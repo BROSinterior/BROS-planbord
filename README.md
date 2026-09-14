@@ -12,6 +12,7 @@ Statische webapp (geen build-stap) op een Supabase-database.
 | `config.js` | koppeling met de database — **hier de Project URL en anon-sleutel invullen** |
 | `version.json` | versienummer; de app meldt een nieuwe versie aan wie ze open heeft |
 | `sql/001_init.sql` | databasescript 1: tabellen, rechten, live-sync, fasen en standaardtaken |
+| `drive/Code.gs` | Google Apps Script dat projectmappen aanmaakt/koppelt op Drive (installatie: zie bovenaan dat bestand) |
 | `next/` | (later) testversie van een volgende update |
 
 ## In gebruik nemen (eenmalig)
@@ -39,3 +40,11 @@ Statische webapp (geen build-stap) op een Supabase-database.
 
 - **Beheer**: projecten aanmaken/bewerken, forfaits en uurtarieven zien, medewerkers beheren, uren van iedereen bewerken.
 - **Medewerker**: alles zien, taken en eigen uren bewerken, eigen profiel aanpassen.
+
+## Drive-koppeling (script 006 + drive/Code.gs)
+
+1. Log in als brosburo@gmail.com op script.google.com → Nieuw project → plak `drive/Code.gs`.
+2. Vul `CONFIG` in: een zelfgekozen SECRET en de map-ID's van `BROS/PROJECTEN` en `BROS/PROJECTEN/A SJABLOON` (het deel van de Drive-URL na `/folders/`).
+3. Deploy → New deployment → Web app → Execute as **Me**, Who has access **Anyone** → Deploy → kopieer de Web app-URL.
+4. In het Planbord: Instellingen → Drive-koppeling → URL + secret → Bewaren → "Verbinding testen".
+5. Nieuwe projecten krijgen automatisch hun map (kopie van A SJABLOON, bestanden hernoemd met de klantnaam). Voor bestaande projecten: projectfiche → Dossier → "Bestaande map koppelen".

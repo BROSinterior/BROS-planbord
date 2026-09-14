@@ -2,7 +2,7 @@
    BROS Planbord — app v1.0
    Statische webapp op Supabase (login, live-synchronisatie, rechten)
    ===================================================================== */
-const APP_VERSION = "1.4.1";
+const APP_VERSION = "1.5.1";
 const PROJ_STATUS = { offerte: "In offerte", lopend: "Lopend", on_hold: "On hold", afgerond: "Afgerond", verloren: "Verloren" };
 const KLANTTYPE = { particulier: "Particulier", zakelijk: "Zakelijk" };
 const KLANTCODE = { particulier: "PAR", zakelijk: "ZAK" };
@@ -35,11 +35,11 @@ const workdays = (a, b) => { let n = 0; for (let s = a; s <= b; s = addDays(s, 1
 /* ---------- state ---------- */
 const S = {
   session: null, me: null,
-  profiles: {}, tarieven: {}, fasen: {}, standaardtaken: [], projecten: {}, taken: {}, uren: {},
+  profiles: {}, tarieven: {}, fasen: {}, standaardtaken: [], projecten: {}, taken: {}, uren: {}, documenten: {}, instellingen: {},
   view: "overzicht", project: null, ptab: "taken",
   filters: { user: "", status: "", project: "", q: "" },
   ganttStart: addDays(mondayOf(todayIso), -14), ganttDays: 112, ganttOpen: {},
-  weekStart: mondayOf(todayIso), hoursUser: null,
+  weekStart: mondayOf(todayIso), hoursUser: null, sort: { key: "nummer", dir: "desc" },
   ready: false, loadError: null,
 };
 const cfg = window.PLANBORD_CONFIG || {};
@@ -70,20 +70,20 @@ const projKost = (pid, soort) => Object.values(S.uren).filter(h => h.project_id 
 let toastT; function toast(msg) { const t = $("#toast"); t.textContent = msg; t.classList.add("show"); clearTimeout(toastT); toastT = setTimeout(() => t.classList.remove("show"), 2800); }
 
 /* ---------- data laden en live houden ---------- */
-const TABLES = { profiles: "profiles", tarieven: "tarieven", fasen: "fasen", standaardtaken: "standaardtaken", projecten: "projecten", taken: "taken", uren: "uren" };
+const TABLES = { profiles: "profiles", tarieven: "tarieven", fasen: "fasen", standaardtaken: "standaardtaken", projecten: "projecten", taken: "taken", uren: "uren", documenten: "documenten", instellingen: "instellingen" };
 function ingest(table, rows) {
   if (table === "standaardtaken") { S.standaardtaken = rows.sort((a, b) => a.fase_nr - b.fase_nr || a.volgorde - b.volgorde); return; }
-  const key = table === "fasen" ? "nr" : table === "tarieven" ? "user_id" : "id";
+  const key = table === "fasen" ? "nr" : table === "tarieven" ? "user_id" : table === "instellingen" ? "key" : "id";
   const o = {}; rows.forEach(r => o[r[key]] = r); S[table] = o;
 }
 async function loadAll() {
   const res = await Promise.all(Object.keys(TABLES).map(t => sb.from(t).select("*").limit(5000)));
-  Object.keys(TABLES).forEach((t, i) => { if (res[i].error) { if (t !== "tarieven") throw res[i].error; } else ingest(t, res[i].data || []); });
+  Object.keys(TABLES).forEach((t, i) => { if (res[i].error) { if (!["tarieven", "documenten", "instellingen"].includes(t)) throw res[i].error; } else ingest(t, res[i].data || []); });
   S.me = S.profiles[S.session.user.id] || null;
 }
 function subscribe() {
   const ch = sb.channel("planbord");
-  ["profiles", "tarieven", "fasen", "standaardtaken", "projecten", "taken", "uren"].forEach(t => {
+  ["profiles", "tarieven", "fasen", "standaardtaken", "projecten", "taken", "uren", "documenten"].forEach(t => {
     ch.on("postgres_changes", { event: "*", schema: "public", table: t }, (payload) => {
       if (t === "standaardtaken") { refetch(t); return; }
       const key = t === "fasen" ? "nr" : t === "tarieven" ? "user_id" : "id";
@@ -124,6 +124,29 @@ async function dbDelete(table, id) {
   const { error } = await sb.from(table).delete().eq("id", id);
   if (error) { S[table][id] = prev; render(); toast("Verwijderen mislukt: " + error.message); throw error; }
 }
+
+
+/* ---------- Drive-koppeling (Google Apps Script als brosburo@gmail.com) ---------- */
+const driveCfg = () => (S.instellingen.drive && S.instellingen.drive.value) || {};
+const driveReady = () => !!(driveCfg().url && driveCfg().secret);
+async function driveCall(action, payload) {
+  const c = driveCfg(); if (!c.url) throw new Error("Drive-koppeling niet ingesteld (Instellingen → Drive).");
+  const r = await fetch(c.url, { method: "POST", body: JSON.stringify({ ...payload, action, secret: c.secret }), redirect: "follow" });
+  const j = await r.json().catch(() => ({ ok: false, error: "Onleesbaar antwoord van het Drive-script." }));
+  if (!j.ok) throw new Error(j.error || "Drive-script gaf een fout.");
+  return j;
+}
+async function driveSync(p, action) {
+  toast(action === "create" ? "Projectmap aanmaken op Drive…" : action === "link" ? "Map zoeken op Drive…" : "Bestanden vernieuwen…");
+  const j = await driveCall(action, action === "list" ? { folderId: p.drive_folder_id } : { klant: p.klant });
+  await dbUpdate("projecten", p.id, { drive_folder_id: j.folder.id, drive_url: j.folder.url, drive_map: "PROJECTEN/" + j.folder.name });
+  const rows = (j.files || []).map(f => ({ project_id: p.id, drive_id: f.id, naam: f.name, pad: f.path || "", url: f.url, mime: f.mime || "", grootte: f.size || null, gewijzigd: f.updated || null, gesynct_op: new Date().toISOString() }));
+  const { data, error } = await sb.from("documenten").upsert(rows, { onConflict: "project_id,drive_id" }).select();
+  if (error) toast("Documenten niet bewaard: " + error.message); else { Object.values(S.documenten).filter(d => d.project_id === p.id && !rows.some(r => r.drive_id === d.drive_id)).forEach(d => { sb.from("documenten").delete().eq("id", d.id); delete S.documenten[d.id]; }); (data || []).forEach(d => S.documenten[d.id] = d); }
+  render(); toast(j.created ? `Map aangemaakt met ${rows.length} bestanden` : `Map gekoppeld · ${rows.length} bestanden`);
+}
+const docsOf = (pid) => Object.values(S.documenten).filter(d => d.project_id === pid).sort((a, b) => (a.pad || "").localeCompare(b.pad || "") || a.naam.localeCompare(b.naam));
+const docIcon = (m, n) => /spreadsheet|excel/.test(m) ? "xls" : /word|document/.test(m) ? "doc" : /pdf/.test(m) ? "pdf" : /skp|sketchup|vwx|dwg|dxf/i.test(n) ? "dwg" : "map";
 
 /* ---------- render root ---------- */
 const TABS = [["overzicht", "Overzicht"], ["projecten", "Projecten"], ["taken", "Taken"], ["planning", "Planning"], ["uren", "Uren"], ["team", "Team"], ["rapporten", "Rapporten"], ["instellingen", "Instellingen", "beheer"]];
@@ -215,20 +238,27 @@ function taskRow(t, withProject) {
 /* ---------- Projecten ---------- */
 function vProjecten() {
   if (S.project && S.projecten[S.project]) return vProjectDetail(S.projecten[S.project]);
-  const ps = projects().filter(p => !S.filters.status || p.status === S.filters.status);
+  const beheer = isBeheer();
+  const ps = projects().filter(p => !S.filters.status || p.status === S.filters.status).map(p => { const ts = tasksOf(p.id); const [st, en] = projSpan(p); return { p, ts, pl: projPlanned(p.id), dn: projDone(p.id), st, en }; });
+  const STATUS_ORDER = { offerte: 0, lopend: 1, on_hold: 2, afgerond: 3, verloren: 4 };
+  const val = (r, k) => ({ nummer: r.p.nummer || "", klant: (r.p.klant || "").toLowerCase(), status: STATUS_ORDER[r.p.status] ?? 9, fase: r.p.fase_nr || 0, lead: userById(r.p.lead).name.toLowerCase(), timing: r.st || "9999", forfait: Number(r.p.forfait) || 0, taken: r.ts.length, uren: r.dn })[k];
+  const { key, dir } = S.sort; const m = dir === "asc" ? 1 : -1;
+  ps.sort((a, b) => { const x = val(a, key), y = val(b, key); return (x < y ? -1 : x > y ? 1 : 0) * m || (a.p.klant || "").localeCompare(b.p.klant || ""); });
+  const th = (k, label, cls = "") => `<th class="sortable ${cls} ${key === k ? "on" : ""}" data-sort="${k}">${label}<span class="arrow">${key === k ? (dir === "asc" ? "↑" : "↓") : ""}</span></th>`;
   return `
   <div class="page-head"><div><div class="eyebrow">${ps.length} projecten</div><h1>Projecten</h1></div>
-    <div class="actions"><select data-filter="status"><option value="">Alle statussen</option>${Object.entries(PROJ_STATUS).map(([k, v]) => `<option value="${k}" ${S.filters.status === k ? "selected" : ""}>${v}</option>`).join("")}</select>${isBeheer() ? `<button class="btn primary" data-act="new-project">+ Nieuw project</button>` : ""}</div></div>
-  <div class="panel tw"><table class="t"><thead><tr><th>Klant · project</th><th>Status</th><th>Fase</th><th>Lead</th><th>Timing</th>${isBeheer() ? `<th class="r">Forfait</th>` : ""}<th class="r">Taken</th><th style="min-width:140px">Uren</th></tr></thead><tbody>
-  ${ps.map(p => { const ts = tasksOf(p.id), pl = projPlanned(p.id), dn = projDone(p.id), [st, en] = projSpan(p); return `<tr class="click" data-open="${p.id}">
-    <td><div class="row-title">${esc(p.klant)}<small>${p.nummer ? `<span class="num">${esc(p.nummer)}</span> · ` : ""}${KLANTCODE[p.klanttype] || ""}${p.naam && p.naam !== p.klant ? " · " + esc(p.naam) : ""}${p.gemeente ? " · " + esc(p.gemeente) : ""}</small></div></td>
+    <div class="actions"><select data-filter="status"><option value="">Alle statussen</option>${Object.entries(PROJ_STATUS).map(([k, v]) => `<option value="${k}" ${S.filters.status === k ? "selected" : ""}>${v}</option>`).join("")}</select>${beheer ? `<button class="btn primary" data-act="new-project">+ Nieuw project</button>` : ""}</div></div>
+  <div class="panel tw"><table class="t"><thead><tr>${th("nummer", "Nr")}${th("klant", "Klant · project")}${th("status", "Status")}${th("fase", "Fase")}${th("lead", "Lead")}${th("timing", "Timing")}${beheer ? th("forfait", "Forfait", "r") : ""}${th("taken", "Taken", "r")}<th class="sortable ${key === "uren" ? "on" : ""}" data-sort="uren" style="min-width:140px">Uren<span class="arrow">${key === "uren" ? (dir === "asc" ? "↑" : "↓") : ""}</span></th></tr></thead><tbody>
+  ${ps.map(({ p, ts, pl, dn, st, en }) => `<tr class="click" data-open="${p.id}">
+    <td class="num muted">${esc(p.nummer || "")}</td>
+    <td><div class="row-title">${esc(p.klant)}<small>${KLANTCODE[p.klanttype] || ""}${p.naam && p.naam !== p.klant ? " · " + esc(p.naam) : ""}${p.gemeente ? " · " + esc(p.gemeente) : ""}</small></div></td>
     <td><span class="pill st-${p.status}">${PROJ_STATUS[p.status] || p.status}</span></td>
     <td><span class="pill phase">${esc(faseName(p.fase_nr) || "—")}</span></td>
     <td>${p.lead ? avatar(p.lead) : "—"}</td>
     <td class="num">${fmt(st)} → ${fmt(en)}</td>
-    ${isBeheer() ? `<td class="r num">${eur(p.forfait)}</td>` : ""}
+    ${beheer ? `<td class="r num">${eur(p.forfait)}</td>` : ""}
     <td class="r num">${ts.filter(t => t.status === "done").length}/${ts.length}</td>
-    <td><div class="num" style="font-size:12px;margin-bottom:3px">${nl(dn)} / ${nl(pl)} u</div><div class="bar"><i class="${dn > pl && pl ? "over" : ""}" style="width:${pl ? Math.min(dn / pl, 1) * 100 : 0}%"></i></div></td></tr>`; }).join("") || `<tr><td colspan="8"><div class="empty"><b>Nog geen projecten</b>${isBeheer() ? "Maak het eerste project aan met de knop rechtsboven." : "De beheerder maakt projecten aan."}</div></td></tr>`}
+    <td><div class="num" style="font-size:12px;margin-bottom:3px">${nl(dn)} / ${nl(pl)} u</div><div class="bar"><i class="${dn > pl && pl ? "over" : ""}" style="width:${pl ? Math.min(dn / pl, 1) * 100 : 0}%"></i></div></td></tr>`).join("") || `<tr><td colspan="9"><div class="empty"><b>Nog geen projecten</b>${beheer ? "Maak het eerste project aan met de knop rechtsboven." : "De beheerder maakt projecten aan."}</div></td></tr>`}
   </tbody></table></div>`;
 }
 function vProjectDetail(p) {
@@ -265,12 +295,15 @@ function vProjectDetail(p) {
       </div></div>`;
   } else {
     const map = p.drive_map || ("PROJECTEN/" + (p.klant || ""));
-    body = `<div class="panel"><div class="panel-head"><h3>Dossier</h3><span class="pill st-offerte">Drive-koppeling volgt in een latere update</span></div>
+    const docs = docsOf(p.id); const groups = [...new Set(docs.map(d => d.pad || ""))];
+    body = `<div class="panel" style="margin-bottom:16px"><div class="panel-head"><div><h3>Projectmap op Google Drive</h3><div class="muted" style="font-size:12px;margin-top:2px"><span class="drive-path">${esc(map)}</span></div></div>
+      <div class="actions">${p.drive_url ? `<a class="btn" href="${esc(p.drive_url)}" target="_blank" rel="noopener">Open map in Drive ↗</a><button class="btn sm" data-act="drive-list" data-pid="${p.id}">Vernieuwen</button>` : driveReady() ? `<button class="btn sm" data-act="drive-link" data-pid="${p.id}">Bestaande map koppelen</button><button class="btn sm primary" data-act="drive-create" data-pid="${p.id}">Map aanmaken uit sjabloon</button>` : `<span class="pill st-offerte">Drive-koppeling nog niet ingesteld</span>`}</div></div>
+      ${docs.length ? `<div class="panel-body"><div class="docs">${groups.map(g => `${g ? `<div style="grid-column:1/-1" class="eyebrow">${esc(g)}</div>` : ""}${docs.filter(d => (d.pad || "") === g).map(d => `<a class="doc" href="${esc(d.url)}" target="_blank" rel="noopener" style="text-decoration:none;color:inherit"><div class="ico ${docIcon(d.mime, d.naam)}">${docIcon(d.mime, d.naam) === "map" ? "DOC" : docIcon(d.mime, d.naam).toUpperCase()}</div><div style="min-width:0"><div class="n" style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(d.naam)}</div><div class="s">${d.gewijzigd ? "gewijzigd " + fmtLong(d.gewijzigd.slice(0, 10)) : ""}</div></div></a>`).join("")}`).join("")}</div>
+        <p class="muted" style="font-size:12px;margin:12px 0 0">Laatst gesynchroniseerd ${docs[0].gesynct_op ? fmtLong(docs[0].gesynct_op.slice(0, 10)) : "—"}. Nieuwe bestanden in Drive verschijnen hier na "Vernieuwen".</p></div>` : `<div class="empty">${p.drive_url ? "Nog geen bestanden gevonden — klik op Vernieuwen." : "Nog geen map gekoppeld."}</div>`}</div>
+      <div class="panel"><div class="panel-head"><h3>Gegevens</h3></div>
       <div class="panel-body"><div class="meta">
-        <div><div class="k">Drive-map</div><div class="v"><span class="drive-path">${esc(map)}</span></div></div>
         <div><div class="k">Adres werf</div><div class="v">${esc(p.adres || "—")}${(p.postcode || p.gemeente) ? ", " + esc([p.postcode, p.gemeente].filter(Boolean).join(" ")) : ""}</div></div>
-        ${p.klanttype === "zakelijk" ? `<div><div class="k">Bedrijf</div><div class="v">${esc(p.bedrijf || "—")}${p.btw_nummer ? `<br><span class="num">${esc(p.btw_nummer)}</span>` : ""}</div></div>` : ""}
-    <div><div class="k">Contact</div><div class="v">${esc(p.contact || "—")}${p.gsm1 ? " · " + esc(p.gsm1) : ""}${p.gsm2 ? " · " + esc(p.gsm2) : ""}</div></div>
+        <div><div class="k">Contact</div><div class="v">${esc(p.contact || "—")}${p.gsm1 ? " · " + esc(p.gsm1) : ""}${p.gsm2 ? " · " + esc(p.gsm2) : ""}</div></div>
         <div><div class="k">Type klant</div><div class="v">${KLANTTYPE[p.klanttype] || "—"}${p.btw_tarief ? ` · btw ${p.btw_tarief} %` : ""}</div></div>
         <div><div class="k">Bron</div><div class="v">${esc(p.bron || "—")}</div></div>
         <div><div class="k">Oppervlakte</div><div class="v num">${p.oppervlakte_m2 ? nl(p.oppervlakte_m2) + " m²" : "—"}</div></div>
@@ -499,6 +532,12 @@ function vInstellingen() {
   const f = S.fasen[S.selFase]; const ts = S.standaardtaken.filter(t => t.fase_nr === S.selFase);
   return `
   <div class="page-head"><div><div class="eyebrow">Beheer</div><h1>Instellingen</h1><div class="sub">Fasen en standaardtaken voor nieuwe projecten. Wijzigingen gelden voor projecten die je hierna aanmaakt; bestaande projecten houden hun taken.</div></div></div>
+  <div class="panel" style="margin-bottom:16px"><div class="panel-head"><h3>Drive-koppeling</h3><span class="pill ${driveReady() ? "st-afgerond" : "st-offerte"}">${driveReady() ? "ingesteld" : "niet ingesteld"}</span></div>
+    <div class="panel-body"><div class="form-grid">
+      <div class="field"><label for="dr_url">Web app-URL van het Drive-script</label><input id="dr_url" value="${esc(driveCfg().url || "")}" placeholder="https://script.google.com/macros/s/…/exec"></div>
+      <div class="field"><label for="dr_secret">Secret (zelfde als in het script)</label><input id="dr_secret" type="password" value="${esc(driveCfg().secret || "")}"></div>
+      <div class="field span2"><div class="actions"><button class="btn primary" data-act="drive-save">Bewaren</button><button class="btn" data-act="drive-test">Verbinding testen</button><span class="muted" style="font-size:12px">Het script staat in de map <code>drive/Code.gs</code>; de installatie staat bovenaan in dat bestand. Nieuwe projecten krijgen daarna automatisch hun map met de sjabloonbestanden.</span></div></div>
+    </div></div></div>
   <div class="grid two" style="grid-template-columns: 1fr 1.4fr">
     <div class="panel"><div class="panel-head"><h3>Fasen</h3><button class="btn sm" data-act="fase-new">+ Fase</button></div>
       <div class="tw"><table class="t"><tbody>${fs.map(x => `<tr class="click ${x.nr === S.selFase ? "sel" : ""}" data-selfase="${x.nr}"><td class="num" style="width:40px;color:var(--muted)">${x.nr}</td><td><span style="${x.actief === false ? "color:var(--muted);text-decoration:line-through" : ""}">${esc(x.naam)}</span><small class="muted" style="display:block">${S.standaardtaken.filter(t => t.fase_nr === x.nr).length} taken${x.actief === false ? " · verborgen" : ""}</small></td><td class="r"><button class="btn ghost sm" data-act="fase-edit" data-nr="${x.nr}">Bewerken</button></td></tr>`).join("")}</tbody></table></div>
@@ -507,6 +546,11 @@ function vInstellingen() {
       ${ts.length ? `<div class="tw"><table class="t"><tbody>${ts.map((t, i) => `<tr><td class="num" style="width:40px;color:var(--muted)">${t.volgorde}</td><td><input class="inline" data-st-title="${t.id}" value="${esc(t.titel)}" aria-label="Titel"></td><td class="r" style="white-space:nowrap"><button class="btn ghost sm" data-act="st-move" data-id="${t.id}" data-dir="-1" ${i === 0 ? "disabled" : ""} aria-label="Omhoog">↑</button><button class="btn ghost sm" data-act="st-move" data-id="${t.id}" data-dir="1" ${i === ts.length - 1 ? "disabled" : ""} aria-label="Omlaag">↓</button><button class="btn ghost sm danger" data-act="st-del" data-id="${t.id}" aria-label="Verwijderen">✕</button></td></tr>`).join("")}</tbody></table></div>` : `<div class="empty"><b>Geen standaardtaken</b>Voeg er een toe voor deze fase.</div>`}
       <div class="panel-body muted" style="font-size:12px;border-top:1px solid var(--line)">Klik in een titel om ze te wijzigen; de wijziging wordt bewaard zodra je het veld verlaat.</div></div>
   </div>`;
+}
+async function driveSaveSettings() {
+  const value = { url: $("#dr_url").value.trim(), secret: $("#dr_secret").value.trim() };
+  const { data, error } = await sb.from("instellingen").upsert({ key: "drive", value, updated_at: new Date().toISOString() }).select().single();
+  if (error) { toast("Bewaren mislukt: " + error.message); return; } S.instellingen.drive = data; render(); toast("Drive-instellingen bewaard");
 }
 function faseForm(f) {
   const isNew = !f; const nrs = Object.keys(S.fasen).map(Number); const nextNr = nrs.length ? Math.max(...nrs) + 1 : 1;
@@ -623,6 +667,7 @@ function projectForm(p = {}) {
         if (tasks.length) { const { data, error } = await sb.from("taken").insert(tasks).select(); if (error) toast("Standaardtaken niet aangemaakt: " + error.message); else (data || []).forEach(t => S.taken[t.id] = t); }
         toast(`Project aangemaakt met ${tasks.length} standaardtaken`);
         S.view = "projecten"; S.project = created.id; S.ptab = "taken"; render();
+        if (driveReady()) { try { await driveSync(S.projecten[created.id], "create"); } catch (e) { toast("Drive-map niet aangemaakt: " + e.message); } }
       } else { await dbUpdate("projecten", p.id, row); toast("Project bewaard"); }
     },
     onDelete: isNew ? null : async () => { await dbDelete("projecten", p.id); Object.values(S.taken).filter(t => t.project_id === p.id).forEach(t => delete S.taken[t.id]); Object.values(S.uren).filter(h => h.project_id === p.id).forEach(h => delete S.uren[h.id]); S.project = null; render(); toast("Project verwijderd"); },
@@ -741,11 +786,12 @@ function userForm(u) {
 
 /* ---------- events ---------- */
 document.addEventListener("click", (e) => {
-  const el = e.target.closest("[data-nav],[data-act],[data-open],[data-back],[data-ptab],[data-edit-task],[data-edit-hours],[data-gnav],[data-wnav],[data-gtoggle],[data-close],[data-selfase]");
+  const el = e.target.closest("[data-nav],[data-act],[data-open],[data-back],[data-ptab],[data-edit-task],[data-edit-hours],[data-gnav],[data-wnav],[data-gtoggle],[data-close],[data-selfase],[data-sort]");
   if (!el) { if (e.target === $("#modalBg")) closeModal(); return; }
   if (e.target.matches(".task-check")) return;
   const d = el.dataset;
   if (d.close != null) return closeModal();
+  if (d.sort) { S.sort = { key: d.sort, dir: S.sort.key === d.sort && S.sort.dir === "asc" ? "desc" : S.sort.key === d.sort ? "asc" : (["klant", "lead", "status", "fase"].includes(d.sort) ? "asc" : "desc") }; try { localStorage.setItem("bros.sort", JSON.stringify(S.sort)); } catch (err) { } return render(); }
   if (d.nav) { S.view = d.nav; S.project = null; if (d.nav === "planning") S.filters.project = ""; return render(); }
   if (d.open) { S.view = "projecten"; S.project = d.open; S.ptab = S.ptab || "taken"; return render(); }
   if (d.back) { S.project = null; return render(); }
@@ -763,6 +809,9 @@ document.addEventListener("click", (e) => {
   if (d.act === "edit-user") return userForm(S.profiles[d.uid]);
   if (d.act === "export-hours") return exportHours();
   if (d.act === "export-projects") return exportProjects();
+  if (d.act === "drive-create" || d.act === "drive-link" || d.act === "drive-list") { const p = S.projecten[d.pid]; const a = d.act.replace("drive-", ""); driveSync(p, a).catch(err => toast("Drive: " + err.message)); return; }
+  if (d.act === "drive-save") return driveSaveSettings();
+  if (d.act === "drive-test") return driveCall("ping", {}).then(j => toast(`OK — mappen: ${j.projecten} / ${j.sjabloon}`)).catch(err => toast("Drive: " + err.message));
   if (d.selfase) { S.selFase = Number(d.selfase); return render(); }
   if (d.act === "fase-new") return faseForm(null);
   if (d.act === "fase-edit") { e.stopPropagation(); return faseForm(S.fasen[d.nr]); }
@@ -792,6 +841,7 @@ async function checkVersion() {
 
 /* ---------- start ---------- */
 async function boot() {
+  try { const sv = JSON.parse(localStorage.getItem("bros.sort") || "null"); if (sv && sv.key) S.sort = sv; } catch (e) { }
   render();
   if (!configured) return;
   const { data: { session } } = await sb.auth.getSession();
