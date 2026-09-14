@@ -179,6 +179,9 @@
   .task-check { width: 16px; height: 16px; accent-color: var(--accent); cursor: pointer; }
   .row-title { font-weight: 500; }
   .row-title small { display: block; color: var(--muted); font-weight: 400; }
+  a.btn { color: inherit; text-decoration: none; }
+  .drive-ico { text-decoration: none; font-size: 13px; margin-left: 4px; opacity: .6; }
+  .drive-ico:hover { opacity: 1; }
   .empty { padding: 28px 16px; text-align: center; color: var(--muted); }
   .empty b { display: block; color: var(--ink); margin-bottom: 4px; }
 
@@ -279,6 +282,10 @@
   .seg { display: flex; gap: 14px; padding: 8px 0 2px; }
   .seg label { display: flex; align-items: center; gap: 6px; font-weight: 500; font-size: 14px; cursor: pointer; }
   .seg input { accent-color: var(--accent); width: auto; margin: 0; }
+  table.t th.sortable { cursor: pointer; user-select: none; white-space: nowrap; }
+  table.t th.sortable:hover { color: var(--ink); }
+  table.t th.sortable.on { color: var(--accent); }
+  table.t th .arrow { display: inline-block; width: 12px; margin-left: 3px; }
   table.t tr.sel td { background: var(--accent-soft); }
   input.inline { width: 100%; border: 1px solid transparent; background: transparent; padding: 4px 6px; border-radius: 4px; font: inherit; color: inherit; }
   input.inline:hover { border-color: var(--line-2); } input.inline:focus { border-color: var(--accent); background: var(--surface); outline: none; }
@@ -291,12 +298,22 @@
   .rend .k { font-size: 11px; letter-spacing: .06em; text-transform: uppercase; color: var(--muted); font-weight: 600; }
   .rend .v { font-family: var(--font-display); font-weight: 800; font-size: 20px; margin-top: 2px; font-variant-numeric: tabular-nums; }
   .rend .v.neg { color: var(--crit); } .rend .v.pos { color: var(--ok); }
+  /* laadscherm: BROS-logo dat volloopt */
+  .loader { position: fixed; inset: 0; z-index: 60; display: none; align-items: center; justify-content: center; flex-direction: column; gap: 18px; background: color-mix(in srgb, var(--ground) 88%, transparent); backdrop-filter: blur(3px); }
+  .loader.show { display: flex; }
+  .loader .logo { position: relative; width: min(320px, 70vw); aspect-ratio: 900 / 313; }
+  .loader .logo i { position: absolute; inset: 0; display: block; -webkit-mask: url(logo.png) no-repeat center / contain; mask: url(logo.png) no-repeat center / contain; }
+  .loader .logo .base { background: var(--line-2); }
+  .loader .logo .fill { background: var(--ink); clip-path: inset(0 100% 0 0); transition: clip-path .35s ease-out; }
+  .loader .msg { font-size: 13px; color: var(--muted); letter-spacing: .04em; text-transform: uppercase; }
+  .loader .pct { font-family: var(--font-display); font-weight: 800; font-size: 22px; font-variant-numeric: tabular-nums; margin-top: -10px; }
 </style>
 </head>
 <body>
 <div id="app"></div>
 <div class="modal-bg" id="modalBg"><div class="modal" id="modal" role="dialog" aria-modal="true"></div></div>
 <div class="toast" id="toast" role="status"></div>
+<div class="loader" id="loader" aria-live="polite"><div class="logo"><i class="base"></i><i class="fill" id="loaderFill"></i></div><div class="pct" id="loaderPct">0%</div><div class="msg" id="loaderMsg">Even geduld…</div></div>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.45.4/dist/umd/supabase.min.js"></script>
 <script src="config.js"></script>
 <script src="postcodes.js"></script>

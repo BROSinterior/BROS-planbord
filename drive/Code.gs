@@ -34,25 +34,56 @@ function json(o) { return ContentService.createTextOutput(JSON.stringify(o)).set
 /** Maakt de projectmap aan uit het sjabloon (create=true) of koppelt een bestaande map met die naam. */
 function createOrLink(klant, create) {
   if (!klant) return { ok: false, error: "Geen klantnaam." };
-  const parent = DriveApp.getFolderById(CONFIG.PROJECTEN_FOLDER_ID);
-  const existing = parent.getFoldersByName(klant);
-  let folder, created = false;
-  if (existing.hasNext()) folder = existing.next();
-  else if (create) { folder = parent.createFolder(klant); copyFolder(DriveApp.getFolderById(CONFIG.SJABLOON_FOLDER_ID), folder, klant); created = true; }
-  else return { ok: false, error: "Geen map gevonden met de naam \"" + klant + "\" in PROJECTEN." };
-  return { ok: true, created: created, folder: { id: folder.getId(), url: folder.getUrl(), name: folder.getName() }, files: listFiles(folder, "") };
+  const existing = driveQuery("mimeType='application/vnd.google-apps.folder' and trashed=false and '" + CONFIG.PROJECTEN_FOLDER_ID + "' in parents and name='" + klant.replace(/'/g, "\\'") + "'", "id,name,webViewLink");
+  if (existing.length) { const f = existing[0]; return { ok: true, created: false, folder: { id: f.id, url: f.webViewLink, name: f.name }, files: listFiles(f.id, "") }; }
+  if (!create) return { ok: false, error: "Geen map gevonden met de naam \"" + klant + "\" in PROJECTEN." };
+  const root = driveCreateFolders([{ name: klant, parent: CONFIG.PROJECTEN_FOLDER_ID }])[0];
+  const files = copyTemplate(root.id, klant);
+  return { ok: true, created: true, folder: { id: root.id, url: root.webViewLink, name: root.name }, files: files };
 }
 
-/** Kopieert submappen en bestanden recursief; slaat tijdelijke Office-bestanden en Finder-iconen over. */
-function copyFolder(src, dst, klant) {
-  const files = src.getFiles();
-  while (files.hasNext()) {
-    const f = files.next(); const name = f.getName();
-    if (name.indexOf("~$") === 0 || name.indexOf("._") === 0 || name.indexOf("Icon") === 0 || name === ".DS_Store") continue;
-    f.makeCopy(renameFor(name, klant), dst);
+/* ---- Sjabloon kopiëren via de Drive REST API: mappen per laag en alle bestanden tegelijk (fetchAll = parallel) ---- */
+const SKIP = (name) => name.indexOf("~$") === 0 || name.indexOf("._") === 0 || name.indexOf("Icon") === 0 || name === ".DS_Store";
+function driveReq(url, method, payload) {
+  return { url: url, method: method, contentType: "application/json", payload: JSON.stringify(payload), headers: { Authorization: "Bearer " + ScriptApp.getOAuthToken() }, muteHttpExceptions: true };
+}
+function driveFetchAll(reqs) {
+  const out = [];
+  chunks(reqs, 40).forEach(batch => {
+    UrlFetchApp.fetchAll(batch).forEach(r => { const j = JSON.parse(r.getContentText() || "{}"); if (j.error) throw new Error("Drive API: " + (j.error.message || r.getResponseCode())); out.push(j); });
+  });
+  return out;
+}
+/** Maakt mappen aan ({name, parent}) en geeft ze terug in dezelfde volgorde. */
+function driveCreateFolders(specs) {
+  if (!specs.length) return [];
+  return driveFetchAll(specs.map(s => driveReq("https://www.googleapis.com/drive/v3/files?supportsAllDrives=true&fields=id,name,webViewLink", "post", { name: s.name, mimeType: "application/vnd.google-apps.folder", parents: [s.parent] })));
+}
+/** Kopieert de volledige inhoud van A SJABLOON naar de nieuwe projectmap; geeft de lijst van gekopieerde bestanden terug. */
+function copyTemplate(dstRootId, klant) {
+  const srcId = CONFIG.SJABLOON_FOLDER_ID;
+  const map = {}; map[srcId] = { dst: dstRootId, path: "" };   // sjabloonmap-id → nieuwe map-id + pad
+  let level = [srcId];
+  while (level.length) {                                       // mappenboom laag per laag
+    let subs = [];
+    chunks(level, 20).forEach(ids => {
+      const q = "mimeType='application/vnd.google-apps.folder' and trashed=false and (" + ids.map(i => "'" + i + "' in parents").join(" or ") + ")";
+      driveQuery(q, "id,name,parents").forEach(f => { const parent = (f.parents || []).find(p => map[p]); if (parent) subs.push({ src: f.id, name: f.name, parent: parent }); });
+    });
+    if (!subs.length) break;
+    const made = driveCreateFolders(subs.map(s => ({ name: s.name, parent: map[s.parent].dst })));
+    subs.forEach((s, i) => { map[s.src] = { dst: made[i].id, path: map[s.parent].path ? map[s.parent].path + "/" + s.name : s.name }; });
+    level = subs.map(s => s.src);
+    if (Object.keys(map).length > 300) break;
   }
-  const subs = src.getFolders();
-  while (subs.hasNext()) { const s = subs.next(); copyFolder(s, dst.createFolder(s.getName()), klant); }
+  const srcIds = Object.keys(map);                             // alle bestanden in één keer opzoeken …
+  let files = [];
+  chunks(srcIds, 20).forEach(ids => {
+    const q = "mimeType!='application/vnd.google-apps.folder' and trashed=false and (" + ids.map(i => "'" + i + "' in parents").join(" or ") + ")";
+    driveQuery(q, "id,name,parents").forEach(f => { if (SKIP(f.name)) return; const parent = (f.parents || []).find(p => map[p]); if (parent) files.push({ src: f.id, name: renameFor(f.name, klant), parent: parent }); });
+  });
+  const copied = driveFetchAll(files.map(f => driveReq("https://www.googleapis.com/drive/v3/files/" + f.src + "/copy?supportsAllDrives=true&fields=id,name,mimeType,size,modifiedTime,webViewLink", "post", { name: f.name, parents: [map[f.parent].dst] })));
+  return copied.map((c, i) => ({ id: c.id, name: c.name, path: map[files[i].parent].path, url: c.webViewLink, mime: c.mimeType, size: Number(c.size) || 0, updated: c.modifiedTime })).filter(f => !/^image\/|^video\//.test(f.mime || ""));
 }
 /** "SJABLOON MEETSTAAT 2026 DEF.xlsx" → "MEETSTAAT 2026 DEF Chantor Mansi.xlsx"; "TEMPLATE_BROS.skp" → "Chantor Mansi.skp" */
 function renameFor(name, klant) {
@@ -62,8 +93,9 @@ function renameFor(name, klant) {
 }
 function listById(folderId) {
   if (!folderId) return { ok: false, error: "Geen map-id." };
-  const folder = DriveApp.getFolderById(folderId);
-  return { ok: true, folder: { id: folder.getId(), url: folder.getUrl(), name: folder.getName() }, files: listFiles(folder, "") };
+  const r = UrlFetchApp.fetch("https://www.googleapis.com/drive/v3/files/" + folderId + "?supportsAllDrives=true&fields=id,name,webViewLink", { headers: { Authorization: "Bearer " + ScriptApp.getOAuthToken() }, muteHttpExceptions: true });
+  const f = JSON.parse(r.getContentText()); if (f.error) throw new Error("Map niet gevonden: " + (f.error.message || ""));
+  return { ok: true, folder: { id: f.id, url: f.webViewLink, name: f.name }, files: listFiles(f.id, "") };
 }
 
 /* ---- Snel oplijsten via de Drive REST API (DriveApp is te traag per map) ---- */
@@ -80,8 +112,7 @@ function driveQuery(q, fields) {
   return out;
 }
 function chunks(arr, n) { const o = []; for (let i = 0; i < arr.length; i += n) o.push(arr.slice(i, i + n)); return o; }
-function listFiles(folder, path) {
-  const rootId = folder.getId();
+function listFiles(rootId, path) {
   const paths = {}; paths[rootId] = path || "";
   let level = [rootId], allIds = [rootId];
   // mappenboom in de breedte (één aanvraag per laag van max. 20 mappen)

@@ -2,7 +2,7 @@
    BROS Planbord — app v1.0
    Statische webapp op Supabase (login, live-synchronisatie, rechten)
    ===================================================================== */
-const APP_VERSION = "1.5.3";
+const APP_VERSION = "1.5.5";
 const PROJ_STATUS = { offerte: "In offerte", lopend: "Lopend", on_hold: "On hold", afgerond: "Afgerond", verloren: "Verloren" };
 const KLANTTYPE = { particulier: "Particulier", zakelijk: "Zakelijk" };
 const KLANTCODE = { particulier: "PAR", zakelijk: "ZAK" };
@@ -136,15 +136,41 @@ async function driveCall(action, payload) {
   if (!j.ok) throw new Error(j.error || "Drive-script gaf een fout.");
   return j;
 }
+/* Laadscherm met het BROS-logo dat volloopt. Het Drive-script geeft geen tussenstand,
+   dus de balk loopt op volgens de duur van de vorige keer (bewaard per actie) en springt op 100% zodra het antwoord er is. */
+const loader = (() => {
+  let timer, start, expect, pct = 0;
+  const set = (v, msg) => { pct = v; $("#loaderFill").style.clipPath = `inset(0 ${100 - v}% 0 0)`; $("#loaderPct").textContent = Math.round(v) + "%"; if (msg) $("#loaderMsg").textContent = msg; };
+  const expected = (k) => { try { return Number(localStorage.getItem("bros.duur." + k)) || 0; } catch (e) { return 0; } };
+  return {
+    start(key, msg, fallbackMs) {
+      clearInterval(timer); start = Date.now(); expect = expected(key) || fallbackMs || 10000;
+      $("#loader").classList.add("show"); set(2, msg);
+      timer = setInterval(() => { const t = (Date.now() - start) / expect; set(Math.min(92, 2 + 90 * (1 - Math.exp(-2.2 * t)))); }, 120);
+    },
+    step(msg) { if (msg) $("#loaderMsg").textContent = msg; },
+    done(key) {
+      clearInterval(timer);
+      if (key) { try { localStorage.setItem("bros.duur." + key, String(Math.round((Date.now() - start) * 0.7 + expect * 0.3))); } catch (e) { } }
+      set(100, "Klaar"); setTimeout(() => $("#loader").classList.remove("show"), 450);
+    },
+    fail() { clearInterval(timer); $("#loader").classList.remove("show"); },
+  };
+})();
 async function driveSync(p, action) {
-  toast(action === "create" ? "Projectmap aanmaken op Drive…" : action === "link" ? "Map zoeken op Drive…" : "Bestanden vernieuwen…");
-  const mapnaam = ((p.drive_map || "").replace(/^PROJECTEN\//, "").trim()) || p.klant;
-  const j = await driveCall(action, action === "list" ? { folderId: p.drive_folder_id } : { klant: mapnaam });
-  await dbUpdate("projecten", p.id, { drive_folder_id: j.folder.id, drive_url: j.folder.url, drive_map: "PROJECTEN/" + j.folder.name });
-  const rows = (j.files || []).filter(f => !/^\._|^Icon|^~\$|^\.DS_Store$|~\.skp$/i.test(f.name)).map(f => ({ project_id: p.id, drive_id: f.id, naam: f.name, pad: f.path || "", url: f.url, mime: f.mime || "", grootte: f.size || null, gewijzigd: f.updated || null, gesynct_op: new Date().toISOString() }));
-  const { data, error } = await sb.from("documenten").upsert(rows, { onConflict: "project_id,drive_id" }).select();
-  if (error) toast("Documenten niet bewaard: " + error.message); else { Object.values(S.documenten).filter(d => d.project_id === p.id && !rows.some(r => r.drive_id === d.drive_id)).forEach(d => { sb.from("documenten").delete().eq("id", d.id); delete S.documenten[d.id]; }); (data || []).forEach(d => S.documenten[d.id] = d); }
-  render(); toast(j.created ? `Map aangemaakt met ${rows.length} bestanden` : `Map gekoppeld · ${rows.length} bestanden`);
+  const label = action === "create" ? "Projectmap aanmaken op Drive" : action === "link" ? "Map zoeken op Drive" : "Bestanden vernieuwen";
+  loader.start("drive." + action, label + "…", action === "create" ? 12000 : 7000);
+  try {
+    const mapnaam = ((p.drive_map || "").replace(/^PROJECTEN\//, "").trim()) || p.klant;
+    const j = await driveCall(action, action === "list" ? { folderId: p.drive_folder_id } : { klant: mapnaam });
+    loader.step("Bestanden bewaren…");
+    await dbUpdate("projecten", p.id, { drive_folder_id: j.folder.id, drive_url: j.folder.url, drive_map: "PROJECTEN/" + j.folder.name });
+    const rows = (j.files || []).filter(f => !/^\._|^Icon|^~\$|^\.DS_Store$|~\.skp$/i.test(f.name)).map(f => ({ project_id: p.id, drive_id: f.id, naam: f.name, pad: f.path || "", url: f.url, mime: f.mime || "", grootte: f.size || null, gewijzigd: f.updated || null, gesynct_op: new Date().toISOString() }));
+    const { data, error } = await sb.from("documenten").upsert(rows, { onConflict: "project_id,drive_id" }).select();
+    if (error) toast("Documenten niet bewaard: " + error.message); else { Object.values(S.documenten).filter(d => d.project_id === p.id && !rows.some(r => r.drive_id === d.drive_id)).forEach(d => { sb.from("documenten").delete().eq("id", d.id); delete S.documenten[d.id]; }); (data || []).forEach(d => S.documenten[d.id] = d); }
+    loader.done("drive." + action);
+    render(); toast(j.created ? `Map aangemaakt met ${rows.length} bestanden` : `Map gekoppeld · ${rows.length} bestanden`);
+  } catch (e) { loader.fail(); throw e; }
 }
 const docsOf = (pid) => Object.values(S.documenten).filter(d => d.project_id === pid).sort((a, b) => (a.pad || "").localeCompare(b.pad || "") || a.naam.localeCompare(b.naam));
 const docIcon = (m, n) => /spreadsheet|excel/.test(m) ? "xls" : /word|document/.test(m) ? "doc" : /pdf/.test(m) ? "pdf" : /skp|sketchup|vwx|dwg|dxf/i.test(n) ? "dwg" : "map";
@@ -252,7 +278,7 @@ function vProjecten() {
   <div class="panel tw"><table class="t"><thead><tr>${th("nummer", "Nr")}${th("klant", "Klant · project")}${th("status", "Status")}${th("fase", "Fase")}${th("lead", "Lead")}${th("timing", "Timing")}${beheer ? th("forfait", "Forfait", "r") : ""}${th("taken", "Taken", "r")}<th class="sortable ${key === "uren" ? "on" : ""}" data-sort="uren" style="min-width:140px">Uren<span class="arrow">${key === "uren" ? (dir === "asc" ? "↑" : "↓") : ""}</span></th></tr></thead><tbody>
   ${ps.map(({ p, ts, pl, dn, st, en }) => `<tr class="click" data-open="${p.id}">
     <td class="num muted">${esc(p.nummer || "")}</td>
-    <td><div class="row-title">${esc(p.klant)}<small>${KLANTCODE[p.klanttype] || ""}${p.naam && p.naam !== p.klant ? " · " + esc(p.naam) : ""}${p.gemeente ? " · " + esc(p.gemeente) : ""}</small></div></td>
+    <td><div class="row-title">${esc(p.klant)}${p.drive_url ? ` <a class="drive-ico" href="${esc(p.drive_url)}" target="_blank" rel="noopener" title="Projectmap openen in Google Drive">📁</a>` : ""}<small>${KLANTCODE[p.klanttype] || ""}${p.naam && p.naam !== p.klant ? " · " + esc(p.naam) : ""}${p.gemeente ? " · " + esc(p.gemeente) : ""}</small></div></td>
     <td><span class="pill st-${p.status}">${PROJ_STATUS[p.status] || p.status}</span></td>
     <td><span class="pill phase">${esc(faseName(p.fase_nr) || "—")}</span></td>
     <td>${p.lead ? avatar(p.lead) : "—"}</td>
@@ -318,7 +344,7 @@ function vProjectDetail(p) {
   return `
   <div class="crumb"><button data-back="1">Projecten</button><span>›</span><span>${esc(p.klant)}</span></div>
   <div class="page-head"><div>${projCode(p) ? `<div class="eyebrow">${esc(projCode(p))}${p.projecttype ? " · " + esc(p.projecttype) : ""}</div>` : ""}<h1>${esc(projName(p))}</h1><div class="sub">${esc(p.adres || "")}${(p.postcode || p.gemeente) ? (p.adres ? ", " : "") + esc([p.postcode, p.gemeente].filter(Boolean).join(" ")) : ""}</div></div>
-    <div class="actions"><span class="pill st-${p.status}">${PROJ_STATUS[p.status] || p.status}</span>${isBeheer() ? `<button class="btn" data-act="edit-project" data-pid="${p.id}">Bewerken</button>` : ""}<button class="btn" data-act="log-hours" data-pid="${p.id}">+ Uren</button><button class="btn primary" data-act="new-task" data-pid="${p.id}">+ Taak</button></div></div>
+    <div class="actions"><span class="pill st-${p.status}">${PROJ_STATUS[p.status] || p.status}</span>${p.drive_url ? `<a class="btn" href="${esc(p.drive_url)}" target="_blank" rel="noopener" title="Projectmap openen in Google Drive">📁 Drive-map ↗</a>` : (driveReady() ? `<button class="btn" data-act="drive-link" data-pid="${p.id}" title="Bestaande map op Drive koppelen of zoeken">📁 Drive-map koppelen</button>` : "")}${isBeheer() ? `<button class="btn" data-act="edit-project" data-pid="${p.id}">Bewerken</button>` : ""}<button class="btn" data-act="log-hours" data-pid="${p.id}">+ Uren</button><button class="btn primary" data-act="new-task" data-pid="${p.id}">+ Taak</button></div></div>
   <div class="panel" style="margin-bottom:16px"><div class="panel-body meta">
     <div><div class="k">Fase</div><div class="v">${esc(faseName(p.fase_nr) || "—")}</div></div>
     <div><div class="k">Lead</div><div class="v"><span class="who-cell">${p.lead ? avatar(p.lead) : ""}${esc(userById(p.lead).name)}</span></div></div>
@@ -787,6 +813,7 @@ function userForm(u) {
 
 /* ---------- events ---------- */
 document.addEventListener("click", (e) => {
+  if (e.target.closest("a[href][target=_blank]")) return; // externe links (bv. Drive-map) gewoon laten openen
   const el = e.target.closest("[data-nav],[data-act],[data-open],[data-back],[data-ptab],[data-edit-task],[data-edit-hours],[data-gnav],[data-wnav],[data-gtoggle],[data-close],[data-selfase],[data-sort]");
   if (!el) { if (e.target === $("#modalBg")) closeModal(); return; }
   if (e.target.matches(".task-check")) return;
@@ -851,7 +878,8 @@ async function boot() {
   if (session) start();
 }
 async function start() {
-  try { await loadAll(); S.ready = true; S.loadError = null; render(); subscribe(); setInterval(checkVersion, 5 * 60 * 1000); setTimeout(checkVersion, 20000); }
-  catch (e) { S.loadError = e.message || String(e); render(); }
+  loader.start("app.load", "Planbord laden…", 2500);
+  try { await loadAll(); S.ready = true; S.loadError = null; render(); loader.done("app.load"); subscribe(); setInterval(checkVersion, 5 * 60 * 1000); setTimeout(checkVersion, 20000); }
+  catch (e) { loader.fail(); S.loadError = e.message || String(e); render(); }
 }
 boot();
