@@ -2,8 +2,12 @@
    BROS Planbord — app v1.0
    Statische webapp op Supabase (login, live-synchronisatie, rechten)
    ===================================================================== */
-const APP_VERSION = "1.1.0";
-const PROJ_STATUS = { lopend: "Lopend", offerte: "In offerte", on_hold: "On hold", afgerond: "Afgerond" };
+const APP_VERSION = "1.2.0";
+const PROJ_STATUS = { offerte: "In offerte", lopend: "Lopend", on_hold: "On hold", afgerond: "Afgerond", verloren: "Verloren" };
+const KLANTTYPE = { particulier: "Particulier", zakelijk: "Zakelijk" };
+const KLANTCODE = { particulier: "PAR", zakelijk: "ZAK" };
+const PROJECTTYPES = ["Renovatie", "Nieuwbouw", "Interieur", "Maatwerk", "Advies", "Andere"];
+const BRONNEN = ["Website", "Doorverwijzing", "Sociale media", "Bestaande klant", "Architect", "Aannemer", "Andere"];
 const TASK_STATUS = { todo: "Te doen", busy: "Bezig", done: "Klaar" };
 const PALETTE = ["#2A4DD0", "#1E8A5C", "#B8720F", "#8A4BC7", "#C2452F", "#0F7C8C", "#6B6B7B"];
 
@@ -45,7 +49,7 @@ const sb = configured ? window.supabase.createClient(cfg.supabaseUrl, cfg.supaba
 /* ---------- helpers ---------- */
 const isBeheer = () => S.me?.role === "beheer";
 const users = () => Object.values(S.profiles).filter(u => u.active !== false).sort((a, b) => a.name.localeCompare(b.name));
-const projects = () => Object.values(S.projecten).sort((a, b) => (a.klant || "").localeCompare(b.klant || ""));
+const projects = () => Object.values(S.projecten).sort((a, b) => (b.nummer || "").localeCompare(a.nummer || "") || (a.klant || "").localeCompare(b.klant || ""));
 const tasksOf = (pid) => Object.values(S.taken).filter(t => t.project_id === pid).sort((a, b) => (a.volgorde ?? 0) - (b.volgorde ?? 0) || (a.start || "9").localeCompare(b.start || "9"));
 const hoursOf = (pred) => Object.values(S.uren).filter(pred).reduce((s, h) => s + (Number(h.uren) || 0), 0);
 const taskDone = (tid) => hoursOf(h => h.taak_id === tid);
@@ -53,7 +57,8 @@ const projDone = (pid) => hoursOf(h => h.project_id === pid);
 const projPlanned = (pid) => tasksOf(pid).reduce((s, t) => s + (Number(t.uren_gepland) || 0), 0);
 const isLate = (t) => t.status !== "done" && t.eind && t.eind < todayIso;
 const userById = (id) => S.profiles[id] || { name: "—", initials: "?", color: "#999" };
-const projName = (p) => p ? (p.klant + (p.naam ? " · " + p.naam : "")) : "—";
+const projName = (p) => p ? (p.klant + (p.naam && p.naam !== p.klant ? " · " + p.naam : "")) : "—";
+const projCode = (p) => p ? [p.nummer, KLANTCODE[p.klanttype]].filter(Boolean).join(" · ") : "";
 const faseName = (nr) => nr ? (S.fasen[nr] ? `${nr} · ${S.fasen[nr].naam}` : String(nr)) : "";
 const faseShort = (nr) => nr && S.fasen[nr] ? S.fasen[nr].naam : "";
 const fasenList = () => Object.values(S.fasen).filter(f => f.actief !== false).sort((a, b) => a.nr - b.nr);
@@ -194,7 +199,7 @@ function vOverzicht() {
         <div><div style="display:flex;justify-content:space-between;gap:8px;margin-bottom:4px"><button class="btn ghost sm" style="padding-left:0" data-open="${p.id}">${esc(projName(p))}</button><span class="num">${nl(dn)} / ${nl(pl)} u</span></div><div class="bar"><i class="${dn > pl && pl ? "over" : ""}" style="width:${pct}%"></i></div></div>`; }).join("") || `<div class="empty">Nog geen projecten.</div>`}
       </div></div>
   </div>
-  <div style="margin-top:16px">${ganttHtml(ps.filter(p => p.status !== "afgerond"), { compact: true, title: "Timing alle projecten" })}</div>`;
+  <div style="margin-top:16px">${ganttHtml(ps.filter(p => p.status !== "afgerond" && p.status !== "verloren"), { compact: true, title: "Timing alle projecten" })}</div>`;
 }
 function taskRow(t, withProject) {
   const p = S.projecten[t.project_id];
@@ -216,7 +221,7 @@ function vProjecten() {
     <div class="actions"><select data-filter="status"><option value="">Alle statussen</option>${Object.entries(PROJ_STATUS).map(([k, v]) => `<option value="${k}" ${S.filters.status === k ? "selected" : ""}>${v}</option>`).join("")}</select>${isBeheer() ? `<button class="btn primary" data-act="new-project">+ Nieuw project</button>` : ""}</div></div>
   <div class="panel tw"><table class="t"><thead><tr><th>Klant · project</th><th>Status</th><th>Fase</th><th>Lead</th><th>Timing</th>${isBeheer() ? `<th class="r">Forfait</th>` : ""}<th class="r">Taken</th><th style="min-width:140px">Uren</th></tr></thead><tbody>
   ${ps.map(p => { const ts = tasksOf(p.id), pl = projPlanned(p.id), dn = projDone(p.id), [st, en] = projSpan(p); return `<tr class="click" data-open="${p.id}">
-    <td><div class="row-title">${esc(p.klant)}<small>${esc(p.naam || "")}${p.gemeente ? " · " + esc(p.gemeente) : ""}</small></div></td>
+    <td><div class="row-title">${esc(p.klant)}<small>${p.nummer ? `<span class="num">${esc(p.nummer)}</span> · ` : ""}${KLANTCODE[p.klanttype] || ""}${p.naam && p.naam !== p.klant ? " · " + esc(p.naam) : ""}${p.gemeente ? " · " + esc(p.gemeente) : ""}</small></div></td>
     <td><span class="pill st-${p.status}">${PROJ_STATUS[p.status] || p.status}</span></td>
     <td><span class="pill phase">${esc(faseName(p.fase_nr) || "—")}</span></td>
     <td>${p.lead ? avatar(p.lead) : "—"}</td>
@@ -264,14 +269,21 @@ function vProjectDetail(p) {
       <div class="panel-body"><div class="meta">
         <div><div class="k">Drive-map</div><div class="v"><span class="drive-path">${esc(map)}</span></div></div>
         <div><div class="k">Adres werf</div><div class="v">${esc(p.adres || "—")}${(p.postcode || p.gemeente) ? ", " + esc([p.postcode, p.gemeente].filter(Boolean).join(" ")) : ""}</div></div>
-        <div><div class="k">Contact</div><div class="v">${esc(p.contact || "—")}${p.gsm1 ? " · " + esc(p.gsm1) : ""}${p.gsm2 ? " · " + esc(p.gsm2) : ""}</div></div>
+        ${p.klanttype === "zakelijk" ? `<div><div class="k">Bedrijf</div><div class="v">${esc(p.bedrijf || "—")}${p.btw_nummer ? `<br><span class="num">${esc(p.btw_nummer)}</span>` : ""}</div></div>` : ""}
+    <div><div class="k">Contact</div><div class="v">${esc(p.contact || "—")}${p.gsm1 ? " · " + esc(p.gsm1) : ""}${p.gsm2 ? " · " + esc(p.gsm2) : ""}</div></div>
+        <div><div class="k">Type klant</div><div class="v">${KLANTTYPE[p.klanttype] || "—"}${p.btw_tarief ? ` · btw ${p.btw_tarief} %` : ""}</div></div>
+        <div><div class="k">Bron</div><div class="v">${esc(p.bron || "—")}</div></div>
+        <div><div class="k">Oppervlakte</div><div class="v num">${p.oppervlakte_m2 ? nl(p.oppervlakte_m2) + " m²" : "—"}</div></div>
+        <div><div class="k">Offerte / contract / opgeleverd</div><div class="v num">${fmtLong(p.offerte_datum)} · ${fmtLong(p.contract_datum)} · ${fmtLong(p.opgeleverd_op)}</div></div>
+        ${p.status === "verloren" ? `<div><div class="k">Reden verloren</div><div class="v">${esc(p.verloren_reden || "—")}</div></div>` : ""}
+        ${p.tags ? `<div><div class="k">Tags</div><div class="v">${esc(p.tags)}</div></div>` : ""}
         <div><div class="k">Facturatie naar</div><div class="v">${[p.factuur_email1 && p.email1, p.factuur_email2 && p.email2].filter(Boolean).map(esc).join(", ") || "—"}</div></div>
         <div style="grid-column:1/-1"><div class="k">Notities</div><div class="v" style="white-space:pre-wrap">${esc(p.notities || "—")}</div></div>
       </div></div></div>`;
   }
   return `
   <div class="crumb"><button data-back="1">Projecten</button><span>›</span><span>${esc(p.klant)}</span></div>
-  <div class="page-head"><div><h1>${esc(projName(p))}</h1><div class="sub">${esc(p.adres || "")}${(p.postcode || p.gemeente) ? (p.adres ? ", " : "") + esc([p.postcode, p.gemeente].filter(Boolean).join(" ")) : ""}</div></div>
+  <div class="page-head"><div>${projCode(p) ? `<div class="eyebrow">${esc(projCode(p))}${p.projecttype ? " · " + esc(p.projecttype) : ""}</div>` : ""}<h1>${esc(projName(p))}</h1><div class="sub">${esc(p.adres || "")}${(p.postcode || p.gemeente) ? (p.adres ? ", " : "") + esc([p.postcode, p.gemeente].filter(Boolean).join(" ")) : ""}</div></div>
     <div class="actions"><span class="pill st-${p.status}">${PROJ_STATUS[p.status] || p.status}</span>${isBeheer() ? `<button class="btn" data-act="edit-project" data-pid="${p.id}">Bewerken</button>` : ""}<button class="btn" data-act="log-hours" data-pid="${p.id}">+ Uren</button><button class="btn primary" data-act="new-task" data-pid="${p.id}">+ Taak</button></div></div>
   <div class="panel" style="margin-bottom:16px"><div class="panel-body meta">
     <div><div class="k">Fase</div><div class="v">${esc(faseName(p.fase_nr) || "—")}</div></div>
@@ -280,6 +292,7 @@ function vProjectDetail(p) {
     ${isBeheer() ? `<div><div class="k">Forfait</div><div class="v num">${eur(p.forfait)}</div></div>` : ""}
     <div><div class="k">Uren</div><div class="v num">${nl(dn)} / ${nl(pl)} u</div></div>
     <div><div class="k">Taken</div><div class="v num">${ts.filter(t => t.status === "done").length} / ${ts.length} klaar</div></div>
+    ${p.klanttype === "zakelijk" ? `<div><div class="k">Bedrijf</div><div class="v">${esc(p.bedrijf || "—")}${p.btw_nummer ? `<br><span class="num">${esc(p.btw_nummer)}</span>` : ""}</div></div>` : ""}
     <div><div class="k">Contact</div><div class="v">${esc(p.contact || "—")}${p.gsm1 ? `<br><a href="tel:${esc(p.gsm1)}">${esc(p.gsm1)}</a>` : ""}${p.gsm2 ? ` · <a href="tel:${esc(p.gsm2)}">${esc(p.gsm2)}</a>` : ""}</div></div>
     <div><div class="k">E-mail</div><div class="v">${[["email1", "factuur_email1"], ["email2", "factuur_email2"]].filter(([e]) => p[e]).map(([e, f]) => `<a href="mailto:${esc(p[e])}">${esc(p[e])}</a>${p[f] ? ` <span class="pill st-offerte" style="font-size:10px">facturatie</span>` : ""}`).join("<br>") || "—"}</div></div>
   </div></div>
@@ -312,7 +325,7 @@ function vTaken() {
 
 /* ---------- Planning (Gantt) ---------- */
 function vPlanning() {
-  const ps = projects().filter(p => p.status !== "afgerond" && (!S.filters.project || p.id === S.filters.project));
+  const ps = projects().filter(p => p.status !== "afgerond" && p.status !== "verloren" && (!S.filters.project || p.id === S.filters.project));
   return `
   <div class="page-head"><div><div class="eyebrow">${ps.length} projecten · ${Object.values(S.taken).filter(t => ps.some(p => p.id === t.project_id) && t.status !== "done").length} open taken</div><h1>Planning</h1></div>
     <div class="actions"><select data-filter="project"><option value="">Alle projecten</option>${projects().map(p => `<option value="${p.id}" ${S.filters.project === p.id ? "selected" : ""}>${esc(p.klant)}</option>`).join("")}</select><button class="btn primary" data-act="new-task">+ Taak</button></div></div>
@@ -391,8 +404,8 @@ function vUren() {
 }
 function exportHours() {
   const rows = Object.values(S.uren).sort((a, b) => a.datum.localeCompare(b.datum));
-  const head = ["Datum", "Week", "Medewerker", "Klant", "Project", "Fase", "Taak", "Uren", "Notitie"];
-  const lines = [head.join(";")].concat(rows.map(h => { const p = S.projecten[h.project_id] || {}, t = S.taken[h.taak_id] || {}; return [fmtLong(h.datum), weekNr(h.datum), userById(h.user_id).name, p.klant || "", p.naam || "", faseShort(t.fase_nr), t.titel || "", String(h.uren).replace(".", ","), (h.notitie || "").replace(/[;\r\n]/g, " ")].map(v => `"${String(v).replace(/"/g, '""')}"`).join(";"); }));
+  const head = ["Datum", "Week", "Medewerker", "Projectnummer", "Klant", "Project", "Fase", "Taak", "Uren", "Notitie"];
+  const lines = [head.join(";")].concat(rows.map(h => { const p = S.projecten[h.project_id] || {}, t = S.taken[h.taak_id] || {}; return [fmtLong(h.datum), weekNr(h.datum), userById(h.user_id).name, p.nummer || "", p.klant || "", p.naam || "", faseShort(t.fase_nr), t.titel || "", String(h.uren).replace(".", ","), (h.notitie || "").replace(/[;\r\n]/g, " ")].map(v => `"${String(v).replace(/"/g, '""')}"`).join(";"); }));
   const blob = new Blob(["﻿" + lines.join("\r\n")], { type: "text/csv;charset=utf-8" });
   const a = document.createElement("a"); a.href = URL.createObjectURL(blob); a.download = `bros-uren-${todayIso}.csv`; a.click(); URL.revokeObjectURL(a.href);
 }
@@ -437,7 +450,10 @@ function projectForm(p = {}) {
     <div class="field"><label for="f_klant">Klant (naam van de projectmap)</label><input id="f_klant" name="klant" required value="${esc(p.klant || "")}" placeholder="bv. Chantor - Mansi"></div>
     <div class="field"><label for="f_naam">Projectnaam</label><input id="f_naam" name="naam" value="${esc(p.naam || "")}" placeholder="bv. Renovatie gelijkvloers"></div>
     <div class="field span2"><div class="eyebrow" style="margin-top:4px">Klantgegevens</div></div>
+    <div class="field"><label>Type klant</label><div class="seg"><label><input type="radio" name="klanttype" value="particulier" ${(p.klanttype || "particulier") === "particulier" ? "checked" : ""}> Particulier</label><label><input type="radio" name="klanttype" value="zakelijk" ${p.klanttype === "zakelijk" ? "checked" : ""}> Zakelijk</label></div></div>
     <div class="field"><label for="f_contact">Contactpersoon</label><input id="f_contact" name="contact" value="${esc(p.contact || "")}" placeholder="naam"></div>
+    <div class="field zak"><label for="f_bedrijf">Bedrijfsnaam</label><input id="f_bedrijf" name="bedrijf" value="${esc(p.bedrijf || "")}"></div>
+    <div class="field zak"><label for="f_btw">BTW-nummer</label><input id="f_btw" name="btw_nummer" value="${esc(p.btw_nummer || "")}" placeholder="BE 0123.456.789"></div>
     <div class="field"><label for="f_adres">Adres (straat + nr)</label><input id="f_adres" name="adres" value="${esc(p.adres || "")}"></div>
     <div class="field"><label for="f_pc">Postcode</label><input id="f_pc" name="postcode" inputmode="numeric" maxlength="4" value="${esc(p.postcode || "")}" list="pc_list" autocomplete="off"><datalist id="pc_list"></datalist></div>
     <div class="field"><label for="f_gem">Gemeente</label><input id="f_gem" name="gemeente" value="${esc(p.gemeente || "")}" list="gem_list" autocomplete="off"><datalist id="gem_list"></datalist></div>
@@ -446,6 +462,7 @@ function projectForm(p = {}) {
     <div class="field"><label for="f_email1">E-mailadres 1</label><input id="f_email1" name="email1" type="email" value="${esc(p.email1 || "")}"><label class="chk"><input type="checkbox" name="factuur_email1" ${p.factuur_email1 ? "checked" : ""}> facturatie naar dit adres</label></div>
     <div class="field"><label for="f_email2">E-mailadres 2</label><input id="f_email2" name="email2" type="email" value="${esc(p.email2 || "")}"><label class="chk"><input type="checkbox" name="factuur_email2" ${p.factuur_email2 ? "checked" : ""}> facturatie naar dit adres</label></div>
     <div class="field span2"><div class="eyebrow" style="margin-top:4px">Project</div></div>
+    <div class="field"><label for="f_nr">Projectnummer</label><input id="f_nr" name="nummer" value="${esc(p.nummer || "")}" placeholder="automatisch (jaar + volgnummer)" ${isNew ? "" : ""}><span class="muted" style="font-size:12px">${isNew ? "Leeg laten = automatisch volgend nummer" : "Enkel wijzigen als het echt moet"}</span></div>
     <div class="field"><label for="f_lead">Projectlead</label><select id="f_lead" name="lead">${userOpts(p.lead || S.me.id)}</select></div>
     <div class="field"><label for="f_status">Status</label><select id="f_status" name="status">${opts(Object.entries(PROJ_STATUS), p.status || "offerte")}</select></div>
     <div class="field"><label for="f_fase">Huidige fase</label><select id="f_fase" name="fase_nr">${faseOpts(p.fase_nr || 1, true)}</select></div>
@@ -453,13 +470,24 @@ function projectForm(p = {}) {
     <div class="field"><label for="f_start">Start</label><input id="f_start" type="date" name="start" value="${esc(p.start || todayIso)}"></div>
     <div class="field"><label for="f_eind">Geplande oplevering</label><input id="f_eind" type="date" name="eind" value="${esc(p.eind || "")}"></div>
     <div class="field"><label for="f_map">Drive-map</label><input id="f_map" name="drive_map" value="${esc(p.drive_map || "")}" placeholder="BROS-PROJECTEN-… (automatisch)"></div>
+    <div class="field verloren"><label for="f_vr">Reden verloren</label><input id="f_vr" name="verloren_reden" value="${esc(p.verloren_reden || "")}" placeholder="bv. prijs, timing, ander bureau"></div>
     <div class="field span2"><label for="f_not">Notities</label><textarea id="f_not" name="notities">${esc(p.notities || "")}</textarea></div>
+    <div class="field span2"><div class="eyebrow" style="margin-top:4px">Extra gegevens <span class="muted" style="font-weight:400;letter-spacing:0;text-transform:none">— niet verplicht, handig voor rapportage en nacalculatie</span></div></div>
+    <div class="field"><label for="f_ptype">Type project</label><select id="f_ptype" name="projecttype"><option value="">—</option>${opts(PROJECTTYPES.map(x => [x, x]), p.projecttype || "")}</select></div>
+    <div class="field"><label for="f_bron">Hoe kwam de klant bij BROS?</label><select id="f_bron" name="bron"><option value="">—</option>${opts(BRONNEN.map(x => [x, x]), p.bron || "")}</select></div>
+    <div class="field"><label for="f_m2">Oppervlakte (m²)</label><input id="f_m2" type="number" step="0.5" min="0" name="oppervlakte_m2" value="${esc(p.oppervlakte_m2 ?? "")}"></div>
+    <div class="field"><label for="f_btwt">BTW-tarief</label><select id="f_btwt" name="btw_tarief"><option value="">—</option>${opts([[6, "6 % (renovatie, woning > 10 jaar)"], [21, "21 %"]], p.btw_tarief ?? "")}</select></div>
+    <div class="field"><label for="f_od">Datum offerte</label><input id="f_od" type="date" name="offerte_datum" value="${esc(p.offerte_datum || "")}"></div>
+    <div class="field"><label for="f_cd">Datum contract</label><input id="f_cd" type="date" name="contract_datum" value="${esc(p.contract_datum || "")}"></div>
+    <div class="field"><label for="f_op">Werkelijk opgeleverd op</label><input id="f_op" type="date" name="opgeleverd_op" value="${esc(p.opgeleverd_op || "")}"></div>
+    <div class="field"><label for="f_tags">Tags (komma-gescheiden)</label><input id="f_tags" name="tags" value="${esc(p.tags || "")}" placeholder="bv. keuken, badkamer, showroom"></div>
     ${isNew ? `<div class="field span2"><label>Fasen voor dit project <span class="muted" style="font-weight:400">— vink uit wat niet van toepassing is; elke fase brengt zijn standaardtaken mee</span></label>
       <div class="fase-list">${fasenList().map(f => `<label><input type="checkbox" name="fase" value="${f.nr}" checked><span class="n">${f.nr}</span><span class="nm">${esc(f.naam)}</span><span class="c">${S.standaardtaken.filter(t => t.fase_nr === f.nr).length} taken</span></label>`).join("")}</div></div>` : ""}
   </div>`, {
     wide: true,
     onSave: async (d) => {
-      const row = { klant: d.klant.trim(), naam: d.naam.trim(), contact: d.contact.trim(), adres: d.adres.trim(), postcode: d.postcode.trim(), gemeente: d.gemeente.trim(), gsm1: d.gsm1.trim(), gsm2: d.gsm2.trim(), email1: d.email1.trim(), email2: d.email2.trim(), factuur_email1: d.factuur_email1 === "on", factuur_email2: d.factuur_email2 === "on", lead: d.lead || null, status: d.status, fase_nr: d.fase_nr ? Number(d.fase_nr) : null, start: d.start || null, eind: d.eind || null, forfait: d.forfait === "" ? null : Number(d.forfait), drive_map: d.drive_map || ("BROS-PROJECTEN-" + d.klant.trim().toUpperCase()), notities: d.notities };
+      const row = { klant: d.klant.trim(), naam: d.naam.trim(), klanttype: d.klanttype || "particulier", bedrijf: (d.bedrijf || "").trim(), btw_nummer: (d.btw_nummer || "").trim(), projecttype: d.projecttype || "", bron: d.bron || "", oppervlakte_m2: d.oppervlakte_m2 === "" ? null : Number(d.oppervlakte_m2), btw_tarief: d.btw_tarief === "" ? null : Number(d.btw_tarief), offerte_datum: d.offerte_datum || null, contract_datum: d.contract_datum || null, opgeleverd_op: d.opgeleverd_op || null, verloren_reden: d.status === "verloren" ? d.verloren_reden.trim() : "", tags: d.tags.trim(), contact: d.contact.trim(), adres: d.adres.trim(), postcode: d.postcode.trim(), gemeente: d.gemeente.trim(), gsm1: d.gsm1.trim(), gsm2: d.gsm2.trim(), email1: d.email1.trim(), email2: d.email2.trim(), factuur_email1: d.factuur_email1 === "on", factuur_email2: d.factuur_email2 === "on", lead: d.lead || null, status: d.status, fase_nr: d.fase_nr ? Number(d.fase_nr) : null, start: d.start || null, eind: d.eind || null, forfait: d.forfait === "" ? null : Number(d.forfait), drive_map: d.drive_map || ("BROS-PROJECTEN-" + d.klant.trim().toUpperCase()), notities: d.notities };
+      if (d.nummer && d.nummer.trim()) row.nummer = d.nummer.trim(); else if (!isNew) row.nummer = p.nummer || null;
       if (isNew) {
         row.created_by = S.me.id;
         const created = await dbInsert("projecten", row);
@@ -472,6 +500,8 @@ function projectForm(p = {}) {
     onDelete: isNew ? null : async () => { await dbDelete("projecten", p.id); Object.values(S.taken).filter(t => t.project_id === p.id).forEach(t => delete S.taken[t.id]); Object.values(S.uren).filter(h => h.project_id === p.id).forEach(h => delete S.uren[h.id]); S.project = null; render(); toast("Project verwijderd"); },
   });
   wirePostcode();
+  const form = $("#mform"); const sync = () => { const zak = form.querySelector('input[name="klanttype"]:checked')?.value === "zakelijk"; form.querySelectorAll(".field.zak").forEach(el => el.style.display = zak ? "" : "none"); form.querySelectorAll(".field.verloren").forEach(el => el.style.display = form.querySelector("#f_status").value === "verloren" ? "" : "none"); };
+  form.addEventListener("change", sync); sync();
 }
 /* Postcode ⇄ gemeente: invullen zodra het ene veld bekend is; bij meerdere mogelijkheden een keuzelijstje */
 function wirePostcode() {
