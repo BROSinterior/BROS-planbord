@@ -2,7 +2,7 @@
    BROS Planbord — app v1.0
    Statische webapp op Supabase (login, live-synchronisatie, rechten)
    ===================================================================== */
-const APP_VERSION = "1.5.1";
+const APP_VERSION = "1.5.3";
 const PROJ_STATUS = { offerte: "In offerte", lopend: "Lopend", on_hold: "On hold", afgerond: "Afgerond", verloren: "Verloren" };
 const KLANTTYPE = { particulier: "Particulier", zakelijk: "Zakelijk" };
 const KLANTCODE = { particulier: "PAR", zakelijk: "ZAK" };
@@ -138,9 +138,10 @@ async function driveCall(action, payload) {
 }
 async function driveSync(p, action) {
   toast(action === "create" ? "Projectmap aanmaken op Drive…" : action === "link" ? "Map zoeken op Drive…" : "Bestanden vernieuwen…");
-  const j = await driveCall(action, action === "list" ? { folderId: p.drive_folder_id } : { klant: p.klant });
+  const mapnaam = ((p.drive_map || "").replace(/^PROJECTEN\//, "").trim()) || p.klant;
+  const j = await driveCall(action, action === "list" ? { folderId: p.drive_folder_id } : { klant: mapnaam });
   await dbUpdate("projecten", p.id, { drive_folder_id: j.folder.id, drive_url: j.folder.url, drive_map: "PROJECTEN/" + j.folder.name });
-  const rows = (j.files || []).map(f => ({ project_id: p.id, drive_id: f.id, naam: f.name, pad: f.path || "", url: f.url, mime: f.mime || "", grootte: f.size || null, gewijzigd: f.updated || null, gesynct_op: new Date().toISOString() }));
+  const rows = (j.files || []).filter(f => !/^\._|^Icon|^~\$|^\.DS_Store$|~\.skp$/i.test(f.name)).map(f => ({ project_id: p.id, drive_id: f.id, naam: f.name, pad: f.path || "", url: f.url, mime: f.mime || "", grootte: f.size || null, gewijzigd: f.updated || null, gesynct_op: new Date().toISOString() }));
   const { data, error } = await sb.from("documenten").upsert(rows, { onConflict: "project_id,drive_id" }).select();
   if (error) toast("Documenten niet bewaard: " + error.message); else { Object.values(S.documenten).filter(d => d.project_id === p.id && !rows.some(r => r.drive_id === d.drive_id)).forEach(d => { sb.from("documenten").delete().eq("id", d.id); delete S.documenten[d.id]; }); (data || []).forEach(d => S.documenten[d.id] = d); }
   render(); toast(j.created ? `Map aangemaakt met ${rows.length} bestanden` : `Map gekoppeld · ${rows.length} bestanden`);
@@ -299,7 +300,7 @@ function vProjectDetail(p) {
     body = `<div class="panel" style="margin-bottom:16px"><div class="panel-head"><div><h3>Projectmap op Google Drive</h3><div class="muted" style="font-size:12px;margin-top:2px"><span class="drive-path">${esc(map)}</span></div></div>
       <div class="actions">${p.drive_url ? `<a class="btn" href="${esc(p.drive_url)}" target="_blank" rel="noopener">Open map in Drive ↗</a><button class="btn sm" data-act="drive-list" data-pid="${p.id}">Vernieuwen</button>` : driveReady() ? `<button class="btn sm" data-act="drive-link" data-pid="${p.id}">Bestaande map koppelen</button><button class="btn sm primary" data-act="drive-create" data-pid="${p.id}">Map aanmaken uit sjabloon</button>` : `<span class="pill st-offerte">Drive-koppeling nog niet ingesteld</span>`}</div></div>
       ${docs.length ? `<div class="panel-body"><div class="docs">${groups.map(g => `${g ? `<div style="grid-column:1/-1" class="eyebrow">${esc(g)}</div>` : ""}${docs.filter(d => (d.pad || "") === g).map(d => `<a class="doc" href="${esc(d.url)}" target="_blank" rel="noopener" style="text-decoration:none;color:inherit"><div class="ico ${docIcon(d.mime, d.naam)}">${docIcon(d.mime, d.naam) === "map" ? "DOC" : docIcon(d.mime, d.naam).toUpperCase()}</div><div style="min-width:0"><div class="n" style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(d.naam)}</div><div class="s">${d.gewijzigd ? "gewijzigd " + fmtLong(d.gewijzigd.slice(0, 10)) : ""}</div></div></a>`).join("")}`).join("")}</div>
-        <p class="muted" style="font-size:12px;margin:12px 0 0">Laatst gesynchroniseerd ${docs[0].gesynct_op ? fmtLong(docs[0].gesynct_op.slice(0, 10)) : "—"}. Nieuwe bestanden in Drive verschijnen hier na "Vernieuwen".</p></div>` : `<div class="empty">${p.drive_url ? "Nog geen bestanden gevonden — klik op Vernieuwen." : "Nog geen map gekoppeld."}</div>`}</div>
+        <p class="muted" style="font-size:12px;margin:12px 0 0">Laatst gesynchroniseerd ${docs[0].gesynct_op ? fmtLong(docs[0].gesynct_op.slice(0, 10)) : "—"}. Nieuwe bestanden in Drive verschijnen hier na "Vernieuwen"; foto's en video's worden niet opgesomd (die open je via de map).</p></div>` : `<div class="empty">${p.drive_url ? "Nog geen bestanden gevonden — klik op Vernieuwen." : "Nog geen map gekoppeld. \"Bestaande map koppelen\" zoekt in PROJECTEN naar een map met de naam uit het veld Drive-map (of de klantnaam)."}</div>`}</div>
       <div class="panel"><div class="panel-head"><h3>Gegevens</h3></div>
       <div class="panel-body"><div class="meta">
         <div><div class="k">Adres werf</div><div class="v">${esc(p.adres || "—")}${(p.postcode || p.gemeente) ? ", " + esc([p.postcode, p.gemeente].filter(Boolean).join(" ")) : ""}</div></div>

@@ -48,7 +48,7 @@ function copyFolder(src, dst, klant) {
   const files = src.getFiles();
   while (files.hasNext()) {
     const f = files.next(); const name = f.getName();
-    if (name.indexOf("~$") === 0 || name.indexOf("Icon") === 0 || name === ".DS_Store") continue;
+    if (name.indexOf("~$") === 0 || name.indexOf("._") === 0 || name.indexOf("Icon") === 0 || name === ".DS_Store") continue;
     f.makeCopy(renameFor(name, klant), dst);
   }
   const subs = src.getFolders();
@@ -65,15 +65,52 @@ function listById(folderId) {
   const folder = DriveApp.getFolderById(folderId);
   return { ok: true, folder: { id: folder.getId(), url: folder.getUrl(), name: folder.getName() }, files: listFiles(folder, "") };
 }
-function listFiles(folder, path) {
-  let out = [];
-  const files = folder.getFiles();
-  while (files.hasNext()) {
-    const f = files.next(); const name = f.getName();
-    if (name.indexOf("~$") === 0 || name.indexOf("Icon") === 0 || name === ".DS_Store") continue;
-    out.push({ id: f.getId(), name: name, path: path, url: f.getUrl(), mime: f.getMimeType(), size: f.getSize(), updated: f.getLastUpdated().toISOString() });
-  }
-  const subs = folder.getFolders();
-  while (subs.hasNext()) { const s = subs.next(); out = out.concat(listFiles(s, path ? path + "/" + s.getName() : s.getName())); }
+
+/* ---- Snel oplijsten via de Drive REST API (DriveApp is te traag per map) ---- */
+const MAX_FILES = 800;
+function driveQuery(q, fields) {
+  let out = [], pageToken = null;
+  do {
+    const url = "https://www.googleapis.com/drive/v3/files?pageSize=1000&supportsAllDrives=true&includeItemsFromAllDrives=true&q=" + encodeURIComponent(q) + "&fields=" + encodeURIComponent("nextPageToken,files(" + fields + ")") + (pageToken ? "&pageToken=" + pageToken : "");
+    const r = UrlFetchApp.fetch(url, { headers: { Authorization: "Bearer " + ScriptApp.getOAuthToken() }, muteHttpExceptions: true });
+    const j = JSON.parse(r.getContentText());
+    if (j.error) throw new Error("Drive API: " + (j.error.message || r.getResponseCode()));
+    out = out.concat(j.files || []); pageToken = j.nextPageToken;
+  } while (pageToken);
   return out;
+}
+function chunks(arr, n) { const o = []; for (let i = 0; i < arr.length; i += n) o.push(arr.slice(i, i + n)); return o; }
+function listFiles(folder, path) {
+  const rootId = folder.getId();
+  const paths = {}; paths[rootId] = path || "";
+  let level = [rootId], allIds = [rootId];
+  // mappenboom in de breedte (één aanvraag per laag van max. 20 mappen)
+  while (level.length) {
+    let next = [];
+    chunks(level, 20).forEach(ids => {
+      const q = "mimeType='application/vnd.google-apps.folder' and trashed=false and (" + ids.map(i => "'" + i + "' in parents").join(" or ") + ")";
+      driveQuery(q, "id,name,parents").forEach(f => { const parent = (f.parents || []).find(p => paths[p] !== undefined); if (parent === undefined) return; paths[f.id] = paths[parent] ? paths[parent] + "/" + f.name : f.name; next.push(f.id); allIds.push(f.id); });
+    });
+    level = next;
+    if (allIds.length > 300) break;
+  }
+  // bestanden van alle mappen (foto's en video's overslaan; die blijven in Drive)
+  let out = [];
+  chunks(allIds, 20).forEach(ids => {
+    if (out.length >= MAX_FILES) return;
+    const q = "mimeType!='application/vnd.google-apps.folder' and trashed=false and not mimeType contains 'image/' and not mimeType contains 'video/' and (" + ids.map(i => "'" + i + "' in parents").join(" or ") + ")";
+    driveQuery(q, "id,name,mimeType,size,modifiedTime,webViewLink,parents").forEach(f => {
+      if (f.name.indexOf("~$") === 0 || f.name.indexOf("._") === 0 || f.name.indexOf("Icon") === 0 || f.name === ".DS_Store") return;
+      const parent = (f.parents || []).find(p => paths[p] !== undefined);
+      out.push({ id: f.id, name: f.name, path: parent !== undefined ? paths[parent] : "", url: f.webViewLink, mime: f.mimeType, size: Number(f.size) || 0, updated: f.modifiedTime });
+    });
+  });
+  return out.slice(0, MAX_FILES);
+}
+
+/** Eenmalig uitvoeren vanuit de editor (Uitvoeren ▷) om alle rechten te verlenen: Drive én de Drive-API. */
+function autoriseer() {
+  DriveApp.getRootFolder().getName();
+  const r = UrlFetchApp.fetch("https://www.googleapis.com/drive/v3/about?fields=user", { headers: { Authorization: "Bearer " + ScriptApp.getOAuthToken() } });
+  Logger.log("OK — rechten in orde voor " + JSON.parse(r.getContentText()).user.emailAddress);
 }
