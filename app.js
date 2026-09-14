@@ -2,7 +2,7 @@
    BROS Planbord — app v1.0
    Statische webapp op Supabase (login, live-synchronisatie, rechten)
    ===================================================================== */
-const APP_VERSION = "1.2.0";
+const APP_VERSION = "1.4.0";
 const PROJ_STATUS = { offerte: "In offerte", lopend: "Lopend", on_hold: "On hold", afgerond: "Afgerond", verloren: "Verloren" };
 const KLANTTYPE = { particulier: "Particulier", zakelijk: "Zakelijk" };
 const KLANTCODE = { particulier: "PAR", zakelijk: "ZAK" };
@@ -126,7 +126,7 @@ async function dbDelete(table, id) {
 }
 
 /* ---------- render root ---------- */
-const TABS = [["overzicht", "Overzicht"], ["projecten", "Projecten"], ["taken", "Taken"], ["planning", "Planning"], ["uren", "Uren"], ["team", "Team"]];
+const TABS = [["overzicht", "Overzicht"], ["projecten", "Projecten"], ["taken", "Taken"], ["planning", "Planning"], ["uren", "Uren"], ["team", "Team"], ["rapporten", "Rapporten"], ["instellingen", "Instellingen", "beheer"]];
 function render() {
   const app = $("#app");
   if (!configured) { app.innerHTML = `<div class="login"><div class="card"><h1>BROS Planbord</h1><p>De app is nog niet gekoppeld aan de database. Vul <code>config.js</code> in (Project URL en anon public-sleutel uit Supabase) en herlaad.</p></div></div>`; return; }
@@ -134,12 +134,12 @@ function render() {
   if (S.loadError) { app.innerHTML = `<div class="login"><div class="card"><h1>Kon de gegevens niet laden</h1><p class="err">${esc(S.loadError)}</p><button class="btn" data-act="logout">Uitloggen</button> <button class="btn primary" data-act="reload">Opnieuw proberen</button></div></div>`; return; }
   if (!S.ready) { app.innerHTML = `<div class="login"><div class="card"><h1>BROS Planbord</h1><p>Gegevens laden…</p></div></div>`; return; }
   if (!S.me) { app.innerHTML = `<div class="login"><div class="card"><h1>Nog geen profiel</h1><p>Je login werkt, maar er is nog geen medewerkersprofiel gekoppeld. Vraag de beheerder om je uit te nodigen, of herlaad de pagina.</p><button class="btn" data-act="logout">Uitloggen</button> <button class="btn primary" data-act="reload">Herladen</button></div></div>`; return; }
-  const views = { overzicht: vOverzicht, projecten: vProjecten, taken: vTaken, planning: vPlanning, uren: vUren, team: vTeam };
+  const views = { overzicht: vOverzicht, projecten: vProjecten, taken: vTaken, planning: vPlanning, uren: vUren, team: vTeam, rapporten: vRapporten, instellingen: vInstellingen };
   app.innerHTML = `
   <header class="top">
     <div class="top-in">
       <div class="brand"><span class="mark">BROS</span><span class="name">Planbord</span></div>
-      <nav class="tabs" aria-label="Hoofdnavigatie">${TABS.map(([k, l]) => `<button data-nav="${k}" ${S.view === k ? 'aria-current="page"' : ""}>${l}</button>`).join("")}</nav>
+      <nav class="tabs" aria-label="Hoofdnavigatie">${TABS.filter(([, , r]) => !r || isBeheer()).map(([k, l]) => `<button data-nav="${k}" ${S.view === k ? 'aria-current="page"' : ""}>${l}</button>`).join("")}</nav>
       <div class="who"><span class="who-cell">${avatar(S.me.id)}<span style="font-weight:600">${esc(S.me.name)}</span></span><button class="btn ghost sm" data-act="logout" title="Uitloggen">Uitloggen</button></div>
     </div>
     <div class="update" id="updateBar"><span>Er is een nieuwe versie van het Planbord.</span><button class="btn sm primary" data-act="reload">Nu herladen</button><button class="btn sm ghost" data-act="update-later">Later</button></div>
@@ -427,6 +427,134 @@ function vTeam() {
   <div class="panel-body muted" style="font-size:12px;border-top:1px solid var(--line)">Geplande uren per week = geplande uren van open taken, verdeeld over de werkdagen van de taak. Oranje vanaf 32 u, rood boven 40 u.</div></div>`;
 }
 
+
+
+/* ---------- Rapporten ---------- */
+function vRapporten() {
+  const jaar = S.rapJaar || todayIso.slice(0, 4);
+  const jaren = [...new Set([todayIso.slice(0, 4), ...Object.values(S.uren).map(h => h.datum.slice(0, 4)), ...Object.values(S.projecten).map(p => (p.created_at || "").slice(0, 4)).filter(Boolean)])].sort().reverse();
+  const ps = projects(); const beheer = isBeheer();
+  const inJaar = (d) => d && d.slice(0, 4) === jaar;
+  const won = ps.filter(p => ["lopend", "afgerond"].includes(p.status)), lost = ps.filter(p => p.status === "verloren"), off = ps.filter(p => p.status === "offerte"), lopend = ps.filter(p => p.status === "lopend");
+  const conv = won.length + lost.length ? Math.round(won.length / (won.length + lost.length) * 100) : null;
+  const urenJaar = hoursOf(h => inJaar(h.datum));
+  const sum = (arr, f) => arr.reduce((a, x) => a + (Number(f(x)) || 0), 0);
+  // per project
+  const rows = ps.filter(p => p.status !== "verloren").map(p => { const d = projDone(p.id), g = projPlanned(p.id), ki = beheer ? projKost(p.id, "intern") : 0, ke = beheer ? projKost(p.id, "extern") : 0, f = Number(p.forfait) || 0, m2 = Number(p.oppervlakte_m2) || 0; return { p, d, g, ki, ke, f, m2, marge: f && beheer ? f - ki : null }; });
+  // per fase
+  const perFase = fasenList().map(f => { const ts = Object.values(S.taken).filter(t => t.fase_nr === f.nr && S.projecten[t.project_id]?.status !== "verloren"); const ids = new Set(ts.map(t => t.id)); return { f, g: sum(ts, t => t.uren_gepland), d: hoursOf(h => ids.has(h.taak_id)) }; }).filter(x => x.g || x.d);
+  const maxFase = Math.max(1, ...perFase.map(x => Math.max(x.g, x.d)));
+  // bron
+  const bronnen = [...new Set(ps.map(p => p.bron || "(onbekend)"))].sort();
+  const perBron = bronnen.map(b => { const g = ps.filter(p => (p.bron || "(onbekend)") === b); return { b, n: g.length, won: g.filter(p => ["lopend", "afgerond"].includes(p.status)).length, lost: g.filter(p => p.status === "verloren").length, off: g.filter(p => p.status === "offerte").length, forfait: sum(g.filter(p => p.status !== "verloren"), p => p.forfait) }; });
+  // per medewerker per maand
+  const us = users(); const maanden = Array.from({ length: 12 }, (_, i) => i);
+  const cell = (u, m) => hoursOf(h => h.user_id === u.id && inJaar(h.datum) && Number(h.datum.slice(5, 7)) === m + 1);
+  // doorlooptijden
+  const dl = (a, b) => { const v = ps.filter(p => p[a] && p[b]).map(p => diffDays(p[a], p[b])).filter(x => x >= 0); return v.length ? { avg: Math.round(v.reduce((x, y) => x + y, 0) / v.length), n: v.length } : null; };
+  const d1 = dl("offerte_datum", "contract_datum"), d2 = dl("contract_datum", "opgeleverd_op"), d3 = dl("start", "opgeleverd_op");
+  const money = (n) => beheer ? eur(n) : "";
+  return `
+  <div class="page-head"><div><div class="eyebrow">Rapporten</div><h1>Cijfers</h1><div class="sub">Live berekend uit projecten, taken en uren${beheer ? "" : " — bedragen zijn enkel zichtbaar voor beheer"}.</div></div>
+    <div class="actions"><select data-rapjaar>${jaren.map(j => `<option ${j === jaar ? "selected" : ""}>${j}</option>`).join("")}</select>${beheer ? `<button class="btn" data-act="export-projects">Projecten exporteren</button>` : ""}<button class="btn" data-act="export-hours">Uren exporteren</button></div></div>
+  <div class="grid kpi" style="margin-bottom:16px">
+    <div class="panel kpi-tile"><div class="eyebrow">Lopend</div><div class="v">${lopend.length}</div><div class="d">${beheer ? "forfait " + eur(sum(lopend, p => p.forfait)) : "projecten in uitvoering"}</div></div>
+    <div class="panel kpi-tile"><div class="eyebrow">In offerte</div><div class="v">${off.length}</div><div class="d">${beheer ? "forfait " + eur(sum(off, p => p.forfait)) : "offertes open"}</div></div>
+    <div class="panel kpi-tile"><div class="eyebrow">Conversie</div><div class="v">${conv == null ? "—" : conv + "<small>%</small>"}</div><div class="d">${won.length} gewonnen · ${lost.length} verloren</div></div>
+    <div class="panel kpi-tile"><div class="eyebrow">Uren ${jaar}</div><div class="v">${nl(urenJaar, 0)}<small>u</small></div><div class="d">${beheer ? "interne kost " + eur(Object.values(S.uren).filter(h => inJaar(h.datum)).reduce((a, h) => a + kost(h.user_id, Number(h.uren) || 0, "intern"), 0)) : "geregistreerd door het team"}</div></div>
+  </div>
+  <div class="panel" style="margin-bottom:16px"><div class="panel-head"><h3>Per project</h3><span class="muted" style="font-size:12px">zonder verloren offertes</span></div>
+    <div class="tw"><table class="t"><thead><tr><th>Nr</th><th>Klant</th><th>Type</th><th>Status</th><th class="r">m²</th>${beheer ? `<th class="r">Forfait</th>` : ""}<th class="r">Uren</th>${beheer ? `<th class="r">Interne kost</th><th class="r">Marge</th><th class="r">€/m²</th>` : ""}<th class="r">u/m²</th></tr></thead><tbody>
+    ${rows.map(r => `<tr class="click" data-open="${r.p.id}"><td class="num">${esc(r.p.nummer || "")}</td><td>${esc(r.p.klant)}</td><td class="muted">${esc(r.p.projecttype || "")}</td><td><span class="pill st-${r.p.status}">${PROJ_STATUS[r.p.status]}</span></td><td class="r num">${r.m2 ? nl(r.m2, 0) : "—"}</td>${beheer ? `<td class="r num">${eur(r.p.forfait)}</td>` : ""}<td class="r num">${nl(r.d)} / ${nl(r.g)}</td>${beheer ? `<td class="r num">${eur(r.ki)}</td><td class="r num" style="color:${r.marge == null ? "inherit" : r.marge < 0 ? "var(--crit)" : "var(--ok)"}">${r.marge == null ? "—" : eur(r.marge)}</td><td class="r num">${r.m2 && r.f ? eur(r.f / r.m2) : "—"}</td>` : ""}<td class="r num">${r.m2 && r.d ? nl(r.d / r.m2, 2) : "—"}</td></tr>`).join("") || `<tr><td colspan="11" class="muted">Nog geen projecten.</td></tr>`}
+    ${rows.length ? `<tr><td colspan="4"><b>Totaal</b></td><td class="r num"><b>${nl(sum(rows, r => r.m2), 0)}</b></td>${beheer ? `<td class="r num"><b>${eur(sum(rows, r => r.f))}</b></td>` : ""}<td class="r num"><b>${nl(sum(rows, r => r.d))} / ${nl(sum(rows, r => r.g))}</b></td>${beheer ? `<td class="r num"><b>${eur(sum(rows, r => r.ki))}</b></td><td class="r num"><b>${eur(sum(rows.filter(r => r.marge != null), r => r.marge))}</b></td><td></td>` : ""}<td></td></tr>` : ""}</tbody></table></div></div>
+  <div class="grid two" style="margin-bottom:16px">
+    <div class="panel"><div class="panel-head"><h3>Uren per fase</h3><span class="muted" style="font-size:12px">gepresteerd · gepland, alle projecten</span></div>
+      ${perFase.length ? `<div class="tw"><table class="t"><tbody>${perFase.map(x => `<tr><td style="width:38%">${x.f.nr} · ${esc(x.f.naam)}</td><td style="width:42%"><div class="bar" style="height:8px"><i style="width:${Math.min(x.d / maxFase, 1) * 100}%"></i></div><div class="bar" style="height:4px;margin-top:2px"><i style="width:${Math.min(x.g / maxFase, 1) * 100}%;background:var(--line-2)"></i></div></td><td class="r num" style="white-space:nowrap">${nl(x.d)} · ${nl(x.g)} u</td></tr>`).join("")}</tbody></table></div>` : `<div class="empty">Nog geen uren of geplande uren.</div>`}</div>
+    <div class="panel"><div class="panel-head"><h3>Waar komen klanten vandaan?</h3></div>
+      <div class="tw"><table class="t"><thead><tr><th>Bron</th><th class="r">Projecten</th><th class="r">Gewonnen</th><th class="r">Verloren</th><th class="r">Offerte</th>${beheer ? `<th class="r">Forfait</th>` : ""}</tr></thead><tbody>${perBron.map(x => `<tr><td>${esc(x.b)}</td><td class="r num">${x.n}</td><td class="r num">${x.won}</td><td class="r num">${x.lost}</td><td class="r num">${x.off}</td>${beheer ? `<td class="r num">${eur(x.forfait)}</td>` : ""}</tr>`).join("") || `<tr><td class="muted">Nog geen projecten.</td></tr>`}</tbody></table></div>
+      <div class="panel-body" style="border-top:1px solid var(--line)"><div class="eyebrow" style="margin-bottom:6px">Doorlooptijd (gemiddeld)</div><div class="meta">
+        <div><div class="k">Offerte → contract</div><div class="v num">${d1 ? d1.avg + " dagen (" + d1.n + ")" : "—"}</div></div>
+        <div><div class="k">Contract → oplevering</div><div class="v num">${d2 ? d2.avg + " dagen (" + d2.n + ")" : "—"}</div></div>
+        <div><div class="k">Start → oplevering</div><div class="v num">${d3 ? d3.avg + " dagen (" + d3.n + ")" : "—"}</div></div></div></div></div>
+  </div>
+  <div class="panel"><div class="panel-head"><h3>Uren per medewerker per maand · ${jaar}</h3></div>
+    <div class="tw"><table class="t"><thead><tr><th>Medewerker</th>${maanden.map(m => `<th class="r">${MONTHS[m]}</th>`).join("")}<th class="r">Totaal</th></tr></thead><tbody>
+    ${us.map(u => { const vals = maanden.map(m => cell(u, m)); return `<tr><td><span class="who-cell">${avatar(u.id)}${esc(u.name)}</span></td>${vals.map(v => `<td class="r num" style="color:${v ? "inherit" : "var(--line-2)"}">${v ? nl(v, 0) : "·"}</td>`).join("")}<td class="r num"><b>${nl(vals.reduce((a, b) => a + b, 0), 0)}</b></td></tr>`; }).join("")}
+    <tr><td><b>Team</b></td>${maanden.map(m => { const v = us.reduce((a, u) => a + cell(u, m), 0); return `<td class="r num"><b>${v ? nl(v, 0) : "·"}</b></td>`; }).join("")}<td class="r num"><b>${nl(urenJaar, 0)}</b></td></tr></tbody></table></div></div>`;
+}
+function exportProjects() {
+  const fmtLong = (d) => d ? `${d.slice(8, 10)}/${d.slice(5, 7)}/${d.slice(0, 4)}` : "";
+  const head = ["Nummer", "Klant", "Type klant", "Bedrijf", "BTW-nummer", "Projectnaam", "Adres", "Postcode", "Gemeente", "Contact", "GSM 1", "GSM 2", "E-mail 1", "Factuur e-mail 1", "E-mail 2", "Factuur e-mail 2", "Status", "Fase", "Lead", "Type project", "Bron", "m²", "BTW-tarief", "Forfait", "Uren gepresteerd", "Uren gepland", "Interne kost", "Externe waarde", "Start", "Geplande oplevering", "Offerte", "Contract", "Opgeleverd", "Reden verloren", "Tags", "Drive-map"];
+  const q = (v) => `"${String(v ?? "").replace(/"/g, '""')}"`; const n = (v) => v == null || v === "" ? "" : String(v).replace(".", ",");
+  const lines = [head.join(";")].concat(projects().map(p => [p.nummer, p.klant, KLANTTYPE[p.klanttype], p.bedrijf, p.btw_nummer, p.naam, p.adres, p.postcode, p.gemeente, p.contact, p.gsm1, p.gsm2, p.email1, p.factuur_email1 ? "ja" : "", p.email2, p.factuur_email2 ? "ja" : "", PROJ_STATUS[p.status], faseName(p.fase_nr), userById(p.lead).name, p.projecttype, p.bron, n(p.oppervlakte_m2), n(p.btw_tarief), n(p.forfait), n(projDone(p.id)), n(projPlanned(p.id)), n(Math.round(projKost(p.id, "intern"))), n(Math.round(projKost(p.id, "extern"))), fmtLong(p.start), fmtLong(p.eind), fmtLong(p.offerte_datum), fmtLong(p.contract_datum), fmtLong(p.opgeleverd_op), p.verloren_reden, p.tags, p.drive_map].map(q).join(";")));
+  const blob = new Blob(["﻿" + lines.join("\r\n")], { type: "text/csv;charset=utf-8" });
+  const a = document.createElement("a"); a.href = URL.createObjectURL(blob); a.download = `bros-projecten-${todayIso}.csv`; a.click(); URL.revokeObjectURL(a.href);
+}
+
+/* ---------- Instellingen (beheer): fasen en standaardtaken ---------- */
+function vInstellingen() {
+  if (!isBeheer()) return `<div class="empty">Alleen voor beheerders.</div>`;
+  const fs = Object.values(S.fasen).sort((a, b) => a.nr - b.nr);
+  if (!S.selFase || !S.fasen[S.selFase]) S.selFase = fs[0]?.nr;
+  const f = S.fasen[S.selFase]; const ts = S.standaardtaken.filter(t => t.fase_nr === S.selFase);
+  return `
+  <div class="page-head"><div><div class="eyebrow">Beheer</div><h1>Instellingen</h1><div class="sub">Fasen en standaardtaken voor nieuwe projecten. Wijzigingen gelden voor projecten die je hierna aanmaakt; bestaande projecten houden hun taken.</div></div></div>
+  <div class="grid two" style="grid-template-columns: 1fr 1.4fr">
+    <div class="panel"><div class="panel-head"><h3>Fasen</h3><button class="btn sm" data-act="fase-new">+ Fase</button></div>
+      <div class="tw"><table class="t"><tbody>${fs.map(x => `<tr class="click ${x.nr === S.selFase ? "sel" : ""}" data-selfase="${x.nr}"><td class="num" style="width:40px;color:var(--muted)">${x.nr}</td><td><span style="${x.actief === false ? "color:var(--muted);text-decoration:line-through" : ""}">${esc(x.naam)}</span><small class="muted" style="display:block">${S.standaardtaken.filter(t => t.fase_nr === x.nr).length} taken${x.actief === false ? " · verborgen" : ""}</small></td><td class="r"><button class="btn ghost sm" data-act="fase-edit" data-nr="${x.nr}">Bewerken</button></td></tr>`).join("")}</tbody></table></div>
+      <div class="panel-body muted" style="font-size:12px;border-top:1px solid var(--line)">Het nummer bepaalt de volgorde. Een fase die je niet meer gebruikt zet je op "verborgen" — verwijderen kan alleen als geen enkel project ernaar verwijst.</div></div>
+    <div class="panel"><div class="panel-head"><h3>${f ? `${f.nr} · ${esc(f.naam)}` : "Standaardtaken"}</h3>${f ? `<button class="btn sm primary" data-act="st-new" data-nr="${f.nr}">+ Standaardtaak</button>` : ""}</div>
+      ${ts.length ? `<div class="tw"><table class="t"><tbody>${ts.map((t, i) => `<tr><td class="num" style="width:40px;color:var(--muted)">${t.volgorde}</td><td><input class="inline" data-st-title="${t.id}" value="${esc(t.titel)}" aria-label="Titel"></td><td class="r" style="white-space:nowrap"><button class="btn ghost sm" data-act="st-move" data-id="${t.id}" data-dir="-1" ${i === 0 ? "disabled" : ""} aria-label="Omhoog">↑</button><button class="btn ghost sm" data-act="st-move" data-id="${t.id}" data-dir="1" ${i === ts.length - 1 ? "disabled" : ""} aria-label="Omlaag">↓</button><button class="btn ghost sm danger" data-act="st-del" data-id="${t.id}" aria-label="Verwijderen">✕</button></td></tr>`).join("")}</tbody></table></div>` : `<div class="empty"><b>Geen standaardtaken</b>Voeg er een toe voor deze fase.</div>`}
+      <div class="panel-body muted" style="font-size:12px;border-top:1px solid var(--line)">Klik in een titel om ze te wijzigen; de wijziging wordt bewaard zodra je het veld verlaat.</div></div>
+  </div>`;
+}
+function faseForm(f) {
+  const isNew = !f; const nrs = Object.keys(S.fasen).map(Number); const nextNr = nrs.length ? Math.max(...nrs) + 1 : 1;
+  openModal(isNew ? "Nieuwe fase" : "Fase bewerken", `<div class="form-grid">
+    <div class="field"><label for="fa_nr">Nummer</label><input id="fa_nr" name="nr" type="number" min="1" required value="${isNew ? nextNr : f.nr}" ${isNew ? "" : "readonly"}></div>
+    <div class="field"><label for="fa_naam">Naam</label><input id="fa_naam" name="naam" required value="${esc(f?.naam || "")}"></div>
+    ${isNew ? "" : `<div class="field"><label for="fa_act">Zichtbaar bij nieuwe projecten</label><select id="fa_act" name="actief"><option value="1" ${f.actief !== false ? "selected" : ""}>Ja</option><option value="0" ${f.actief === false ? "selected" : ""}>Nee (verborgen)</option></select></div>`}
+  </div>`, {
+    onSave: async (d) => {
+      const nr = Number(d.nr);
+      if (isNew) { if (S.fasen[nr]) { toast("Nummer " + nr + " bestaat al."); return false; } const { data, error } = await sb.from("fasen").insert({ nr, naam: d.naam.trim() }).select().single(); if (error) { toast("Mislukt: " + error.message); return false; } S.fasen[nr] = data; S.selFase = nr; render(); toast("Fase toegevoegd"); }
+      else { const { data, error } = await sb.from("fasen").update({ naam: d.naam.trim(), actief: d.actief === "1" }).eq("nr", f.nr).select().single(); if (error) { toast("Mislukt: " + error.message); return false; } S.fasen[f.nr] = data; render(); toast("Fase bewaard"); }
+    },
+    onDelete: isNew ? null : async () => {
+      const { error } = await sb.from("fasen").delete().eq("nr", f.nr);
+      if (error) { toast(/foreign key|violates/i.test(error.message) ? "Deze fase wordt nog gebruikt door een project — zet ze op verborgen." : "Mislukt: " + error.message); throw error; }
+      delete S.fasen[f.nr]; S.standaardtaken = S.standaardtaken.filter(t => t.fase_nr !== f.nr); S.selFase = null; render(); toast("Fase verwijderd");
+    },
+  });
+}
+async function stAdd(nr) {
+  const titel = prompt("Titel van de standaardtaak:"); if (!titel || !titel.trim()) return;
+  const volgorde = Math.max(0, ...S.standaardtaken.filter(t => t.fase_nr === nr).map(t => t.volgorde)) + 1;
+  const { data, error } = await sb.from("standaardtaken").insert({ fase_nr: nr, volgorde, titel: titel.trim() }).select().single();
+  if (error) { toast("Mislukt: " + error.message); return; } S.standaardtaken.push(data); render(); toast("Toegevoegd");
+}
+async function stRename(id, titel) {
+  const t = S.standaardtaken.find(x => x.id === Number(id)); if (!t || t.titel === titel.trim() || !titel.trim()) return;
+  const { error } = await sb.from("standaardtaken").update({ titel: titel.trim() }).eq("id", t.id);
+  if (error) { toast("Mislukt: " + error.message); return; } t.titel = titel.trim(); toast("Bewaard");
+}
+async function stMove(id, dir) {
+  const t = S.standaardtaken.find(x => x.id === Number(id)); if (!t) return;
+  const list = S.standaardtaken.filter(x => x.fase_nr === t.fase_nr).sort((a, b) => a.volgorde - b.volgorde);
+  const i = list.indexOf(t), j = i + dir; if (j < 0 || j >= list.length) return;
+  const o = list[j]; const a = t.volgorde, b = o.volgorde;
+  // via een tijdelijk nummer, want (fase, volgorde) moet uniek blijven
+  const r1 = await sb.from("standaardtaken").update({ volgorde: 9999 }).eq("id", t.id); if (r1.error) return toast("Mislukt: " + r1.error.message);
+  const r2 = await sb.from("standaardtaken").update({ volgorde: a }).eq("id", o.id); if (r2.error) return toast("Mislukt: " + r2.error.message);
+  const r3 = await sb.from("standaardtaken").update({ volgorde: b }).eq("id", t.id); if (r3.error) return toast("Mislukt: " + r3.error.message);
+  t.volgorde = b; o.volgorde = a; S.standaardtaken.sort((x, y) => x.fase_nr - y.fase_nr || x.volgorde - y.volgorde); render();
+}
+async function stDel(id) {
+  const t = S.standaardtaken.find(x => x.id === Number(id)); if (!t || !confirm(`"${t.titel}" verwijderen uit de standaardtaken?`)) return;
+  const { error } = await sb.from("standaardtaken").delete().eq("id", t.id);
+  if (error) { toast("Mislukt: " + error.message); return; } S.standaardtaken = S.standaardtaken.filter(x => x.id !== t.id); render(); toast("Verwijderd");
+}
+
 /* ---------- modals ---------- */
 function openModal(title, bodyHtml, { onSave, onDelete, saveLabel = "Bewaren", wide } = {}) {
   $("#modal").innerHTML = `<div class="mh"><h2>${esc(title)}</h2><button class="btn ghost sm" data-close type="button">✕</button></div><form id="mform"><div class="mb">${bodyHtml}</div>
@@ -613,7 +741,7 @@ function userForm(u) {
 
 /* ---------- events ---------- */
 document.addEventListener("click", (e) => {
-  const el = e.target.closest("[data-nav],[data-act],[data-open],[data-back],[data-ptab],[data-edit-task],[data-edit-hours],[data-gnav],[data-wnav],[data-gtoggle],[data-close]");
+  const el = e.target.closest("[data-nav],[data-act],[data-open],[data-back],[data-ptab],[data-edit-task],[data-edit-hours],[data-gnav],[data-wnav],[data-gtoggle],[data-close],[data-selfase]");
   if (!el) { if (e.target === $("#modalBg")) closeModal(); return; }
   if (e.target.matches(".task-check")) return;
   const d = el.dataset;
@@ -634,14 +762,23 @@ document.addEventListener("click", (e) => {
   if (d.act === "log-hours") return hoursForm({}, d.pid);
   if (d.act === "edit-user") return userForm(S.profiles[d.uid]);
   if (d.act === "export-hours") return exportHours();
+  if (d.act === "export-projects") return exportProjects();
+  if (d.selfase) { S.selFase = Number(d.selfase); return render(); }
+  if (d.act === "fase-new") return faseForm(null);
+  if (d.act === "fase-edit") { e.stopPropagation(); return faseForm(S.fasen[d.nr]); }
+  if (d.act === "st-new") return stAdd(Number(d.nr));
+  if (d.act === "st-move") return stMove(d.id, Number(d.dir));
+  if (d.act === "st-del") return stDel(d.id);
   if (d.act === "logout") return sb.auth.signOut().then(() => location.reload());
   if (d.act === "reload") return location.reload();
   if (d.act === "update-later") { updateAvailable = false; $("#updateBar")?.classList.remove("show"); }
 });
+document.addEventListener("focusout", (e) => { if (e.target.dataset && e.target.dataset.stTitle) stRename(e.target.dataset.stTitle, e.target.value); });
 document.addEventListener("change", (e) => {
   const el = e.target;
   if (el.dataset.filter) { S.filters[el.dataset.filter] = el.value; return render(); }
   if (el.dataset.hoursUser != null) { S.hoursUser = el.value; return render(); }
+  if (el.dataset.rapjaar != null) { S.rapJaar = el.value; return render(); }
   if (el.dataset.toggle) { const t = S.taken[el.dataset.toggle]; if (t) dbUpdate("taken", t.id, { status: el.checked ? "done" : "todo" }).catch(() => { }); }
 });
 document.addEventListener("input", (e) => { if (e.target.dataset.filter === "q") { S.filters.q = e.target.value; render(); const i = $("[data-filter=q]"); i.focus(); i.setSelectionRange(i.value.length, i.value.length); } });
