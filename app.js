@@ -2,7 +2,7 @@
    BROS Planbord — app v1.0
    Statische webapp op Supabase (login, live-synchronisatie, rechten)
    ===================================================================== */
-const APP_VERSION = "1.4.0";
+const APP_VERSION = "1.4.1";
 const PROJ_STATUS = { offerte: "In offerte", lopend: "Lopend", on_hold: "On hold", afgerond: "Afgerond", verloren: "Verloren" };
 const KLANTTYPE = { particulier: "Particulier", zakelijk: "Zakelijk" };
 const KLANTCODE = { particulier: "PAR", zakelijk: "ZAK" };
@@ -264,7 +264,7 @@ function vProjectDetail(p) {
         <div class="panel"><div class="panel-head"><h3>Laatste registraties</h3></div><div class="tw"><table class="t"><tbody>${logs.map(h => `<tr class="click" data-edit-hours="${h.id}"><td class="num">${fmt(h.datum)}</td><td>${avatar(h.user_id)}</td><td>${esc(S.taken[h.taak_id]?.titel || "—")}${h.notitie ? `<small class="muted"> · ${esc(h.notitie)}</small>` : ""}</td><td class="r num">${nl(h.uren)} u</td></tr>`).join("") || `<tr><td class="muted">Nog geen registraties.</td></tr>`}</tbody></table></div></div>
       </div></div>`;
   } else {
-    const map = p.drive_map || ("BROS-PROJECTEN-" + (p.klant || "").toUpperCase());
+    const map = p.drive_map || ("PROJECTEN/" + (p.klant || ""));
     body = `<div class="panel"><div class="panel-head"><h3>Dossier</h3><span class="pill st-offerte">Drive-koppeling volgt in een latere update</span></div>
       <div class="panel-body"><div class="meta">
         <div><div class="k">Drive-map</div><div class="v"><span class="drive-path">${esc(map)}</span></div></div>
@@ -597,7 +597,7 @@ function projectForm(p = {}) {
     <div class="field"><label for="f_forfait">Forfait (€, excl. btw)</label><input id="f_forfait" type="number" step="1" name="forfait" value="${esc(p.forfait ?? "")}"></div>
     <div class="field"><label for="f_start">Start</label><input id="f_start" type="date" name="start" value="${esc(p.start || todayIso)}"></div>
     <div class="field"><label for="f_eind">Geplande oplevering</label><input id="f_eind" type="date" name="eind" value="${esc(p.eind || "")}"></div>
-    <div class="field"><label for="f_map">Drive-map</label><input id="f_map" name="drive_map" value="${esc(p.drive_map || "")}" placeholder="BROS-PROJECTEN-… (automatisch)"></div>
+    <div class="field"><label for="f_map">Drive-map</label><input id="f_map" name="drive_map" value="${esc(p.drive_map || "")}" placeholder="PROJECTEN/klantnaam (automatisch)"></div>
     <div class="field verloren"><label for="f_vr">Reden verloren</label><input id="f_vr" name="verloren_reden" value="${esc(p.verloren_reden || "")}" placeholder="bv. prijs, timing, ander bureau"></div>
     <div class="field span2"><label for="f_not">Notities</label><textarea id="f_not" name="notities">${esc(p.notities || "")}</textarea></div>
     <div class="field span2"><div class="eyebrow" style="margin-top:4px">Extra gegevens <span class="muted" style="font-weight:400;letter-spacing:0;text-transform:none">— niet verplicht, handig voor rapportage en nacalculatie</span></div></div>
@@ -614,7 +614,7 @@ function projectForm(p = {}) {
   </div>`, {
     wide: true,
     onSave: async (d) => {
-      const row = { klant: d.klant.trim(), naam: d.naam.trim(), klanttype: d.klanttype || "particulier", bedrijf: (d.bedrijf || "").trim(), btw_nummer: (d.btw_nummer || "").trim(), projecttype: d.projecttype || "", bron: d.bron || "", oppervlakte_m2: d.oppervlakte_m2 === "" ? null : Number(d.oppervlakte_m2), btw_tarief: d.btw_tarief === "" ? null : Number(d.btw_tarief), offerte_datum: d.offerte_datum || null, contract_datum: d.contract_datum || null, opgeleverd_op: d.opgeleverd_op || null, verloren_reden: d.status === "verloren" ? d.verloren_reden.trim() : "", tags: d.tags.trim(), contact: d.contact.trim(), adres: d.adres.trim(), postcode: d.postcode.trim(), gemeente: d.gemeente.trim(), gsm1: d.gsm1.trim(), gsm2: d.gsm2.trim(), email1: d.email1.trim(), email2: d.email2.trim(), factuur_email1: d.factuur_email1 === "on", factuur_email2: d.factuur_email2 === "on", lead: d.lead || null, status: d.status, fase_nr: d.fase_nr ? Number(d.fase_nr) : null, start: d.start || null, eind: d.eind || null, forfait: d.forfait === "" ? null : Number(d.forfait), drive_map: d.drive_map || ("BROS-PROJECTEN-" + d.klant.trim().toUpperCase()), notities: d.notities };
+      const row = { klant: d.klant.trim(), naam: d.naam.trim(), klanttype: d.klanttype || "particulier", bedrijf: (d.bedrijf || "").trim(), btw_nummer: (d.btw_nummer || "").trim(), projecttype: d.projecttype || "", bron: d.bron || "", oppervlakte_m2: d.oppervlakte_m2 === "" ? null : Number(d.oppervlakte_m2), btw_tarief: d.btw_tarief === "" ? null : Number(d.btw_tarief), offerte_datum: d.offerte_datum || null, contract_datum: d.contract_datum || null, opgeleverd_op: d.opgeleverd_op || null, verloren_reden: d.status === "verloren" ? d.verloren_reden.trim() : "", tags: d.tags.trim(), contact: d.contact.trim(), adres: d.adres.trim(), postcode: d.postcode.trim(), gemeente: d.gemeente.trim(), gsm1: d.gsm1.trim(), gsm2: d.gsm2.trim(), email1: d.email1.trim(), email2: d.email2.trim(), factuur_email1: d.factuur_email1 === "on", factuur_email2: d.factuur_email2 === "on", lead: d.lead || null, status: d.status, fase_nr: d.fase_nr ? Number(d.fase_nr) : null, start: d.start || null, eind: d.eind || null, forfait: d.forfait === "" ? null : Number(d.forfait), drive_map: d.drive_map || ("PROJECTEN/" + d.klant.trim()), notities: d.notities };
       if (d.nummer && d.nummer.trim()) row.nummer = d.nummer.trim(); else if (!isNew) row.nummer = p.nummer || null;
       if (isNew) {
         row.created_by = S.me.id;
