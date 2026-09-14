@@ -1,7 +1,6 @@
-// BROS Planbord — koppeling met de database.
-// Vul de twee waarden in uit Supabase: Settings → API.
-// De "anon public"-sleutel mag in dit bestand staan (hij is publiek); de service_role-sleutel NOOIT.
+// BROS Planbord — koppeling met de database (Supabase, project "BROS planbord").
+// Deze twee waarden zijn publiek en mogen in dit bestand staan; de service_role-/secret-sleutel NOOIT.
 window.PLANBORD_CONFIG = {
-  supabaseUrl: "https://VUL-IN.supabase.co",
-  supabaseAnonKey: "VUL-IN",
+  supabaseUrl: "https://xsgpqpwrgpnmfupuitaq.supabase.co",
+  supabaseAnonKey: "sb_publishable_gPModXFtfryEkrXEZzAyAg_9Qtieiux",
 };
