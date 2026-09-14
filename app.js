@@ -2,7 +2,7 @@
    BROS Planbord — app v1.0
    Statische webapp op Supabase (login, live-synchronisatie, rechten)
    ===================================================================== */
-const APP_VERSION = "1.0.0";
+const APP_VERSION = "1.1.0";
 const PROJ_STATUS = { lopend: "Lopend", offerte: "In offerte", on_hold: "On hold", afgerond: "Afgerond" };
 const TASK_STATUS = { todo: "Te doen", busy: "Bezig", done: "Klaar" };
 const PALETTE = ["#2A4DD0", "#1E8A5C", "#B8720F", "#8A4BC7", "#C2452F", "#0F7C8C", "#6B6B7B"];
@@ -263,14 +263,15 @@ function vProjectDetail(p) {
     body = `<div class="panel"><div class="panel-head"><h3>Dossier</h3><span class="pill st-offerte">Drive-koppeling volgt in een latere update</span></div>
       <div class="panel-body"><div class="meta">
         <div><div class="k">Drive-map</div><div class="v"><span class="drive-path">${esc(map)}</span></div></div>
-        <div><div class="k">Adres werf</div><div class="v">${esc(p.adres || "—")}${p.gemeente ? ", " + esc(p.gemeente) : ""}</div></div>
-        <div><div class="k">Contact</div><div class="v">${esc(p.contact || "—")}</div></div>
+        <div><div class="k">Adres werf</div><div class="v">${esc(p.adres || "—")}${(p.postcode || p.gemeente) ? ", " + esc([p.postcode, p.gemeente].filter(Boolean).join(" ")) : ""}</div></div>
+        <div><div class="k">Contact</div><div class="v">${esc(p.contact || "—")}${p.gsm1 ? " · " + esc(p.gsm1) : ""}${p.gsm2 ? " · " + esc(p.gsm2) : ""}</div></div>
+        <div><div class="k">Facturatie naar</div><div class="v">${[p.factuur_email1 && p.email1, p.factuur_email2 && p.email2].filter(Boolean).map(esc).join(", ") || "—"}</div></div>
         <div style="grid-column:1/-1"><div class="k">Notities</div><div class="v" style="white-space:pre-wrap">${esc(p.notities || "—")}</div></div>
       </div></div></div>`;
   }
   return `
   <div class="crumb"><button data-back="1">Projecten</button><span>›</span><span>${esc(p.klant)}</span></div>
-  <div class="page-head"><div><h1>${esc(projName(p))}</h1><div class="sub">${esc(p.gemeente || "")}${p.adres ? " · " + esc(p.adres) : ""}</div></div>
+  <div class="page-head"><div><h1>${esc(projName(p))}</h1><div class="sub">${esc(p.adres || "")}${(p.postcode || p.gemeente) ? (p.adres ? ", " : "") + esc([p.postcode, p.gemeente].filter(Boolean).join(" ")) : ""}</div></div>
     <div class="actions"><span class="pill st-${p.status}">${PROJ_STATUS[p.status] || p.status}</span>${isBeheer() ? `<button class="btn" data-act="edit-project" data-pid="${p.id}">Bewerken</button>` : ""}<button class="btn" data-act="log-hours" data-pid="${p.id}">+ Uren</button><button class="btn primary" data-act="new-task" data-pid="${p.id}">+ Taak</button></div></div>
   <div class="panel" style="margin-bottom:16px"><div class="panel-body meta">
     <div><div class="k">Fase</div><div class="v">${esc(faseName(p.fase_nr) || "—")}</div></div>
@@ -279,6 +280,8 @@ function vProjectDetail(p) {
     ${isBeheer() ? `<div><div class="k">Forfait</div><div class="v num">${eur(p.forfait)}</div></div>` : ""}
     <div><div class="k">Uren</div><div class="v num">${nl(dn)} / ${nl(pl)} u</div></div>
     <div><div class="k">Taken</div><div class="v num">${ts.filter(t => t.status === "done").length} / ${ts.length} klaar</div></div>
+    <div><div class="k">Contact</div><div class="v">${esc(p.contact || "—")}${p.gsm1 ? `<br><a href="tel:${esc(p.gsm1)}">${esc(p.gsm1)}</a>` : ""}${p.gsm2 ? ` · <a href="tel:${esc(p.gsm2)}">${esc(p.gsm2)}</a>` : ""}</div></div>
+    <div><div class="k">E-mail</div><div class="v">${[["email1", "factuur_email1"], ["email2", "factuur_email2"]].filter(([e]) => p[e]).map(([e, f]) => `<a href="mailto:${esc(p[e])}">${esc(p[e])}</a>${p[f] ? ` <span class="pill st-offerte" style="font-size:10px">facturatie</span>` : ""}`).join("<br>") || "—"}</div></div>
   </div></div>
   <div class="subtabs">${tabs.map(([k, l]) => `<button data-ptab="${k}" aria-current="${S.ptab === k}">${l}</button>`).join("")}</div>
   ${body}`;
@@ -431,25 +434,32 @@ const faseOpts = (sel, allowEmpty) => (allowEmpty ? `<option value="">— geen f
 function projectForm(p = {}) {
   const isNew = !p.id;
   openModal(isNew ? "Nieuw project" : "Project bewerken", `<div class="form-grid">
-    <div class="field"><label for="f_klant">Klant (naam van de projectmap)</label><input id="f_klant" name="klant" required value="${esc(p.klant || "")}" placeholder="bv. Familie Janssens"></div>
+    <div class="field"><label for="f_klant">Klant (naam van de projectmap)</label><input id="f_klant" name="klant" required value="${esc(p.klant || "")}" placeholder="bv. Chantor - Mansi"></div>
     <div class="field"><label for="f_naam">Projectnaam</label><input id="f_naam" name="naam" value="${esc(p.naam || "")}" placeholder="bv. Renovatie gelijkvloers"></div>
-    <div class="field"><label for="f_adres">Adres werf</label><input id="f_adres" name="adres" value="${esc(p.adres || "")}"></div>
-    <div class="field"><label for="f_gem">Gemeente</label><input id="f_gem" name="gemeente" value="${esc(p.gemeente || "")}"></div>
-    <div class="field"><label for="f_contact">Contact (naam · tel · mail)</label><input id="f_contact" name="contact" value="${esc(p.contact || "")}"></div>
+    <div class="field span2"><div class="eyebrow" style="margin-top:4px">Klantgegevens</div></div>
+    <div class="field"><label for="f_contact">Contactpersoon</label><input id="f_contact" name="contact" value="${esc(p.contact || "")}" placeholder="naam"></div>
+    <div class="field"><label for="f_adres">Adres (straat + nr)</label><input id="f_adres" name="adres" value="${esc(p.adres || "")}"></div>
+    <div class="field"><label for="f_pc">Postcode</label><input id="f_pc" name="postcode" inputmode="numeric" maxlength="4" value="${esc(p.postcode || "")}" list="pc_list" autocomplete="off"><datalist id="pc_list"></datalist></div>
+    <div class="field"><label for="f_gem">Gemeente</label><input id="f_gem" name="gemeente" value="${esc(p.gemeente || "")}" list="gem_list" autocomplete="off"><datalist id="gem_list"></datalist></div>
+    <div class="field"><label for="f_gsm1">GSM 1</label><input id="f_gsm1" name="gsm1" type="tel" value="${esc(p.gsm1 || "")}"></div>
+    <div class="field"><label for="f_gsm2">GSM 2</label><input id="f_gsm2" name="gsm2" type="tel" value="${esc(p.gsm2 || "")}"></div>
+    <div class="field"><label for="f_email1">E-mailadres 1</label><input id="f_email1" name="email1" type="email" value="${esc(p.email1 || "")}"><label class="chk"><input type="checkbox" name="factuur_email1" ${p.factuur_email1 ? "checked" : ""}> facturatie naar dit adres</label></div>
+    <div class="field"><label for="f_email2">E-mailadres 2</label><input id="f_email2" name="email2" type="email" value="${esc(p.email2 || "")}"><label class="chk"><input type="checkbox" name="factuur_email2" ${p.factuur_email2 ? "checked" : ""}> facturatie naar dit adres</label></div>
+    <div class="field span2"><div class="eyebrow" style="margin-top:4px">Project</div></div>
     <div class="field"><label for="f_lead">Projectlead</label><select id="f_lead" name="lead">${userOpts(p.lead || S.me.id)}</select></div>
     <div class="field"><label for="f_status">Status</label><select id="f_status" name="status">${opts(Object.entries(PROJ_STATUS), p.status || "offerte")}</select></div>
     <div class="field"><label for="f_fase">Huidige fase</label><select id="f_fase" name="fase_nr">${faseOpts(p.fase_nr || 1, true)}</select></div>
+    <div class="field"><label for="f_forfait">Forfait (€, excl. btw)</label><input id="f_forfait" type="number" step="1" name="forfait" value="${esc(p.forfait ?? "")}"></div>
     <div class="field"><label for="f_start">Start</label><input id="f_start" type="date" name="start" value="${esc(p.start || todayIso)}"></div>
     <div class="field"><label for="f_eind">Geplande oplevering</label><input id="f_eind" type="date" name="eind" value="${esc(p.eind || "")}"></div>
-    <div class="field"><label for="f_forfait">Forfait (€, excl. btw)</label><input id="f_forfait" type="number" step="1" name="forfait" value="${esc(p.forfait ?? "")}"></div>
     <div class="field"><label for="f_map">Drive-map</label><input id="f_map" name="drive_map" value="${esc(p.drive_map || "")}" placeholder="BROS-PROJECTEN-… (automatisch)"></div>
     <div class="field span2"><label for="f_not">Notities</label><textarea id="f_not" name="notities">${esc(p.notities || "")}</textarea></div>
     ${isNew ? `<div class="field span2"><label>Fasen voor dit project <span class="muted" style="font-weight:400">— vink uit wat niet van toepassing is; elke fase brengt zijn standaardtaken mee</span></label>
       <div class="fase-list">${fasenList().map(f => `<label><input type="checkbox" name="fase" value="${f.nr}" checked><span class="n">${f.nr}</span><span class="nm">${esc(f.naam)}</span><span class="c">${S.standaardtaken.filter(t => t.fase_nr === f.nr).length} taken</span></label>`).join("")}</div></div>` : ""}
   </div>`, {
-    wide: isNew,
+    wide: true,
     onSave: async (d) => {
-      const row = { klant: d.klant.trim(), naam: d.naam.trim(), adres: d.adres, gemeente: d.gemeente, contact: d.contact, lead: d.lead || null, status: d.status, fase_nr: d.fase_nr ? Number(d.fase_nr) : null, start: d.start || null, eind: d.eind || null, forfait: d.forfait === "" ? null : Number(d.forfait), drive_map: d.drive_map || ("BROS-PROJECTEN-" + d.klant.trim().toUpperCase()), notities: d.notities };
+      const row = { klant: d.klant.trim(), naam: d.naam.trim(), contact: d.contact.trim(), adres: d.adres.trim(), postcode: d.postcode.trim(), gemeente: d.gemeente.trim(), gsm1: d.gsm1.trim(), gsm2: d.gsm2.trim(), email1: d.email1.trim(), email2: d.email2.trim(), factuur_email1: d.factuur_email1 === "on", factuur_email2: d.factuur_email2 === "on", lead: d.lead || null, status: d.status, fase_nr: d.fase_nr ? Number(d.fase_nr) : null, start: d.start || null, eind: d.eind || null, forfait: d.forfait === "" ? null : Number(d.forfait), drive_map: d.drive_map || ("BROS-PROJECTEN-" + d.klant.trim().toUpperCase()), notities: d.notities };
       if (isNew) {
         row.created_by = S.me.id;
         const created = await dbInsert("projecten", row);
@@ -460,6 +470,34 @@ function projectForm(p = {}) {
       } else { await dbUpdate("projecten", p.id, row); toast("Project bewaard"); }
     },
     onDelete: isNew ? null : async () => { await dbDelete("projecten", p.id); Object.values(S.taken).filter(t => t.project_id === p.id).forEach(t => delete S.taken[t.id]); Object.values(S.uren).filter(h => h.project_id === p.id).forEach(h => delete S.uren[h.id]); S.project = null; render(); toast("Project verwijderd"); },
+  });
+  wirePostcode();
+}
+/* Postcode ⇄ gemeente: invullen zodra het ene veld bekend is; bij meerdere mogelijkheden een keuzelijstje */
+function wirePostcode() {
+  const PC = window.BE_POSTCODES || []; const pc = $("#f_pc"), gem = $("#f_gem"), pcl = $("#pc_list"), geml = $("#gem_list");
+  if (!pc || !gem) return;
+  const norm = (s) => s.toLowerCase().replace(/[^a-z0-9]/g, "");
+  pc.addEventListener("input", () => {
+    const v = pc.value.trim(); if (v.length !== 4) return;
+    const hits = PC.filter(r => r[0] === v); if (!hits.length) return;
+    geml.innerHTML = hits.map(r => `<option value="${esc(r[1])}">`).join("");
+    if (!hits.some(r => norm(r[1]) === norm(gem.value))) gem.value = hits[0][1];
+    choices(hits.map(r => r[1]));
+  });
+  function choices(names) {
+    let box = $("#gem_choices");
+    if (!box) { box = document.createElement("div"); box.id = "gem_choices"; box.className = "choices"; gem.parentNode.appendChild(box); }
+    box.innerHTML = names.length > 1 ? `<span class="muted">Deelgemeente:</span> ` + names.map(n => `<button type="button" class="btn sm ${n === gem.value ? "primary" : ""}" data-gem="${esc(n)}">${esc(n)}</button>`).join(" ") : "";
+    box.querySelectorAll("[data-gem]").forEach(b => b.onclick = () => { gem.value = b.dataset.gem; choices(names); });
+  }
+  gem.addEventListener("input", () => {
+    const v = norm(gem.value); if (v.length < 3) return;
+    const hits = PC.filter(r => norm(r[1]).startsWith(v));
+    geml.innerHTML = [...new Set(hits.map(r => r[1]))].slice(0, 12).map(c => `<option value="${esc(c)}">`).join("");
+    const exact = PC.filter(r => norm(r[1]) === v); const zips = [...new Set(exact.map(r => r[0]))];
+    pcl.innerHTML = zips.map(z => `<option value="${z}">`).join("");
+    if (zips.length && !zips.includes(pc.value.trim())) pc.value = zips[0];
   });
 }
 function addFaseForm(pid) {
