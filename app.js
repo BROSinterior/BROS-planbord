@@ -143,19 +143,28 @@ function render() {
   <footer>BROS Planbord v${APP_VERSION}</footer>`;
   if (updateAvailable) $("#updateBar").classList.add("show");
 }
+let loginMode = "password";
 function renderLogin() {
+  const pw = loginMode === "password";
   $("#app").innerHTML = `<div class="login"><div class="card">
     <div class="brand" style="margin-bottom:14px"><span class="mark">BROS</span><span class="name">Planbord</span></div>
-    <h1>Inloggen</h1><p>Vul je e-mailadres in; je krijgt een link in je mailbox waarmee je meteen binnen bent.</p>
-    <form id="loginForm"><div class="field"><label for="email">E-mailadres</label><input id="email" type="email" required autocomplete="email" placeholder="naam@bros.be"></div>
-    <button class="btn primary" type="submit" id="loginBtn">Stuur mij een inloglink</button></form>
-    <div class="msg" id="loginMsg"></div></div></div>`;
+    <h1>Inloggen</h1><p>${pw ? "Log in met je e-mailadres en wachtwoord." : "Vul je e-mailadres in; je krijgt een link in je mailbox waarmee je meteen binnen bent."}</p>
+    <form id="loginForm"><div class="field"><label for="email">E-mailadres</label><input id="email" type="email" required autocomplete="username" placeholder="naam@bros.be"></div>
+    ${pw ? `<div class="field"><label for="password">Wachtwoord</label><input id="password" type="password" required autocomplete="current-password"></div>` : ""}
+    <button class="btn primary" type="submit" id="loginBtn">${pw ? "Inloggen" : "Stuur mij een inloglink"}</button></form>
+    <div class="msg" id="loginMsg"></div>
+    <p style="margin:16px 0 0;font-size:13px"><button class="btn ghost sm" type="button" id="loginSwitch">${pw ? "Liever een inloglink per e-mail?" : "Liever met wachtwoord inloggen?"}</button></p></div></div>`;
+  $("#loginSwitch").onclick = () => { loginMode = pw ? "otp" : "password"; renderLogin(); };
   $("#loginForm").onsubmit = async (e) => {
-    e.preventDefault(); const email = $("#email").value.trim(); const btn = $("#loginBtn"); btn.disabled = true;
-    const { error } = await sb.auth.signInWithOtp({ email, options: { emailRedirectTo: location.origin + location.pathname } });
-    const m = $("#loginMsg");
-    if (error) { m.className = "msg err"; m.textContent = "Dat lukte niet: " + error.message + (error.message.toLowerCase().includes("signup") ? " — dit adres is nog niet uitgenodigd." : ""); btn.disabled = false; }
-    else { m.className = "msg"; m.textContent = "Link verstuurd naar " + email + ". Kijk in je mailbox (ook bij spam) en klik op de link."; }
+    e.preventDefault(); const email = $("#email").value.trim(); const btn = $("#loginBtn"); btn.disabled = true; const m = $("#loginMsg"); m.className = "msg"; m.textContent = "";
+    if (pw) {
+      const { error } = await sb.auth.signInWithPassword({ email, password: $("#password").value });
+      if (error) { m.className = "msg err"; m.textContent = /invalid/i.test(error.message) ? "E-mailadres of wachtwoord klopt niet." : "Dat lukte niet: " + error.message; btn.disabled = false; }
+    } else {
+      const { error } = await sb.auth.signInWithOtp({ email, options: { emailRedirectTo: location.origin + location.pathname } });
+      if (error) { m.className = "msg err"; m.textContent = "Dat lukte niet: " + error.message + (/signup/i.test(error.message) ? " — dit adres is nog niet uitgenodigd of nog niet bevestigd." : ""); btn.disabled = false; }
+      else { m.textContent = "Link verstuurd naar " + email + ". Kijk in je mailbox (ook bij spam) en klik op de link."; }
+    }
   };
 }
 
