@@ -151,20 +151,42 @@ function getTemplate(match) {
   if (r.getResponseCode() !== 200) return { ok: false, error: "Sjabloon niet leesbaar (" + r.getResponseCode() + ")." };
   return { ok: true, name: f.name, path: f.path, base64: Utilities.base64Encode(r.getContent()) };
 }
-/** Schrijft een bestand (base64) in de projectmap, in de submap `subpath` (bv. "Documenten/Meetstaat"); submappen worden aangemaakt als ze ontbreken. */
+/** Schrijft een bestand (base64) in de projectmap, in de submap `subpath` (bv. "Documenten/Meetstaat/DEF"); submappen worden aangemaakt als ze ontbreken.
+ *  Met `archiveTo` (bv. "Documenten/Meetstaat") verhuizen bestaande Excel-bestanden uit de doelmap eerst naar die map, met hun wijzigingsdatum vóór de naam (logboek van versies). */
 function putFile(body) {
   const folderId = String(body.folderId || ""); if (!folderId) return { ok: false, error: "Geen projectmap gekoppeld." };
-  let folder = DriveApp.getFolderById(folderId);
-  String(body.subpath || "").split("/").filter(Boolean).forEach(seg => {
-    const it = folder.getFolders(); let found = null;
-    while (it.hasNext()) { const f = it.next(); if (f.getName().trim().toLowerCase() === seg.trim().toLowerCase()) { found = f; break; } }
-    folder = found || folder.createFolder(seg);
-  });
+  const root = DriveApp.getFolderById(folderId);
+  const folder = subfolder(root, String(body.subpath || ""));
+  const archived = [];
+  if (body.archiveTo) {
+    const dest = subfolder(root, String(body.archiveTo));
+    const it = folder.getFiles();
+    while (it.hasNext()) {
+      const f = it.next(); const n = f.getName();
+      if (!/\.xlsx$/i.test(n) || n.indexOf("~$") === 0 || n.indexOf("._") === 0) continue;
+      const d = f.getLastUpdated(); const stamp = ("0" + d.getDate()).slice(-2) + ("0" + (d.getMonth() + 1)).slice(-2) + d.getFullYear();
+      let newName = /^\d{8}\s/.test(n) ? n : stamp + " " + n; const base = newName.replace(/\.xlsx$/i, ""); let k = 2;
+      while (dest.getFilesByName(newName).hasNext()) newName = base + " (" + (k++) + ").xlsx";
+      f.moveTo(dest); f.setName(newName);
+      archived.push({ id: f.getId(), name: newName, url: f.getUrl(), path: String(body.archiveTo), size: f.getSize(), mime: f.getMimeType(), updated: d.toISOString() });
+    }
+  }
   let name = String(body.name || "bestand.xlsx"); const base = name.replace(/\.xlsx$/i, ""); let k = 2;
   while (folder.getFilesByName(name).hasNext()) { name = base + " (" + (k++) + ").xlsx"; }
   const blob = Utilities.newBlob(Utilities.base64Decode(String(body.base64 || "")), body.mime || "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", name);
   const file = folder.createFile(blob);
-  return { ok: true, file: { id: file.getId(), name: file.getName(), url: file.getUrl(), path: String(body.subpath || ""), size: file.getSize(), mime: file.getMimeType(), updated: new Date().toISOString() } };
+  return { ok: true, archived: archived, file: { id: file.getId(), name: file.getName(), url: file.getUrl(), path: String(body.subpath || ""), size: file.getSize(), mime: file.getMimeType(), updated: new Date().toISOString() } };
+}
+/** Zoekt (of maakt) een submappad; mapnamen worden vergeleken zonder hoofdletters en zonder punt/spatie op het einde ("DEF." = "DEF"). */
+function subfolder(root, path) {
+  let folder = root;
+  const norm = (s) => String(s).trim().replace(/[.\s]+$/, "").toLowerCase();
+  path.split("/").filter(Boolean).forEach(seg => {
+    const it = folder.getFolders(); let found = null;
+    while (it.hasNext()) { const f = it.next(); if (norm(f.getName()) === norm(seg)) { found = f; break; } }
+    folder = found || folder.createFolder(seg);
+  });
+  return folder;
 }
 
 /** Eenmalig uitvoeren vanuit de editor (Uitvoeren ▷) om alle rechten te verlenen: Drive én de Drive-API. */

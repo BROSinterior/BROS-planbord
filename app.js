@@ -2,7 +2,7 @@
    BROS Planbord — app v1.0
    Statische webapp op Supabase (login, live-synchronisatie, rechten)
    ===================================================================== */
-const APP_VERSION = "1.6.0";
+const APP_VERSION = "1.6.1";
 const PROJ_STATUS = { offerte: "In offerte", lopend: "Lopend", on_hold: "On hold", afgerond: "Afgerond", verloren: "Verloren" };
 const KLANTTYPE = { particulier: "Particulier", zakelijk: "Zakelijk" };
 const KLANTCODE = { particulier: "PAR", zakelijk: "ZAK" };
@@ -310,12 +310,14 @@ async function exportMeetstaat(p) {
   const { bytes } = await window.MeetstaatExport.build(templateCache.bytes, { project: p, rows, titel: "MEETSTAAT", date: new Date() });
   loader.step("Wegschrijven in Documenten/Meetstaat…");
   let b64 = ""; for (let i = 0; i < bytes.length; i += 0x8000) b64 += String.fromCharCode.apply(null, bytes.subarray(i, i + 0x8000)); b64 = btoa(b64);
-  const d = new Date(); const stamp = `${String(d.getDate()).padStart(2, "0")}${String(d.getMonth() + 1).padStart(2, "0")}${d.getFullYear()}`;
-  const name = `${stamp} MEETSTAAT ${(p.klant || "").toUpperCase()}.xlsx`;
-  const j = await driveCall("put", { folderId: p.drive_folder_id, subpath: "Documenten/Meetstaat", name, base64: b64 });
-  const f = j.file; const row = { project_id: p.id, drive_id: f.id, naam: f.name, pad: f.path || "Documenten/Meetstaat", url: f.url, mime: f.mime || "", grootte: f.size || null, gewijzigd: f.updated || null, gesynct_op: new Date().toISOString() };
-  const { data } = await sb.from("documenten").upsert(row, { onConflict: "project_id,drive_id" }).select().single(); if (data) S.documenten[data.id] = data;
-  loader.done("ms.export"); render(); toast(`Meetstaat bewaard: ${f.name}`);
+  const name = `MEETSTAAT ${(p.klant || "").toUpperCase()}.xlsx`;
+  // nieuwe versie komt in Documenten/Meetstaat/DEF; de vorige versie verhuist naar Documenten/Meetstaat met haar datum in de naam (logboek)
+  const j = await driveCall("put", { folderId: p.drive_folder_id, subpath: "Documenten/Meetstaat/DEF", archiveTo: "Documenten/Meetstaat", name, base64: b64 });
+  const f = j.file; const now = new Date().toISOString();
+  const docs = [{ project_id: p.id, drive_id: f.id, naam: f.name, pad: f.path || "Documenten/Meetstaat/DEF", url: f.url, mime: f.mime || "", grootte: f.size || null, gewijzigd: f.updated || null, gesynct_op: now }]
+    .concat((j.archived || []).map(a => ({ project_id: p.id, drive_id: a.id, naam: a.name, pad: a.path || "Documenten/Meetstaat", url: a.url, mime: a.mime || "", grootte: a.size || null, gewijzigd: a.updated || null, gesynct_op: now })));
+  const { data } = await sb.from("documenten").upsert(docs, { onConflict: "project_id,drive_id" }).select(); (data || []).forEach(d => S.documenten[d.id] = d);
+  loader.done("ms.export"); render(); toast(j.archived && j.archived.length ? `Nieuwe versie bewaard in DEF · vorige versie gearchiveerd als "${j.archived[0].name}"` : `Meetstaat bewaard: ${f.name}`);
   window.open(f.url, "_blank", "noopener");
 }
 /* bibliotheek beheren (Instellingen) */
@@ -526,7 +528,7 @@ function vProjectDetail(p) {
   return `
   <div class="crumb"><button data-back="1">Projecten</button><span>›</span><span>${esc(p.klant)}</span></div>
   <div class="page-head"><div>${projCode(p) ? `<div class="eyebrow">${esc(projCode(p))}${p.projecttype ? " · " + esc(p.projecttype) : ""}</div>` : ""}<h1>${esc(projName(p))}</h1><div class="sub">${esc(p.adres || "")}${(p.postcode || p.gemeente) ? (p.adres ? ", " : "") + esc([p.postcode, p.gemeente].filter(Boolean).join(" ")) : ""}</div></div>
-    <div class="actions"><span class="pill st-${p.status}">${PROJ_STATUS[p.status] || p.status}</span>${p.drive_url ? `<a class="btn" href="${esc(p.drive_url)}" target="_blank" rel="noopener" title="Projectmap openen in Google Drive">📁 Drive-map ↗</a>` : (driveReady() ? `<button class="btn" data-act="drive-link" data-pid="${p.id}" title="Bestaande map op Drive koppelen of zoeken">📁 Drive-map koppelen</button>` : "")}${isBeheer() ? `<button class="btn" data-act="edit-project" data-pid="${p.id}">Bewerken</button>` : ""}<button class="btn" data-act="log-hours" data-pid="${p.id}">+ Uren</button><button class="btn primary" data-act="new-task" data-pid="${p.id}">+ Taak</button></div></div>
+    <div class="actions"><span class="pill st-${p.status}">${PROJ_STATUS[p.status] || p.status}</span>${p.drive_url ? `<a class="btn" href="${esc(p.drive_url)}" target="_blank" rel="noopener" title="Projectmap openen in Google Drive">📁 Drive-map ↗</a>` : (driveReady() ? `<button class="btn" data-act="drive-link" data-pid="${p.id}" title="Bestaande map op Drive koppelen of zoeken">📁 Drive-map koppelen</button>` : "")}${isBeheer() ? `<button class="btn" data-act="edit-project" data-pid="${p.id}">Bewerken</button>` : ""}<button class="btn" data-act="log-hours" data-pid="${p.id}">+ Uren</button>${msReady() ? `<button class="btn" data-act="ms-open" data-pid="${p.id}" title="${msRows(p.id).length ? "Meetstaat openen" : "Meetstaat aanmaken: loten en posten kiezen"}">${msRows(p.id).length ? "Meetstaat" : "+ Meetstaat"}</button>` : ""}<button class="btn primary" data-act="new-task" data-pid="${p.id}">+ Taak</button></div></div>
   <div class="panel" style="margin-bottom:16px"><div class="panel-body meta">
     <div><div class="k">Fase</div><div class="v">${esc(faseName(p.fase_nr) || "—")}</div></div>
     <div><div class="k">Lead</div><div class="v"><span class="who-cell">${p.lead ? avatar(p.lead) : ""}${esc(userById(p.lead).name)}</span></div></div>
@@ -1031,6 +1033,7 @@ document.addEventListener("click", (e) => {
   if (d.act === "st-del") return stDel(d.id);
   if (d.sellot) { S.selLot = Number(d.sellot); return render(); }
   if (d.act === "ms-add-lot") return msAddLotForm(d.pid);
+  if (d.act === "ms-open") { S.ptab = "meetstaat"; render(); if (!msRows(d.pid).length) msAddLotForm(d.pid); return; }
   if (d.act === "ms-add-post") return msAddPostForm(d.pid, d.lot ? Number(d.lot) : null);
   if (d.act === "ms-del") { const r = S.meetstaat_posten[d.id]; if (r && confirm(`"${r.omschrijving}" verwijderen?`)) dbDelete("meetstaat_posten", d.id).catch(() => { }); return; }
   if (d.act === "ms-del-lot") return msDelLot(d.pid, Number(d.lot));
