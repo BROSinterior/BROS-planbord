@@ -23,6 +23,8 @@ function doPost(e) {
     if (body.action === "create") return json(createOrLink(String(body.klant || "").trim(), true));
     if (body.action === "link") return json(createOrLink(String(body.klant || "").trim(), false));
     if (body.action === "list") return json(listById(String(body.folderId || "")));
+    if (body.action === "template") return json(getTemplate(String(body.match || "MEETSTAAT")));
+    if (body.action === "put") return json(putFile(body));
     return json({ ok: false, error: "Onbekende actie." });
   } catch (err) {
     return json({ ok: false, error: String(err && err.message || err) });
@@ -137,6 +139,32 @@ function listFiles(rootId, path) {
     });
   });
   return out.slice(0, MAX_FILES);
+}
+
+/* ---- Sjabloonbestand ophalen en een bestand in de projectmap wegschrijven (voor de meetstaat-export) ---- */
+/** Zoekt in A SJABLOON het Excel-bestand waarvan de naam `match` bevat en geeft het terug als base64. */
+function getTemplate(match) {
+  const files = listFiles(CONFIG.SJABLOON_FOLDER_ID, "").filter(f => f.name.toUpperCase().indexOf(match.toUpperCase()) >= 0 && /\.xlsx$/i.test(f.name) && f.name.indexOf("~$") !== 0);
+  if (!files.length) return { ok: false, error: "Geen sjabloon gevonden met \"" + match + "\" in de naam (map A SJABLOON)." };
+  const f = files[0];
+  const r = UrlFetchApp.fetch("https://www.googleapis.com/drive/v3/files/" + f.id + "?alt=media&supportsAllDrives=true", { headers: { Authorization: "Bearer " + ScriptApp.getOAuthToken() }, muteHttpExceptions: true });
+  if (r.getResponseCode() !== 200) return { ok: false, error: "Sjabloon niet leesbaar (" + r.getResponseCode() + ")." };
+  return { ok: true, name: f.name, path: f.path, base64: Utilities.base64Encode(r.getContent()) };
+}
+/** Schrijft een bestand (base64) in de projectmap, in de submap `subpath` (bv. "Documenten/Meetstaat"); submappen worden aangemaakt als ze ontbreken. */
+function putFile(body) {
+  const folderId = String(body.folderId || ""); if (!folderId) return { ok: false, error: "Geen projectmap gekoppeld." };
+  let folder = DriveApp.getFolderById(folderId);
+  String(body.subpath || "").split("/").filter(Boolean).forEach(seg => {
+    const it = folder.getFolders(); let found = null;
+    while (it.hasNext()) { const f = it.next(); if (f.getName().trim().toLowerCase() === seg.trim().toLowerCase()) { found = f; break; } }
+    folder = found || folder.createFolder(seg);
+  });
+  let name = String(body.name || "bestand.xlsx"); const base = name.replace(/\.xlsx$/i, ""); let k = 2;
+  while (folder.getFilesByName(name).hasNext()) { name = base + " (" + (k++) + ").xlsx"; }
+  const blob = Utilities.newBlob(Utilities.base64Decode(String(body.base64 || "")), body.mime || "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", name);
+  const file = folder.createFile(blob);
+  return { ok: true, file: { id: file.getId(), name: file.getName(), url: file.getUrl(), path: String(body.subpath || ""), size: file.getSize(), mime: file.getMimeType(), updated: new Date().toISOString() } };
 }
 
 /** Eenmalig uitvoeren vanuit de editor (Uitvoeren ▷) om alle rechten te verlenen: Drive én de Drive-API. */

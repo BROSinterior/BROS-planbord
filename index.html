@@ -289,6 +289,17 @@
   table.t tr.sel td { background: var(--accent-soft); }
   input.inline { width: 100%; border: 1px solid transparent; background: transparent; padding: 4px 6px; border-radius: 4px; font: inherit; color: inherit; }
   input.inline:hover { border-color: var(--line-2); } input.inline:focus { border-color: var(--accent); background: var(--surface); outline: none; }
+  select.inline { width: 100%; border: 1px solid transparent; background: transparent; padding: 3px 4px; border-radius: 4px; font: inherit; color: inherit; }
+  select.inline:hover { border-color: var(--line-2); } select.inline:focus { border-color: var(--accent); background: var(--surface); outline: none; }
+  input.inline.num { font-family: var(--font-mono); font-size: 12px; text-align: right; }
+  input.inline[type=number]::-webkit-inner-spin-button { display: none; }
+  /* meetstaat */
+  table.ms td { padding: 3px 6px; vertical-align: middle; }
+  table.ms th { white-space: nowrap; }
+  table.ms tr.ms-lot td { background: var(--surface-2); font-weight: 700; font-family: var(--font-display); padding: 8px 10px; border-top: 2px solid var(--line-2); }
+  table.ms tr.ms-groep td { font-size: 11px; letter-spacing: .06em; text-transform: uppercase; color: var(--muted); font-weight: 600; padding: 6px 6px 2px; }
+  tr.ms-dead td, tr.ms-dead input, tr.ms-dead select { color: var(--muted); text-decoration: line-through; }
+  .fase-list label.chk { grid-template-columns: 18px minmax(0, 1fr); }
   .update { background: var(--accent-soft); color: var(--accent); border-bottom: 1px solid var(--line); padding: 8px 20px; font-size: 13px; display: none; align-items: center; gap: 10px; }
   .update.show { display: flex; }
   footer { text-align: center; color: var(--muted); font-size: 12px; padding: 20px; font-family: var(--font-mono); }
@@ -316,7 +327,9 @@
 <div class="loader" id="loader" aria-live="polite"><div class="logo"><i class="base"></i><i class="fill" id="loaderFill"></i></div><div class="pct" id="loaderPct">0%</div><div class="msg" id="loaderMsg">Even geduld…</div></div>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.45.4/dist/umd/supabase.min.js"></script>
 <script src="config.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
 <script src="postcodes.js"></script>
+<script src="meetstaat-export.js"></script>
 <script src="app.js"></script>
 </body>
 </html>

@@ -2,7 +2,7 @@
    BROS Planbord — app v1.0
    Statische webapp op Supabase (login, live-synchronisatie, rechten)
    ===================================================================== */
-const APP_VERSION = "1.5.5";
+const APP_VERSION = "1.6.0";
 const PROJ_STATUS = { offerte: "In offerte", lopend: "Lopend", on_hold: "On hold", afgerond: "Afgerond", verloren: "Verloren" };
 const KLANTTYPE = { particulier: "Particulier", zakelijk: "Zakelijk" };
 const KLANTCODE = { particulier: "PAR", zakelijk: "ZAK" };
@@ -35,7 +35,7 @@ const workdays = (a, b) => { let n = 0; for (let s = a; s <= b; s = addDays(s, 1
 /* ---------- state ---------- */
 const S = {
   session: null, me: null,
-  profiles: {}, tarieven: {}, fasen: {}, standaardtaken: [], projecten: {}, taken: {}, uren: {}, documenten: {}, instellingen: {},
+  profiles: {}, tarieven: {}, fasen: {}, standaardtaken: [], projecten: {}, taken: {}, uren: {}, documenten: {}, instellingen: {}, loten: {}, posten: {}, meetstaat_posten: {}, vorderingen: {},
   view: "overzicht", project: null, ptab: "taken",
   filters: { user: "", status: "", project: "", q: "" },
   ganttStart: addDays(mondayOf(todayIso), -14), ganttDays: 112, ganttOpen: {},
@@ -70,23 +70,24 @@ const projKost = (pid, soort) => Object.values(S.uren).filter(h => h.project_id 
 let toastT; function toast(msg) { const t = $("#toast"); t.textContent = msg; t.classList.add("show"); clearTimeout(toastT); toastT = setTimeout(() => t.classList.remove("show"), 2800); }
 
 /* ---------- data laden en live houden ---------- */
-const TABLES = { profiles: "profiles", tarieven: "tarieven", fasen: "fasen", standaardtaken: "standaardtaken", projecten: "projecten", taken: "taken", uren: "uren", documenten: "documenten", instellingen: "instellingen" };
+const TABLES = { profiles: "profiles", tarieven: "tarieven", fasen: "fasen", standaardtaken: "standaardtaken", projecten: "projecten", taken: "taken", uren: "uren", documenten: "documenten", instellingen: "instellingen", loten: "loten", posten: "posten", meetstaat_posten: "meetstaat_posten", vorderingen: "vorderingen" };
+const OPTIONAL_TABLES = ["tarieven", "documenten", "instellingen", "loten", "posten", "meetstaat_posten", "vorderingen"]; // ontbreken zolang het bijbehorende sql-script niet is uitgevoerd
 function ingest(table, rows) {
   if (table === "standaardtaken") { S.standaardtaken = rows.sort((a, b) => a.fase_nr - b.fase_nr || a.volgorde - b.volgorde); return; }
-  const key = table === "fasen" ? "nr" : table === "tarieven" ? "user_id" : table === "instellingen" ? "key" : "id";
+  const key = table === "fasen" || table === "loten" ? "nr" : table === "tarieven" ? "user_id" : table === "instellingen" ? "key" : "id";
   const o = {}; rows.forEach(r => o[r[key]] = r); S[table] = o;
 }
 async function loadAll() {
   const res = await Promise.all(Object.keys(TABLES).map(t => sb.from(t).select("*").limit(5000)));
-  Object.keys(TABLES).forEach((t, i) => { if (res[i].error) { if (!["tarieven", "documenten", "instellingen"].includes(t)) throw res[i].error; } else ingest(t, res[i].data || []); });
+  Object.keys(TABLES).forEach((t, i) => { if (res[i].error) { if (!OPTIONAL_TABLES.includes(t)) throw res[i].error; } else ingest(t, res[i].data || []); });
   S.me = S.profiles[S.session.user.id] || null;
 }
 function subscribe() {
   const ch = sb.channel("planbord");
-  ["profiles", "tarieven", "fasen", "standaardtaken", "projecten", "taken", "uren", "documenten"].forEach(t => {
+  ["profiles", "tarieven", "fasen", "standaardtaken", "projecten", "taken", "uren", "documenten", "loten", "posten", "meetstaat_posten", "vorderingen"].forEach(t => {
     ch.on("postgres_changes", { event: "*", schema: "public", table: t }, (payload) => {
       if (t === "standaardtaken") { refetch(t); return; }
-      const key = t === "fasen" ? "nr" : t === "tarieven" ? "user_id" : "id";
+      const key = t === "fasen" || t === "loten" ? "nr" : t === "tarieven" ? "user_id" : "id";
       if (payload.eventType === "DELETE") { delete S[t][payload.old[key]]; }
       else { S[t][payload.new[key]] = payload.new; }
       if (t === "profiles") S.me = S.profiles[S.session.user.id] || S.me;
@@ -104,10 +105,10 @@ async function refetchAll() { try { await loadAll(); render(); } catch (e) { } }
 async function dbInsert(table, row) {
   const { data, error } = await sb.from(table).insert(row).select().single();
   if (error) { toast("Bewaren mislukt: " + error.message); throw error; }
-  const key = table === "tarieven" ? "user_id" : "id"; S[table][data[key]] = data; render(); return data;
+  const key = table === "tarieven" ? "user_id" : table === "loten" ? "nr" : "id"; S[table][data[key]] = data; render(); return data;
 }
 async function dbUpdate(table, id, patch) {
-  const key = table === "tarieven" ? "user_id" : "id";
+  const key = table === "tarieven" ? "user_id" : table === "loten" ? "nr" : "id";
   const prev = S[table][id]; S[table][id] = { ...prev, ...patch }; render();
   const { data, error } = await sb.from(table).update(patch).eq(key, id).select().single();
   if (error) { S[table][id] = prev; render(); toast("Bewaren mislukt: " + error.message); throw error; }
@@ -173,6 +174,185 @@ async function driveSync(p, action) {
   } catch (e) { loader.fail(); throw e; }
 }
 const docsOf = (pid) => Object.values(S.documenten).filter(d => d.project_id === pid).sort((a, b) => (a.pad || "").localeCompare(b.pad || "") || a.naam.localeCompare(b.naam));
+
+/* ---------- Meetstaat: loten, postenbibliotheek en meetstaatregels per project ---------- */
+const MS_STATUS = { offerte: "Offerte", akkoord: "Akkoord", meerwerk: "Meerwerk", minwerk: "Minwerk", vervallen: "Vervallen" };
+const EENHEDEN = ["m2", "lm", "m3", "stk", "sog", "uur", "dag", "week", "rol", "zak", "%", "PM"];
+const msReady = () => Object.keys(S.loten).length > 0;
+const lotenList = () => Object.values(S.loten).filter(l => l.actief !== false).sort((a, b) => a.nr - b.nr);
+const lotName = (nr) => S.loten[nr] ? `${nr}. ${S.loten[nr].naam}` : String(nr);
+const postenOf = (lot) => Object.values(S.posten).filter(x => x.lot === lot && x.actief !== false).sort((a, b) => a.volgorde - b.volgorde);
+const msRows = (pid) => Object.values(S.meetstaat_posten).filter(r => r.project_id === pid).sort((a, b) => a.lot - b.lot || (a.volgorde ?? 0) - (b.volgorde ?? 0) || (a.code || "").localeCompare(b.code || ""));
+const msMarge = (r) => r.marge != null && r.marge !== "" ? Number(r.marge) : Number(S.loten[r.lot]?.marge) || 0;
+const msKost = (r) => (Number(r.hoeveelheid) || 0) * (Number(r.eenheidsprijs) || 0);
+const msVerkoopEP = (r) => (Number(r.eenheidsprijs) || 0) * (1 + msMarge(r));
+const msVerkoop = (r) => (Number(r.hoeveelheid) || 0) * msVerkoopEP(r);
+const msTelt = (r) => r.status !== "vervallen";
+const eur2 = (n) => Number(n || 0).toLocaleString("nl-BE", { style: "currency", currency: "EUR", minimumFractionDigits: 2, maximumFractionDigits: 2 });
+function msTotals(pid) {
+  const rows = msRows(pid).filter(msTelt);
+  const t = { kost: 0, verkoop: 0, btw: 0, meerwerk: 0, n: rows.length };
+  rows.forEach(r => { const v = msVerkoop(r); t.kost += msKost(r); if (r.status === "meerwerk") t.meerwerk += v; else if (r.status === "minwerk") t.meerwerk -= v; else t.verkoop += v; t.btw += v * (Number(r.btw) || 0) * (r.status === "minwerk" ? -1 : 1); });
+  t.marge = t.verkoop + t.meerwerk - t.kost; t.incl = t.verkoop + t.meerwerk + t.btw; return t;
+}
+function vMeetstaat(p) {
+  if (!msReady()) return `<div class="panel"><div class="empty"><b>Meetstaat nog niet beschikbaar</b>Voer eerst databasescript <code>sql/007_meetstaat.sql</code> uit in Supabase (SQL Editor). Daarna verschijnen hier de loten en de postenbibliotheek.</div></div>`;
+  const rows = msRows(p.id); const beheer = isBeheer(); const t = msTotals(p.id);
+  const byLot = {}; rows.forEach(r => (byLot[r.lot] = byLot[r.lot] || []).push(r));
+  const lots = Object.keys(byLot).map(Number).sort((a, b) => a - b);
+  const kpi = `<div class="rend">
+    ${beheer ? `<div class="panel"><div class="k">Kostprijs excl. btw</div><div class="v">${eur(t.kost)}</div></div>` : ""}
+    <div class="panel"><div class="k">Offerte excl. btw</div><div class="v">${eur(t.verkoop)}</div></div>
+    <div class="panel"><div class="k">Meer-/minwerk excl. btw</div><div class="v ${t.meerwerk < 0 ? "neg" : ""}">${t.meerwerk ? eur(t.meerwerk) : "—"}</div></div>
+    ${beheer ? `<div class="panel"><div class="k">Marge</div><div class="v ${t.marge >= 0 ? "pos" : "neg"}">${eur(t.marge)}<small class="muted" style="font-size:12px;font-weight:400"> · ${t.kost ? nl(t.marge / t.kost * 100, 1) : "0"} %</small></div></div>` : ""}
+    <div class="panel"><div class="k">Btw</div><div class="v">${eur(t.btw)}</div></div>
+    <div class="panel"><div class="k">Totaal incl. btw</div><div class="v">${eur(t.incl)}</div></div></div>`;
+  const inp = (r, f, cls = "", attrs = "") => `<input class="inline ${cls}" data-ms="${r.id}" data-f="${f}" value="${esc(r[f] ?? "")}" ${attrs}>`;
+  const num = (r, f, cls = "") => `<input class="inline num ${cls}" data-ms="${r.id}" data-f="${f}" type="number" step="any" inputmode="decimal" value="${r[f] == null || r[f] === "" ? "" : Number(r[f])}">`;
+  const sel = (r, f, options) => `<select class="inline" data-ms="${r.id}" data-f="${f}">${options}</select>`;
+  const cols = 8 + (beheer ? 3 : 0);
+  const body = lots.map(nr => { const g = byLot[nr]; const sub = g.filter(msTelt).reduce((s, r) => s + msVerkoop(r), 0); const subk = g.filter(msTelt).reduce((s, r) => s + msKost(r), 0); let lastGroep = null;
+    return `<tr class="ms-lot"><td colspan="${cols}"><div style="display:flex;justify-content:space-between;align-items:center;gap:8px;flex-wrap:wrap"><span>${esc(lotName(nr))} <span class="muted num" style="font-weight:400">${g.length} posten${beheer ? ` · kost ${eur(subk)}` : ""} · <b>${eur(sub)}</b> excl. btw</span></span><span class="actions"><button class="btn ghost sm" data-act="ms-add-post" data-pid="${p.id}" data-lot="${nr}">+ Post</button><button class="btn ghost sm danger" data-act="ms-del-lot" data-pid="${p.id}" data-lot="${nr}" title="Alle posten van dit lot verwijderen">✕</button></span></div></td></tr>` +
+      g.map(r => { const gh = r.groep && r.groep !== lastGroep ? `<tr class="ms-groep"><td></td><td colspan="${cols - 1}">${esc(r.groep)}</td></tr>` : ""; lastGroep = r.groep || lastGroep; const dead = r.status === "vervallen";
+        return gh + `<tr class="${dead ? "ms-dead" : ""}"><td class="num muted" style="width:52px">${esc(r.code)}</td>
+        <td style="min-width:260px">${inp(r, "omschrijving", "wide")}</td>
+        <td style="width:110px">${inp(r, "locatie", "", 'placeholder="locatie"')}</td>
+        <td style="width:84px">${num(r, "hoeveelheid")}</td>
+        <td style="width:82px">${sel(r, "eenheid", opts(EENHEDEN.map(e => [e, e]), r.eenheid))}</td>
+        ${beheer ? `<td style="width:96px">${num(r, "eenheidsprijs")}</td><td style="width:64px"><input class="inline num" data-ms="${r.id}" data-f="marge" type="number" step="1" inputmode="numeric" placeholder="${Math.round((Number(S.loten[r.lot]?.marge) || 0) * 100)}" value="${r.marge == null || r.marge === "" ? "" : Math.round(Number(r.marge) * 100)}" title="Marge % (leeg = marge van het lot)"></td>` : ""}
+        <td class="r num" style="width:96px" title="Eenheidsprijs voor de klant">${eur2(msVerkoopEP(r))}</td>
+        <td class="r num" style="width:104px"><b>${eur2(msVerkoop(r))}</b></td>
+        ${beheer ? `<td style="width:76px">${sel(r, "btw", opts([[0.06, "6 %"], [0.21, "21 %"], [0, "0 %"]], Number(r.btw)))}</td>` : ""}
+        <td style="width:104px">${sel(r, "status", opts(Object.entries(MS_STATUS), r.status))}</td>
+        <td class="r" style="width:36px"><button class="btn ghost sm danger" data-act="ms-del" data-id="${r.id}" aria-label="Verwijderen">✕</button></td></tr>`; }).join(""); }).join("");
+  return kpi + `<div class="panel"><div class="panel-head"><div><h3>Meetstaat</h3><div class="muted" style="font-size:12px;margin-top:2px">${rows.length ? `${rows.length} posten in ${lots.length} loten` : "Nog leeg"} · klik in een veld om het te wijzigen, bewaard bij verlaten van het veld</div></div>
+      <div class="actions">${rows.length ? `<button class="btn sm" data-act="ms-export" data-pid="${p.id}" title="Excel in het BROS-sjabloon aanmaken in Documenten/Meetstaat van de projectmap">Exporteren naar Drive (Excel)</button>` : ""}<button class="btn sm" data-act="ms-add-post" data-pid="${p.id}">+ Post</button><button class="btn sm primary" data-act="ms-add-lot" data-pid="${p.id}">+ Lot toevoegen</button></div></div>
+    ${rows.length ? `<div class="tw"><table class="t ms"><thead><tr><th>Nr</th><th>Omschrijving</th><th>Locatie</th><th>Hoev.</th><th>Eenh.</th>${beheer ? `<th title="Kostprijs / aannemersprijs excl. btw">Kost EP</th><th>Marge</th>` : ""}<th class="r">Klant EP</th><th class="r">Totaal excl.</th>${beheer ? `<th>Btw</th>` : ""}<th>Status</th><th></th></tr></thead><tbody>${body}</tbody></table></div>` : `<div class="empty"><b>Nog geen posten</b>Voeg een lot toe (met de standaardposten) of kies losse posten uit de bibliotheek.</div>`}</div>`;
+}
+function msNextCode(pid, lot) { const n = msRows(pid).filter(r => r.lot === lot).length + 1; return `${lot}.${n}`; }
+function msRowFromPost(pid, x, lot, i) {
+  const sog = x.prijstype !== "EP";
+  return { project_id: pid, post_id: x.id || null, lot, code: `${lot}.${i}`, groep: x.groep || "", omschrijving: x.omschrijving, eenheid: x.eenheid || (sog ? "sog" : "stk"), prijstype: x.prijstype || "EP", hoeveelheid: sog ? 1 : 0, eenheidsprijs: Number(x.richtprijs) || 0, marge: null, btw: x.btw ?? 0.06, status: "offerte", volgorde: x.volgorde ?? 0, created_by: S.me?.id || null };
+}
+async function msInsert(rows) {
+  if (!rows.length) return [];
+  const { data, error } = await sb.from("meetstaat_posten").insert(rows).select();
+  if (error) { toast("Mislukt: " + error.message); throw error; }
+  (data || []).forEach(r => S.meetstaat_posten[r.id] = r); render(); return data || [];
+}
+function msAddLotForm(pid) {
+  const p = S.projecten[pid]; const present = new Set(msRows(pid).map(r => r.lot));
+  openModal("Lot toevoegen aan " + p.klant, `<div class="fase-list">${lotenList().map(l => { const all = postenOf(l.nr), std = all.filter(x => x.standaard_aan); return `<label class="chk"><input type="checkbox" name="lot" value="${l.nr}" ${present.has(l.nr) ? "disabled" : (l.standaard_aan && !present.size ? "checked" : "")}> <span>${esc(lotName(l.nr))}<small class="muted" style="display:block">${present.has(l.nr) ? "al aanwezig" : `${std.length} standaardposten · ${all.length} in bibliotheek`}</small></span></label>`; }).join("")}</div>
+    <div class="field" style="margin-top:12px"><label for="al_mode">Welke posten</label><select id="al_mode" name="mode"><option value="std">Alleen de standaardposten (aanbevolen)</option><option value="all">Alle posten van het lot</option><option value="none">Geen posten — alleen het lot klaarzetten</option></select></div>
+    <p class="muted" style="font-size:13px;margin:10px 0 0">Richtprijzen uit de bibliotheek worden als kostprijs ingevuld; hoeveelheden staan op 0 (forfaits op 1). Alles is daarna in de tabel aan te passen.</p>`, {
+    saveLabel: "Toevoegen", wide: true,
+    onSave: async (d) => {
+      const lots = [...$("#mform").querySelectorAll('input[name="lot"]:checked')].map(i => Number(i.value)); if (!lots.length) { toast("Kies minstens één lot."); return false; }
+      const rows = [];
+      lots.forEach(lot => { const src = d.mode === "none" ? [] : postenOf(lot).filter(x => d.mode === "all" || x.standaard_aan); src.forEach((x, i) => rows.push(msRowFromPost(pid, x, lot, i + 1))); if (!src.length) rows.push({ ...msRowFromPost(pid, { omschrijving: S.loten[lot].naam, eenheid: "sog", prijstype: "SOG", richtprijs: 0, btw: 0.06 }, lot, 1), groep: "" }); });
+      await msInsert(rows); toast(`${rows.length} posten toegevoegd`);
+    },
+  });
+}
+function msAddPostForm(pid, lot) {
+  const p = S.projecten[pid]; let curLot = lot || lotenList()[0]?.nr;
+  const listHtml = (lotNr, q) => { const qq = (q || "").toLowerCase(); const src = qq ? Object.values(S.posten).filter(x => x.actief !== false && (x.omschrijving.toLowerCase().includes(qq) || (x.groep || "").toLowerCase().includes(qq))).sort((a, b) => a.lot - b.lot || a.volgorde - b.volgorde).slice(0, 80) : postenOf(lotNr);
+    return src.map(x => `<label class="chk"><input type="checkbox" name="post" value="${x.id}"> <span>${esc(x.omschrijving)}<small class="muted" style="display:block">${qq ? esc(lotName(x.lot)) + " · " : ""}${esc(x.groep || "")}${x.groep ? " · " : ""}${esc(x.eenheid)}${x.richtprijs ? " · " + eur2(x.richtprijs) : ""}</small></span></label>`).join("") || `<div class="muted" style="padding:8px">Geen posten gevonden.</div>`; };
+  openModal("Post toevoegen aan " + p.klant, `<div class="form-grid">
+      <div class="field"><label for="ap_lot">Lot</label><select id="ap_lot" name="lot">${opts(lotenList().map(l => [l.nr, lotName(l.nr)]), curLot)}</select></div>
+      <div class="field"><label for="ap_q">Zoeken in de bibliotheek</label><input id="ap_q" placeholder="bv. plint, spot, chape…" autocomplete="off"></div>
+      <div class="field span2"><div id="ap_list" class="fase-list" style="max-height:300px;overflow:auto">${listHtml(curLot)}</div></div>
+      <div class="field span2"><label for="ap_vrij">Of een vrije post (omschrijving)</label><input id="ap_vrij" name="vrij" placeholder="eigen omschrijving — komt in het gekozen lot"></div>
+      <div class="field"><label for="ap_een">Eenheid vrije post</label><select id="ap_een" name="eenheid">${opts(EENHEDEN.map(e => [e, e]), "stk")}</select></div>
+      <div class="field"><label for="ap_prijs">Kostprijs vrije post (excl. btw)</label><input id="ap_prijs" name="prijs" type="number" step="any" placeholder="0"></div>
+    </div>`, {
+    saveLabel: "Toevoegen", wide: true,
+    onSave: async (d) => {
+      const lotNr = Number(d.lot); const ids = [...$("#mform").querySelectorAll('input[name="post"]:checked')].map(i => i.value);
+      const rows = []; const cnt = {}; const next = (l) => { cnt[l] = (cnt[l] ?? msRows(pid).filter(r => r.lot === l).length) + 1; return cnt[l]; };
+      const zoekend = !!$("#ap_q").value.trim();
+      ids.forEach(id => { const x = S.posten[id]; const l = zoekend ? x.lot : lotNr; rows.push(msRowFromPost(pid, x, l, next(l))); });
+      if (d.vrij && d.vrij.trim()) { const n = next(lotNr); rows.push(msRowFromPost(pid, { omschrijving: d.vrij.trim(), eenheid: d.eenheid, prijstype: d.eenheid === "sog" ? "SOG" : "EP", richtprijs: Number(d.prijs) || 0, btw: 0.06, volgorde: 9000 + n }, lotNr, n)); }
+      if (!rows.length) { toast("Vink een post aan of typ een vrije post."); return false; }
+      await msInsert(rows); toast(`${rows.length} post${rows.length > 1 ? "en" : ""} toegevoegd`);
+    },
+  });
+  const sync = () => { $("#ap_list").innerHTML = listHtml(Number($("#ap_lot").value), $("#ap_q").value.trim()); };
+  $("#ap_lot").addEventListener("change", sync); $("#ap_q").addEventListener("input", sync);
+}
+async function msEdit(id, f, raw) {
+  const r = S.meetstaat_posten[id]; if (!r) return;
+  let v = raw;
+  if (["hoeveelheid", "eenheidsprijs", "btw"].includes(f)) v = raw === "" ? 0 : Number(String(raw).replace(",", "."));
+  if (f === "marge") v = raw === "" ? null : Number(String(raw).replace(",", ".")) / 100;
+  if (String(r[f] ?? "") === String(v ?? "")) return;
+  const active = document.activeElement; const keep = active && active.dataset ? { ms: active.dataset.ms, f: active.dataset.f, sel: active.selectionStart } : null;
+  try { await dbUpdate("meetstaat_posten", id, { [f]: v, updated_at: new Date().toISOString() }); } catch (e) { return; }
+  if (keep && keep.ms) { const el = document.querySelector(`[data-ms="${keep.ms}"][data-f="${keep.f}"]`); if (el) { el.focus(); try { if (keep.sel != null) el.setSelectionRange(keep.sel, keep.sel); } catch (e) { } } }
+}
+async function msDelLot(pid, lot) {
+  const ids = msRows(pid).filter(r => r.lot === lot).map(r => r.id);
+  if (!confirm(`${lotName(lot)}: alle ${ids.length} posten verwijderen uit deze meetstaat?`)) return;
+  const { error } = await sb.from("meetstaat_posten").delete().in("id", ids);
+  if (error) return toast("Mislukt: " + error.message);
+  ids.forEach(id => delete S.meetstaat_posten[id]); render(); toast("Lot verwijderd");
+}
+/* export naar het Excel-sjabloon in de projectmap (Documenten/Meetstaat) */
+let templateCache = null; // { name, bytes } — sjabloon één keer per sessie ophalen
+async function exportMeetstaat(p) {
+  if (!driveReady()) throw new Error("Drive-koppeling niet ingesteld (Instellingen → Drive).");
+  if (!p.drive_folder_id) throw new Error("Dit project heeft nog geen Drive-map (Dossier → map koppelen of aanmaken).");
+  if (!window.JSZip || !window.MeetstaatExport) throw new Error("Exportmodule niet geladen — herlaad de pagina.");
+  loader.start("ms.export", "Sjabloon ophalen…", 9000);
+  if (!templateCache) { const j = await driveCall("template", { match: "MEETSTAAT" }); const bin = atob(j.base64); const bytes = new Uint8Array(bin.length); for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i); templateCache = { name: j.name, bytes }; }
+  loader.step("Meetstaat opbouwen…");
+  const rows = msRows(p.id).filter(msTelt).map(r => ({ lot: r.lot, groep: r.groep, omschrijving: r.omschrijving, locatie: r.locatie, artikelnr: r.artikelnr, hoeveelheid: Number(r.hoeveelheid) || 0, eenheid: r.eenheid, prijs: Math.round(msVerkoopEP(r) * 100) / 100, btw: Number(r.btw) || 0, status: r.status }));
+  const { bytes } = await window.MeetstaatExport.build(templateCache.bytes, { project: p, rows, titel: "MEETSTAAT", date: new Date() });
+  loader.step("Wegschrijven in Documenten/Meetstaat…");
+  let b64 = ""; for (let i = 0; i < bytes.length; i += 0x8000) b64 += String.fromCharCode.apply(null, bytes.subarray(i, i + 0x8000)); b64 = btoa(b64);
+  const d = new Date(); const stamp = `${String(d.getDate()).padStart(2, "0")}${String(d.getMonth() + 1).padStart(2, "0")}${d.getFullYear()}`;
+  const name = `${stamp} MEETSTAAT ${(p.klant || "").toUpperCase()}.xlsx`;
+  const j = await driveCall("put", { folderId: p.drive_folder_id, subpath: "Documenten/Meetstaat", name, base64: b64 });
+  const f = j.file; const row = { project_id: p.id, drive_id: f.id, naam: f.name, pad: f.path || "Documenten/Meetstaat", url: f.url, mime: f.mime || "", grootte: f.size || null, gewijzigd: f.updated || null, gesynct_op: new Date().toISOString() };
+  const { data } = await sb.from("documenten").upsert(row, { onConflict: "project_id,drive_id" }).select().single(); if (data) S.documenten[data.id] = data;
+  loader.done("ms.export"); render(); toast(`Meetstaat bewaard: ${f.name}`);
+  window.open(f.url, "_blank", "noopener");
+}
+/* bibliotheek beheren (Instellingen) */
+function vPostenBeheer() {
+  if (!msReady()) return `<div class="panel" style="margin-bottom:16px"><div class="panel-head"><h3>Postenbibliotheek meetstaat</h3></div><div class="empty">Voer eerst <code>sql/007_meetstaat.sql</code> uit in Supabase.</div></div>`;
+  const ls = lotenList(); if (S.selLot == null || !S.loten[S.selLot]) S.selLot = ls[0]?.nr;
+  const l = S.loten[S.selLot]; const ps = Object.values(S.posten).filter(x => x.lot === S.selLot).sort((a, b) => a.volgorde - b.volgorde);
+  return `<div class="grid two" style="grid-template-columns: 1fr 2fr;margin-bottom:16px">
+    <div class="panel"><div class="panel-head"><h3>Loten meetstaat</h3></div>
+      <div class="tw"><table class="t"><thead><tr><th></th><th>Lot</th><th class="r" title="Standaardmarge op de kostprijs">Marge</th><th></th></tr></thead><tbody>${ls.map(x => `<tr class="click ${x.nr === S.selLot ? "sel" : ""}" data-sellot="${x.nr}"><td class="num" style="width:36px;color:var(--muted)">${x.nr}</td><td>${esc(x.naam)}<small class="muted" style="display:block">${postenOf(x.nr).filter(p => p.standaard_aan).length} standaard · ${postenOf(x.nr).length} posten${x.buildwise ? " · BBW " + esc(x.buildwise) : ""}</small></td><td class="r" style="width:90px;white-space:nowrap"><input class="inline num" style="width:52px;text-align:right" data-lot="${x.nr}" data-f="marge" type="number" step="1" value="${Math.round((Number(x.marge) || 0) * 100)}" aria-label="Marge %"> %</td><td style="width:40px"><input type="checkbox" data-lot="${x.nr}" data-f="standaard_aan" ${x.standaard_aan ? "checked" : ""} title="Standaard aan bij nieuw project"></td></tr>`).join("")}</tbody></table></div>
+      <div class="panel-body muted" style="font-size:12px;border-top:1px solid var(--line)">Marge = standaardopslag op de kostprijs voor alle posten van het lot (per post te overschrijven in de meetstaat). Vinkje = lot staat standaard aangevinkt bij "+ Lot toevoegen".</div></div>
+    <div class="panel"><div class="panel-head"><h3>${l ? esc(lotName(l.nr)) : "Posten"}</h3>${l ? `<button class="btn sm primary" data-act="post-new" data-lot="${l.nr}">+ Post</button>` : ""}</div>
+      ${ps.length ? `<div class="tw"><table class="t"><thead><tr><th title="Standaard aan">Std</th><th>Groep</th><th>Omschrijving</th><th>Eenh.</th><th class="r">Richtprijs</th><th>Btw</th><th title="Actief">Act.</th><th></th></tr></thead><tbody>${ps.map(x => `<tr class="${x.actief === false ? "ms-dead" : ""}"><td style="width:32px"><input type="checkbox" data-post="${x.id}" data-f="standaard_aan" ${x.standaard_aan ? "checked" : ""}></td><td style="width:130px"><input class="inline" data-post="${x.id}" data-f="groep" value="${esc(x.groep || "")}"></td><td><input class="inline wide" data-post="${x.id}" data-f="omschrijving" value="${esc(x.omschrijving)}"></td><td style="width:84px"><select class="inline" data-post="${x.id}" data-f="eenheid">${opts(EENHEDEN.map(e => [e, e]), x.eenheid)}</select></td><td style="width:100px"><input class="inline num" data-post="${x.id}" data-f="richtprijs" type="number" step="any" value="${x.richtprijs == null ? "" : Number(x.richtprijs)}" title="${x.n ? `mediaan uit ${x.n} waarneming(en), ${eur2(x.prijs_min)} – ${eur2(x.prijs_max)}` : "nog geen data"}"></td><td style="width:78px"><select class="inline" data-post="${x.id}" data-f="btw">${opts([[0.06, "6 %"], [0.21, "21 %"], [0, "0 %"]], Number(x.btw))}</select></td><td style="width:32px"><input type="checkbox" data-post="${x.id}" data-f="actief" ${x.actief !== false ? "checked" : ""}></td><td class="r" style="width:36px"><button class="btn ghost sm danger" data-act="post-del" data-id="${x.id}" aria-label="Verwijderen">✕</button></td></tr>`).join("")}</tbody></table></div>` : `<div class="empty"><b>Geen posten in dit lot</b>Voeg er een toe.</div>`}
+      <div class="panel-body muted" style="font-size:12px;border-top:1px solid var(--line)">Std = komt standaard mee bij "+ Lot toevoegen". Act. uit = blijft bewaard maar verschijnt niet meer in de keuzelijst. Richtprijs = kostprijs excl. btw die als startwaarde in nieuwe meetstaten komt.</div></div></div>`;
+}
+async function postEdit(id, f, raw, checked) {
+  const x = S.posten[id]; if (!x) return; let v = raw;
+  if (f === "standaard_aan" || f === "actief") v = !!checked;
+  else if (f === "richtprijs") v = raw === "" ? null : Number(String(raw).replace(",", "."));
+  else if (f === "btw") v = Number(raw);
+  if (String(x[f] ?? "") === String(v ?? "")) return;
+  await dbUpdate("posten", id, { [f]: v, updated_at: new Date().toISOString() }).catch(() => { });
+}
+async function lotEdit(nr, f, raw, checked) {
+  const l = S.loten[nr]; if (!l) return; const v = f === "marge" ? (Number(String(raw).replace(",", ".")) || 0) / 100 : !!checked;
+  if (String(l[f] ?? "") === String(v)) return;
+  await dbUpdate("loten", nr, { [f]: v }).catch(() => { });
+}
+async function postAdd(lot) {
+  const oms = prompt("Omschrijving van de nieuwe post:"); if (!oms || !oms.trim()) return;
+  const volgorde = Math.max(0, ...postenOf(lot).map(x => x.volgorde)) + 1; const code = `${String(lot).padStart(2, "0")}.${String(postenOf(lot).length + 1).padStart(2, "0")}`;
+  await dbInsert("posten", { code, lot, omschrijving: oms.trim(), eenheid: "stk", prijstype: "EP", btw: 0.06, standaard_aan: false, actief: true, volgorde }).catch(() => { }); toast("Post toegevoegd");
+}
+async function postDel(id) {
+  const x = S.posten[id]; if (!x || !confirm(`"${x.omschrijving}" verwijderen uit de bibliotheek? (Bestaande meetstaten behouden hun regels.)`)) return;
+  await dbDelete("posten", id).catch(() => { });
+}
 const docIcon = (m, n) => /spreadsheet|excel/.test(m) ? "xls" : /word|document/.test(m) ? "doc" : /pdf/.test(m) ? "pdf" : /skp|sketchup|vwx|dwg|dxf/i.test(n) ? "dwg" : "map";
 
 /* ---------- render root ---------- */
@@ -291,7 +471,7 @@ function vProjecten() {
 function vProjectDetail(p) {
   const ts = tasksOf(p.id), pl = projPlanned(p.id), dn = projDone(p.id);
   const [st, en] = projSpan(p);
-  const tabs = [["taken", "Taken"], ["planning", "Planning"], ["uren", "Uren"], ["dossier", "Dossier"]];
+  const tabs = [["taken", "Taken"], ["meetstaat", "Meetstaat"], ["planning", "Planning"], ["uren", "Uren"], ["dossier", "Dossier"]];
   let body = "";
   if (S.ptab === "taken") {
     const byFase = {}; ts.forEach(t => { (byFase[t.fase_nr || 0] = byFase[t.fase_nr || 0] || []).push(t); });
@@ -301,6 +481,8 @@ function vProjectDetail(p) {
       ${groups.map(nr => { const g = byFase[nr]; const done = g.filter(t => t.status === "done").length; return `<tr><td colspan="7" style="background:var(--surface-2);font-weight:700;font-family:var(--font-display)">${esc(faseName(nr) || "Zonder fase")} <span class="muted num" style="font-weight:400">${done}/${g.length}</span></td></tr>` + g.map(t => `<tr class="click" data-edit-task="${t.id}"><td style="width:28px"><input type="checkbox" class="task-check" data-toggle="${t.id}" ${t.status === "done" ? "checked" : ""} aria-label="Klaar"></td>
         <td><div class="row-title">${esc(t.titel)}${t.notitie ? `<small>${esc(t.notitie)}</small>` : ""}</div></td><td><span class="who-cell">${t.assignee ? avatar(t.assignee) : ""}${esc(userById(t.assignee).name)}</span></td>
         <td class="num">${fmt(t.start)}</td><td class="num" style="color:${isLate(t) ? "var(--crit)" : "inherit"}">${fmt(t.eind)}</td><td class="r num">${nl(taskDone(t.id))} / ${nl(t.uren_gepland)}</td><td>${pill(t)}</td></tr>`).join(""); }).join("")}</tbody></table></div>` : `<div class="empty"><b>Nog geen taken</b>Voeg een fase toe (met de standaardtaken) of maak een losse taak.</div>`}</div>`;
+  } else if (S.ptab === "meetstaat") {
+    body = vMeetstaat(p);
   } else if (S.ptab === "planning") {
     body = ganttHtml([p], { expanded: true, title: "Timing " + p.klant });
   } else if (S.ptab === "uren") {
@@ -558,13 +740,14 @@ function vInstellingen() {
   if (!S.selFase || !S.fasen[S.selFase]) S.selFase = fs[0]?.nr;
   const f = S.fasen[S.selFase]; const ts = S.standaardtaken.filter(t => t.fase_nr === S.selFase);
   return `
-  <div class="page-head"><div><div class="eyebrow">Beheer</div><h1>Instellingen</h1><div class="sub">Fasen en standaardtaken voor nieuwe projecten. Wijzigingen gelden voor projecten die je hierna aanmaakt; bestaande projecten houden hun taken.</div></div></div>
+  <div class="page-head"><div><div class="eyebrow">Beheer</div><h1>Instellingen</h1><div class="sub">Drive-koppeling, postenbibliotheek voor meetstaten, fasen en standaardtaken. Wijzigingen gelden voor wat je hierna aanmaakt; bestaande projecten houden hun taken en meetstaatregels.</div></div></div>
   <div class="panel" style="margin-bottom:16px"><div class="panel-head"><h3>Drive-koppeling</h3><span class="pill ${driveReady() ? "st-afgerond" : "st-offerte"}">${driveReady() ? "ingesteld" : "niet ingesteld"}</span></div>
     <div class="panel-body"><div class="form-grid">
       <div class="field"><label for="dr_url">Web app-URL van het Drive-script</label><input id="dr_url" value="${esc(driveCfg().url || "")}" placeholder="https://script.google.com/macros/s/…/exec"></div>
       <div class="field"><label for="dr_secret">Secret (zelfde als in het script)</label><input id="dr_secret" type="password" value="${esc(driveCfg().secret || "")}"></div>
       <div class="field span2"><div class="actions"><button class="btn primary" data-act="drive-save">Bewaren</button><button class="btn" data-act="drive-test">Verbinding testen</button><span class="muted" style="font-size:12px">Het script staat in de map <code>drive/Code.gs</code>; de installatie staat bovenaan in dat bestand. Nieuwe projecten krijgen daarna automatisch hun map met de sjabloonbestanden.</span></div></div>
     </div></div></div>
+  ${vPostenBeheer()}
   <div class="grid two" style="grid-template-columns: 1fr 1.4fr">
     <div class="panel"><div class="panel-head"><h3>Fasen</h3><button class="btn sm" data-act="fase-new">+ Fase</button></div>
       <div class="tw"><table class="t"><tbody>${fs.map(x => `<tr class="click ${x.nr === S.selFase ? "sel" : ""}" data-selfase="${x.nr}"><td class="num" style="width:40px;color:var(--muted)">${x.nr}</td><td><span style="${x.actief === false ? "color:var(--muted);text-decoration:line-through" : ""}">${esc(x.naam)}</span><small class="muted" style="display:block">${S.standaardtaken.filter(t => t.fase_nr === x.nr).length} taken${x.actief === false ? " · verborgen" : ""}</small></td><td class="r"><button class="btn ghost sm" data-act="fase-edit" data-nr="${x.nr}">Bewerken</button></td></tr>`).join("")}</tbody></table></div>
@@ -814,9 +997,9 @@ function userForm(u) {
 /* ---------- events ---------- */
 document.addEventListener("click", (e) => {
   if (e.target.closest("a[href][target=_blank]")) return; // externe links (bv. Drive-map) gewoon laten openen
-  const el = e.target.closest("[data-nav],[data-act],[data-open],[data-back],[data-ptab],[data-edit-task],[data-edit-hours],[data-gnav],[data-wnav],[data-gtoggle],[data-close],[data-selfase],[data-sort]");
+  const el = e.target.closest("[data-nav],[data-act],[data-open],[data-back],[data-ptab],[data-edit-task],[data-edit-hours],[data-gnav],[data-wnav],[data-gtoggle],[data-close],[data-selfase],[data-sellot],[data-sort]");
   if (!el) { if (e.target === $("#modalBg")) closeModal(); return; }
-  if (e.target.matches(".task-check")) return;
+  if (e.target.matches(".task-check") || e.target.matches("input,select")) { if (!e.target.closest("[data-act]")) return; }
   const d = el.dataset;
   if (d.close != null) return closeModal();
   if (d.sort) { S.sort = { key: d.sort, dir: S.sort.key === d.sort && S.sort.dir === "asc" ? "desc" : S.sort.key === d.sort ? "asc" : (["klant", "lead", "status", "fase"].includes(d.sort) ? "asc" : "desc") }; try { localStorage.setItem("bros.sort", JSON.stringify(S.sort)); } catch (err) { } return render(); }
@@ -846,20 +1029,37 @@ document.addEventListener("click", (e) => {
   if (d.act === "st-new") return stAdd(Number(d.nr));
   if (d.act === "st-move") return stMove(d.id, Number(d.dir));
   if (d.act === "st-del") return stDel(d.id);
+  if (d.sellot) { S.selLot = Number(d.sellot); return render(); }
+  if (d.act === "ms-add-lot") return msAddLotForm(d.pid);
+  if (d.act === "ms-add-post") return msAddPostForm(d.pid, d.lot ? Number(d.lot) : null);
+  if (d.act === "ms-del") { const r = S.meetstaat_posten[d.id]; if (r && confirm(`"${r.omschrijving}" verwijderen?`)) dbDelete("meetstaat_posten", d.id).catch(() => { }); return; }
+  if (d.act === "ms-del-lot") return msDelLot(d.pid, Number(d.lot));
+  if (d.act === "ms-export") return exportMeetstaat(S.projecten[d.pid]).catch(err => { loader.fail(); toast("Export: " + err.message); });
+  if (d.act === "post-new") return postAdd(Number(d.lot));
+  if (d.act === "post-del") return postDel(d.id);
   if (d.act === "logout") return sb.auth.signOut().then(() => location.reload());
   if (d.act === "reload") return location.reload();
   if (d.act === "update-later") { updateAvailable = false; $("#updateBar")?.classList.remove("show"); }
 });
-document.addEventListener("focusout", (e) => { if (e.target.dataset && e.target.dataset.stTitle) stRename(e.target.dataset.stTitle, e.target.value); });
+document.addEventListener("focusout", (e) => {
+  const d = e.target.dataset || {};
+  if (d.stTitle) return stRename(d.stTitle, e.target.value);
+  if (d.ms && e.target.tagName !== "SELECT") return msEdit(d.ms, d.f, e.target.value);
+  if (d.post && e.target.type !== "checkbox" && e.target.tagName !== "SELECT") return postEdit(d.post, d.f, e.target.value);
+  if (d.lot && d.f === "marge") return lotEdit(Number(d.lot), d.f, e.target.value);
+});
 document.addEventListener("change", (e) => {
   const el = e.target;
   if (el.dataset.filter) { S.filters[el.dataset.filter] = el.value; return render(); }
   if (el.dataset.hoursUser != null) { S.hoursUser = el.value; return render(); }
   if (el.dataset.rapjaar != null) { S.rapJaar = el.value; return render(); }
   if (el.dataset.toggle) { const t = S.taken[el.dataset.toggle]; if (t) dbUpdate("taken", t.id, { status: el.checked ? "done" : "todo" }).catch(() => { }); }
+  if (el.dataset.ms && el.tagName === "SELECT") return msEdit(el.dataset.ms, el.dataset.f, el.value);
+  if (el.dataset.post && (el.type === "checkbox" || el.tagName === "SELECT")) return postEdit(el.dataset.post, el.dataset.f, el.value, el.checked);
+  if (el.dataset.lot && el.type === "checkbox") return lotEdit(Number(el.dataset.lot), el.dataset.f, null, el.checked);
 });
 document.addEventListener("input", (e) => { if (e.target.dataset.filter === "q") { S.filters.q = e.target.value; render(); const i = $("[data-filter=q]"); i.focus(); i.setSelectionRange(i.value.length, i.value.length); } });
-document.addEventListener("keydown", (e) => { if (e.key === "Escape") closeModal(); });
+document.addEventListener("keydown", (e) => { if (e.key === "Escape") closeModal(); if (e.key === "Enter" && e.target.classList && e.target.classList.contains("inline") && e.target.tagName === "INPUT") { e.preventDefault(); e.target.blur(); } });
 
 /* ---------- versiecontrole: melden als er een nieuwe versie online staat ---------- */
 let updateAvailable = false;
