@@ -72,7 +72,7 @@ let toastT; function toast(msg) { const t = $("#toast"); t.textContent = msg; t.
 /* ---------- data laden en live houden ---------- */
 const TABLES = { profiles: "profiles", tarieven: "tarieven", fasen: "fasen", standaardtaken: "standaardtaken", projecten: "projecten", taken: "taken", uren: "uren", documenten: "documenten", instellingen: "instellingen", loten: "loten", posten: "posten", meetstaat_posten: "meetstaat_posten", vorderingen: "vorderingen", vordering_regels: "vordering_regels" };
 const OPTIONAL_TABLES = ["tarieven", "documenten", "instellingen", "loten", "posten", "meetstaat_posten", "vorderingen", "vordering_regels"]; // ontbreken zolang het bijbehorende sql-script niet is uitgevoerd
-const rowKey = (t, r) => t === "fasen" || t === "loten" ? r.nr : t === "tarieven" ? r.user_id : t === "instellingen" ? r.key : t === "vordering_regels" ? r.vordering_id + "|" + r.lot : r.id;
+const rowKey = (t, r) => t === "fasen" || t === "loten" ? r.nr : t === "tarieven" ? r.user_id : t === "instellingen" ? r.key : t === "vordering_regels" ? (r.id || r.vordering_id + "|" + r.lot + "|" + (r.post_id || "")) : r.id;
 function ingest(table, rows) {
   if (table === "standaardtaken") { S.standaardtaken = rows.sort((a, b) => a.fase_nr - b.fase_nr || a.volgorde - b.volgorde); return; }
   const o = {}; rows.forEach(r => o[rowKey(table, r)] = r); S[table] = o;
@@ -296,58 +296,67 @@ async function msDelLot(pid, lot) {
   if (error) return toast("Mislukt: " + error.message);
   ids.forEach(id => delete S.meetstaat_posten[id]); render(); toast("Lot verwijderd");
 }
-/* ---------- Facturatie: vorderingsstaat per project ---------- */
+/* ---------- Facturatie: vorderingsstaat per project (percentages per lot én per post) ---------- */
 const VORD_SOORT = { voorschot: "Voorschot", vordering: "Vordering", slotfactuur: "Slotfactuur", meerwerk: "Meerwerk" };
 const VORD_STATUS = { opgemaakt: "Op te maken", verzonden: "Verzonden", betaald: "Betaald" };
 const vordOf = (pid) => Object.values(S.vorderingen).filter(v => v.project_id === pid).sort((a, b) => a.nr - b.nr || (a.created_at || "").localeCompare(b.created_at || ""));
-const regelsOf = (vid) => { const o = {}; Object.values(S.vordering_regels).filter(r => r.vordering_id === vid).forEach(r => o[r.lot] = Number(r.pct) || 0); return o; };
 const vordLocked = (v) => v.status !== "opgemaakt";
-/* basis per lot: offerte (offerte+akkoord), meerwerk (meerwerk − minwerk), gewogen btw-tarief */
+const isMw = (r) => r.status === "meerwerk" || r.status === "minwerk";
+const rowSigned = (r) => msVerkoop(r) * (r.status === "minwerk" ? -1 : 1);
+/* regels van een vordering: lot-niveau (post_id leeg) en post-niveau */
+function vordRegels(vid) { const lot = {}, post = {}; Object.values(S.vordering_regels).filter(r => r.vordering_id === vid).forEach(r => { if (r.post_id) post[r.post_id] = r; else lot[r.lot] = r; }); return { lot, post }; }
+const vordPct = (rg, r) => rg.post[r.id] ? Number(rg.post[r.id].pct) : rg.lot[r.lot] ? Number(rg.lot[r.lot].pct) : null;
+/* rijen van de meetstaat die bij een soort vordering horen (contract vs. meerwerk) */
+const vordRows = (pid, soort) => msRows(pid).filter(msTelt).filter(r => isMw(r) === (soort === "meerwerk"));
+/* basis per lot: contract (offerte+akkoord) en meerwerk (meerwerk − minwerk) */
 function lotBasis(pid) {
-  const b = {};
-  msRows(pid).filter(msTelt).forEach(r => { const x = b[r.lot] = b[r.lot] || { offerte: 0, meerwerk: 0, btwSom: 0, som: 0 }; const v = msVerkoop(r);
-    if (r.status === "meerwerk") x.meerwerk += v; else if (r.status === "minwerk") x.meerwerk -= v; else x.offerte += v;
-    x.btwSom += Math.abs(v) * (Number(r.btw) || 0); x.som += Math.abs(v); });
-  Object.values(b).forEach(x => x.btw = x.som ? x.btwSom / x.som : 0.06);
-  return b;
+  const b = {}; msRows(pid).filter(msTelt).forEach(r => { const x = b[r.lot] = b[r.lot] || { offerte: 0, meerwerk: 0 }; if (isMw(r)) x.meerwerk += rowSigned(r); else x.offerte += msVerkoop(r); }); return b;
 }
 const vordBase = (basis, lot, soort) => soort === "meerwerk" ? (basis[lot]?.meerwerk || 0) : (basis[lot]?.offerte || 0);
-/* berekend bedrag van een vordering: som over loten van pct × basis */
-function vordCalc(v, basis) {
-  const rg = regelsOf(v.id); let excl = 0, btw = 0;
-  Object.keys(rg).forEach(lot => { const a = rg[lot] * vordBase(basis, Number(lot), v.soort); excl += a; btw += a * (basis[lot]?.btw ?? 0.06); });
-  return { excl, btw, incl: excl + btw };
+/* berekening van één vordering: per post en per lot */
+function vordCalc(v) {
+  const rg = vordRegels(v.id); const perLot = {}, perPost = {}; let excl = 0, btw = 0;
+  vordRows(v.project_id, v.soort).forEach(r => { const pct = vordPct(rg, r); if (pct == null) return; const a = pct * rowSigned(r); perPost[r.id] = { pct, excl: a }; const L = perLot[r.lot] = perLot[r.lot] || { excl: 0 }; L.excl += a; excl += a; btw += a * (Number(r.btw) || 0); });
+  return { excl, btw, incl: excl + btw, perLot, perPost, rg };
 }
-const vordBedrag = (v, basis) => v.bedrag_excl != null && v.bedrag_excl !== "" && vordLocked(v) ? Number(v.bedrag_excl) : vordCalc(v, basis).excl;
+const vordBedrag = (v, c) => v.bedrag_excl != null && v.bedrag_excl !== "" && vordLocked(v) ? Number(v.bedrag_excl) : c.excl;
+/* cumulatief per post over alle vorderingen van dezelfde soort */
+function cumPost(pid, calcs, r) { return vordOf(pid).filter(v => (v.soort === "meerwerk") === isMw(r)).reduce((s, v) => s + (calcs[v.id].perPost[r.id]?.pct || 0), 0); }
 function vFacturatie(p) {
   if (!msReady()) return `<div class="panel"><div class="empty"><b>Facturatie nog niet beschikbaar</b>Voer eerst databasescript <code>sql/007_meetstaat.sql</code> uit.</div></div>`;
-  const beheer = isBeheer(); const basis = lotBasis(p.id); const vs = vordOf(p.id);
+  const beheer = isBeheer(); const basis = lotBasis(p.id); const vs = vordOf(p.id); const calcs = {}; vs.forEach(v => calcs[v.id] = vordCalc(v));
   const lots = Object.keys(basis).map(Number).sort((a, b) => a - b);
   const contract = lots.reduce((s, l) => s + basis[l].offerte, 0), meerwerk = lots.reduce((s, l) => s + basis[l].meerwerk, 0);
-  const gefact = vs.filter(vordLocked).reduce((s, v) => s + vordBedrag(v, basis), 0);
-  const betaald = vs.filter(v => v.status === "betaald").reduce((s, v) => s + vordBedrag(v, basis), 0);
-  const open = vs.filter(v => !vordLocked(v)).reduce((s, v) => s + vordCalc(v, basis).excl, 0);
+  const gefact = vs.filter(vordLocked).reduce((s, v) => s + vordBedrag(v, calcs[v.id]), 0);
+  const betaald = vs.filter(v => v.status === "betaald").reduce((s, v) => s + vordBedrag(v, calcs[v.id]), 0);
+  const open = vs.filter(v => !vordLocked(v)).reduce((s, v) => s + calcs[v.id].excl, 0);
   const kpi = `<div class="rend">
     <div class="panel"><div class="k">Contract excl. btw</div><div class="v">${eur(contract)}</div></div>
     <div class="panel"><div class="k">Meer-/minwerk</div><div class="v ${meerwerk < 0 ? "neg" : ""}">${meerwerk ? eur(meerwerk) : "—"}</div></div>
     <div class="panel"><div class="k">Gefactureerd excl. btw</div><div class="v">${eur(gefact)}</div><div class="muted" style="font-size:12px">${contract + meerwerk ? nl(gefact / (contract + meerwerk) * 100, 0) : 0} % · betaald ${eur(betaald)}</div></div>
     <div class="panel"><div class="k">Op te maken</div><div class="v">${open ? eur(open) : "—"}</div></div>
     <div class="panel"><div class="k">Nog te factureren</div><div class="v ${contract + meerwerk - gefact - open < -0.5 ? "neg" : ""}">${eur(contract + meerwerk - gefact - open)}</div></div></div>`;
-  if (!lots.length) return kpi + `<div class="panel"><div class="empty"><b>Nog geen meetstaat</b>Maak eerst de meetstaat op (tabblad Meetstaat); de vorderingsstaat rekent op de loten daarvan.</div></div>`;
+  if (!lots.length) return kpi + `<div class="panel"><div class="empty"><b>Nog geen meetstaat</b>Maak eerst de meetstaat op (tabblad Meetstaat); de vorderingsstaat rekent op de loten en posten daarvan.</div></div>`;
   const heeftVoorschot = vs.some(v => v.soort === "voorschot");
-  // raster: rijen = loten (+ meerwerk-rijen), kolommen = vorderingen
-  const pctInput = (v, lot) => { const rg = regelsOf(v.id); const val = rg[lot] != null ? Math.round(rg[lot] * 1000) / 10 : ""; const base = vordBase(basis, lot, v.soort);
-    if (!base) return `<td class="c muted">·</td>`;
-    if (vordLocked(v) || !beheer) return `<td class="c num">${val === "" ? "" : val + " %"}<small class="muted" style="display:block">${val === "" ? "" : eur(rg[lot] * base)}</small></td>`;
-    return `<td class="c"><input class="inline num" style="width:58px;text-align:right" data-vr="${v.id}" data-lot="${lot}" type="number" step="any" min="0" max="100" value="${val}" placeholder="0"> <span class="muted">%</span><small class="muted" style="display:block">${val === "" ? "" : eur(rg[lot] * base)}</small></td>`; };
-  const cum = (lot, soort) => vs.filter(v => (v.soort === "meerwerk") === (soort === "meerwerk")).reduce((s, v) => s + (regelsOf(v.id)[lot] || 0), 0);
-  const rowsHtml = (soort) => lots.filter(l => vordBase(basis, l, soort) > 0.005 || (soort !== "meerwerk")).filter(l => soort !== "meerwerk" || basis[l].meerwerk).map(l => { const base = vordBase(basis, l, soort); const c = cum(l, soort); const rest = Math.max(0, 1 - c);
-    return `<tr class="${soort === "meerwerk" ? "ms-mw" : ""}"><td class="sticky"><b>${esc(lotName(l))}</b>${soort === "meerwerk" ? ` <span class="pill st-offerte" style="font-size:10px">meerwerk</span>` : ""}</td><td class="r num">${eur(base)}</td>${vs.map(v => (v.soort === "meerwerk") === (soort === "meerwerk") ? pctInput(v, l) : `<td class="c muted">·</td>`).join("")}<td class="c num"><b>${nl(c * 100, 0)} %</b></td><td class="r num ${rest < 0.005 ? "muted" : ""}">${eur(rest * base)}</td></tr>`; }).join("");
-  const totRow = (label, f) => `<tr class="tot"><td class="sticky"><b>${label}</b></td><td class="r num"><b>${eur(f.basis)}</b></td>${vs.map(v => `<td class="c num"><b>${eur(f.v(v))}</b></td>`).join("")}<td></td><td class="r num"><b>${eur(f.rest)}</b></td></tr>`;
-  const calcs = {}; vs.forEach(v => calcs[v.id] = vordCalc(v, basis));
-  const totRest = lots.reduce((s, l) => s + Math.max(0, 1 - cum(l, "vordering")) * basis[l].offerte + Math.max(0, 1 - cum(l, "meerwerk")) * basis[l].meerwerk, 0);
+  S.vordOpen = S.vordOpen || {};
+  const pctFmt = (x) => Math.round(x * 1000) / 10;
+  /* cel voor een lot: invoerveld als het lot-% geldt, anders het gewogen % (per post ingesteld) */
+  const lotCell = (v, lot, soort) => { const c = calcs[v.id]; const base = vordBase(basis, lot, soort); if ((v.soort === "meerwerk") !== (soort === "meerwerk") || !base) return `<td class="c muted">·</td>`;
+    const L = c.perLot[lot]; const overrides = vordRows(p.id, soort).some(r => r.lot === lot && c.rg.post[r.id]); const lotPct = c.rg.lot[lot] ? Number(c.rg.lot[lot].pct) : null;
+    const amt = L ? L.excl : 0; const w = base ? amt / base : 0;
+    if (overrides || vordLocked(v) || !beheer) return `<td class="c num">${(L || lotPct != null) ? pctFmt(w) + " %" : ""}${overrides ? `<small class="muted" style="display:block">per post</small>` : ""}<small class="muted" style="display:block">${L ? eur(amt) : ""}</small></td>`;
+    return `<td class="c"><input class="inline num" style="width:58px;text-align:right" data-vr="${v.id}" data-lot="${lot}" type="number" step="any" min="0" max="100" value="${lotPct == null ? "" : pctFmt(lotPct)}" placeholder="0"> <span class="muted">%</span><small class="muted" style="display:block">${L ? eur(amt) : ""}</small></td>`; };
+  const postCell = (v, r) => { const c = calcs[v.id]; if ((v.soort === "meerwerk") !== isMw(r)) return `<td class="c muted">·</td>`; const P = c.perPost[r.id]; const own = !!c.rg.post[r.id];
+    if (vordLocked(v) || !beheer) return `<td class="c num">${P ? pctFmt(P.pct) + " %" : ""}<small class="muted" style="display:block">${P ? eur(P.excl) : ""}</small></td>`;
+    return `<td class="c"><input class="inline num ${own ? "" : "muted"}" style="width:58px;text-align:right" data-vr="${v.id}" data-lot="${r.lot}" data-vpost="${r.id}" type="number" step="any" min="0" max="100" value="${P ? pctFmt(P.pct) : ""}" placeholder="0" title="${own ? "eigen % voor deze post" : "volgt het lot-%"}"> <span class="muted">%</span><small class="muted" style="display:block">${P ? eur(P.excl) : ""}</small></td>`; };
+  const lotRows = (soort) => lots.filter(l => Math.abs(vordBase(basis, l, soort)) > 0.005).map(l => { const base = vordBase(basis, l, soort); const rows = vordRows(p.id, soort).filter(r => r.lot === l); const inv = vs.reduce((s, v) => s + (calcs[v.id].perLot[l]?.excl || 0) * ((v.soort === "meerwerk") === (soort === "meerwerk") ? 1 : 0), 0); const cum = base ? inv / base : 0; const rest = base - inv; const key = soort + l; const openL = !!S.vordOpen[key];
+    return `<tr class="${soort === "meerwerk" ? "ms-mw" : ""}"><td class="sticky"><button class="btn ghost sm" data-vtoggle="${key}" aria-label="Posten tonen" style="padding:0 4px">${openL ? "▾" : "▸"}</button> <b>${esc(lotName(l))}</b>${soort === "meerwerk" ? ` <span class="pill st-offerte" style="font-size:10px">meerwerk</span>` : ""}<small class="muted" style="display:block;margin-left:22px">${rows.length} posten</small></td><td class="r num">${eur(base)}</td>${vs.map(v => lotCell(v, l, soort)).join("")}<td class="c num"><b>${pctFmt(cum)} %</b></td><td class="r num ${Math.abs(rest) < 0.005 ? "muted" : ""}">${eur(rest)}</td></tr>` +
+      (openL ? rows.map(r => { const amt = rowSigned(r); const invP = vs.reduce((s, v) => s + (calcs[v.id].perPost[r.id]?.excl || 0), 0); const cumP = amt ? invP / amt : 0;
+        return `<tr class="vpost"><td class="sticky" style="padding-left:30px"><span class="muted num" style="font-size:11px">${esc(r.code)}</span> ${esc(r.omschrijving)}${r.locatie ? ` <small class="muted">· ${esc(r.locatie)}</small>` : ""}</td><td class="r num">${eur(amt)}</td>${vs.map(v => postCell(v, r)).join("")}<td class="c num">${pctFmt(cumP)} %</td><td class="r num ${Math.abs(amt - invP) < 0.005 ? "muted" : ""}">${eur(amt - invP)}</td></tr>`; }).join("") : ""); }).join("");
+  const totRow = (label, base, f, rest) => `<tr class="tot"><td class="sticky"><b>${label}</b></td><td class="r num"><b>${eur(base)}</b></td>${vs.map(v => `<td class="c num"><b>${eur(f(v))}</b></td>`).join("")}<td></td><td class="r num"><b>${eur(rest)}</b></td></tr>`;
+  const sumInv = (soort) => vs.filter(v => (v.soort === "meerwerk") === (soort === "meerwerk")).reduce((s, v) => s + calcs[v.id].excl, 0);
   const head = vs.map(v => { const c = calcs[v.id]; const frozen = vordLocked(v) && v.bedrag_excl != null && v.bedrag_excl !== ""; const diff = frozen ? Number(v.bedrag_excl) - c.excl : 0;
-    return `<th class="vh"><div class="vh-top"><span class="pill st-${v.status === "betaald" ? "afgerond" : v.status === "verzonden" ? "lopend" : "offerte"}">${v.nr === 0 ? "Voorschot" : "#" + v.nr}</span>${beheer && !vordLocked(v) ? `<button class="btn ghost sm danger" data-act="vord-del" data-id="${v.id}" aria-label="Verwijderen">✕</button>` : ""}</div>
+    return `<th class="vh"><div class="vh-top"><span class="pill st-${v.status === "betaald" ? "afgerond" : v.status === "verzonden" ? "lopend" : "offerte"}">${v.nr === 0 ? "Voorschot" : "#" + v.nr}${v.soort === "meerwerk" ? " · MW" : ""}</span>${beheer && !vordLocked(v) ? `<button class="btn ghost sm danger" data-act="vord-del" data-id="${v.id}" aria-label="Verwijderen">✕</button>` : ""}</div>
       <div class="vh-body">${beheer ? `<input class="inline" data-vf="${v.id}" data-f="omschrijving" value="${esc(v.omschrijving || "")}" placeholder="${esc(VORD_SOORT[v.soort])}">` : `<div>${esc(v.omschrijving || VORD_SOORT[v.soort])}</div>`}
       <div class="vh-row"><span class="muted">Datum</span>${beheer ? `<input class="inline num" data-vf="${v.id}" data-f="datum" type="date" value="${v.datum || ""}">` : `<span class="num">${fmtLong(v.datum)}</span>`}</div>
       <div class="vh-row"><span class="muted">Yuki-nr</span>${beheer ? `<input class="inline num" data-vf="${v.id}" data-f="factuurnummer" value="${esc(v.factuurnummer || "")}" placeholder="—">` : `<span class="num">${esc(v.factuurnummer || "—")}</span>`}</div>
@@ -356,57 +365,71 @@ function vFacturatie(p) {
       ${beheer ? `<div class="vh-row"><span class="muted" title="Bedrag op de factuur in Yuki (excl. btw) — wordt bevroren zodra de status verzonden of betaald is">Factuur excl.</span><input class="inline num" data-vf="${v.id}" data-f="bedrag_excl" type="number" step="any" value="${v.bedrag_excl == null ? "" : Number(v.bedrag_excl)}" placeholder="${Math.round(c.excl)}"></div>` : ""}
       ${frozen && Math.abs(diff) > 0.5 ? `<div class="vh-row" style="color:var(--warn)"><span>Verschil</span><span class="num">${eur(diff)}</span></div>` : ""}
       <div class="vh-row"><span class="muted">Status</span>${beheer ? `<select class="inline" data-vf="${v.id}" data-f="status">${opts(Object.entries(VORD_STATUS), v.status)}</select>` : `<span>${VORD_STATUS[v.status]}</span>`}</div></div></th>`; }).join("");
-  const grid = `<div class="panel" style="margin-bottom:16px"><div class="panel-head"><div><h3>Vorderingsstaat</h3><div class="muted" style="font-size:12px;margin-top:2px">Per lot het % dat je in elke vordering factureert. Het voorschot telt overal mee: na 30 % voorschot kan per lot nog 70 % gefactureerd worden. Meerwerk staat apart en zit niet in het voorschot.</div></div>
-      <div class="actions">${beheer ? `${heeftVoorschot ? "" : `<button class="btn sm" data-act="vord-new" data-pid="${p.id}" data-soort="voorschot">+ Voorschot</button>`}<button class="btn sm primary" data-act="vord-new" data-pid="${p.id}" data-soort="vordering">+ Vordering</button>${meerwerk ? `<button class="btn sm" data-act="vord-new" data-pid="${p.id}" data-soort="meerwerk">+ Meerwerkfactuur</button>` : ""}<button class="btn sm" data-act="vord-new" data-pid="${p.id}" data-soort="slotfactuur" title="Alle loten tot 100 %">+ Slotfactuur</button>` : ""}</div></div>
-    ${vs.length ? `<div class="tw"><table class="t vord"><thead><tr><th class="sticky">Lot</th><th class="r">Basis excl.</th>${head}<th class="c">Cumul.</th><th class="r">Rest</th></tr></thead><tbody>
-      ${rowsHtml("vordering")}${totRow("Contract", { basis: contract, v: (v) => v.soort === "meerwerk" ? 0 : calcs[v.id].excl, rest: lots.reduce((s, l) => s + Math.max(0, 1 - cum(l, "vordering")) * basis[l].offerte, 0) })}
-      ${meerwerk ? rowsHtml("meerwerk") + totRow("Meer-/minwerk", { basis: meerwerk, v: (v) => v.soort === "meerwerk" ? calcs[v.id].excl : 0, rest: lots.reduce((s, l) => s + Math.max(0, 1 - cum(l, "meerwerk")) * basis[l].meerwerk, 0) }) : ""}
-      ${totRow("Totaal excl. btw", { basis: contract + meerwerk, v: (v) => calcs[v.id].excl, rest: totRest })}
-      <tr class="tot"><td class="sticky"><b>Totaal incl. btw</b></td><td></td>${vs.map(v => `<td class="c num"><b>${eur(calcs[v.id].incl)}</b></td>`).join("")}<td></td><td></td></tr></tbody></table></div>` : `<div class="empty"><b>Nog geen vorderingen</b>Begin met het voorschot (bv. 30 % op het contract), daarna een vordering per afgewerkt lot.</div>`}</div>`;
-  // klantoverzicht: eenvoudige tijdlijn per factuur
+  const grid = `<div class="panel" style="margin-bottom:16px"><div class="panel-head"><div><h3>Vorderingsstaat</h3><div class="muted" style="font-size:12px;margin-top:2px">Per lot het % dat je in elke vordering factureert; klap een lot open (▸) om per post te werken — een post-% overschrijft het lot-%. Het voorschot telt overal mee. Meerwerk staat apart en zit niet in het voorschot.</div></div>
+      <div class="actions">${beheer ? `${heeftVoorschot ? "" : `<button class="btn sm" data-act="vord-new" data-pid="${p.id}" data-soort="voorschot">+ Voorschot</button>`}<button class="btn sm primary" data-act="vord-new" data-pid="${p.id}" data-soort="vordering">+ Vordering</button>${meerwerk ? `<button class="btn sm" data-act="vord-new" data-pid="${p.id}" data-soort="meerwerk">+ Meerwerkfactuur</button>` : ""}<button class="btn sm" data-act="vord-new" data-pid="${p.id}" data-soort="slotfactuur" title="Alles wat nog openstaat, per post">+ Slotfactuur</button>` : ""}</div></div>
+    ${vs.length ? `<div class="tw"><table class="t vord"><thead><tr><th class="sticky">Lot / post</th><th class="r">Basis excl.</th>${head}<th class="c">Cumul.</th><th class="r">Rest</th></tr></thead><tbody>
+      ${lotRows("vordering")}${totRow("Contract", contract, (v) => v.soort === "meerwerk" ? 0 : calcs[v.id].excl, contract - sumInv("vordering"))}
+      ${meerwerk ? lotRows("meerwerk") + totRow("Meer-/minwerk", meerwerk, (v) => v.soort === "meerwerk" ? calcs[v.id].excl : 0, meerwerk - sumInv("meerwerk")) : ""}
+      ${totRow("Totaal excl. btw", contract + meerwerk, (v) => calcs[v.id].excl, contract + meerwerk - sumInv("vordering") - sumInv("meerwerk"))}
+      <tr class="tot"><td class="sticky"><b>Totaal incl. btw</b></td><td></td>${vs.map(v => `<td class="c num"><b>${eur(calcs[v.id].incl)}</b></td>`).join("")}<td></td><td></td></tr></tbody></table></div>` : `<div class="empty"><b>Nog geen vorderingen</b>Begin met het voorschot (bv. 30 % op het contract), daarna een vordering per afgewerkt lot of per post.</div>`}</div>`;
   const klant = `<div class="panel"><div class="panel-head"><div><h3>Overzicht voor de klant</h3><div class="muted" style="font-size:12px;margin-top:2px">Zo ziet de klant het straks in het portaal: geen percentages of kostprijzen, wel wat gefactureerd is en wat nog komt.</div></div></div>
     <div class="tw"><table class="t"><thead><tr><th>Nr</th><th>Datum</th><th>Omschrijving</th><th>Loten</th><th class="r">Excl. btw</th><th class="r">Btw</th><th class="r">Incl. btw</th><th>Status</th></tr></thead><tbody>
-      ${vs.map(v => { const c = calcs[v.id]; const excl = vordBedrag(v, basis); const btw = vordLocked(v) && v.bedrag_excl != null && v.bedrag_excl !== "" && c.excl ? excl * (c.btw / c.excl) : c.btw; const rg = regelsOf(v.id); const lotsTxt = v.soort === "voorschot" ? "alle loten" : Object.keys(rg).filter(l => rg[l] > 0).map(l => l + "." + (S.loten[l]?.naam || "")).join(", ");
+      ${vs.map(v => { const c = calcs[v.id]; const excl = vordBedrag(v, c); const btw = c.excl ? excl * (c.btw / c.excl) : c.btw; const lotsTxt = v.soort === "voorschot" ? "alle loten" : Object.keys(c.perLot).filter(l => Math.abs(c.perLot[l].excl) > 0.005).map(l => lotName(Number(l))).join(", ");
         return `<tr><td class="num">${v.nr === 0 ? "V" : v.nr}</td><td class="num">${fmtLong(v.datum)}</td><td>${esc(v.omschrijving || VORD_SOORT[v.soort])}${v.factuurnummer ? `<small class="muted" style="display:block">factuur ${esc(v.factuurnummer)}</small>` : ""}</td><td class="muted" style="font-size:12px;max-width:260px">${esc(lotsTxt)}</td><td class="r num">${eur(excl)}</td><td class="r num">${eur(btw)}</td><td class="r num"><b>${eur(excl + btw)}</b></td><td><span class="pill st-${v.status === "betaald" ? "afgerond" : v.status === "verzonden" ? "lopend" : "offerte"}">${VORD_STATUS[v.status]}</span></td></tr>`; }).join("") || `<tr><td class="muted" colspan="8">Nog geen facturen.</td></tr>`}
       <tr class="tot"><td colspan="4"><b>Nog te factureren (contract + meerwerk − gefactureerd/opgemaakt)</b></td><td class="r num"><b>${eur(contract + meerwerk - gefact - open)}</b></td><td></td><td></td><td></td></tr></tbody></table></div></div>`;
   return kpi + grid + klant;
 }
+/* regels voor "de rest" van gekozen loten: lot-% als alle posten gelijk staan, anders per post */
+function restRegels(pid, soort, lots, calcs) {
+  const out = [];
+  lots.forEach(l => { const rows = vordRows(pid, soort).filter(r => r.lot === l && Math.abs(rowSigned(r)) > 0.005); if (!rows.length) return;
+    const rests = rows.map(r => Math.max(0, 1 - cumPost(pid, calcs, r)));
+    const uniform = rests.every(x => Math.abs(x - rests[0]) < 1e-6);
+    if (uniform) { if (rests[0] > 1e-6) out.push({ lot: l, post_id: null, pct: rests[0] }); }
+    else rows.forEach((r, i) => { if (rests[i] > 1e-6) out.push({ lot: l, post_id: r.id, pct: rests[i] }); }); });
+  return out;
+}
 function vordForm(pid, soort) {
-  const p = S.projecten[pid]; const basis = lotBasis(pid); const vs = vordOf(pid);
-  const lots = Object.keys(basis).map(Number).sort((a, b) => a - b).filter(l => soort === "meerwerk" ? basis[l].meerwerk : basis[l].offerte > 0.005);
-  const cum = (l) => vs.filter(v => (v.soort === "meerwerk") === (soort === "meerwerk")).reduce((s, v) => s + (regelsOf(v.id)[l] || 0), 0);
+  const p = S.projecten[pid]; const basis = lotBasis(pid); const vs = vordOf(pid); const calcs = {}; vs.forEach(v => calcs[v.id] = vordCalc(v));
+  const lots = Object.keys(basis).map(Number).sort((a, b) => a - b).filter(l => Math.abs(vordBase(basis, l, soort === "slotfactuur" ? "vordering" : soort)) > 0.005);
   const nextNr = soort === "voorschot" ? 0 : Math.max(0, ...vs.map(v => v.nr)) + 1;
-  const isVoorschot = soort === "voorschot";
+  const isVoorschot = soort === "voorschot", isSlot = soort === "slotfactuur";
+  const restLot = (l, srt) => { const base = vordBase(basis, l, srt); const inv = vs.reduce((s, v) => s + ((v.soort === "meerwerk") === (srt === "meerwerk") ? (calcs[v.id].perLot[l]?.excl || 0) : 0), 0); return base - inv; };
   openModal({ voorschot: "Voorschotfactuur", vordering: "Nieuwe vordering", slotfactuur: "Slotfactuur", meerwerk: "Meerwerkfactuur" }[soort] + " — " + p.klant, `<div class="form-grid">
-      <div class="field"><label for="vo_oms">Omschrijving</label><input id="vo_oms" name="omschrijving" value="${esc(isVoorschot ? "Voorschot bij ondertekening" : soort === "slotfactuur" ? "Slotfactuur bij oplevering" : "")}" placeholder="bv. Afwerking lot 8 en 9"></div>
+      <div class="field"><label for="vo_oms">Omschrijving</label><input id="vo_oms" name="omschrijving" value="${esc(isVoorschot ? "Voorschot bij ondertekening" : isSlot ? "Slotfactuur bij oplevering" : "")}" placeholder="bv. Afwerking lot 8 en 9"></div>
       <div class="field"><label for="vo_datum">Datum</label><input id="vo_datum" name="datum" type="date" value="${todayIso}"></div>
       ${isVoorschot ? `<div class="field"><label for="vo_pct">Voorschot % op het contract</label><input id="vo_pct" name="pct" type="number" step="any" min="0" max="100" value="30"></div><div class="field"><label>Contract excl. btw</label><div class="num" style="padding:8px 0">${eur(lots.reduce((s, l) => s + basis[l].offerte, 0))}</div></div>`
-      : `<div class="field span2"><label>${soort === "slotfactuur" ? "Alle loten worden aangevuld tot 100 %" : "Loten die je nu factureert (het resterende % wordt voorgesteld; daarna aanpasbaar in de tabel)"}</label><div class="fase-list">${lots.map(l => { const rest = Math.max(0, 1 - cum(l)); const base = soort === "meerwerk" ? basis[l].meerwerk : basis[l].offerte; return `<label class="chk"><input type="checkbox" name="lot" value="${l}" ${rest > 0.0005 && (soort === "slotfactuur" || false) ? "checked" : ""} ${rest <= 0.0005 ? "disabled" : ""}> <span>${esc(lotName(l))}<small class="muted" style="display:block">rest ${nl(rest * 100, 0)} % · ${eur(rest * base)}</small></span></label>`; }).join("")}</div></div>`}
+      : isSlot ? `<div class="field span2"><p class="muted" style="margin:0">Alles wat nog openstaat wordt gefactureerd: per post het resterende % op het contract${lots.some(l => basis[l].meerwerk) ? " (meerwerk factureer je apart via + Meerwerkfactuur)" : ""}. Nog open: <b>${eur(lots.reduce((s, l) => s + restLot(l, "vordering"), 0))}</b> excl. btw.</p></div>`
+      : `<div class="field span2"><label>Loten die je nu factureert — het resterende % wordt voorgesteld; daarna per lot of per post aanpasbaar in de tabel</label><div class="fase-list">${lots.map(l => { const rest = restLot(l, soort); const base = vordBase(basis, l, soort); return `<label class="chk"><input type="checkbox" name="lot" value="${l}" ${Math.abs(rest) <= 0.005 ? "disabled" : ""}> <span>${esc(lotName(l))}<small class="muted" style="display:block">rest ${base ? nl(rest / base * 100, 0) : 0} % · ${eur(rest)}</small></span></label>`; }).join("")}</div></div>`}
     </div>`, {
     saveLabel: "Aanmaken", wide: !isVoorschot,
     onSave: async (d) => {
-      const pct = isVoorschot ? (Number(d.pct) || 0) / 100 : null;
-      const sel = isVoorschot ? lots : [...$("#mform").querySelectorAll('input[name="lot"]:checked')].map(i => Number(i.value));
+      const sel = isVoorschot || isSlot ? lots : [...$("#mform").querySelectorAll('input[name="lot"]:checked')].map(i => Number(i.value));
       if (!sel.length) { toast("Kies minstens één lot."); return false; }
+      const regels = isVoorschot ? sel.map(l => ({ lot: l, post_id: null, pct: (Number(d.pct) || 0) / 100 })) : restRegels(pid, isSlot ? "vordering" : soort, sel, calcs);
+      if (!regels.length) { toast("Er staat niets meer open voor deze loten."); return false; }
       const { data: v, error } = await sb.from("vorderingen").insert({ project_id: pid, nr: nextNr, soort, omschrijving: d.omschrijving.trim(), datum: d.datum || null, status: "opgemaakt" }).select().single();
       if (error) { toast("Mislukt: " + error.message); return false; }
       S.vorderingen[v.id] = v;
-      const regels = sel.map(l => ({ vordering_id: v.id, lot: l, pct: isVoorschot ? pct : Math.max(0, 1 - cum(l)) }));
-      const r2 = await sb.from("vordering_regels").insert(regels).select();
-      if (r2.error) { toast("Regels niet bewaard: " + r2.error.message); } else (r2.data || []).forEach(r => S.vordering_regels[rowKey("vordering_regels", r)] = r);
+      const r2 = await sb.from("vordering_regels").insert(regels.map(r => ({ vordering_id: v.id, lot: r.lot, post_id: r.post_id, pct: r.pct }))).select();
+      if (r2.error) { toast("Regels niet bewaard: " + r2.error.message + (/post_id/.test(r2.error.message) ? " — voer sql/008_vordering_posten.sql uit" : "")); } else (r2.data || []).forEach(r => S.vordering_regels[rowKey("vordering_regels", r)] = r);
       render(); toast(`${VORD_SOORT[soort]} aangemaakt`);
     },
   });
 }
-async function vordEditPct(vid, lot, raw) {
+/* % wijzigen: op lot-niveau (post_id leeg → post-regels van dat lot worden gewist) of op post-niveau */
+async function vordEditPct(vid, lot, raw, postId) {
   const v = S.vorderingen[vid]; if (!v || vordLocked(v)) return;
-  const pct = raw === "" ? 0 : Math.min(1, Math.max(0, Number(String(raw).replace(",", ".")) / 100));
-  const key = vid + "|" + lot; const prev = S.vordering_regels[key];
-  if (prev && Math.abs(Number(prev.pct) - pct) < 1e-6) return;
-  if (raw === "" && !prev) return;
-  const { data, error } = await sb.from("vordering_regels").upsert({ vordering_id: vid, lot, pct }).select().single();
-  if (error) return toast("Mislukt: " + error.message);
-  S.vordering_regels[key] = data; render();
+  const pct = raw === "" ? null : Math.min(1, Math.max(0, Number(String(raw).replace(",", ".")) / 100));
+  const all = Object.values(S.vordering_regels).filter(r => r.vordering_id === vid && r.lot === lot);
+  const cur = all.find(r => (postId ? r.post_id === postId : !r.post_id));
+  if (cur && pct != null && Math.abs(Number(cur.pct) - pct) < 1e-6) return;
+  if (!cur && pct == null) return;
+  if (pct == null) { const { error } = await sb.from("vordering_regels").delete().eq("id", cur.id); if (error) return toast("Mislukt: " + error.message); delete S.vordering_regels[rowKey("vordering_regels", cur)]; }
+  else if (cur) { const { data, error } = await sb.from("vordering_regels").update({ pct }).eq("id", cur.id).select().single(); if (error) return toast("Mislukt: " + error.message); S.vordering_regels[rowKey("vordering_regels", data)] = data; }
+  else { const { data, error } = await sb.from("vordering_regels").insert({ vordering_id: vid, lot, post_id: postId || null, pct }).select().single(); if (error) return toast("Mislukt: " + error.message + (/post_id|column/.test(error.message) ? " — voer sql/008_vordering_posten.sql uit" : "")); S.vordering_regels[rowKey("vordering_regels", data)] = data; }
+  if (!postId) { const posts = all.filter(r => r.post_id); if (posts.length) { await sb.from("vordering_regels").delete().in("id", posts.map(r => r.id)); posts.forEach(r => delete S.vordering_regels[rowKey("vordering_regels", r)]); } }
+  render();
 }
 async function vordEdit(vid, f, raw) {
   const v = S.vorderingen[vid]; if (!v) return; let val = raw;
@@ -414,12 +437,24 @@ async function vordEdit(vid, f, raw) {
   if (f === "datum") val = raw || null;
   if (String(v[f] ?? "") === String(val ?? "")) return;
   const patch = { [f]: val };
-  if (f === "status" && val !== "opgemaakt" && (v.bedrag_excl == null || v.bedrag_excl === "")) patch.bedrag_excl = Math.round(vordCalc(v, lotBasis(v.project_id)).excl * 100) / 100; // bevriezen op het berekende bedrag
+  if (f === "status" && val !== "opgemaakt" && (v.bedrag_excl == null || v.bedrag_excl === "")) patch.bedrag_excl = Math.round(vordCalc(v).excl * 100) / 100; // bevriezen op het berekende bedrag
   await dbUpdate("vorderingen", vid, patch).catch(() => { });
+}
+/* gegevens voor het tabblad VORDERINGSSTAAT in de Excel-export (klantversie: bevroren bedragen, geen kostprijzen) */
+function vordExportData(p) {
+  const vs = vordOf(p.id); if (!vs.length) return null;
+  const basis = lotBasis(p.id); const lots = Object.keys(basis).map(Number).sort((a, b) => a - b); const calcs = {}; vs.forEach(v => calcs[v.id] = vordCalc(v));
+  const list = vs.map(v => { const c = calcs[v.id]; const excl = vordBedrag(v, c); const btw = c.excl ? excl * (c.btw / c.excl) : c.btw;
+    return { nr: v.nr, soort: v.soort, datum: fmtLong(v.datum), omschrijving: v.omschrijving || VORD_SOORT[v.soort], factuurnummer: v.factuurnummer || "", loten: v.soort === "voorschot" ? "alle loten" : Object.keys(c.perLot).filter(l => Math.abs(c.perLot[l].excl) > 0.005).map(l => lotName(Number(l))).join(", "), excl: Math.round(excl * 100) / 100, btw: Math.round(btw * 100) / 100, incl: Math.round((excl + btw) * 100) / 100, status: VORD_STATUS[v.status] || v.status }; });
+  const loten = [];
+  ["vordering", "meerwerk"].forEach(soort => lots.forEach(l => { const base = vordBase(basis, l, soort); if (Math.abs(base) < 0.005) return;
+    loten.push({ naam: lotName(l), basis: base, meerwerk: soort === "meerwerk", pcts: vs.map(v => (v.soort === "meerwerk") !== (soort === "meerwerk") ? null : (calcs[v.id].perLot[l] ? calcs[v.id].perLot[l].excl / base : null)) });
+    vordRows(p.id, soort).filter(r => r.lot === l).forEach(r => loten.push({ naam: "   " + r.code + " " + r.omschrijving + (r.locatie ? " · " + r.locatie : ""), basis: rowSigned(r), meerwerk: soort === "meerwerk", post: true, pcts: vs.map(v => (v.soort === "meerwerk") !== (soort === "meerwerk") ? null : (calcs[v.id].perPost[r.id]?.pct ?? null)) })); }));
+  return { list, loten, contract: lots.reduce((s, l) => s + basis[l].offerte, 0), meerwerk: lots.reduce((s, l) => s + basis[l].meerwerk, 0) };
 }
 async function vordDel(vid) {
   const v = S.vorderingen[vid]; if (!v || vordLocked(v) || !confirm(`${VORD_SOORT[v.soort]} ${v.nr ? "#" + v.nr : ""} verwijderen?`)) return;
-  Object.keys(S.vordering_regels).filter(k => k.startsWith(vid + "|")).forEach(k => delete S.vordering_regels[k]);
+  Object.values(S.vordering_regels).filter(r => r.vordering_id === vid).forEach(r => delete S.vordering_regels[rowKey("vordering_regels", r)]);
   await dbDelete("vorderingen", vid).catch(() => { });
 }
 
@@ -433,7 +468,7 @@ async function exportMeetstaat(p) {
   if (!templateCache) { const j = await driveCall("template", { match: "MEETSTAAT" }); const bin = atob(j.base64); const bytes = new Uint8Array(bin.length); for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i); templateCache = { name: j.name, bytes }; }
   loader.step("Meetstaat opbouwen…");
   const rows = msRows(p.id).filter(msTelt).map(r => ({ lot: r.lot, groep: r.groep, omschrijving: r.omschrijving, locatie: r.locatie, artikelnr: r.artikelnr, hoeveelheid: Number(r.hoeveelheid) || 0, eenheid: r.eenheid, prijs: Math.round(msVerkoopEP(r) * 100) / 100, btw: Number(r.btw) || 0, status: r.status }));
-  const { bytes } = await window.MeetstaatExport.build(templateCache.bytes, { project: p, rows, titel: "MEETSTAAT", date: new Date() });
+  const { bytes } = await window.MeetstaatExport.build(templateCache.bytes, { project: p, rows, titel: "MEETSTAAT", date: new Date(), vorderingen: vordExportData(p) });
   loader.step("Wegschrijven in Documenten/Meetstaat…");
   let b64 = ""; for (let i = 0; i < bytes.length; i += 0x8000) b64 += String.fromCharCode.apply(null, bytes.subarray(i, i + 0x8000)); b64 = btoa(b64);
   const name = `MEETSTAAT ${(p.klant || "").toUpperCase()}.xlsx`;
@@ -1127,7 +1162,7 @@ function userForm(u) {
 /* ---------- events ---------- */
 document.addEventListener("click", (e) => {
   if (e.target.closest("a[href][target=_blank]")) return; // externe links (bv. Drive-map) gewoon laten openen
-  const el = e.target.closest("[data-nav],[data-act],[data-open],[data-back],[data-ptab],[data-edit-task],[data-edit-hours],[data-gnav],[data-wnav],[data-gtoggle],[data-close],[data-selfase],[data-sellot],[data-sort]");
+  const el = e.target.closest("[data-nav],[data-act],[data-open],[data-back],[data-ptab],[data-edit-task],[data-edit-hours],[data-gnav],[data-wnav],[data-gtoggle],[data-close],[data-selfase],[data-sellot],[data-sort],[data-vtoggle]");
   if (!el) { if (e.target === $("#modalBg")) closeModal(); return; }
   if (e.target.matches(".task-check") || e.target.matches("input,select")) { if (!e.target.closest("[data-act]")) return; }
   const d = el.dataset;
@@ -1160,6 +1195,7 @@ document.addEventListener("click", (e) => {
   if (d.act === "st-move") return stMove(d.id, Number(d.dir));
   if (d.act === "st-del") return stDel(d.id);
   if (d.sellot) { S.selLot = Number(d.sellot); return render(); }
+  if (d.vtoggle) { S.vordOpen = S.vordOpen || {}; S.vordOpen[d.vtoggle] = !S.vordOpen[d.vtoggle]; return render(); }
   if (d.act === "ms-add-lot") return msAddLotForm(d.pid);
   if (d.act === "ms-open") { S.ptab = "meetstaat"; render(); if (!msRows(d.pid).length) msAddLotForm(d.pid); return; }
   if (d.act === "ms-add-post") return msAddPostForm(d.pid, d.lot ? Number(d.lot) : null);
@@ -1177,10 +1213,11 @@ document.addEventListener("click", (e) => {
 document.addEventListener("focusout", (e) => {
   const d = e.target.dataset || {};
   if (d.stTitle) return stRename(d.stTitle, e.target.value);
+  if (d.vr) return vordEditPct(d.vr, Number(d.lot), e.target.value, d.vpost || null);
   if (d.ms && e.target.tagName !== "SELECT") return msEdit(d.ms, d.f, e.target.value);
   if (d.post && e.target.type !== "checkbox" && e.target.tagName !== "SELECT") return postEdit(d.post, d.f, e.target.value);
   if (d.lot && d.f === "marge") return lotEdit(Number(d.lot), d.f, e.target.value);
-  if (d.vr) return vordEditPct(d.vr, Number(d.lot), e.target.value);
+
   if (d.vf && e.target.tagName !== "SELECT" && e.target.type !== "date") return vordEdit(d.vf, d.f, e.target.value);
 });
 document.addEventListener("change", (e) => {

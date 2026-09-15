@@ -59,6 +59,6 @@ Statische webapp (geen build-stap) op een Supabase-database.
 
 ## Facturatie (vorderingsstaat)
 
-- Projectfiche → tabblad **Facturatie**: "+ Voorschot" (% op het contract, telt voor elk lot mee), "+ Vordering" (loten aanvinken; het resterende % wordt voorgesteld en is per lot aanpasbaar in de tabel), "+ Meerwerkfactuur" (op het meer-/minwerk, los van het contract) en "+ Slotfactuur" (alles tot 100 %).
+- Projectfiche → tabblad **Facturatie** (script 008): "+ Voorschot" (% op het contract, telt voor elk lot mee), "+ Vordering" (loten aanvinken; het resterende % wordt voorgesteld en is daarna per lot óf per post aanpasbaar — klap een lot open met ▸; een post-% overschrijft het lot-%), "+ Meerwerkfactuur" (op het meer-/minwerk, los van het contract) en "+ Slotfactuur" (alles tot 100 %).
 - Per vordering: omschrijving, datum, Yuki-factuurnummer, berekend bedrag (excl./btw/incl.) en het factuurbedrag. Zet je de status op verzonden of betaald, dan wordt het bedrag bevroren (latere wijzigingen in de meetstaat veranderen de factuur niet meer) en toont het Planbord een verschil als factuur en berekening uiteenlopen.
-- Onderaan staat het klantoverzicht (facturen, bedragen, status, nog te factureren) — dit wordt de basis voor het klantportaal.
+- Onderaan staat het klantoverzicht (facturen, bedragen, status, nog te factureren) — dit wordt de basis voor het klantportaal. De Excel-export krijgt een tabblad VORDERINGSSTAAT met hetzelfde overzicht plus de percentages per lot en per post.

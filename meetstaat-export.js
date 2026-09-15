@@ -181,8 +181,59 @@
     if (tailShifts.length) wb = wb.replace(/<definedName([^>]*)>([^<]*)<\/definedName>/g, (m, a, f) => { let g = f; tailShifts.forEach(([at, n]) => g = shiftRefs(g, at, n, SHEET, true)); return `<definedName${a}>${g}</definedName>`; });
     zip.file("xl/workbook.xml", wb);
     if (zip.file("xl/calcChain.xml")) { zip.remove("xl/calcChain.xml"); zip.file("xl/_rels/workbook.xml.rels", rels.replace(/<Relationship [^>]*calcChain[^>]*\/>/, "")); const ct = await zip.file("[Content_Types].xml").async("string"); zip.file("[Content_Types].xml", ct.replace(/<Override PartName="\/xl\/calcChain.xml"[^>]*\/>/, "")); }
+    // optioneel: tabblad VORDERINGSSTAAT (facturatie) toevoegen
+    if (opts.vorderingen && opts.vorderingen.list && opts.vorderingen.list.length) {
+      const st = { titel: styleOf(rowMap.get(9)?.cells.get("A")) ?? 0, kop: styleOf(rowMap.get(b0.header + 4)?.cells.get("H")) ?? 0, lot: styleOf(rowMap.get(b0.header)?.cells.get("A")) ?? 0, tekst: styles["H"] ?? 0, vet: styles["G"] ?? 0, geld: styles["M"] ?? 0, pct: styles["N"] ?? 0 };
+      await addVorderingsstaat(zip, opts.vorderingen, { project: p, datum: dd, st });
+    }
     const bytes = await zip.generateAsync({ type: "uint8array", compression: "DEFLATE", mimeType: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" });
     return { bytes, warnings, blocks };
+  }
+
+  /* ---- nieuw tabblad VORDERINGSSTAAT (klantoverzicht + percentages per lot) ---- */
+  async function addVorderingsstaat(zip, V, { project, datum, st }) {
+    const rows = []; // [{r, cells:[{c, v|s|f, st}]}]
+    const T = (v, s) => ({ t: "s", v, s }), N = (v, s) => ({ t: "n", v, s }), F = (f, s) => ({ t: "f", v: f, s });
+    let r = 1; const add = (cells) => { rows.push({ r: r++, cells }); };
+    add([T(`VORDERINGSSTAAT - ${String(project.klant || "").toUpperCase()} - DATUM ${datum}`, st.titel)]);
+    r++;
+    add([T("Nr", st.kop), T("Datum", st.kop), T("Omschrijving", st.kop), T("Factuurnr", st.kop), T("Loten", st.kop), T("Excl. btw", st.kop), T("Btw", st.kop), T("Incl. btw", st.kop), T("Status", st.kop)]);
+    const first = r;
+    V.list.forEach(v => add([T(v.nr === 0 ? "V" : String(v.nr), st.tekst), T(v.datum || "", st.tekst), T(v.omschrijving || "", st.tekst), T(v.factuurnummer || "", st.tekst), T(v.loten || "", st.tekst), N(v.excl, st.geld), N(v.btw, st.geld), N(v.incl, st.geld), T(v.status || "", st.tekst)]));
+    const last = r - 1;
+    add([T("", 0), T("", 0), T("", 0), T("", 0), T("Totaal gefactureerd / opgemaakt", st.vet), F(`SUM(F${first}:F${last})`, st.geld), F(`SUM(G${first}:G${last})`, st.geld), F(`SUM(H${first}:H${last})`, st.geld)]);
+    r++;
+    add([T("", 0), T("", 0), T("", 0), T("", 0), T("Contract excl. btw", st.vet), N(V.contract, st.geld)]);
+    add([T("", 0), T("", 0), T("", 0), T("", 0), T("Meer-/minwerk excl. btw", st.vet), N(V.meerwerk, st.geld)]);
+    add([T("", 0), T("", 0), T("", 0), T("", 0), T("Nog te factureren excl. btw", st.vet), F(`F${r - 2}+F${r - 1}-F${last + 1}`, st.geld)]);
+    r++;
+    // percentages per lot
+    const cols = V.list.map(v => (v.nr === 0 ? "Voorschot" : "Vordering " + v.nr + (v.soort === "meerwerk" ? " (MW)" : "")));
+    add([T("Lot", st.kop), T("Basis excl. btw", st.kop), ...cols.map(c => T(c, st.kop)), T("Cumulatief", st.kop), T("Rest excl. btw", st.kop)]);
+    V.loten.forEach(l => { const cum = l.pcts.reduce((s, x) => s + (x || 0), 0);
+      add([T(l.naam + (l.meerwerk && !l.post ? " (meerwerk)" : ""), l.post ? st.tekst : st.vet), N(l.basis, st.geld), ...l.pcts.map(x => x == null ? T("", st.tekst) : N(x, st.pct)), N(cum, st.pct), N(Math.max(0, 1 - cum) * l.basis, st.geld)]); });
+    const colW = [6, 12, 40, 14, 44, 14, 12, 14, 14];
+    const xmlCell = (c, col, row) => { const s = c.s != null ? ` s="${c.s}"` : ""; const ref = colName(col) + row;
+      if (c.t === "s") return c.v === "" ? `<c r="${ref}"${s}/>` : `<c r="${ref}"${s} t="inlineStr"><is><t xml:space="preserve">${xmlEsc(c.v)}</t></is></c>`;
+      if (c.t === "f") return `<c r="${ref}"${s}><f>${xmlEsc(c.v)}</f></c>`;
+      return `<c r="${ref}"${s}><v>${Number(c.v) || 0}</v></c>`; };
+    const sheetData = rows.map(rw => `<row r="${rw.r}">${rw.cells.map((c, i) => xmlCell(c, i + 1, rw.r)).join("")}</row>`).join("");
+    const maxCol = Math.max(...rows.map(rw => rw.cells.length));
+    const xml = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\n<worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"><dimension ref="A1:${colName(maxCol)}${r}"/><sheetViews><sheetView workbookViewId="0" showGridLines="0"/></sheetViews><sheetFormatPr defaultRowHeight="15"/><cols>${colW.map((w, i) => `<col min="${i + 1}" max="${i + 1}" width="${w}" customWidth="1"/>`).join("")}${maxCol > colW.length ? `<col min="${colW.length + 1}" max="${maxCol}" width="12" customWidth="1"/>` : ""}</cols><sheetData>${sheetData}</sheetData><pageMargins left="0.5" right="0.5" top="0.6" bottom="0.6" header="0.3" footer="0.3"/><pageSetup paperSize="9" orientation="landscape" fitToWidth="1" fitToHeight="0"/></worksheet>`;
+    // registreren: worksheet-bestand, workbook.xml, rels, content types
+    let n = 1; while (zip.file(`xl/worksheets/sheet${n}.xml`)) n++;
+    const path = `xl/worksheets/sheet${n}.xml`; zip.file(path, xml);
+    let rels = await zip.file("xl/_rels/workbook.xml.rels").async("string");
+    const rid = "rId" + (Math.max(0, ...[...rels.matchAll(/Id="rId(\d+)"/g)].map(m => Number(m[1]))) + 1);
+    rels = rels.replace("</Relationships>", `<Relationship Id="${rid}" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" Target="worksheets/sheet${n}.xml"/></Relationships>`);
+    zip.file("xl/_rels/workbook.xml.rels", rels);
+    let wb = await zip.file("xl/workbook.xml").async("string");
+    const sid = Math.max(0, ...[...wb.matchAll(/sheetId="(\d+)"/g)].map(m => Number(m[1]))) + 1;
+    wb = wb.replace("</sheets>", `<sheet name="VORDERINGSSTAAT" sheetId="${sid}" r:id="${rid}"/></sheets>`);
+    zip.file("xl/workbook.xml", wb);
+    let ct = await zip.file("[Content_Types].xml").async("string");
+    ct = ct.replace("</Types>", `<Override PartName="/${path}" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"/></Types>`);
+    zip.file("[Content_Types].xml", ct);
   }
 
   const api = { build, shiftRefs };
