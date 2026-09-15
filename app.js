@@ -2,7 +2,7 @@
    BROS Planbord — app v1.0
    Statische webapp op Supabase (login, live-synchronisatie, rechten)
    ===================================================================== */
-const APP_VERSION = "1.6.1";
+const APP_VERSION = "1.7.0";
 const PROJ_STATUS = { offerte: "In offerte", lopend: "Lopend", on_hold: "On hold", afgerond: "Afgerond", verloren: "Verloren" };
 const KLANTTYPE = { particulier: "Particulier", zakelijk: "Zakelijk" };
 const KLANTCODE = { particulier: "PAR", zakelijk: "ZAK" };
@@ -35,7 +35,7 @@ const workdays = (a, b) => { let n = 0; for (let s = a; s <= b; s = addDays(s, 1
 /* ---------- state ---------- */
 const S = {
   session: null, me: null,
-  profiles: {}, tarieven: {}, fasen: {}, standaardtaken: [], projecten: {}, taken: {}, uren: {}, documenten: {}, instellingen: {}, loten: {}, posten: {}, meetstaat_posten: {}, vorderingen: {},
+  profiles: {}, tarieven: {}, fasen: {}, standaardtaken: [], projecten: {}, taken: {}, uren: {}, documenten: {}, instellingen: {}, loten: {}, posten: {}, meetstaat_posten: {}, vorderingen: {}, vordering_regels: {},
   view: "overzicht", project: null, ptab: "taken",
   filters: { user: "", status: "", project: "", q: "" },
   ganttStart: addDays(mondayOf(todayIso), -14), ganttDays: 112, ganttOpen: {},
@@ -70,12 +70,12 @@ const projKost = (pid, soort) => Object.values(S.uren).filter(h => h.project_id 
 let toastT; function toast(msg) { const t = $("#toast"); t.textContent = msg; t.classList.add("show"); clearTimeout(toastT); toastT = setTimeout(() => t.classList.remove("show"), 2800); }
 
 /* ---------- data laden en live houden ---------- */
-const TABLES = { profiles: "profiles", tarieven: "tarieven", fasen: "fasen", standaardtaken: "standaardtaken", projecten: "projecten", taken: "taken", uren: "uren", documenten: "documenten", instellingen: "instellingen", loten: "loten", posten: "posten", meetstaat_posten: "meetstaat_posten", vorderingen: "vorderingen" };
-const OPTIONAL_TABLES = ["tarieven", "documenten", "instellingen", "loten", "posten", "meetstaat_posten", "vorderingen"]; // ontbreken zolang het bijbehorende sql-script niet is uitgevoerd
+const TABLES = { profiles: "profiles", tarieven: "tarieven", fasen: "fasen", standaardtaken: "standaardtaken", projecten: "projecten", taken: "taken", uren: "uren", documenten: "documenten", instellingen: "instellingen", loten: "loten", posten: "posten", meetstaat_posten: "meetstaat_posten", vorderingen: "vorderingen", vordering_regels: "vordering_regels" };
+const OPTIONAL_TABLES = ["tarieven", "documenten", "instellingen", "loten", "posten", "meetstaat_posten", "vorderingen", "vordering_regels"]; // ontbreken zolang het bijbehorende sql-script niet is uitgevoerd
+const rowKey = (t, r) => t === "fasen" || t === "loten" ? r.nr : t === "tarieven" ? r.user_id : t === "instellingen" ? r.key : t === "vordering_regels" ? r.vordering_id + "|" + r.lot : r.id;
 function ingest(table, rows) {
   if (table === "standaardtaken") { S.standaardtaken = rows.sort((a, b) => a.fase_nr - b.fase_nr || a.volgorde - b.volgorde); return; }
-  const key = table === "fasen" || table === "loten" ? "nr" : table === "tarieven" ? "user_id" : table === "instellingen" ? "key" : "id";
-  const o = {}; rows.forEach(r => o[r[key]] = r); S[table] = o;
+  const o = {}; rows.forEach(r => o[rowKey(table, r)] = r); S[table] = o;
 }
 async function loadAll() {
   const res = await Promise.all(Object.keys(TABLES).map(t => sb.from(t).select("*").limit(5000)));
@@ -84,12 +84,11 @@ async function loadAll() {
 }
 function subscribe() {
   const ch = sb.channel("planbord");
-  ["profiles", "tarieven", "fasen", "standaardtaken", "projecten", "taken", "uren", "documenten", "loten", "posten", "meetstaat_posten", "vorderingen"].forEach(t => {
+  ["profiles", "tarieven", "fasen", "standaardtaken", "projecten", "taken", "uren", "documenten", "loten", "posten", "meetstaat_posten", "vorderingen", "vordering_regels"].forEach(t => {
     ch.on("postgres_changes", { event: "*", schema: "public", table: t }, (payload) => {
       if (t === "standaardtaken") { refetch(t); return; }
-      const key = t === "fasen" || t === "loten" ? "nr" : t === "tarieven" ? "user_id" : "id";
-      if (payload.eventType === "DELETE") { delete S[t][payload.old[key]]; }
-      else { S[t][payload.new[key]] = payload.new; }
+      if (payload.eventType === "DELETE") { delete S[t][rowKey(t, payload.old)]; }
+      else { S[t][rowKey(t, payload.new)] = payload.new; }
       if (t === "profiles") S.me = S.profiles[S.session.user.id] || S.me;
       render();
     });
@@ -297,6 +296,133 @@ async function msDelLot(pid, lot) {
   if (error) return toast("Mislukt: " + error.message);
   ids.forEach(id => delete S.meetstaat_posten[id]); render(); toast("Lot verwijderd");
 }
+/* ---------- Facturatie: vorderingsstaat per project ---------- */
+const VORD_SOORT = { voorschot: "Voorschot", vordering: "Vordering", slotfactuur: "Slotfactuur", meerwerk: "Meerwerk" };
+const VORD_STATUS = { opgemaakt: "Op te maken", verzonden: "Verzonden", betaald: "Betaald" };
+const vordOf = (pid) => Object.values(S.vorderingen).filter(v => v.project_id === pid).sort((a, b) => a.nr - b.nr || (a.created_at || "").localeCompare(b.created_at || ""));
+const regelsOf = (vid) => { const o = {}; Object.values(S.vordering_regels).filter(r => r.vordering_id === vid).forEach(r => o[r.lot] = Number(r.pct) || 0); return o; };
+const vordLocked = (v) => v.status !== "opgemaakt";
+/* basis per lot: offerte (offerte+akkoord), meerwerk (meerwerk − minwerk), gewogen btw-tarief */
+function lotBasis(pid) {
+  const b = {};
+  msRows(pid).filter(msTelt).forEach(r => { const x = b[r.lot] = b[r.lot] || { offerte: 0, meerwerk: 0, btwSom: 0, som: 0 }; const v = msVerkoop(r);
+    if (r.status === "meerwerk") x.meerwerk += v; else if (r.status === "minwerk") x.meerwerk -= v; else x.offerte += v;
+    x.btwSom += Math.abs(v) * (Number(r.btw) || 0); x.som += Math.abs(v); });
+  Object.values(b).forEach(x => x.btw = x.som ? x.btwSom / x.som : 0.06);
+  return b;
+}
+const vordBase = (basis, lot, soort) => soort === "meerwerk" ? (basis[lot]?.meerwerk || 0) : (basis[lot]?.offerte || 0);
+/* berekend bedrag van een vordering: som over loten van pct × basis */
+function vordCalc(v, basis) {
+  const rg = regelsOf(v.id); let excl = 0, btw = 0;
+  Object.keys(rg).forEach(lot => { const a = rg[lot] * vordBase(basis, Number(lot), v.soort); excl += a; btw += a * (basis[lot]?.btw ?? 0.06); });
+  return { excl, btw, incl: excl + btw };
+}
+const vordBedrag = (v, basis) => v.bedrag_excl != null && v.bedrag_excl !== "" && vordLocked(v) ? Number(v.bedrag_excl) : vordCalc(v, basis).excl;
+function vFacturatie(p) {
+  if (!msReady()) return `<div class="panel"><div class="empty"><b>Facturatie nog niet beschikbaar</b>Voer eerst databasescript <code>sql/007_meetstaat.sql</code> uit.</div></div>`;
+  const beheer = isBeheer(); const basis = lotBasis(p.id); const vs = vordOf(p.id);
+  const lots = Object.keys(basis).map(Number).sort((a, b) => a - b);
+  const contract = lots.reduce((s, l) => s + basis[l].offerte, 0), meerwerk = lots.reduce((s, l) => s + basis[l].meerwerk, 0);
+  const gefact = vs.filter(vordLocked).reduce((s, v) => s + vordBedrag(v, basis), 0);
+  const betaald = vs.filter(v => v.status === "betaald").reduce((s, v) => s + vordBedrag(v, basis), 0);
+  const open = vs.filter(v => !vordLocked(v)).reduce((s, v) => s + vordCalc(v, basis).excl, 0);
+  const kpi = `<div class="rend">
+    <div class="panel"><div class="k">Contract excl. btw</div><div class="v">${eur(contract)}</div></div>
+    <div class="panel"><div class="k">Meer-/minwerk</div><div class="v ${meerwerk < 0 ? "neg" : ""}">${meerwerk ? eur(meerwerk) : "—"}</div></div>
+    <div class="panel"><div class="k">Gefactureerd excl. btw</div><div class="v">${eur(gefact)}</div><div class="muted" style="font-size:12px">${contract + meerwerk ? nl(gefact / (contract + meerwerk) * 100, 0) : 0} % · betaald ${eur(betaald)}</div></div>
+    <div class="panel"><div class="k">Op te maken</div><div class="v">${open ? eur(open) : "—"}</div></div>
+    <div class="panel"><div class="k">Nog te factureren</div><div class="v ${contract + meerwerk - gefact - open < -0.5 ? "neg" : ""}">${eur(contract + meerwerk - gefact - open)}</div></div></div>`;
+  if (!lots.length) return kpi + `<div class="panel"><div class="empty"><b>Nog geen meetstaat</b>Maak eerst de meetstaat op (tabblad Meetstaat); de vorderingsstaat rekent op de loten daarvan.</div></div>`;
+  const heeftVoorschot = vs.some(v => v.soort === "voorschot");
+  // raster: rijen = loten (+ meerwerk-rijen), kolommen = vorderingen
+  const pctInput = (v, lot) => { const rg = regelsOf(v.id); const val = rg[lot] != null ? Math.round(rg[lot] * 1000) / 10 : ""; const base = vordBase(basis, lot, v.soort);
+    if (!base) return `<td class="c muted">·</td>`;
+    if (vordLocked(v) || !beheer) return `<td class="c num">${val === "" ? "" : val + " %"}<small class="muted" style="display:block">${val === "" ? "" : eur(rg[lot] * base)}</small></td>`;
+    return `<td class="c"><input class="inline num" style="width:58px;text-align:right" data-vr="${v.id}" data-lot="${lot}" type="number" step="any" min="0" max="100" value="${val}" placeholder="0"> <span class="muted">%</span><small class="muted" style="display:block">${val === "" ? "" : eur(rg[lot] * base)}</small></td>`; };
+  const cum = (lot, soort) => vs.filter(v => (v.soort === "meerwerk") === (soort === "meerwerk")).reduce((s, v) => s + (regelsOf(v.id)[lot] || 0), 0);
+  const rowsHtml = (soort) => lots.filter(l => vordBase(basis, l, soort) > 0.005 || (soort !== "meerwerk")).filter(l => soort !== "meerwerk" || basis[l].meerwerk).map(l => { const base = vordBase(basis, l, soort); const c = cum(l, soort); const rest = Math.max(0, 1 - c);
+    return `<tr class="${soort === "meerwerk" ? "ms-mw" : ""}"><td class="sticky"><b>${esc(lotName(l))}</b>${soort === "meerwerk" ? ` <span class="pill st-offerte" style="font-size:10px">meerwerk</span>` : ""}</td><td class="r num">${eur(base)}</td>${vs.map(v => (v.soort === "meerwerk") === (soort === "meerwerk") ? pctInput(v, l) : `<td class="c muted">·</td>`).join("")}<td class="c num"><b>${nl(c * 100, 0)} %</b></td><td class="r num ${rest < 0.005 ? "muted" : ""}">${eur(rest * base)}</td></tr>`; }).join("");
+  const totRow = (label, f) => `<tr class="tot"><td class="sticky"><b>${label}</b></td><td class="r num"><b>${eur(f.basis)}</b></td>${vs.map(v => `<td class="c num"><b>${eur(f.v(v))}</b></td>`).join("")}<td></td><td class="r num"><b>${eur(f.rest)}</b></td></tr>`;
+  const calcs = {}; vs.forEach(v => calcs[v.id] = vordCalc(v, basis));
+  const totRest = lots.reduce((s, l) => s + Math.max(0, 1 - cum(l, "vordering")) * basis[l].offerte + Math.max(0, 1 - cum(l, "meerwerk")) * basis[l].meerwerk, 0);
+  const head = vs.map(v => { const c = calcs[v.id]; const frozen = vordLocked(v) && v.bedrag_excl != null && v.bedrag_excl !== ""; const diff = frozen ? Number(v.bedrag_excl) - c.excl : 0;
+    return `<th class="vh"><div class="vh-top"><span class="pill st-${v.status === "betaald" ? "afgerond" : v.status === "verzonden" ? "lopend" : "offerte"}">${v.nr === 0 ? "Voorschot" : "#" + v.nr}</span>${beheer && !vordLocked(v) ? `<button class="btn ghost sm danger" data-act="vord-del" data-id="${v.id}" aria-label="Verwijderen">✕</button>` : ""}</div>
+      <div class="vh-body">${beheer ? `<input class="inline" data-vf="${v.id}" data-f="omschrijving" value="${esc(v.omschrijving || "")}" placeholder="${esc(VORD_SOORT[v.soort])}">` : `<div>${esc(v.omschrijving || VORD_SOORT[v.soort])}</div>`}
+      <div class="vh-row"><span class="muted">Datum</span>${beheer ? `<input class="inline num" data-vf="${v.id}" data-f="datum" type="date" value="${v.datum || ""}">` : `<span class="num">${fmtLong(v.datum)}</span>`}</div>
+      <div class="vh-row"><span class="muted">Yuki-nr</span>${beheer ? `<input class="inline num" data-vf="${v.id}" data-f="factuurnummer" value="${esc(v.factuurnummer || "")}" placeholder="—">` : `<span class="num">${esc(v.factuurnummer || "—")}</span>`}</div>
+      <div class="vh-row"><span class="muted">Berekend</span><span class="num">${eur(c.excl)}</span></div>
+      <div class="vh-row"><span class="muted">Btw · incl.</span><span class="num">${eur(c.btw)} · <b>${eur(c.incl)}</b></span></div>
+      ${beheer ? `<div class="vh-row"><span class="muted" title="Bedrag op de factuur in Yuki (excl. btw) — wordt bevroren zodra de status verzonden of betaald is">Factuur excl.</span><input class="inline num" data-vf="${v.id}" data-f="bedrag_excl" type="number" step="any" value="${v.bedrag_excl == null ? "" : Number(v.bedrag_excl)}" placeholder="${Math.round(c.excl)}"></div>` : ""}
+      ${frozen && Math.abs(diff) > 0.5 ? `<div class="vh-row" style="color:var(--warn)"><span>Verschil</span><span class="num">${eur(diff)}</span></div>` : ""}
+      <div class="vh-row"><span class="muted">Status</span>${beheer ? `<select class="inline" data-vf="${v.id}" data-f="status">${opts(Object.entries(VORD_STATUS), v.status)}</select>` : `<span>${VORD_STATUS[v.status]}</span>`}</div></div></th>`; }).join("");
+  const grid = `<div class="panel" style="margin-bottom:16px"><div class="panel-head"><div><h3>Vorderingsstaat</h3><div class="muted" style="font-size:12px;margin-top:2px">Per lot het % dat je in elke vordering factureert. Het voorschot telt overal mee: na 30 % voorschot kan per lot nog 70 % gefactureerd worden. Meerwerk staat apart en zit niet in het voorschot.</div></div>
+      <div class="actions">${beheer ? `${heeftVoorschot ? "" : `<button class="btn sm" data-act="vord-new" data-pid="${p.id}" data-soort="voorschot">+ Voorschot</button>`}<button class="btn sm primary" data-act="vord-new" data-pid="${p.id}" data-soort="vordering">+ Vordering</button>${meerwerk ? `<button class="btn sm" data-act="vord-new" data-pid="${p.id}" data-soort="meerwerk">+ Meerwerkfactuur</button>` : ""}<button class="btn sm" data-act="vord-new" data-pid="${p.id}" data-soort="slotfactuur" title="Alle loten tot 100 %">+ Slotfactuur</button>` : ""}</div></div>
+    ${vs.length ? `<div class="tw"><table class="t vord"><thead><tr><th class="sticky">Lot</th><th class="r">Basis excl.</th>${head}<th class="c">Cumul.</th><th class="r">Rest</th></tr></thead><tbody>
+      ${rowsHtml("vordering")}${totRow("Contract", { basis: contract, v: (v) => v.soort === "meerwerk" ? 0 : calcs[v.id].excl, rest: lots.reduce((s, l) => s + Math.max(0, 1 - cum(l, "vordering")) * basis[l].offerte, 0) })}
+      ${meerwerk ? rowsHtml("meerwerk") + totRow("Meer-/minwerk", { basis: meerwerk, v: (v) => v.soort === "meerwerk" ? calcs[v.id].excl : 0, rest: lots.reduce((s, l) => s + Math.max(0, 1 - cum(l, "meerwerk")) * basis[l].meerwerk, 0) }) : ""}
+      ${totRow("Totaal excl. btw", { basis: contract + meerwerk, v: (v) => calcs[v.id].excl, rest: totRest })}
+      <tr class="tot"><td class="sticky"><b>Totaal incl. btw</b></td><td></td>${vs.map(v => `<td class="c num"><b>${eur(calcs[v.id].incl)}</b></td>`).join("")}<td></td><td></td></tr></tbody></table></div>` : `<div class="empty"><b>Nog geen vorderingen</b>Begin met het voorschot (bv. 30 % op het contract), daarna een vordering per afgewerkt lot.</div>`}</div>`;
+  // klantoverzicht: eenvoudige tijdlijn per factuur
+  const klant = `<div class="panel"><div class="panel-head"><div><h3>Overzicht voor de klant</h3><div class="muted" style="font-size:12px;margin-top:2px">Zo ziet de klant het straks in het portaal: geen percentages of kostprijzen, wel wat gefactureerd is en wat nog komt.</div></div></div>
+    <div class="tw"><table class="t"><thead><tr><th>Nr</th><th>Datum</th><th>Omschrijving</th><th>Loten</th><th class="r">Excl. btw</th><th class="r">Btw</th><th class="r">Incl. btw</th><th>Status</th></tr></thead><tbody>
+      ${vs.map(v => { const c = calcs[v.id]; const excl = vordBedrag(v, basis); const btw = vordLocked(v) && v.bedrag_excl != null && v.bedrag_excl !== "" && c.excl ? excl * (c.btw / c.excl) : c.btw; const rg = regelsOf(v.id); const lotsTxt = v.soort === "voorschot" ? "alle loten" : Object.keys(rg).filter(l => rg[l] > 0).map(l => l + "." + (S.loten[l]?.naam || "")).join(", ");
+        return `<tr><td class="num">${v.nr === 0 ? "V" : v.nr}</td><td class="num">${fmtLong(v.datum)}</td><td>${esc(v.omschrijving || VORD_SOORT[v.soort])}${v.factuurnummer ? `<small class="muted" style="display:block">factuur ${esc(v.factuurnummer)}</small>` : ""}</td><td class="muted" style="font-size:12px;max-width:260px">${esc(lotsTxt)}</td><td class="r num">${eur(excl)}</td><td class="r num">${eur(btw)}</td><td class="r num"><b>${eur(excl + btw)}</b></td><td><span class="pill st-${v.status === "betaald" ? "afgerond" : v.status === "verzonden" ? "lopend" : "offerte"}">${VORD_STATUS[v.status]}</span></td></tr>`; }).join("") || `<tr><td class="muted" colspan="8">Nog geen facturen.</td></tr>`}
+      <tr class="tot"><td colspan="4"><b>Nog te factureren (contract + meerwerk − gefactureerd/opgemaakt)</b></td><td class="r num"><b>${eur(contract + meerwerk - gefact - open)}</b></td><td></td><td></td><td></td></tr></tbody></table></div></div>`;
+  return kpi + grid + klant;
+}
+function vordForm(pid, soort) {
+  const p = S.projecten[pid]; const basis = lotBasis(pid); const vs = vordOf(pid);
+  const lots = Object.keys(basis).map(Number).sort((a, b) => a - b).filter(l => soort === "meerwerk" ? basis[l].meerwerk : basis[l].offerte > 0.005);
+  const cum = (l) => vs.filter(v => (v.soort === "meerwerk") === (soort === "meerwerk")).reduce((s, v) => s + (regelsOf(v.id)[l] || 0), 0);
+  const nextNr = soort === "voorschot" ? 0 : Math.max(0, ...vs.map(v => v.nr)) + 1;
+  const isVoorschot = soort === "voorschot";
+  openModal({ voorschot: "Voorschotfactuur", vordering: "Nieuwe vordering", slotfactuur: "Slotfactuur", meerwerk: "Meerwerkfactuur" }[soort] + " — " + p.klant, `<div class="form-grid">
+      <div class="field"><label for="vo_oms">Omschrijving</label><input id="vo_oms" name="omschrijving" value="${esc(isVoorschot ? "Voorschot bij ondertekening" : soort === "slotfactuur" ? "Slotfactuur bij oplevering" : "")}" placeholder="bv. Afwerking lot 8 en 9"></div>
+      <div class="field"><label for="vo_datum">Datum</label><input id="vo_datum" name="datum" type="date" value="${todayIso}"></div>
+      ${isVoorschot ? `<div class="field"><label for="vo_pct">Voorschot % op het contract</label><input id="vo_pct" name="pct" type="number" step="any" min="0" max="100" value="30"></div><div class="field"><label>Contract excl. btw</label><div class="num" style="padding:8px 0">${eur(lots.reduce((s, l) => s + basis[l].offerte, 0))}</div></div>`
+      : `<div class="field span2"><label>${soort === "slotfactuur" ? "Alle loten worden aangevuld tot 100 %" : "Loten die je nu factureert (het resterende % wordt voorgesteld; daarna aanpasbaar in de tabel)"}</label><div class="fase-list">${lots.map(l => { const rest = Math.max(0, 1 - cum(l)); const base = soort === "meerwerk" ? basis[l].meerwerk : basis[l].offerte; return `<label class="chk"><input type="checkbox" name="lot" value="${l}" ${rest > 0.0005 && (soort === "slotfactuur" || false) ? "checked" : ""} ${rest <= 0.0005 ? "disabled" : ""}> <span>${esc(lotName(l))}<small class="muted" style="display:block">rest ${nl(rest * 100, 0)} % · ${eur(rest * base)}</small></span></label>`; }).join("")}</div></div>`}
+    </div>`, {
+    saveLabel: "Aanmaken", wide: !isVoorschot,
+    onSave: async (d) => {
+      const pct = isVoorschot ? (Number(d.pct) || 0) / 100 : null;
+      const sel = isVoorschot ? lots : [...$("#mform").querySelectorAll('input[name="lot"]:checked')].map(i => Number(i.value));
+      if (!sel.length) { toast("Kies minstens één lot."); return false; }
+      const { data: v, error } = await sb.from("vorderingen").insert({ project_id: pid, nr: nextNr, soort, omschrijving: d.omschrijving.trim(), datum: d.datum || null, status: "opgemaakt" }).select().single();
+      if (error) { toast("Mislukt: " + error.message); return false; }
+      S.vorderingen[v.id] = v;
+      const regels = sel.map(l => ({ vordering_id: v.id, lot: l, pct: isVoorschot ? pct : Math.max(0, 1 - cum(l)) }));
+      const r2 = await sb.from("vordering_regels").insert(regels).select();
+      if (r2.error) { toast("Regels niet bewaard: " + r2.error.message); } else (r2.data || []).forEach(r => S.vordering_regels[rowKey("vordering_regels", r)] = r);
+      render(); toast(`${VORD_SOORT[soort]} aangemaakt`);
+    },
+  });
+}
+async function vordEditPct(vid, lot, raw) {
+  const v = S.vorderingen[vid]; if (!v || vordLocked(v)) return;
+  const pct = raw === "" ? 0 : Math.min(1, Math.max(0, Number(String(raw).replace(",", ".")) / 100));
+  const key = vid + "|" + lot; const prev = S.vordering_regels[key];
+  if (prev && Math.abs(Number(prev.pct) - pct) < 1e-6) return;
+  if (raw === "" && !prev) return;
+  const { data, error } = await sb.from("vordering_regels").upsert({ vordering_id: vid, lot, pct }).select().single();
+  if (error) return toast("Mislukt: " + error.message);
+  S.vordering_regels[key] = data; render();
+}
+async function vordEdit(vid, f, raw) {
+  const v = S.vorderingen[vid]; if (!v) return; let val = raw;
+  if (f === "bedrag_excl") val = raw === "" ? null : Number(String(raw).replace(",", "."));
+  if (f === "datum") val = raw || null;
+  if (String(v[f] ?? "") === String(val ?? "")) return;
+  const patch = { [f]: val };
+  if (f === "status" && val !== "opgemaakt" && (v.bedrag_excl == null || v.bedrag_excl === "")) patch.bedrag_excl = Math.round(vordCalc(v, lotBasis(v.project_id)).excl * 100) / 100; // bevriezen op het berekende bedrag
+  await dbUpdate("vorderingen", vid, patch).catch(() => { });
+}
+async function vordDel(vid) {
+  const v = S.vorderingen[vid]; if (!v || vordLocked(v) || !confirm(`${VORD_SOORT[v.soort]} ${v.nr ? "#" + v.nr : ""} verwijderen?`)) return;
+  Object.keys(S.vordering_regels).filter(k => k.startsWith(vid + "|")).forEach(k => delete S.vordering_regels[k]);
+  await dbDelete("vorderingen", vid).catch(() => { });
+}
+
 /* export naar het Excel-sjabloon in de projectmap (Documenten/Meetstaat) */
 let templateCache = null; // { name, bytes } — sjabloon één keer per sessie ophalen
 async function exportMeetstaat(p) {
@@ -473,7 +599,7 @@ function vProjecten() {
 function vProjectDetail(p) {
   const ts = tasksOf(p.id), pl = projPlanned(p.id), dn = projDone(p.id);
   const [st, en] = projSpan(p);
-  const tabs = [["taken", "Taken"], ["meetstaat", "Meetstaat"], ["planning", "Planning"], ["uren", "Uren"], ["dossier", "Dossier"]];
+  const tabs = [["taken", "Taken"], ["meetstaat", "Meetstaat"], ["facturatie", "Facturatie"], ["planning", "Planning"], ["uren", "Uren"], ["dossier", "Dossier"]];
   let body = "";
   if (S.ptab === "taken") {
     const byFase = {}; ts.forEach(t => { (byFase[t.fase_nr || 0] = byFase[t.fase_nr || 0] || []).push(t); });
@@ -485,6 +611,8 @@ function vProjectDetail(p) {
         <td class="num">${fmt(t.start)}</td><td class="num" style="color:${isLate(t) ? "var(--crit)" : "inherit"}">${fmt(t.eind)}</td><td class="r num">${nl(taskDone(t.id))} / ${nl(t.uren_gepland)}</td><td>${pill(t)}</td></tr>`).join(""); }).join("")}</tbody></table></div>` : `<div class="empty"><b>Nog geen taken</b>Voeg een fase toe (met de standaardtaken) of maak een losse taak.</div>`}</div>`;
   } else if (S.ptab === "meetstaat") {
     body = vMeetstaat(p);
+  } else if (S.ptab === "facturatie") {
+    body = vFacturatie(p);
   } else if (S.ptab === "planning") {
     body = ganttHtml([p], { expanded: true, title: "Timing " + p.klant });
   } else if (S.ptab === "uren") {
@@ -1039,6 +1167,8 @@ document.addEventListener("click", (e) => {
   if (d.act === "ms-del-lot") return msDelLot(d.pid, Number(d.lot));
   if (d.act === "ms-export") return exportMeetstaat(S.projecten[d.pid]).catch(err => { loader.fail(); toast("Export: " + err.message); });
   if (d.act === "post-new") return postAdd(Number(d.lot));
+  if (d.act === "vord-new") return vordForm(d.pid, d.soort);
+  if (d.act === "vord-del") return vordDel(d.id);
   if (d.act === "post-del") return postDel(d.id);
   if (d.act === "logout") return sb.auth.signOut().then(() => location.reload());
   if (d.act === "reload") return location.reload();
@@ -1050,6 +1180,8 @@ document.addEventListener("focusout", (e) => {
   if (d.ms && e.target.tagName !== "SELECT") return msEdit(d.ms, d.f, e.target.value);
   if (d.post && e.target.type !== "checkbox" && e.target.tagName !== "SELECT") return postEdit(d.post, d.f, e.target.value);
   if (d.lot && d.f === "marge") return lotEdit(Number(d.lot), d.f, e.target.value);
+  if (d.vr) return vordEditPct(d.vr, Number(d.lot), e.target.value);
+  if (d.vf && e.target.tagName !== "SELECT" && e.target.type !== "date") return vordEdit(d.vf, d.f, e.target.value);
 });
 document.addEventListener("change", (e) => {
   const el = e.target;
@@ -1060,6 +1192,7 @@ document.addEventListener("change", (e) => {
   if (el.dataset.ms && el.tagName === "SELECT") return msEdit(el.dataset.ms, el.dataset.f, el.value);
   if (el.dataset.post && (el.type === "checkbox" || el.tagName === "SELECT")) return postEdit(el.dataset.post, el.dataset.f, el.value, el.checked);
   if (el.dataset.lot && el.type === "checkbox") return lotEdit(Number(el.dataset.lot), el.dataset.f, null, el.checked);
+  if (el.dataset.vf && (el.tagName === "SELECT" || el.type === "date")) return vordEdit(el.dataset.vf, el.dataset.f, el.value);
 });
 document.addEventListener("input", (e) => { if (e.target.dataset.filter === "q") { S.filters.q = e.target.value; render(); const i = $("[data-filter=q]"); i.focus(); i.setSelectionRange(i.value.length, i.value.length); } });
 document.addEventListener("keydown", (e) => { if (e.key === "Escape") closeModal(); if (e.key === "Enter" && e.target.classList && e.target.classList.contains("inline") && e.target.tagName === "INPUT") { e.preventDefault(); e.target.blur(); } });
