@@ -2,7 +2,7 @@
    BROS Planbord — app v1.0
    Statische webapp op Supabase (login, live-synchronisatie, rechten)
    ===================================================================== */
-const APP_VERSION = "1.10.1";
+const APP_VERSION = "1.10.2";
 const PROJ_STATUS = { offerte: "In offerte", lopend: "Lopend", on_hold: "On hold", afgerond: "Afgerond", verloren: "Verloren" };
 const KLANTTYPE = { particulier: "Particulier", zakelijk: "Zakelijk" };
 const KLANTCODE = { particulier: "PAR", zakelijk: "ZAK" };
@@ -187,7 +187,19 @@ async function driveSync(p, action) {
   loader.start("drive." + action, label + "…", action === "create" ? 12000 : 7000);
   try {
     const mapnaam = ((p.drive_map || "").replace(/^PROJECTEN\//, "").trim()) || p.klant;
-    const j = await driveCall(action, action === "list" ? { folderId: p.drive_folder_id } : { klant: mapnaam });
+    let j;
+    if (action === "list") j = await driveCall(action, { folderId: p.drive_folder_id });
+    else {
+      // Koppelen: probeer de opgeslagen mapnaam, daarna de klantnaam en een opgeschoonde variant (oude koppeltekens, dubbele spaties)
+      const clean = (s) => (s || "").replace(/\s*-\s*/g, " ").replace(/\s+/g, " ").trim();
+      const kandidaten = [...new Set([mapnaam, p.klant, clean(mapnaam), clean(p.klant)].map(s => (s || "").trim()).filter(Boolean))];
+      let fout = null;
+      for (const k of kandidaten) {
+        try { j = await driveCall(action === "create" ? "create" : "link", { klant: k }); fout = null; break; }
+        catch (e) { fout = e; if (action === "create" || !/Geen map gevonden/i.test(String(e.message || e))) throw e; }
+      }
+      if (fout) throw new Error(`Geen map gevonden in PROJECTEN. Geprobeerd: ${kandidaten.map(k => `"${k}"`).join(", ")}. Pas de Drive-map in het projectformulier aan naar de exacte mapnaam.`);
+    }
     loader.step("Bestanden bewaren…");
     await dbUpdate("projecten", p.id, { drive_folder_id: j.folder.id, drive_url: j.folder.url, drive_map: "PROJECTEN/" + j.folder.name });
     const rows = (j.files || []).filter(f => !/^\._|^Icon|^~\$|^\.DS_Store$|~\.skp$/i.test(f.name)).map(f => ({ project_id: p.id, drive_id: f.id, naam: f.name, pad: f.path || "", url: f.url, mime: f.mime || "", grootte: f.size || null, gewijzigd: f.updated || null, gesynct_op: new Date().toISOString() }));
@@ -1284,7 +1296,9 @@ function projectForm(p = {}) {
   </div>`, {
     wide: true,
     onSave: async (d) => {
-      const row = { klant: d.klant.trim(), naam: d.naam.trim(), klanttype: d.klanttype || "particulier", bedrijf: (d.bedrijf || "").trim(), btw_nummer: (d.btw_nummer || "").trim(), projecttype: d.projecttype || "", bron: d.bron || "", oppervlakte_m2: d.oppervlakte_m2 === "" ? null : Number(d.oppervlakte_m2), btw_tarief: d.btw_tarief === "" ? null : Number(d.btw_tarief), offerte_datum: d.offerte_datum || null, contract_datum: d.contract_datum || null, opgeleverd_op: d.opgeleverd_op || null, verloren_reden: d.status === "verloren" ? d.verloren_reden.trim() : "", tags: d.tags.trim(), contact: d.contact.trim(), adres: d.adres.trim(), postcode: d.postcode.trim(), gemeente: d.gemeente.trim(), gsm1: d.gsm1.trim(), gsm2: d.gsm2.trim(), email1: d.email1.trim(), email2: d.email2.trim(), factuur_email1: d.factuur_email1 === "on", factuur_email2: d.factuur_email2 === "on", lead: d.lead || null, status: d.status, fase_nr: d.fase_nr ? Number(d.fase_nr) : null, start: d.start || null, eind: d.eind || null, forfait: d.forfait === "" ? null : Number(d.forfait), drive_map: d.drive_map || ("PROJECTEN/" + d.klant.trim()), notities: d.notities };
+      const row = { klant: d.klant.trim(), naam: d.naam.trim(), klanttype: d.klanttype || "particulier", bedrijf: (d.bedrijf || "").trim(), btw_nummer: (d.btw_nummer || "").trim(), projecttype: d.projecttype || "", bron: d.bron || "", oppervlakte_m2: d.oppervlakte_m2 === "" ? null : Number(d.oppervlakte_m2), btw_tarief: d.btw_tarief === "" ? null : Number(d.btw_tarief), offerte_datum: d.offerte_datum || null, contract_datum: d.contract_datum || null, opgeleverd_op: d.opgeleverd_op || null, verloren_reden: d.status === "verloren" ? d.verloren_reden.trim() : "", tags: d.tags.trim(), contact: d.contact.trim(), adres: d.adres.trim(), postcode: d.postcode.trim(), gemeente: d.gemeente.trim(), gsm1: d.gsm1.trim(), gsm2: d.gsm2.trim(), email1: d.email1.trim(), email2: d.email2.trim(), factuur_email1: d.factuur_email1 === "on", factuur_email2: d.factuur_email2 === "on", lead: d.lead || null, status: d.status, fase_nr: d.fase_nr ? Number(d.fase_nr) : null, start: d.start || null, eind: d.eind || null, forfait: d.forfait === "" ? null : Number(d.forfait), drive_map: d.drive_map.trim() || ("PROJECTEN/" + d.klant.trim()), notities: d.notities };
+      // Klantnaam gewijzigd terwijl er nog geen Drive-map gekoppeld is en de mapnaam niet zelf aangepast werd → mapnaam volgt de klantnaam
+      if (!isNew && !p.drive_folder_id && row.klant !== (p.klant || "") && row.drive_map === (p.drive_map || "")) row.drive_map = "PROJECTEN/" + row.klant;
       if (d.nummer && d.nummer.trim()) row.nummer = d.nummer.trim(); else if (!isNew) row.nummer = p.nummer || null;
       if (isNew) {
         row.created_by = S.me.id;

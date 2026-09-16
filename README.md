@@ -53,6 +53,7 @@ Statische webapp (geen build-stap) op een Supabase-database.
 3. Deploy → New deployment → Web app → Execute as **Me**, Who has access **Anyone** → Deploy → kopieer de Web app-URL.
 4. In het Planbord: Instellingen → Drive-koppeling → URL + secret → Bewaren → "Verbinding testen".
 5. Nieuwe projecten krijgen automatisch hun map (kopie van A SJABLOON, bestanden hernoemd met de klantnaam). Voor bestaande projecten: projectfiche → Dossier → "Bestaande map koppelen".
+6. Mapnaam: het Planbord zoekt op de opgeslagen Drive-map (projectformulier), anders op de klantnaam; wordt die niet gevonden, dan probeert het ook een versie zonder koppeltekens en dubbele spaties. Het script herkent bovendien mappen die enkel in hoofdletters, spaties of leestekens verschillen (bv. "Chantor - Mansi" ↔ "Chantor Mansi"); bij meerdere kandidaten vraagt het om de exacte naam. Wijzig je de klantnaam vóór er een map gekoppeld is, dan volgt de Drive-map mee. Wijzig je de mapnaam zelf op Drive na koppeling, dan blijft de koppeling werken (ze loopt via de map-ID).
 
 ## Meetstaat in het Planbord (script 007)
 

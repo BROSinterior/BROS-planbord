@@ -38,6 +38,12 @@ function createOrLink(klant, create) {
   if (!klant) return { ok: false, error: "Geen klantnaam." };
   const existing = driveQuery("mimeType='application/vnd.google-apps.folder' and trashed=false and '" + CONFIG.PROJECTEN_FOLDER_ID + "' in parents and name='" + klant.replace(/'/g, "\\'") + "'", "id,name,webViewLink");
   if (existing.length) { const f = existing[0]; return { ok: true, created: false, folder: { id: f.id, url: f.webViewLink, name: f.name }, files: listFiles(f.id, "") }; }
+  // Geen exacte naam: zoek een map die op hoofdletters, spaties en leestekens na hetzelfde heet (bv. "Chantor - Mansi" ↔ "Chantor Mansi")
+  const norm = (s) => String(s || "").toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/[^a-z0-9]+/g, "");
+  const alle = driveQuery("mimeType='application/vnd.google-apps.folder' and trashed=false and '" + CONFIG.PROJECTEN_FOLDER_ID + "' in parents", "id,name,webViewLink");
+  const lijkend = alle.filter(f => norm(f.name) === norm(klant));
+  if (lijkend.length === 1) { const f = lijkend[0]; return { ok: true, created: false, folder: { id: f.id, url: f.webViewLink, name: f.name }, files: listFiles(f.id, "") }; }
+  if (lijkend.length > 1) return { ok: false, error: "Meerdere mappen lijken op \"" + klant + "\": " + lijkend.map(f => f.name).join(", ") + ". Vul de exacte mapnaam in bij Drive-map." };
   if (!create) return { ok: false, error: "Geen map gevonden met de naam \"" + klant + "\" in PROJECTEN." };
   const root = driveCreateFolders([{ name: klant, parent: CONFIG.PROJECTEN_FOLDER_ID }])[0];
   const files = copyTemplate(root.id, klant);
@@ -204,18 +210,20 @@ const YUKI = {
   BOT_EMAIL: "VUL-IN",             // Planbord-gebruiker voor de koppeling (bv. planbord-bot@bros.be)
   BOT_PASSWORD: "VUL-IN",
   REPORT_TO: "info@bros.be",       // samenvatting na elke run met resultaat
-  QUERY: 'subject:"Factuur van BROS" newer_than:60d -label:planbord-verwerkt',   // Yuki verstuurt "namens" accounting@bros.be via yukiworks.be
+  QUERY: 'subject:"Factuur van BROS" newer_than:60d -label:planbord-verwerkt -label:planbord-te-bekijken',   // Yuki verstuurt "namens" accounting@bros.be via yukiworks.be
   LABEL: "Planbord/verwerkt",
+  LABEL_CHECK: "Planbord/te bekijken",   // niet gekoppeld: één keer gemeld; label weghalen in Gmail = opnieuw proberen
   TOL: 1.0,                        // toegelaten verschil in euro tussen factuur en berekend bedrag
 };
 function yukiInstall() {
-  GmailApp.createLabel(YUKI.LABEL);
+  GmailApp.createLabel(YUKI.LABEL); GmailApp.createLabel(YUKI.LABEL_CHECK);
   ScriptApp.getProjectTriggers().filter(t => t.getHandlerFunction() === "yukiSync").forEach(t => ScriptApp.deleteTrigger(t));
   ScriptApp.newTrigger("yukiSync").timeBased().everyHours(1).create();
   Logger.log("OK — label en uurlijkse trigger aangemaakt. Test nu met yukiSync().");
 }
 function yukiSync() {
   const label = GmailApp.getUserLabelByName(YUKI.LABEL) || GmailApp.createLabel(YUKI.LABEL);
+  const labelCheck = GmailApp.getUserLabelByName(YUKI.LABEL_CHECK) || GmailApp.createLabel(YUKI.LABEL_CHECK);
   const threads = GmailApp.search(YUKI.QUERY, 0, 30);
   if (!threads.length) return Logger.log("Geen nieuwe Yuki-facturen.");
   const facturen = [];
@@ -224,8 +232,11 @@ function yukiSync() {
     const f = yukiParse(m); if (f) { f.thread = t; facturen.push(f); }
   }));
   if (!facturen.length) return Logger.log("Geen facturen herkend in " + threads.length + " mails.");
-  const rapport = yukiKoppel(facturen);
-  rapport.forEach(r => { if (r.resultaat === "gekoppeld" || r.resultaat === "al gekoppeld") r.thread.addLabel(label); });
+  // zelfde factuur in meerdere mails (bv. doorgestuurd én via filter): één keer verwerken, alle mails labelen
+  const perNr = {}; facturen.forEach(f => { (perNr[f.factuurnummer] = perNr[f.factuurnummer] || []).push(f); });
+  const uniek = Object.keys(perNr).map(nr => perNr[nr][0]);
+  const rapport = yukiKoppel(uniek);
+  rapport.forEach(r => { const ok = r.resultaat === "gekoppeld" || r.resultaat === "al gekoppeld"; perNr[r.factuurnummer].forEach(f => f.thread.addLabel(ok ? label : labelCheck)); });
   yukiRapporteer(rapport);
 }
 /** Haalt nummer, datum, klant en bedragen uit de mail (en de pdf-bijlage als die leesbaar is). */
@@ -268,7 +279,7 @@ function pbReq(path, method, body, token, prefer) {
   return t ? JSON.parse(t) : null;
 }
 function pbLogin() { return pbReq("/auth/v1/token?grant_type=password", "post", { email: YUKI.BOT_EMAIL, password: YUKI.BOT_PASSWORD }).access_token; }
-function yukiNorm(s) { return String(s || "").toLowerCase().normalize("NFKD").replace(/[̀-ͯ]/g, "").replace(/\b(bv|bvba|nv|vof|cv|srl|sa|invest|group)\b/g, " ").replace(/[^a-z0-9]+/g, " ").trim(); }
+function yukiNorm(s) { return String(s || "").toLowerCase().normalize("NFKD").replace(/[\u0300-\u036f]/g, "").replace(/\b(bv|bvba|nv|vof|cv|srl|sa|invest|group)\b/g, " ").replace(/[^a-z0-9]+/g, " ").trim(); }
 /* dezelfde rekenregels als app.js (vordCalc) */
 function yukiCalc(v, rows, regels, loten) {
   const mw = v.soort === "meerwerk"; const lotRg = {}, postRg = {};
@@ -322,7 +333,7 @@ function yukiRapporteer(rapport) {
   const lijn = r => "• Factuur " + r.factuurnummer + " (" + (r.klant || "?") + ", € " + (r.totaal_incl || 0).toFixed(2) + " incl.): " + r.resultaat +
     (r.resultaat === "gekoppeld" ? " → " + r.project + " (" + r.projectnummer + "), " + (r.vordering_nr === 0 ? "voorschot" : r.vordering_soort + " #" + r.vordering_nr) + ", bedrag excl. € " + r.bedrag_excl.toFixed(2) + (r.opmerking ? " — LET OP: " + r.opmerking : "") : r.reden ? " — " + r.reden : "") + (r.pdf_fout ? " (pdf niet gelezen)" : "");
   const nieuw = rapport.filter(r => r.resultaat !== "al gekoppeld"); if (!nieuw.length) return;
-  const txt = "Yuki-facturen verwerkt in het Planbord:\n\n" + nieuw.map(lijn).join("\n") + "\n\nNiet-gekoppelde facturen koppel je manueel: projectfiche → Facturatie → factuurnummer en bedrag invullen bij de juiste vordering.";
+  const txt = "Yuki-facturen verwerkt in het Planbord:\n\n" + nieuw.map(lijn).join("\n") + "\n\nNiet-gekoppelde facturen koppel je manueel (projectfiche → Facturatie → factuurnummer en bedrag bij de juiste vordering), of je maakt eerst de vordering aan en haalt in Gmail het label \"Planbord/te bekijken\" van de mail — dan probeert het script het volgende uur opnieuw.";
   GmailApp.sendEmail(YUKI.REPORT_TO, "Planbord: " + nieuw.filter(r => r.resultaat === "gekoppeld").length + " factuur/facturen gekoppeld" + (nieuw.some(r => r.resultaat !== "gekoppeld") ? " — " + nieuw.filter(r => r.resultaat !== "gekoppeld").length + " te bekijken" : ""), txt);
   Logger.log(txt);
 }
