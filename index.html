@@ -205,6 +205,19 @@
   .crumb { display: inline-flex; gap: 6px; align-items: center; color: var(--muted); font-size: 13px; margin-bottom: 8px; }
   .crumb button { background: none; border: 0; padding: 0; color: var(--accent); cursor: pointer; font-weight: 500; }
   .docs { display: grid; grid-template-columns: repeat(auto-fill, minmax(230px, 1fr)); gap: 10px; }
+  .notes { display: grid; grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); gap: 12px; padding: 14px 16px; }
+  .note { border: 1px solid var(--line); border-radius: 10px; padding: 12px 14px; background: var(--surface); cursor: pointer; display: flex; flex-direction: column; gap: 6px; }
+  .note:hover { border-color: var(--muted); }
+  .note-head { display: flex; align-items: center; gap: 8px; font-size: 12px; flex-wrap: wrap; }
+  .note-title { font-family: var(--font-display); font-weight: 700; font-size: 15px; }
+  .note-body { font-size: 13px; line-height: 1.4; }
+  .note-foot { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin-top: auto; padding-top: 4px; }
+  .ap-row { display: flex; gap: 6px; margin-bottom: 6px; }
+  .ap-row input, .ap-row select { font: inherit; font-size: 13px; padding: 6px 8px; border: 1px solid var(--line-2); border-radius: 6px; background: var(--surface); color: var(--ink); min-width: 0; width: auto; }
+  .field .ap-row input:not([type=date]) { flex: 2 1 0; width: auto; }
+  .field .ap-row select { flex: 1 1 0; width: auto; max-width: 180px; }
+  .field .ap-row input[type=date] { flex: 0 0 150px; width: 150px; }
+  .subtabs .cnt { display: inline-block; min-width: 16px; padding: 0 5px; border-radius: 8px; background: var(--surface-2); color: var(--ink-2); font-size: 11px; text-align: center; margin-left: 2px; }
   .doc-wrap { display: flex; align-items: center; gap: 8px; min-width: 0; }
   .doc-wrap .doc { flex: 1; min-width: 0; }
   .doc-wrap.shared .doc { border-color: var(--ok); }
@@ -356,11 +369,11 @@
 <div class="toast" id="toast" role="status"></div>
 <div class="loader" id="loader" aria-live="polite"><div class="logo"><i class="base"></i><i class="fill" id="loaderFill"></i></div><div class="pct" id="loaderPct">0%</div><div class="msg" id="loaderMsg">Even geduld…</div></div>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.45.4/dist/umd/supabase.min.js"></script>
-<script src="config.js?v=1.14.0"></script>
+<script src="config.js?v=1.15.0"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
-<script src="postcodes.js?v=1.14.0"></script>
-<script src="meetstaat-export.js?v=1.14.0"></script>
-<script src="meetstaat-import.js?v=1.14.0"></script>
-<script src="app.js?v=1.14.0"></script>
+<script src="postcodes.js?v=1.15.0"></script>
+<script src="meetstaat-export.js?v=1.15.0"></script>
+<script src="meetstaat-import.js?v=1.15.0"></script>
+<script src="app.js?v=1.15.0"></script>
 </body>
 </html>

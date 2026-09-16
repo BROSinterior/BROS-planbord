@@ -29,6 +29,7 @@ function doPost(e) {
     if (body.action === "invite") return json(portaalInvite(body));
     if (body.action === "share") return json(portaalShare(body));
     if (body.action === "gkmail") return json(goedkeuringMail(body));
+    if (body.action === "notitiemail") return json(notitieMail(body));
     return json({ ok: false, error: "Onbekende actie." });
   } catch (err) {
     return json({ ok: false, error: String(err && err.message || err) });
@@ -344,6 +345,26 @@ function goedkeuringMail(body) {
       portaalMail(g.beslist_email, (ok ? "Bevestiging van je akkoord: " : "Je reactie op: ") + g.titel, (ok ? "Bedankt voor je akkoord op " : "We ontvingen je reactie op ") + g.titel + " (" + eur(g.totaal_incl) + " incl. btw).\n\nBROS", bevestiging); naar.push(g.beslist_email);
     }
   }
+  return { ok: true, naar: naar };
+}
+/** Verslag gedeeld met de klant: mail met het verslag en de actiepunten naar de klanten met portaal-toegang. */
+function notitieMail(body) {
+  const wie = caller(body.token, false);
+  const n = (pbAdmin("/rest/v1/notities?id=eq." + encodeURIComponent(String(body.id || "")) + "&select=*", "get") || [])[0];
+  if (!n || !n.klant_zichtbaar) return { ok: false, error: "Notitie niet gevonden of niet gedeeld." };
+  const p = (pbAdmin("/rest/v1/projecten?id=eq." + n.project_id + "&select=nummer,klant,naam", "get") || [])[0] || {};
+  const pcs = pbAdmin("/rest/v1/project_contacten?project_id=eq." + n.project_id + "&rol=in.(bouwheer,contactpersoon)&select=contact_id", "get") || [];
+  const klanten = pcs.length ? (pbAdmin("/rest/v1/contacten?id=in.(" + pcs.map(x => x.contact_id).join(",") + ")&user_id=not.is.null&select=naam,email", "get") || []).filter(c => c.email) : [];
+  const taken = pbAdmin("/rest/v1/taken?notitie_id=eq." + n.id + "&select=titel,eind,status,assignee", "get") || [];
+  const namen = {}; (pbAdmin("/rest/v1/profiles?select=id,name", "get") || []).forEach(u => namen[u.id] = u.name);
+  const SOORT = { vergadering: "Vergadering", werfverslag: "Werfverslag", bespreking: "Bespreking", feedback: "Feedback", notitie: "Notitie" };
+  const datum = String(n.datum || "").split("-").reverse().join("/");
+  const punten = taken.length ? "<h3 style=\"font-size:15px;margin:18px 0 6px\">Actiepunten</h3><ul style=\"padding-left:18px;margin:0\">" + taken.map(t => "<li>" + (t.status === "done" ? "✅ " : "") + String(t.titel).replace(/</g, "&lt;") + (t.assignee && namen[t.assignee] ? " <span style=\"color:#767D78\">· " + namen[t.assignee] + "</span>" : "") + (t.eind ? " <span style=\"color:#767D78\">· " + String(t.eind).split("-").reverse().join("/") + "</span>" : "") + "</li>").join("") + "</ul>" : "";
+  const html = "<div style=\"font-family:Helvetica,Arial,sans-serif;font-size:15px;line-height:1.5;color:#1B1E1C;max-width:720px\"><p>Beste,</p><p>Hierbij het verslag <b>" + String(n.titel || SOORT[n.soort]).replace(/</g, "&lt;") + "</b> (" + (SOORT[n.soort] || n.soort) + " van " + datum + ") voor " + (p.klant || "") + (p.naam && p.naam !== p.klant ? " · " + p.naam : "") + "." + (n.deelnemers ? "<br><span style=\"color:#767D78\">Aanwezig: " + String(n.deelnemers).replace(/</g, "&lt;") + "</span>" : "") + "</p>"
+    + "<div style=\"white-space:pre-line;padding:14px 16px;border:1px solid #DAD8D0;border-radius:10px;background:#F5F4F0\">" + String(n.inhoud || "").replace(/</g, "&lt;") + "</div>" + punten
+    + "<p style=\"margin-top:20px\">Je vindt dit verslag ook terug in je klantenportaal: <a href=\"" + PORTAAL.URL + "\">" + PORTAAL.URL + "</a></p><p>" + wie.name + " — BROS</p></div>";
+  const tekst = "Beste,\n\nHierbij het verslag " + (n.titel || "") + " (" + datum + ").\n\n" + (n.inhoud || "") + (taken.length ? "\n\nActiepunten:\n" + taken.map(t => "- " + t.titel + (t.assignee && namen[t.assignee] ? " (" + namen[t.assignee] + ")" : "")).join("\n") : "") + "\n\nOok in je portaal: " + PORTAAL.URL + "\n\n" + wie.name + " — BROS";
+  const naar = []; klanten.forEach(c => { portaalMail(c.email, "Verslag: " + (n.titel || SOORT[n.soort]) + " · " + datum, tekst.replace("Beste,", "Beste " + c.naam + ","), html.replace("Beste,", "Beste " + String(c.naam).replace(/</g, "&lt;") + ",")); naar.push(c.email); });
   return { ok: true, naar: naar };
 }
 /** Bestand delen met de klant: "iedereen met de link mag lezen" aan- of uitzetten. */

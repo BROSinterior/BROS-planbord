@@ -40,7 +40,7 @@ Statische webapp (geen build-stap) op een Supabase-database.
 - Nieuwe versie = bestanden vervangen in deze map → GitHub Desktop → *Commit* → *Push*. Na ± 1 minuut staat ze online.
 - `version.json` krijgt bij elke update een nieuw nummer; wie de app open heeft, ziet "nieuwe versie beschikbaar" en herlaadt wanneer het past.
 - Bij elke update ook het `?v=…` achter de scripts in `index.html` gelijkzetten met het versienummer (Claude doet dit mee bij elke levering); zo laadt geen enkele browser nog een oude app.js uit zijn cache. Ziet iemand toch een oude versie: ⌘⇧R (harde herlaad).
-- Databasewijzigingen komen als genummerde scripts in `sql/` (002 … 013), altijd toevoegingen, nooit verwijderingen. Vóór elk script: Supabase → Database → Backups.
+- Databasewijzigingen komen als genummerde scripts in `sql/` (002 … 014), altijd toevoegingen, nooit verwijderingen. Vóór elk script: Supabase → Database → Backups.
 - Een volgende versie eerst testen: in de map `next/` zetten; die is bereikbaar op `…/BROS-planbord/next/` met dezelfde database.
 
 ## Rollen
@@ -92,6 +92,13 @@ Gebruik per project: projectfiche → Dossier → Contacten → bij de bouwheer 
 - De klant keurt goed met zijn naam en een vinkje, of klikt "Ik heb een vraag / niet akkoord" met een opmerking. De beslissing loopt via de databasefunctie `goedkeuring_beslis()` (controleert dat het zijn project is en dat het voorstel nog open staat) en wordt vastgelegd met naam, e-mail en tijdstip.
 - Bij akkoord: offerteposten → status Akkoord; alle posten uit het voorstel krijgen `akkoord_op` (vinkje "✓ klant dd/mm" in de meetstaat, ook in het portaal). BROS krijgt een melding op het rapportadres (info@bros.be), de klant een bevestiging met het overzicht. Bij "niet akkoord" blijven de posten ongewijzigd en staat de opmerking in het paneel **Goedkeuringen door de klant** op de meetstaat; van daaruit kan je intrekken of opnieuw voorleggen.
 - Vereist `sql/013_goedkeuringen.sql` en het nieuwe `drive/Code.gs` (actie `gkmail`).
+
+## Notities en verslagen (script 014)
+
+- Projectfiche → tabblad **Notities** (+ Notitie) en hoofdnavigatie **Notities** (alle projecten, zoeken, eigen open actiepunten). Soorten: vergadering, werfverslag, bespreking, feedback klant, notitie — elk met een sjabloon (aanwezig, besproken, beslissingen, afspraken, volgende stap) dat je met "Sjabloon invullen" in het verslag zet.
+- Per notitie: datum, aanwezigen (vrije tekst), verslag, verantwoordelijken uit het team én uit de aan het project gekoppelde contacten (aannemers, architect, …), en **actiepunten**: elke regel wordt een taak op het project (wie, deadline, gekoppeld aan de notitie). In de notitie vink je ze af; in de takenlijst staat "📝 <verslag>" bij zo'n taak, en in het taakformulier kan je een taak aan een verslag koppelen. Bij een nieuwe notitie zie je de nog open actiepunten uit vorige verslagen.
+- **Delen met de klant**: het verslag en zijn actiepunten (titel, wie, deadline, klaar/open) verschijnen in het portaal onder **Verslagen**; de klant krijgt een mail met het verslag (Drive-script, actie `notitiemail`). Interne opmerkingen horen dan niet in dat verslag — maak daarvoor een aparte notitie zonder deling.
+- Vereist `sql/014_notities.sql` en het nieuwe `drive/Code.gs`.
 
 ## Yuki-koppeling (in drive/Code.gs)
 

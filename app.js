@@ -2,7 +2,7 @@
    BROS Planbord — app v1.0
    Statische webapp op Supabase (login, live-synchronisatie, rechten)
    ===================================================================== */
-const APP_VERSION = "1.14.0";
+const APP_VERSION = "1.15.0";
 const PROJ_STATUS = { offerte: "In offerte", lopend: "Lopend", on_hold: "On hold", afgerond: "Afgerond", verloren: "Verloren" };
 const KLANTTYPE = { particulier: "Particulier", zakelijk: "Zakelijk" };
 const KLANTCODE = { particulier: "PAR", zakelijk: "ZAK" };
@@ -35,7 +35,7 @@ const workdays = (a, b) => { let n = 0; for (let s = a; s <= b; s = addDays(s, 1
 /* ---------- state ---------- */
 const S = {
   session: null, me: null, setPassword: false, passwordForced: false,
-  profiles: {}, tarieven: {}, fasen: {}, standaardtaken: [], projecten: {}, taken: {}, uren: {}, documenten: {}, instellingen: {}, loten: {}, posten: {}, meetstaat_posten: {}, vorderingen: {}, vordering_regels: {}, contacten: {}, project_contacten: {}, goedkeuringen: {},
+  profiles: {}, tarieven: {}, fasen: {}, standaardtaken: [], projecten: {}, taken: {}, uren: {}, documenten: {}, instellingen: {}, loten: {}, posten: {}, meetstaat_posten: {}, vorderingen: {}, vordering_regels: {}, contacten: {}, project_contacten: {}, goedkeuringen: {}, notities: {},
   view: "overzicht", project: null, ptab: "taken",
   filters: { user: "", status: "", project: "", q: "" }, cfilters: { soort: "", q: "" },
   ganttStart: addDays(mondayOf(todayIso), -14), ganttDays: 112, ganttOpen: {},
@@ -80,8 +80,8 @@ const projKost = (pid, soort) => Object.values(S.uren).filter(h => h.project_id 
 let toastT; function toast(msg) { const t = $("#toast"); t.textContent = msg; t.classList.add("show"); clearTimeout(toastT); toastT = setTimeout(() => t.classList.remove("show"), 2800); }
 
 /* ---------- data laden en live houden ---------- */
-const TABLES = { profiles: "profiles", tarieven: "tarieven", fasen: "fasen", standaardtaken: "standaardtaken", projecten: "projecten", taken: "taken", uren: "uren", documenten: "documenten", instellingen: "instellingen", loten: "loten", posten: "posten", meetstaat_posten: "meetstaat_posten", vorderingen: "vorderingen", vordering_regels: "vordering_regels", contacten: "contacten", project_contacten: "project_contacten", goedkeuringen: "goedkeuringen" };
-const OPTIONAL_TABLES = ["tarieven", "documenten", "instellingen", "loten", "posten", "meetstaat_posten", "vorderingen", "vordering_regels", "contacten", "project_contacten", "goedkeuringen"]; // ontbreken zolang het bijbehorende sql-script niet is uitgevoerd
+const TABLES = { profiles: "profiles", tarieven: "tarieven", fasen: "fasen", standaardtaken: "standaardtaken", projecten: "projecten", taken: "taken", uren: "uren", documenten: "documenten", instellingen: "instellingen", loten: "loten", posten: "posten", meetstaat_posten: "meetstaat_posten", vorderingen: "vorderingen", vordering_regels: "vordering_regels", contacten: "contacten", project_contacten: "project_contacten", goedkeuringen: "goedkeuringen", notities: "notities" };
+const OPTIONAL_TABLES = ["tarieven", "documenten", "instellingen", "loten", "posten", "meetstaat_posten", "vorderingen", "vordering_regels", "contacten", "project_contacten", "goedkeuringen", "notities"]; // ontbreken zolang het bijbehorende sql-script niet is uitgevoerd
 const rowKey = (t, r) => t === "fasen" || t === "loten" ? r.nr : t === "tarieven" ? r.user_id : t === "instellingen" ? r.key : t === "vordering_regels" ? (r.id || r.vordering_id + "|" + r.lot + "|" + (r.post_id || "")) : r.id;
 function ingest(table, rows) {
   if (table === "standaardtaken") { S.standaardtaken = rows.sort((a, b) => a.fase_nr - b.fase_nr || a.volgorde - b.volgorde); return; }
@@ -110,7 +110,7 @@ async function loadAll() {
 }
 function subscribe() {
   // Eén kanaal per tabel: als één tabel niet in de realtime-publicatie zit, blijven de andere werken.
-  ["profiles", "tarieven", "fasen", "standaardtaken", "projecten", "taken", "uren", "documenten", "loten", "posten", "meetstaat_posten", "meetstaat_prijzen", "vorderingen", "vordering_regels", "contacten", "project_contacten", "goedkeuringen"].forEach(t => {
+  ["profiles", "tarieven", "fasen", "standaardtaken", "projecten", "taken", "uren", "documenten", "loten", "posten", "meetstaat_posten", "meetstaat_prijzen", "vorderingen", "vordering_regels", "contacten", "project_contacten", "goedkeuringen", "notities"].forEach(t => {
     const ch = sb.channel("pb-" + t);
     ch.on("postgres_changes", { event: "*", schema: "public", table: t }, (payload) => {
       if (t === "standaardtaken") { refetch(t); return; }
@@ -424,6 +424,92 @@ function vMeetstaat(p) {
   return kpi + vGoedkeuringen(p) + `<div class="panel"><div class="panel-head"><div><h3>Meetstaat</h3><div class="muted" style="font-size:12px;margin-top:2px">${rows.length ? `${rows.length} posten in ${lots.length} loten` : "Nog leeg"} · klik in een veld om het te wijzigen, bewaard bij verlaten van het veld</div></div>
       <div class="actions">${schemaV() >= 13 && rows.some(r => gkKandidaat(r)) ? `<button class="btn sm" data-act="gk-new" data-pid="${p.id}" title="Offerte of meerwerk bevroren ter goedkeuring in het klantenportaal zetten">Ter goedkeuring voorleggen</button>` : ""}<button class="btn sm" data-act="ms-import" data-pid="${p.id}" title="Een bestaande meetstaat (Excel, elk BROS-sjabloon) inlezen als posten">Importeren uit Excel</button>${rows.length ? `<button class="btn sm" data-act="ms-export" data-pid="${p.id}" title="Excel in het BROS-sjabloon aanmaken in Documenten/Meetstaat van de projectmap">Exporteren naar Drive (Excel)</button>` : ""}<button class="btn sm" data-act="ms-add-post" data-pid="${p.id}">+ Post</button><button class="btn sm primary" data-act="ms-add-lot" data-pid="${p.id}">+ Lot toevoegen</button></div></div>
     ${rows.length ? `<div class="tw"><table class="t ms"><thead><tr><th>Nr</th><th>Omschrijving</th><th>Locatie</th><th>Hoev.</th><th>Eenh.</th>${beheer ? `<th title="Kostprijs / aannemersprijs excl. btw">Kost EP</th><th>Marge</th>` : ""}<th class="r">Klant EP</th><th class="r">Totaal excl.</th>${beheer ? `<th>Btw</th>` : ""}<th>Status</th><th></th></tr></thead><tbody>${body}</tbody></table></div>` : `<div class="empty"><b>Nog geen posten</b>Voeg een lot toe (met de standaardposten) of kies losse posten uit de bibliotheek.</div>`}</div>`;
+}
+/* ---------- Notities / verslagen per project: vergaderingen, werfverslagen, feedback — met verantwoordelijken en actiepunten (taken) ---------- */
+const NOTE_SOORT = { vergadering: "Vergadering", werfverslag: "Werfverslag", bespreking: "Bespreking", feedback: "Feedback klant", notitie: "Notitie" };
+const NOTE_SJABLOON = {
+  vergadering: "AANWEZIG\n- \n\nBESPROKEN\n1. \n2. \n\nBESLISSINGEN\n- \n\nVOLGENDE STAPPEN\n- \n\nVOLGENDE VERGADERING\n",
+  werfverslag: "AANWEZIG OP DE WERF\n- \n\nSTAND VAN DE WERKEN\n- \n\nVASTSTELLINGEN / OPMERKINGEN\n- \n\nAFSPRAKEN\n- \n\nPLANNING VOLGENDE WEEK\n- \n\nVOLGEND WERFBEZOEK\n",
+  bespreking: "ONDERWERP\n\n\nBESPROKEN\n- \n\nAFSPRAKEN\n- \n",
+  feedback: "FEEDBACK VAN DE KLANT\n- \n\nWAT WE ERMEE DOEN\n- \n",
+  notitie: "",
+};
+const notesOf = (pid) => Object.values(S.notities).filter(n => n.project_id === pid).sort((a, b) => (b.datum || "").localeCompare(a.datum || "") || (b.created_at || "").localeCompare(a.created_at || ""));
+const noteTasks = (nid) => Object.values(S.taken).filter(t => t.notitie_id === nid).sort((a, b) => (a.eind || "9").localeCompare(b.eind || "9"));
+const noteWie = (n) => [...(n.verantwoordelijken || []).map(id => S.profiles[id]?.name).filter(Boolean), ...(n.contact_ids || []).map(id => S.contacten[id]?.naam).filter(Boolean)];
+const noteExcerpt = (t, n = 160) => { const s = String(t || "").replace(/\s+/g, " ").trim(); return s.length > n ? s.slice(0, n) + "…" : s; };
+function noteCard(n, withProject) {
+  const ts = noteTasks(n.id), open = ts.filter(t => t.status !== "done").length; const wie = noteWie(n);
+  return `<div class="note" data-act="note-open" data-id="${n.id}">
+    <div class="note-head"><span class="pill phase">${NOTE_SOORT[n.soort] || esc(n.soort)}</span><span class="num muted">${fmtLong(n.datum)}</span>${n.klant_zichtbaar ? `<span class="pill st-afgerond" title="Zichtbaar voor de klant in het portaal">klant</span>` : ""}${withProject && S.projecten[n.project_id] ? `<span class="muted">· ${esc(projName(S.projecten[n.project_id]))}</span>` : ""}</div>
+    <div class="note-title">${esc(n.titel || NOTE_SOORT[n.soort])}</div>
+    <div class="note-body muted">${esc(noteExcerpt(n.inhoud))}</div>
+    <div class="note-foot"><span class="who-cell">${n.auteur ? avatar(n.auteur) : ""}<span class="muted" style="font-size:12px">${esc(userById(n.auteur).name)}</span></span>${wie.length ? `<span class="muted" style="font-size:12px">→ ${wie.map(esc).join(", ")}</span>` : ""}${ts.length ? `<span class="pill ${open ? "busy" : "done"}" style="font-size:11px">${open ? `${open} open` : "alles klaar"} · ${ts.length} actiepunt${ts.length === 1 ? "" : "en"}</span>` : ""}</div></div>`;
+}
+function vNotities(p) {
+  if (schemaV() < 14) return SCHEMA_HINT(14);
+  const ns = notesOf(p.id); const q = (S.noteQ || "").toLowerCase();
+  const list = ns.filter(n => !q || [n.titel, n.inhoud, n.deelnemers, NOTE_SOORT[n.soort]].some(v => (v || "").toLowerCase().includes(q)));
+  const openPunten = Object.values(S.taken).filter(t => t.project_id === p.id && t.notitie_id && t.status !== "done").sort((a, b) => (a.eind || "9").localeCompare(b.eind || "9"));
+  return `<div class="panel" style="margin-bottom:16px"><div class="panel-head"><div><h3>Notities en verslagen</h3><div class="muted" style="font-size:12px;margin-top:2px">Vergaderingen, werfverslagen, besprekingen en feedback van dit project. Actiepunten worden taken; een verslag kan je delen met de klant.</div></div>
+      <div class="actions"><input class="inline" data-noteq placeholder="Zoeken…" value="${esc(S.noteQ || "")}" style="width:160px"><button class="btn sm primary" data-act="note-new" data-pid="${p.id}">+ Notitie</button></div></div>
+    ${list.length ? `<div class="notes">${list.map(n => noteCard(n)).join("")}</div>` : `<div class="empty"><b>${q ? "Niets gevonden" : "Nog geen notities"}</b>${q ? "" : "Maak een verslag van een vergadering of werfbezoek; de actiepunten komen automatisch als taken op dit project."}</div>`}</div>
+    ${openPunten.length ? `<div class="panel"><div class="panel-head"><h3>Open actiepunten uit verslagen</h3><span class="muted" style="font-size:12px">${openPunten.length}</span></div><div class="tw"><table class="t"><tbody>${openPunten.map(t => `<tr class="click" data-edit-task="${t.id}"><td style="width:28px"><input type="checkbox" class="task-check" data-toggle="${t.id}" aria-label="Klaar"></td><td>${esc(t.titel)}<small class="muted" style="display:block">📝 ${esc(S.notities[t.notitie_id]?.titel || "")} · ${fmtLong(S.notities[t.notitie_id]?.datum)}</small></td><td><span class="who-cell">${t.assignee ? avatar(t.assignee) : ""}${esc(userById(t.assignee).name)}</span></td><td class="num" style="color:${isLate(t) ? "var(--crit)" : "inherit"}">${fmt(t.eind)}</td><td>${pill(t)}</td></tr>`).join("")}</tbody></table></div></div>` : ""}`;
+}
+function vNotitiesAlle() {
+  if (schemaV() < 14) return `<div class="page-head"><div><h1>Notities</h1></div></div>` + SCHEMA_HINT(14);
+  const q = (S.noteQ || "").toLowerCase(); const ns = Object.values(S.notities).sort((a, b) => (b.datum || "").localeCompare(a.datum || "") || (b.created_at || "").localeCompare(a.created_at || ""));
+  const list = ns.filter(n => !q || [n.titel, n.inhoud, n.deelnemers, NOTE_SOORT[n.soort], S.projecten[n.project_id]?.klant].some(v => (v || "").toLowerCase().includes(q))).slice(0, 60);
+  const mine = Object.values(S.taken).filter(t => t.notitie_id && t.status !== "done" && t.assignee === S.me.id).sort((a, b) => (a.eind || "9").localeCompare(b.eind || "9"));
+  return `<div class="page-head"><div><div class="eyebrow">${ns.length} notities</div><h1>Notities</h1><div class="sub">Alle verslagen over alle projecten. Nieuwe notities maak je op de projectfiche (tabblad Notities).</div></div><div class="actions"><input class="inline" data-noteq placeholder="Zoeken in titel, inhoud, project…" value="${esc(S.noteQ || "")}" style="width:260px"></div></div>
+    ${mine.length ? `<div class="panel" style="margin-bottom:16px"><div class="panel-head"><h3>Mijn open actiepunten</h3><span class="muted" style="font-size:12px">${mine.length}</span></div><div class="tw"><table class="t"><tbody>${mine.map(t => `<tr class="click" data-edit-task="${t.id}"><td style="width:28px"><input type="checkbox" class="task-check" data-toggle="${t.id}" aria-label="Klaar"></td><td>${esc(t.titel)}<small class="muted" style="display:block">${esc(projName(S.projecten[t.project_id] || {}))} · 📝 ${esc(S.notities[t.notitie_id]?.titel || "")}</small></td><td class="num" style="color:${isLate(t) ? "var(--crit)" : "inherit"}">${fmt(t.eind)}</td><td>${pill(t)}</td></tr>`).join("")}</tbody></table></div></div>` : ""}
+    ${list.length ? `<div class="notes">${list.map(n => noteCard(n, true)).join("")}</div>` : `<div class="panel"><div class="empty"><b>${q ? "Niets gevonden" : "Nog geen notities"}</b></div></div>`}`;
+}
+function noteForm(n = {}, pid) {
+  const isNew = !n.id; const projectId = n.project_id || pid; const p = S.projecten[projectId]; if (!p) return;
+  const soort = n.soort || "vergadering"; const ts = isNew ? [] : noteTasks(n.id);
+  const vorige = isNew ? Object.values(S.taken).filter(t => t.project_id === projectId && t.notitie_id && t.status !== "done") : [];
+  const team = users(); const pcs = contactsOf(projectId).filter(x => x.rol !== "bouwheer" && x.rol !== "contactpersoon");
+  const vr = new Set(n.verantwoordelijken || []), cr = new Set(n.contact_ids || []);
+  const taakRij = (i) => `<div class="ap-row"><input name="ap_titel_${i}" placeholder="Actiepunt / taak" style="flex:2"><select name="ap_wie_${i}">${userOpts(S.me.id, true)}</select><input name="ap_eind_${i}" type="date" title="Deadline"></div>`;
+  openModal(isNew ? "Nieuwe notitie — " + p.klant : (n.titel || NOTE_SOORT[n.soort]), `<div class="form-grid">
+    <div class="field"><label for="n_soort">Soort</label><select id="n_soort" name="soort">${opts(Object.entries(NOTE_SOORT), soort)}</select></div>
+    <div class="field"><label for="n_datum">Datum</label><input id="n_datum" name="datum" type="date" value="${esc(n.datum || todayIso)}"></div>
+    <div class="field span2"><label for="n_titel">Titel</label><input id="n_titel" name="titel" required value="${esc(n.titel || "")}" placeholder="bv. Werfvergadering 3 · keuken en badkamer"></div>
+    <div class="field span2"><label for="n_deel">Aanwezig / betrokken (vrije tekst)</label><input id="n_deel" name="deelnemers" value="${esc(n.deelnemers || "")}" placeholder="bv. Phil, Noa, Jo Appelmans, schrijnwerker Peeters"></div>
+    <div class="field span2"><label for="n_inhoud">Verslag ${isNew ? `<button type="button" class="btn ghost sm" data-note-sjabloon>Sjabloon invullen</button>` : ""}</label><textarea id="n_inhoud" name="inhoud" rows="14" style="font-family:var(--font-body);line-height:1.5">${esc(n.inhoud || "")}</textarea></div>
+    <div class="field"><label>Verantwoordelijken — team</label><div class="fase-list">${team.map(u => `<label class="chk"><input type="checkbox" name="vr" value="${u.id}" ${vr.has(u.id) ? "checked" : ""}> <span>${esc(u.name)}</span></label>`).join("")}</div></div>
+    <div class="field"><label>Verantwoordelijken — aannemers en andere contacten</label>${pcs.length ? `<div class="fase-list">${pcs.map(x => `<label class="chk"><input type="checkbox" name="cr" value="${x.c.id}" ${cr.has(x.c.id) ? "checked" : ""}> <span>${esc(x.c.naam)}<small class="muted" style="display:block">${CONTACT_ROL[x.rol] || x.rol}${x.c.vakgebied ? " · " + esc(x.c.vakgebied) : ""}</small></span></label>`).join("")}</div>` : `<div class="muted" style="font-size:12px;padding:6px 0">Koppel aannemers aan dit project via Dossier › Contacten; dan kan je ze hier aanduiden.</div>`}</div>
+    <div class="field span2"><label>Actiepunten → taken op dit project</label>
+      ${ts.length ? `<div class="tw" style="margin-bottom:8px"><table class="t"><tbody>${ts.map(t => `<tr><td style="width:28px"><input type="checkbox" name="ap_done_${t.id}" ${t.status === "done" ? "checked" : ""} title="Klaar"></td><td>${esc(t.titel)}</td><td><span class="who-cell">${t.assignee ? avatar(t.assignee) : ""}${esc(userById(t.assignee).name)}</span></td><td class="num">${fmt(t.eind)}</td><td class="r"><button type="button" class="btn ghost sm" data-act="edit-task-from-note" data-tid="${t.id}">Bewerken</button></td></tr>`).join("")}</tbody></table></div>` : ""}
+      <div id="ap_rows">${taakRij(0)}${taakRij(1)}${taakRij(2)}</div><button type="button" class="btn ghost sm" data-ap-more>+ Nog een actiepunt</button>
+      ${vorige.length ? `<details style="margin-top:10px"><summary class="muted" style="cursor:pointer;font-size:12px">Nog ${vorige.length} open actiepunt${vorige.length === 1 ? "" : "en"} uit vorige verslagen</summary><ul style="margin:6px 0 0;padding-left:18px;font-size:13px">${vorige.map(t => `<li>${esc(t.titel)} <span class="muted">· ${esc(userById(t.assignee).name)}${t.eind ? " · " + fmt(t.eind) : ""} · 📝 ${esc(S.notities[t.notitie_id]?.titel || "")}</span></li>`).join("")}</ul></details>` : ""}</div>
+    <div class="field span2"><label class="sw-row"><input type="checkbox" class="sw" name="klant_zichtbaar" ${n.klant_zichtbaar ? "checked" : ""}><span><b>Delen met de klant</b> — het verslag en zijn actiepunten verschijnen in het klantenportaal onder "Verslagen"${isNew || !n.klant_zichtbaar ? "; de klant krijgt een mail" : ""}. Interne opmerkingen horen dan niet in dit verslag.</span></label></div>
+  </div>`, {
+    wide: true, saveLabel: isNew ? "Bewaren" : "Bewaren",
+    onSave: async (d) => {
+      const f = $("#mform"); const vrs = [...f.querySelectorAll('input[name="vr"]:checked')].map(i => i.value), crs = [...f.querySelectorAll('input[name="cr"]:checked')].map(i => i.value);
+      const wasShared = !!n.klant_zichtbaar; const shared = d.klant_zichtbaar === "on";
+      const row = { project_id: projectId, soort: d.soort, titel: d.titel.trim(), datum: d.datum || todayIso, deelnemers: (d.deelnemers || "").trim(), inhoud: d.inhoud || "", verantwoordelijken: vrs, contact_ids: crs, klant_zichtbaar: shared };
+      if (shared && !wasShared) row.gedeeld_op = new Date().toISOString();
+      let saved;
+      if (isNew) { row.auteur = S.me.id; saved = await dbInsert("notities", row); } else { saved = await dbUpdate("notities", n.id, row); }
+      // bestaande actiepunten: klaar-vinkjes
+      for (const t of ts) { const done = f.querySelector(`input[name="ap_done_${t.id}"]`)?.checked; if (done !== (t.status === "done")) await dbUpdate("taken", t.id, { status: done ? "done" : "todo" }).catch(() => { }); }
+      // nieuwe actiepunten → taken
+      const nieuw = []; f.querySelectorAll("#ap_rows .ap-row").forEach((r, i) => { const titel = r.querySelector(`[name^="ap_titel_"]`).value.trim(); if (!titel) return; nieuw.push({ project_id: projectId, titel, assignee: r.querySelector(`[name^="ap_wie_"]`).value || null, eind: r.querySelector(`[name^="ap_eind_"]`).value || null, start: r.querySelector(`[name^="ap_eind_"]`).value ? null : null, fase_nr: p.fase_nr || null, status: "todo", uren_gepland: 0, volgorde: 9000 + i, notitie_id: saved.id }); });
+      if (nieuw.length) { const { data, error } = await sb.from("taken").insert(nieuw).select(); if (error) toast("Actiepunten niet aangemaakt: " + error.message); else (data || []).forEach(t => S.taken[t.id] = t); }
+      render(); toast(isNew ? `Notitie bewaard${nieuw.length ? ` · ${nieuw.length} actiepunt${nieuw.length === 1 ? "" : "en"} als taak` : ""}` : "Notitie bewaard");
+      if (shared && !wasShared && driveReady()) driveCall("notitiemail", { id: saved.id, token: S.session?.access_token || "" }).then(j => { if ((j.naar || []).length) toast("Verslag gemaild naar " + j.naar.join(", ")); }).catch(e => toast("Mail niet verstuurd: " + e.message, 6000));
+    },
+    onDelete: isNew ? null : async () => { await dbDelete("notities", n.id); toast("Notitie verwijderd"); },
+  });
+  const f = $("#mform"); let apN = 3;
+  f.querySelector("[data-ap-more]").onclick = () => { $("#ap_rows").insertAdjacentHTML("beforeend", taakRij(apN++)); };
+  const sj = f.querySelector("[data-note-sjabloon]"); if (sj) sj.onclick = () => { const ta = $("#n_inhoud"); if (ta.value.trim() && !confirm("De huidige tekst vervangen door het sjabloon?")) return; ta.value = NOTE_SJABLOON[$("#n_soort").value] || ""; ta.focus(); };
+  $("#n_soort").addEventListener("change", () => { if (isNew && !$("#n_inhoud").value.trim()) $("#n_inhoud").value = NOTE_SJABLOON[$("#n_soort").value] || ""; });
+  if (isNew && !$("#n_inhoud").value) $("#n_inhoud").value = NOTE_SJABLOON[soort] || "";
+  f.querySelectorAll("[data-act=edit-task-from-note]").forEach(b => b.onclick = (e) => { e.preventDefault(); const t = S.taken[b.dataset.tid]; closeModal(); if (t) taskForm(t); });
 }
 /* ---------- Goedkeuringen: BROS legt de offerte of een meerwerkvoorstel voor, de klant beslist in het portaal ---------- */
 const GK_STATUS = { open: "Wacht op klant", akkoord: "Goedgekeurd", geweigerd: "Niet akkoord", ingetrokken: "Ingetrokken" };
@@ -876,7 +962,7 @@ async function postDel(id) {
 const docIcon = (m, n) => /spreadsheet|excel/.test(m) ? "xls" : /word|document/.test(m) ? "doc" : /pdf/.test(m) ? "pdf" : /skp|sketchup|vwx|dwg|dxf/i.test(n) ? "dwg" : "map";
 
 /* ---------- render root ---------- */
-const TABS = [["overzicht", "Overzicht"], ["projecten", "Projecten"], ["taken", "Taken"], ["planning", "Planning"], ["uren", "Uren"], ["contacten", "Contacten"], ["team", "Team"], ["rapporten", "Rapporten"], ["instellingen", "Instellingen", "beheer"]];
+const TABS = [["overzicht", "Overzicht"], ["projecten", "Projecten"], ["taken", "Taken"], ["planning", "Planning"], ["uren", "Uren"], ["contacten", "Contacten"], ["notities", "Notities"], ["team", "Team"], ["rapporten", "Rapporten"], ["instellingen", "Instellingen", "beheer"]];
 function render() {
   const app = $("#app");
   if (!configured) { app.innerHTML = `<div class="login"><div class="card"><h1>BROS Planbord</h1><p>De app is nog niet gekoppeld aan de database. Vul <code>config.js</code> in (Project URL en anon public-sleutel uit Supabase) en herlaad.</p></div></div>`; return; }
@@ -885,7 +971,7 @@ function render() {
   if (S.loadError) { app.innerHTML = `<div class="login"><div class="card"><h1>Kon de gegevens niet laden</h1><p class="err">${esc(S.loadError)}</p><button class="btn" data-act="logout">Uitloggen</button> <button class="btn primary" data-act="reload">Opnieuw proberen</button></div></div>`; return; }
   if (!S.ready) { app.innerHTML = `<div class="login"><div class="card"><h1>BROS Planbord</h1><p>Gegevens laden…</p></div></div>`; return; }
   if (!S.me) { app.innerHTML = `<div class="login"><div class="card"><h1>Nog geen profiel</h1><p>Je login werkt, maar er is nog geen medewerkersprofiel gekoppeld. Vraag de beheerder om je uit te nodigen, of herlaad de pagina.</p><button class="btn" data-act="logout">Uitloggen</button> <button class="btn primary" data-act="reload">Herladen</button></div></div>`; return; }
-  const views = { overzicht: vOverzicht, projecten: vProjecten, taken: vTaken, planning: vPlanning, uren: vUren, contacten: vContacten, team: vTeam, rapporten: vRapporten, instellingen: vInstellingen };
+  const views = { overzicht: vOverzicht, projecten: vProjecten, taken: vTaken, planning: vPlanning, uren: vUren, contacten: vContacten, notities: vNotitiesAlle, team: vTeam, rapporten: vRapporten, instellingen: vInstellingen };
   app.innerHTML = `
   <header class="top">
     <div class="top-in">
@@ -1032,7 +1118,7 @@ function vProjecten() {
 function vProjectDetail(p) {
   const ts = tasksOf(p.id), pl = projPlanned(p.id), dn = projDone(p.id);
   const [st, en] = projSpan(p);
-  const tabs = [["taken", "Taken"], ["meetstaat", "Meetstaat"], ["facturatie", "Facturatie"], ["planning", "Planning"], ["uren", "Uren"], ["dossier", "Dossier"]];
+  const tabs = [["taken", "Taken"], ["notities", "Notities" + (schemaV() >= 14 && notesOf(p.id).length ? ` <span class="cnt">${notesOf(p.id).length}</span>` : "")], ["meetstaat", "Meetstaat"], ["facturatie", "Facturatie"], ["planning", "Planning"], ["uren", "Uren"], ["dossier", "Dossier"]];
   let body = "";
   if (S.ptab === "taken") {
     const byFase = {}; ts.forEach(t => { (byFase[t.fase_nr || 0] = byFase[t.fase_nr || 0] || []).push(t); });
@@ -1040,8 +1126,10 @@ function vProjectDetail(p) {
     body = `<div class="panel"><div class="panel-head"><h3>Taken</h3><div class="actions"><button class="btn sm" data-act="add-fase" data-pid="${p.id}">+ Fase toevoegen</button><button class="btn sm primary" data-act="new-task" data-pid="${p.id}">+ Taak</button></div></div>
       ${ts.length ? `<div class="tw"><table class="t"><thead><tr><th></th><th>Taak</th><th>Wie</th><th>Start</th><th>Einde</th><th class="r">Uren</th><th>Status</th></tr></thead><tbody>
       ${groups.map(nr => { const g = byFase[nr]; const done = g.filter(t => t.status === "done").length; return `<tr><td colspan="7" style="background:var(--surface-2);font-weight:700;font-family:var(--font-display)">${esc(faseName(nr) || "Zonder fase")} <span class="muted num" style="font-weight:400">${done}/${g.length}</span></td></tr>` + g.map(t => `<tr class="click" data-edit-task="${t.id}"><td style="width:28px"><input type="checkbox" class="task-check" data-toggle="${t.id}" ${t.status === "done" ? "checked" : ""} aria-label="Klaar"></td>
-        <td><div class="row-title">${esc(t.titel)}${klantTag(t)}${t.notitie ? `<small>${esc(t.notitie)}</small>` : ""}</div></td><td><span class="who-cell">${t.assignee ? avatar(t.assignee) : ""}${esc(userById(t.assignee).name)}</span></td>
+        <td><div class="row-title">${esc(t.titel)}${klantTag(t)}${t.notitie_id && S.notities[t.notitie_id] ? ` <span class="pill kl" title="Actiepunt uit een verslag">📝 ${esc(S.notities[t.notitie_id].titel || "verslag")}</span>` : ""}${t.notitie ? `<small>${esc(t.notitie)}</small>` : ""}</div></td><td><span class="who-cell">${t.assignee ? avatar(t.assignee) : ""}${esc(userById(t.assignee).name)}</span></td>
         <td class="num">${fmt(t.start)}</td><td class="num" style="color:${isLate(t) ? "var(--crit)" : "inherit"}">${fmt(t.eind)}</td><td class="r num">${nl(taskDone(t.id))} / ${nl(t.uren_gepland)}</td><td>${pill(t)}</td></tr>`).join(""); }).join("")}</tbody></table></div>` : `<div class="empty"><b>Nog geen taken</b>Voeg een fase toe (met de standaardtaken) of maak een losse taak.</div>`}</div>`;
+  } else if (S.ptab === "notities") {
+    body = vNotities(p);
   } else if (S.ptab === "meetstaat") {
     body = vMeetstaat(p);
   } else if (S.ptab === "facturatie") {
@@ -1582,11 +1670,12 @@ function taskForm(t = {}, pid) {
     <div class="field"><label for="t_start">Start</label><input id="t_start" type="date" name="start" value="${esc(t.start || "")}"></div>
     <div class="field"><label for="t_eind">Einde</label><input id="t_eind" type="date" name="eind" value="${esc(t.eind || "")}"></div>
     <div class="field"><label for="t_uren">Geplande uren</label><input id="t_uren" type="number" step="0.5" min="0" name="uren_gepland" value="${esc(t.uren_gepland ?? 0)}"></div>
+    ${schemaV() >= 14 ? `<div class="field"><label for="t_note">Uit verslag</label><select id="t_note" name="notitie_id"><option value="">— geen —</option>${opts(notesOf(projectId).map(n => [n.id, `${fmt(n.datum)} · ${n.titel || NOTE_SOORT[n.soort]}`]), t.notitie_id || "")}</select></div>` : ""}
     <div class="field"><label for="t_not">Notitie</label><input id="t_not" name="notitie" value="${esc(t.notitie || "")}"></div>
     ${schemaV() >= 10 ? `<div class="field span2"><label class="sw-row"><input type="checkbox" class="sw" name="uren_klant" value="1" ${t.uren_klant ? "checked" : ""}><span><b>Gepresteerde uren zichtbaar voor de klant</b><small class="muted" style="display:block">De klant ziet de geregistreerde uren van deze taak, met datum en tijdstip. Staat standaard uit.</small></span></label></div>` : ""}
   </div>`, {
     onSave: async (d) => {
-      const row = { titel: d.titel.trim(), project_id: d.project_id, fase_nr: d.fase_nr ? Number(d.fase_nr) : null, assignee: d.assignee || null, status: d.status, start: d.start || null, eind: d.eind || null, uren_gepland: Number(d.uren_gepland) || 0, notitie: d.notitie };
+      const row = { titel: d.titel.trim(), project_id: d.project_id, fase_nr: d.fase_nr ? Number(d.fase_nr) : null, assignee: d.assignee || null, status: d.status, start: d.start || null, eind: d.eind || null, uren_gepland: Number(d.uren_gepland) || 0, notitie: d.notitie , ...(schemaV() >= 14 && "notitie_id" in d ? { notitie_id: d.notitie_id || null } : {}) };
       if (schemaV() >= 10) row.uren_klant = !!d.uren_klant;
       if (row.start && !row.eind) row.eind = row.start; if (row.eind && !row.start) row.start = row.eind; if (row.eind < row.start) row.eind = row.start;
       if (isNew) { row.volgorde = (row.fase_nr || 99) * 100 + 90; await dbInsert("taken", row); toast("Taak aangemaakt"); }
@@ -1707,6 +1796,8 @@ document.addEventListener("click", (e) => {
   if (d.act === "ms-del-lot") return msDelLot(d.pid, Number(d.lot));
   if (d.act === "ms-import") return msImportPick(d.pid);
   if (d.act === "gk-new") return gkForm(d.pid, d.soort || null);
+  if (d.act === "note-new") return noteForm({}, d.pid);
+  if (d.act === "note-open") return noteForm(S.notities[d.id]);
   if (d.act === "gk-view") return gkView(d.id);
   if (d.act === "gk-withdraw") return gkWithdraw(d.id);
   if (d.act === "ms-export") return exportMeetstaat(S.projecten[d.pid]).catch(err => { loader.fail(); toast("Export: " + err.message); });
@@ -1734,6 +1825,7 @@ document.addEventListener("focusout", (e) => {
 
   if (d.vf && e.target.tagName !== "SELECT" && e.target.type !== "date") return vordEdit(d.vf, d.f, e.target.value);
 });
+document.addEventListener("input", (e) => { if (e.target.dataset && e.target.hasAttribute("data-noteq")) { S.noteQ = e.target.value; const pos = e.target.selectionStart; render(); const el = document.querySelector("[data-noteq]"); if (el) { el.focus(); try { el.setSelectionRange(pos, pos); } catch (x) { } } } });
 document.addEventListener("change", (e) => {
   const el = e.target;
   if (el.dataset.filter) { S.filters[el.dataset.filter] = el.value; return render(); }
