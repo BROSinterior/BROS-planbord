@@ -2,7 +2,7 @@
    BROS Planbord — app v1.0
    Statische webapp op Supabase (login, live-synchronisatie, rechten)
    ===================================================================== */
-const APP_VERSION = "1.11.0";
+const APP_VERSION = "1.11.1";
 const PROJ_STATUS = { offerte: "In offerte", lopend: "Lopend", on_hold: "On hold", afgerond: "Afgerond", verloren: "Verloren" };
 const KLANTTYPE = { particulier: "Particulier", zakelijk: "Zakelijk" };
 const KLANTCODE = { particulier: "PAR", zakelijk: "ZAK" };
@@ -1532,7 +1532,7 @@ document.addEventListener("click", (e) => {
   if (d.act === "post-del") return postDel(d.id);
   if (d.act === "logout") return sb.auth.signOut().then(() => location.reload());
   if (d.act === "change-password") { S.setPassword = true; S.passwordForced = false; render(); return; }
-  if (d.act === "reload") return location.reload();
+  if (d.act === "reload") return hardReload();
   if (d.act === "update-later") { updateAvailable = false; $("#updateBar")?.classList.remove("show"); }
 });
 document.addEventListener("focusout", (e) => {
@@ -1566,8 +1566,22 @@ document.addEventListener("keydown", (e) => { if (e.key === "Escape") closeModal
 
 /* ---------- versiecontrole: melden als er een nieuwe versie online staat ---------- */
 let updateAvailable = false;
+const APP_FILES = ["index.html", "app.js", "config.js", "postcodes.js", "meetstaat-export.js", "meetstaat-import.js", "version.json"];
+/* de browser-cache omzeilen: alle bestanden van de app vers ophalen (cache: "reload" ververst de HTTP-cache) en dan herladen */
+async function hardReload() {
+  try { await Promise.all(APP_FILES.map(f => fetch(f, { cache: "reload" }).catch(() => { }))); } catch (e) { }
+  location.reload();
+}
 async function checkVersion() {
-  try { const r = await fetch("version.json?t=" + Date.now(), { cache: "no-store" }); const j = await r.json(); if (j.version && j.version !== APP_VERSION && !updateAvailable) { updateAvailable = true; $("#updateBar")?.classList.add("show"); } } catch (e) { }
+  try {
+    const r = await fetch("version.json?t=" + Date.now(), { cache: "no-store" }); const j = await r.json();
+    if (!j.version || j.version === APP_VERSION) return;
+    // eerste keer: stil vers ophalen en herladen (één poging per versie, zodat het nooit blijft herladen als app.js nog niet online staat)
+    let tried = ""; try { tried = sessionStorage.getItem("pb-refetch") || ""; } catch (e) { }
+    const bezig = $("#modalBg")?.classList.contains("show") || /^(INPUT|TEXTAREA|SELECT)$/.test(document.activeElement?.tagName || "");
+    if (tried !== j.version && !bezig) { try { sessionStorage.setItem("pb-refetch", j.version); } catch (e) { } return hardReload(); }
+    if (!updateAvailable) { updateAvailable = true; $("#updateBar")?.classList.add("show"); }
+  } catch (e) { }
 }
 
 /* ---------- start ---------- */

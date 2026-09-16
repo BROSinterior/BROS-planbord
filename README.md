@@ -38,6 +38,7 @@ Statische webapp (geen build-stap) op een Supabase-database.
 - Code en gegevens staan los van elkaar: een nieuwe versie van de app raakt de database niet.
 - Nieuwe versie = bestanden vervangen in deze map → GitHub Desktop → *Commit* → *Push*. Na ± 1 minuut staat ze online.
 - `version.json` krijgt bij elke update een nieuw nummer; wie de app open heeft, ziet "nieuwe versie beschikbaar" en herlaadt wanneer het past.
+- Bij elke update ook het `?v=…` achter de scripts in `index.html` gelijkzetten met het versienummer (Claude doet dit mee bij elke levering); zo laadt geen enkele browser nog een oude app.js uit zijn cache. Ziet iemand toch een oude versie: ⌘⇧R (harde herlaad).
 - Databasewijzigingen komen als genummerde scripts in `sql/` (002 … 010), altijd toevoegingen, nooit verwijderingen. Vóór elk script: Supabase → Database → Backups.
 - Een volgende versie eerst testen: in de map `next/` zetten; die is bereikbaar op `…/BROS-planbord/next/` met dezelfde database.
 
