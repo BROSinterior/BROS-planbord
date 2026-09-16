@@ -40,7 +40,7 @@ Statische webapp (geen build-stap) op een Supabase-database.
 - Nieuwe versie = bestanden vervangen in deze map → GitHub Desktop → *Commit* → *Push*. Na ± 1 minuut staat ze online.
 - `version.json` krijgt bij elke update een nieuw nummer; wie de app open heeft, ziet "nieuwe versie beschikbaar" en herlaadt wanneer het past.
 - Bij elke update ook het `?v=…` achter de scripts in `index.html` gelijkzetten met het versienummer (Claude doet dit mee bij elke levering); zo laadt geen enkele browser nog een oude app.js uit zijn cache. Ziet iemand toch een oude versie: ⌘⇧R (harde herlaad).
-- Databasewijzigingen komen als genummerde scripts in `sql/` (002 … 012), altijd toevoegingen, nooit verwijderingen. Vóór elk script: Supabase → Database → Backups.
+- Databasewijzigingen komen als genummerde scripts in `sql/` (002 … 013), altijd toevoegingen, nooit verwijderingen. Vóór elk script: Supabase → Database → Backups.
 - Een volgende versie eerst testen: in de map `next/` zetten; die is bereikbaar op `…/BROS-planbord/next/` met dezelfde database.
 
 ## Rollen
@@ -85,6 +85,13 @@ Activeren (eenmalig):
 5. Instellingen → Klantenportaal: welkomtekst, inleiding werkwijze en contactblok nakijken. Team → Bewerken: functie, foto en korte biografie per medewerker (pagina Wie is wie).
 
 Gebruik per project: projectfiche → Dossier → Contacten → bij de bouwheer "Portaal-toegang geven" (beheer). De klant krijgt een mail met een persoonlijke link, kiest een wachtwoord en is binnen. "Link opnieuw sturen" stuurt een nieuwe link (bv. wachtwoord kwijt). Documenten: schakelaar bij een bestand = delen met de klant (het bestand wordt dan "iedereen met de link mag lezen" op Drive; uitzetten draait dat terug). Uren: de schakelaar Klant bij een taak (Uren-tabblad) bepaalt welke uren de klant ziet. Facturen verschijnen pas bij status verzonden of betaald.
+
+## Akkoord-knop (script 013)
+
+- Meetstaat → **Ter goedkeuring voorleggen**: kies Offerte (alle posten in status Offerte) of Meerwerkvoorstel (meer-/minwerkposten), vink aan wat erin hoort, geef een titel, een toelichting en een datum 'Reageren vóór' (standaard 14 dagen; leeg = geen deadline). Na die datum kan de klant niet meer goedkeuren ("Termijn verstreken") en leg je het opnieuw voor. Het Planbord bewaart een bevroren kopie (posten, hoeveelheden, klantprijzen, totalen) in `goedkeuringen`; latere wijzigingen in de meetstaat raken het voorstel niet. De klant krijgt een mail (via het Drive-script) en ziet het voorstel in het portaal onder **Akkoord**.
+- De klant keurt goed met zijn naam en een vinkje, of klikt "Ik heb een vraag / niet akkoord" met een opmerking. De beslissing loopt via de databasefunctie `goedkeuring_beslis()` (controleert dat het zijn project is en dat het voorstel nog open staat) en wordt vastgelegd met naam, e-mail en tijdstip.
+- Bij akkoord: offerteposten → status Akkoord; alle posten uit het voorstel krijgen `akkoord_op` (vinkje "✓ klant dd/mm" in de meetstaat, ook in het portaal). BROS krijgt een melding op het rapportadres (info@bros.be), de klant een bevestiging met het overzicht. Bij "niet akkoord" blijven de posten ongewijzigd en staat de opmerking in het paneel **Goedkeuringen door de klant** op de meetstaat; van daaruit kan je intrekken of opnieuw voorleggen.
+- Vereist `sql/013_goedkeuringen.sql` en het nieuwe `drive/Code.gs` (actie `gkmail`).
 
 ## Yuki-koppeling (in drive/Code.gs)
 

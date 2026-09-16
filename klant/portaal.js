@@ -2,7 +2,7 @@
    BROS Klantenportaal — alleen-lezen zicht van de bouwheer op zijn project
    Leest uitsluitend de klant_*-views (databasescript 011): geen kostprijzen, marges of interne notities.
    ===================================================================== */
-const PORTAAL_VERSION = "1.13.0";
+const PORTAAL_VERSION = "1.14.0";
 const cfg = window.PLANBORD_CONFIG || {};
 const sb = window.supabase.createClient(cfg.supabaseUrl, cfg.supabaseAnonKey);
 const $ = (s, r = document) => r.querySelector(s);
@@ -35,14 +35,15 @@ function toast(msg, ms = 3500) { const t = document.createElement("div"); t.clas
 /* ---------- gegevens ---------- */
 async function loadAll() {
   const q = (v, sel = "*") => sb.from(v).select(sel).then(r => { if (r.error) throw new Error(v + ": " + r.error.message); return r.data || []; });
-  const [me, projecten, meetstaat, vorderingen, regels, planning, uren, documenten, team, ik, fasen, loten, inst] = await Promise.all([
+  const [me, projecten, meetstaat, vorderingen, regels, planning, uren, documenten, team, ik, fasen, loten, inst, goedkeuringen] = await Promise.all([
     sb.from("profiles").select("id,name,email,role").eq("id", S.session.user.id).maybeSingle().then(r => r.data),
     q("klant_project"), q("klant_meetstaat"), q("klant_vorderingen"), q("klant_vordering_regels"), q("klant_planning"), q("klant_uren"),
-    q("klant_documenten"), q("klant_team"), q("klant_ik"), q("fasen"), sb.from("loten_v").select("*").then(r => r.error ? q("loten") : (r.data || [])),
+    q("klant_documenten"), q("klant_team"), q("klant_ik"), q("fasen"), sb.from("loten_v").select("*").then(r => r.error || !(r.data || []).length ? q("loten") : r.data),
     sb.from("instellingen").select("value").eq("key", "portaal").maybeSingle().then(r => r.data?.value || {}),
+    sb.from("klant_goedkeuringen").select("*").then(r => r.error ? [] : (r.data || [])),
   ]);
   S.me = me;
-  S.data = { projecten: projecten.sort((a, b) => (b.nummer || "").localeCompare(a.nummer || "")), meetstaat, vorderingen, regels, planning, uren, documenten, team, ik, fasen: fasen.filter(f => f.actief !== false).sort((a, b) => a.nr - b.nr), loten: Object.fromEntries(loten.map(l => [l.nr, l])), inst };
+  S.data = { projecten: projecten.sort((a, b) => (b.nummer || "").localeCompare(a.nummer || "")), meetstaat, vorderingen, regels, planning, uren, documenten, team, ik, fasen: fasen.filter(f => f.actief !== false).sort((a, b) => a.nr - b.nr), loten: Object.fromEntries(loten.map(l => [l.nr, l])), inst, goedkeuringen: goedkeuringen.sort((a, b) => (b.voorgelegd_op || "").localeCompare(a.voorgelegd_op || "")) };
   if (!S.project || !projecten.some(p => p.id === S.project)) S.project = projecten[0]?.id || null;
   S.eersteBezoek = ik.length > 0 && ik.every(x => !x.portaal_login);
   sb.rpc("portaal_bezoek").then(() => { });
@@ -75,11 +76,12 @@ function render() {
   if (S.me && S.me.role !== "klant") { $("#app").innerHTML = `<div class="login"><div class="card"><div class="brand" style="margin-bottom:14px"><span class="mark">BROS</span><span class="name">Klantenportaal</span></div><h1>Dit is het klantenportaal</h1><p>Je bent ingelogd als teamlid (${esc(S.me.email || "")}). Het Planbord vind je hier:</p><p><a class="btn primary" href="../">Naar het Planbord</a> <button class="btn ghost" data-act="logout">Uitloggen</button></p></div></div>`; return; }
   if (!D().projecten.length) { $("#app").innerHTML = `<div class="login"><div class="card"><div class="brand" style="margin-bottom:14px"><span class="mark">BROS</span><span class="name">Klantenportaal</span></div><h1>Nog geen project gekoppeld</h1><p>Je login werkt, maar er is nog geen project aan je gekoppeld. Laat het ons even weten via ${esc(D().inst.contact_email || "info@bros.be")}.</p><p><button class="btn ghost" data-act="logout">Uitloggen</button></p></div></div>`; return; }
   const p = P();
-  const tabs = [["welkom", "Welkom"], ["meetstaat", "Meetstaat"], ["facturatie", "Facturatie"], ["planning", "Planning"], ["documenten", "Documenten"], ["team", "Wie is wie"]];
+  const openGk = D().goedkeuringen.filter(g => g.project_id === p.id && g.status === "open" && !(g.geldig_tot && g.geldig_tot < new Date().toISOString().slice(0, 10))).length;
+  const tabs = [["welkom", "Welkom"], ["akkoord", "Akkoord" + (openGk ? ` <span class="badge">${openGk}</span>` : "")], ["meetstaat", "Meetstaat"], ["facturatie", "Facturatie"], ["planning", "Planning"], ["documenten", "Documenten"], ["team", "Wie is wie"]];
   $("#app").innerHTML = `<header class="top"><div class="top-in"><div class="brand"><span class="mark">BROS</span><span class="name">Klantenportaal</span></div>
       <div class="who">${D().projecten.length > 1 ? `<select id="projSel" class="btn sm">${D().projecten.map(x => `<option value="${x.id}" ${x.id === p.id ? "selected" : ""}>${esc(x.nummer ? x.nummer + " · " : "")}${esc(x.naam || x.klant)}</option>`).join("")}</select>` : ""}<span>${esc(S.me?.name || "")}</span><button class="btn ghost sm" data-act="logout">Uitloggen</button></div></div>
     <nav class="tabs">${tabs.map(([k, l]) => `<button class="${S.tab === k ? "on" : ""}" data-tab="${k}">${l}</button>`).join("")}</nav></header>
-    <main>${({ welkom: vWelkom, meetstaat: vMeetstaat, facturatie: vFacturatie, planning: vPlanning, documenten: vDocumenten, team: vTeam })[S.tab](p)}</main>`;
+    <main>${({ welkom: vWelkom, akkoord: vAkkoord, meetstaat: vMeetstaat, facturatie: vFacturatie, planning: vPlanning, documenten: vDocumenten, team: vTeam })[S.tab](p)}</main>`;
   window.scrollTo({ top: 0 });
 }
 
@@ -88,8 +90,10 @@ function vWelkom(p) {
   const plan = Object.fromEntries(D().planning.filter(x => x.project_id === p.id).map(x => [x.fase_nr, x]));
   const lead = D().team.find(t => t.id === p.lead);
   const status = p.status === "afgerond" ? "Je project is opgeleverd." : nu ? `Je project zit in stap ${nu}: <b>${esc(faseNaam(nu))}</b>.` : `Status: ${PROJ_STATUS[p.status] || p.status}.`;
+  const open = D().goedkeuringen.filter(g => g.project_id === p.id && g.status === "open" && !(g.geldig_tot && g.geldig_tot < new Date().toISOString().slice(0, 10)));
   return `<div class="hero"><div class="eyebrow">${esc(p.nummer || "")} · ${esc(p.naam || "")}</div><h1>Welkom, ${esc(voornaam())}</h1>
       <p class="lead">${esc(inst.welkom || "")}</p></div>
+    ${open.length ? `<div class="notice"><div><b>${open.length === 1 ? "Er wacht een voorstel op je akkoord" : `Er wachten ${open.length} voorstellen op je akkoord`}</b><div class="muted" style="font-size:13px">${open.map(g => esc(g.titel) + " · " + eur(g.totaal_incl, 0) + " incl. btw" + (g.geldig_tot ? " · vóór " + fmt(g.geldig_tot) : "")).join(" · ")}</div></div><button class="btn primary" data-tab="akkoord">Bekijken en goedkeuren →</button></div>` : ""}
     <div class="two"><div class="stack">
       <div class="panel"><div class="panel-head"><h2>Waar staat je project?</h2><span class="pill grijs">${PROJ_STATUS[p.status] || esc(p.status)}</span></div><div class="panel-body">
         <p>${status}</p>
@@ -104,6 +108,41 @@ function vWelkom(p) {
       <div class="panel"><div class="panel-head"><h2>Snel naar</h2></div><div class="panel-body" style="display:flex;flex-wrap:wrap;gap:8px">${[["meetstaat", "Meetstaat"], ["facturatie", "Facturatie"], ["planning", "Planning"], ["documenten", "Documenten"]].map(([k, l]) => `<button class="btn" data-tab="${k}">${l} →</button>`).join("")}</div></div>
     </div></div>`;
 }
+const GK_STATUS = { open: "Wacht op je akkoord", akkoord: "Goedgekeurd", geweigerd: "Niet akkoord", ingetrokken: "Ingetrokken door BROS" };
+function gkTabel(g) {
+  const ps = g.posten || []; let lot = null;
+  return `<div class="tw"><table class="t"><thead><tr><th style="width:60px">Nr</th><th>Omschrijving</th><th class="r">Hoev.</th><th class="r">Prijs</th><th class="r">Totaal</th></tr></thead><tbody>
+    ${ps.map(x => { let h = ""; if (x.lot !== lot) { lot = x.lot; h = `<tr class="groep"><td colspan="5">${esc(lotNaam(x.lot))}</td></tr>`; }
+      return h + `<tr><td class="num muted" style="font-size:12px">${esc(x.code)}</td><td>${esc(x.omschrijving).replace(/\n/g, "<br>")}${x.locatie ? `<div class="muted" style="font-size:12px">${esc(x.locatie)}</div>` : ""}${x.status === "minwerk" ? ` <span class="pill minwerk">Minwerk</span>` : ""}</td><td class="r num">${nl(x.hoeveelheid, 2)} ${esc(x.eenheid)}</td><td class="r num">${eur(x.prijs)}</td><td class="r num">${eur(x.totaal)}</td></tr>`; }).join("")}
+    <tr class="tot"><td colspan="4">Totaal excl. btw</td><td class="r num">${eur(g.totaal_excl)}</td></tr><tr><td colspan="4">Btw</td><td class="r num">${eur(g.btw)}</td></tr><tr class="tot"><td colspan="4">Totaal incl. btw</td><td class="r num">${eur(g.totaal_incl)}</td></tr></tbody></table></div>`;
+}
+function vAkkoord(p) {
+  const today = new Date().toISOString().slice(0, 10);
+  const gs = D().goedkeuringen.filter(g => g.project_id === p.id); const verlopen = (g) => g.status === "open" && g.geldig_tot && g.geldig_tot < today;
+  const open = gs.filter(g => g.status === "open" && !verlopen(g)), rest = gs.filter(g => g.status !== "open" || verlopen(g));
+  const naam = (D().ik[0]?.naam || S.me?.name || "");
+  return `<h1 style="margin-bottom:6px">Akkoord</h1><p class="muted" style="margin-bottom:16px">Voorstellen die BROS je voorlegt: de offerte en eventuele meerwerken. Je akkoord wordt vastgelegd met je naam en het tijdstip.</p>
+    ${open.length ? open.map(g => `<div class="panel approve" style="margin-bottom:16px"><div class="panel-head"><div><h2>${esc(g.titel)}</h2><div class="muted" style="font-size:13px">${g.soort === "meerwerk" ? "Meerwerkvoorstel" : "Offerte"} · voorgelegd op ${fmtLang(g.voorgelegd_op)}${g.voorgelegd_door_naam ? " door " + esc(g.voorgelegd_door_naam) : ""}</div></div><div style="text-align:right"><span class="pill verzonden">${GK_STATUS.open}</span>${g.geldig_tot ? `<div class="deadline ${g.geldig_tot <= new Date(Date.now() + 3 * 86400000).toISOString().slice(0, 10) ? "soon" : ""}">Reageren vóór ${fmtLang(g.geldig_tot)}</div>` : ""}</div></div>
+      ${g.toelichting ? `<div class="panel-body" style="border-bottom:1px solid var(--line);white-space:pre-line">${esc(g.toelichting)}</div>` : ""}
+      ${gkTabel(g)}
+      <div class="panel-body" style="border-top:1px solid var(--line)"><form class="gk-form" data-gk="${g.id}">
+        <div class="field"><label for="gk_naam_${g.id}">Je naam</label><input id="gk_naam_${g.id}" name="naam" required value="${esc(naam)}" style="max-width:360px"></div>
+        <label class="check"><input type="checkbox" name="ok" required> <span>Ik heb dit voorstel nagekeken en ga akkoord met de vermelde posten, hoeveelheden en prijzen (${eur(g.totaal_incl)} incl. btw).</span></label>
+        <div class="gk-actions"><button class="btn primary" type="submit" data-beslissing="akkoord">Akkoord geven</button><button class="btn" type="button" data-act="gk-nee" data-id="${g.id}">Ik heb een vraag / niet akkoord</button></div>
+        <div class="gk-nee" id="gk_nee_${g.id}" hidden><div class="field"><label for="gk_opm_${g.id}">Wat wil je aanpassen of vragen?</label><textarea id="gk_opm_${g.id}" name="opmerking" rows="3" placeholder="bv. Kunnen we de plinten in eik doen in plaats van MDF?"></textarea></div><button class="btn" type="submit" data-beslissing="geweigerd">Verstuur naar BROS</button></div>
+        <div class="msg" id="gk_msg_${g.id}"></div></form></div></div>`).join("") : `<div class="panel" style="margin-bottom:16px"><div class="empty"><b>Niets dat op je akkoord wacht</b>Zodra BROS je een offerte of meerwerk voorlegt, verschijnt het hier en krijg je een mail.</div></div>`}
+    ${rest.length ? `<div class="panel"><div class="panel-head"><h2>Eerdere beslissingen</h2></div><div class="tw"><table class="t"><thead><tr><th>Voorstel</th><th>Voorgelegd</th><th class="r">Incl. btw</th><th>Status</th><th>Beslist</th><th></th></tr></thead><tbody>
+      ${rest.map(g => `<tr><td><b>${esc(g.titel)}</b><div class="muted" style="font-size:12px">${g.soort === "meerwerk" ? "Meerwerk" : "Offerte"} · ${(g.posten || []).length} posten</div></td><td class="num">${fmt(g.voorgelegd_op)}</td><td class="r num">${eur(g.totaal_incl)}</td><td><span class="pill ${g.status === "akkoord" ? "akkoord" : g.status === "geweigerd" || verlopen(g) ? "minwerk" : "grijs"}">${verlopen(g) ? "Termijn verstreken" : GK_STATUS[g.status]}</span>${verlopen(g) ? `<div class="muted" style="font-size:11px">vraag BROS om het opnieuw voor te leggen</div>` : ""}</td><td style="font-size:12px">${g.beslist_op ? `${fmt(g.beslist_op)} · ${esc(g.beslist_naam)}` : "—"}${g.opmerking ? `<div class="muted">“${esc(g.opmerking)}”</div>` : ""}</td><td class="r"><button class="btn sm" data-act="gk-toon" data-id="${g.id}">Details</button></td></tr>${S.gkOpen === g.id ? `<tr><td colspan="6" style="padding:0">${gkTabel(g)}</td></tr>` : ""}`).join("")}</tbody></table></div></div>` : ""}`;
+}
+async function gkBeslis(id, akkoord, naam, opmerking, form) {
+  const m = form.querySelector(".msg"); m.className = "msg"; m.textContent = "Even geduld…"; form.querySelectorAll("button").forEach(b => b.disabled = true);
+  const { data, error } = await sb.rpc("goedkeuring_beslis", { p_id: id, p_akkoord: akkoord, p_naam: naam, p_opmerking: opmerking || "" });
+  if (error) { m.className = "msg err"; m.textContent = "Dat lukte niet: " + error.message; form.querySelectorAll("button").forEach(b => b.disabled = false); return; }
+  if (cfg.driveScriptUrl) { try { const r = await fetch(cfg.driveScriptUrl, { method: "POST", body: JSON.stringify({ action: "gkmail", id, soort: "beslist", token: S.session?.access_token || "" }), redirect: "follow" }); await r.json(); } catch (e) { } }
+  await loadAll(); render();
+  toast(akkoord ? "Bedankt — je akkoord is vastgelegd. Je krijgt een bevestiging per mail." : "Verstuurd — BROS neemt contact met je op.", 6000);
+  if (akkoord) vuurwerk(null, "Bedankt!");
+}
 function avatar(t, size = 40) { return t.foto_url ? `<img class="avatar" style="width:${size}px;height:${size}px" src="${esc(t.foto_url)}" alt="">` : `<span class="avatar" style="width:${size}px;height:${size}px;background:${esc(t.color || "#2A4DD0")};font-size:${Math.round(size / 3)}px">${esc(t.initials || "")}</span>`; }
 
 function vMeetstaat(p) {
@@ -116,7 +155,7 @@ function vMeetstaat(p) {
     return `<div class="panel"><div class="panel-head"><h3>${esc(lotNaam(lot))}</h3><span class="num" style="font-weight:700">${eur(som)}</span></div><div class="tw"><table class="t"><thead><tr><th style="width:60px">Nr</th><th>Omschrijving</th><th class="r">Hoev.</th><th class="r">Prijs</th><th class="r">Totaal</th><th>Status</th></tr></thead><tbody>
       ${rs.map(r => { const isGroep = !Number(r.hoeveelheid) && !Number(r.prijs) && !r.code && (r.groep || r.omschrijving); let g = ""; if (r.groep && r.groep !== groep) { groep = r.groep; g = `<tr class="groep"><td colspan="6">${esc(r.groep)}</td></tr>`; }
         if (isGroep && !r.groep) return `<tr class="groep"><td colspan="6">${esc(r.omschrijving)}</td></tr>`;
-        return g + `<tr><td class="num muted" style="font-size:12px">${esc(r.code)}</td><td>${esc(r.omschrijving).replace(/\n/g, "<br>")}${r.locatie ? `<div class="muted" style="font-size:12px">${esc(r.locatie)}</div>` : ""}</td><td class="r num">${Number(r.hoeveelheid) ? nl(r.hoeveelheid, 2) + " " + esc(r.eenheid) : ""}</td><td class="r num">${Number(r.prijs) ? eur(r.prijs) : ""}</td><td class="r num">${Number(r.totaal) ? eur(signed(r)) : ""}</td><td><span class="pill ${r.status}">${MS_STATUS[r.status] || esc(r.status)}</span></td></tr>`; }).join("")}
+        return g + `<tr><td class="num muted" style="font-size:12px">${esc(r.code)}</td><td>${esc(r.omschrijving).replace(/\n/g, "<br>")}${r.locatie ? `<div class="muted" style="font-size:12px">${esc(r.locatie)}</div>` : ""}</td><td class="r num">${Number(r.hoeveelheid) ? nl(r.hoeveelheid, 2) + " " + esc(r.eenheid) : ""}</td><td class="r num">${Number(r.prijs) ? eur(r.prijs) : ""}</td><td class="r num">${Number(r.totaal) ? eur(signed(r)) : ""}</td><td><span class="pill ${r.status}">${MS_STATUS[r.status] || esc(r.status)}</span>${r.akkoord_op ? `<div class="muted" style="font-size:11px">✓ ${fmt(r.akkoord_op)}</div>` : ""}</td></tr>`; }).join("")}
     </tbody></table></div></div>`; };
   return `<h1 style="margin-bottom:6px">Meetstaat</h1><p class="muted" style="margin-bottom:16px">Alle posten van je project met de afgesproken prijzen (excl. btw). ${offerteOpen ? "Posten met status <b>Offerte</b> wachten nog op je akkoord; " : ""}<b>Meerwerk</b> en <b>minwerk</b> zijn wijzigingen na het contract.</p>
     <div class="kpis"><div class="kpi"><div class="k">Contract excl. btw</div><div class="v num">${eur(contract, 0)}</div></div><div class="kpi"><div class="k">Meer-/minwerk</div><div class="v num">${mw ? eur(mw, 0) : "—"}</div></div><div class="kpi"><div class="k">Btw</div><div class="v num">${eur(btwTot, 0)}</div><div class="muted" style="font-size:12px">${p.btw_tarief ? p.btw_tarief + " % op je project" : ""}</div></div><div class="kpi"><div class="k">Totaal incl. btw</div><div class="v num">${eur(contract + mw + btwTot, 0)}</div></div></div>
@@ -212,8 +251,8 @@ function renderSetPassword() {
 }
 
 /* ---------- vuurwerk bij het eerste bezoek ---------- */
-function vuurwerk(naam) {
-  const fx = $("#fx"), cv = fx.querySelector("canvas"), ctx = cv.getContext("2d"); $("#fxTxt").innerHTML = `Welkom${naam ? ", " + esc(naam) : ""}!<small>Fijn dat je er bent. Dit is jouw plek om je project te volgen.</small>`;
+function vuurwerk(naam, kop) {
+  const fx = $("#fx"), cv = fx.querySelector("canvas"), ctx = cv.getContext("2d"); $("#fxTxt").innerHTML = kop ? `${esc(kop)}<small>Je akkoord is vastgelegd. We gaan ermee aan de slag.</small>` : `Welkom${naam ? ", " + esc(naam) : ""}!<small>Fijn dat je er bent. Dit is jouw plek om je project te volgen.</small>`;
   fx.classList.add("show"); cv.width = innerWidth * devicePixelRatio; cv.height = innerHeight * devicePixelRatio; ctx.scale(devicePixelRatio, devicePixelRatio);
   const parts = []; const kleuren = ["#2A4DD0", "#E2A84C", "#2E7D4F", "#D0413A", "#8A4BC7", "#0F7C8C"];
   const knal = (x, y) => { const k = kleuren[Math.floor(Math.random() * kleuren.length)]; for (let i = 0; i < 70; i++) { const a = Math.random() * Math.PI * 2, v = 2 + Math.random() * 5; parts.push({ x, y, vx: Math.cos(a) * v, vy: Math.sin(a) * v, life: 60 + Math.random() * 40, k }); } };
@@ -229,6 +268,16 @@ document.addEventListener("click", (e) => {
   const el = e.target.closest("[data-tab],[data-act]"); if (!el) return;
   if (el.dataset.tab) { S.tab = el.dataset.tab; render(); }
   if (el.dataset.act === "logout") sb.auth.signOut().then(() => location.reload());
+  if (el.dataset.act === "gk-nee") { const box = $("#gk_nee_" + el.dataset.id); box.hidden = !box.hidden; if (!box.hidden) box.querySelector("textarea").focus(); }
+  if (el.dataset.act === "gk-toon") { S.gkOpen = S.gkOpen === el.dataset.id ? null : el.dataset.id; render(); }
+});
+document.addEventListener("submit", (e) => {
+  const form = e.target.closest("form.gk-form"); if (!form) return; e.preventDefault();
+  const id = form.dataset.gk; const beslissing = e.submitter?.dataset.beslissing || "akkoord"; const naam = form.querySelector('[name="naam"]').value.trim();
+  const m = form.querySelector(".msg");
+  if (!naam) { m.className = "msg err"; m.textContent = "Vul je naam in."; return; }
+  if (beslissing === "akkoord") { if (!form.querySelector('[name="ok"]').checked) { m.className = "msg err"; m.textContent = "Vink aan dat je akkoord gaat."; return; } gkBeslis(id, true, naam, "", form); }
+  else { const opm = form.querySelector('[name="opmerking"]').value.trim(); if (!opm) { m.className = "msg err"; m.textContent = "Schrijf kort wat je wil aanpassen of vragen."; return; } gkBeslis(id, false, naam, opm, form); }
 });
 document.addEventListener("change", (e) => { if (e.target.id === "projSel") { S.project = e.target.value; render(); } });
 

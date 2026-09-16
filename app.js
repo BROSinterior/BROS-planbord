@@ -2,7 +2,7 @@
    BROS Planbord — app v1.0
    Statische webapp op Supabase (login, live-synchronisatie, rechten)
    ===================================================================== */
-const APP_VERSION = "1.13.1";
+const APP_VERSION = "1.14.0";
 const PROJ_STATUS = { offerte: "In offerte", lopend: "Lopend", on_hold: "On hold", afgerond: "Afgerond", verloren: "Verloren" };
 const KLANTTYPE = { particulier: "Particulier", zakelijk: "Zakelijk" };
 const KLANTCODE = { particulier: "PAR", zakelijk: "ZAK" };
@@ -35,7 +35,7 @@ const workdays = (a, b) => { let n = 0; for (let s = a; s <= b; s = addDays(s, 1
 /* ---------- state ---------- */
 const S = {
   session: null, me: null, setPassword: false, passwordForced: false,
-  profiles: {}, tarieven: {}, fasen: {}, standaardtaken: [], projecten: {}, taken: {}, uren: {}, documenten: {}, instellingen: {}, loten: {}, posten: {}, meetstaat_posten: {}, vorderingen: {}, vordering_regels: {}, contacten: {}, project_contacten: {},
+  profiles: {}, tarieven: {}, fasen: {}, standaardtaken: [], projecten: {}, taken: {}, uren: {}, documenten: {}, instellingen: {}, loten: {}, posten: {}, meetstaat_posten: {}, vorderingen: {}, vordering_regels: {}, contacten: {}, project_contacten: {}, goedkeuringen: {},
   view: "overzicht", project: null, ptab: "taken",
   filters: { user: "", status: "", project: "", q: "" }, cfilters: { soort: "", q: "" },
   ganttStart: addDays(mondayOf(todayIso), -14), ganttDays: 112, ganttOpen: {},
@@ -80,8 +80,8 @@ const projKost = (pid, soort) => Object.values(S.uren).filter(h => h.project_id 
 let toastT; function toast(msg) { const t = $("#toast"); t.textContent = msg; t.classList.add("show"); clearTimeout(toastT); toastT = setTimeout(() => t.classList.remove("show"), 2800); }
 
 /* ---------- data laden en live houden ---------- */
-const TABLES = { profiles: "profiles", tarieven: "tarieven", fasen: "fasen", standaardtaken: "standaardtaken", projecten: "projecten", taken: "taken", uren: "uren", documenten: "documenten", instellingen: "instellingen", loten: "loten", posten: "posten", meetstaat_posten: "meetstaat_posten", vorderingen: "vorderingen", vordering_regels: "vordering_regels", contacten: "contacten", project_contacten: "project_contacten" };
-const OPTIONAL_TABLES = ["tarieven", "documenten", "instellingen", "loten", "posten", "meetstaat_posten", "vorderingen", "vordering_regels", "contacten", "project_contacten"]; // ontbreken zolang het bijbehorende sql-script niet is uitgevoerd
+const TABLES = { profiles: "profiles", tarieven: "tarieven", fasen: "fasen", standaardtaken: "standaardtaken", projecten: "projecten", taken: "taken", uren: "uren", documenten: "documenten", instellingen: "instellingen", loten: "loten", posten: "posten", meetstaat_posten: "meetstaat_posten", vorderingen: "vorderingen", vordering_regels: "vordering_regels", contacten: "contacten", project_contacten: "project_contacten", goedkeuringen: "goedkeuringen" };
+const OPTIONAL_TABLES = ["tarieven", "documenten", "instellingen", "loten", "posten", "meetstaat_posten", "vorderingen", "vordering_regels", "contacten", "project_contacten", "goedkeuringen"]; // ontbreken zolang het bijbehorende sql-script niet is uitgevoerd
 const rowKey = (t, r) => t === "fasen" || t === "loten" ? r.nr : t === "tarieven" ? r.user_id : t === "instellingen" ? r.key : t === "vordering_regels" ? (r.id || r.vordering_id + "|" + r.lot + "|" + (r.post_id || "")) : r.id;
 function ingest(table, rows) {
   if (table === "standaardtaken") { S.standaardtaken = rows.sort((a, b) => a.fase_nr - b.fase_nr || a.volgorde - b.volgorde); return; }
@@ -110,7 +110,7 @@ async function loadAll() {
 }
 function subscribe() {
   // Eén kanaal per tabel: als één tabel niet in de realtime-publicatie zit, blijven de andere werken.
-  ["profiles", "tarieven", "fasen", "standaardtaken", "projecten", "taken", "uren", "documenten", "loten", "posten", "meetstaat_posten", "meetstaat_prijzen", "vorderingen", "vordering_regels", "contacten", "project_contacten"].forEach(t => {
+  ["profiles", "tarieven", "fasen", "standaardtaken", "projecten", "taken", "uren", "documenten", "loten", "posten", "meetstaat_posten", "meetstaat_prijzen", "vorderingen", "vordering_regels", "contacten", "project_contacten", "goedkeuringen"].forEach(t => {
     const ch = sb.channel("pb-" + t);
     ch.on("postgres_changes", { event: "*", schema: "public", table: t }, (payload) => {
       if (t === "standaardtaken") { refetch(t); return; }
@@ -419,11 +419,65 @@ function vMeetstaat(p) {
         <td class="r num" style="width:96px" title="Eenheidsprijs voor de klant">${eur2(msVerkoopEP(r))}</td>
         <td class="r num" style="width:104px"><b>${eur2(msVerkoop(r))}</b></td>
         ${beheer ? `<td style="width:76px">${sel(r, "btw", opts([[0.06, "6 %"], [0.21, "21 %"], [0, "0 %"]], Number(r.btw)))}</td>` : ""}
-        <td style="width:104px">${sel(r, "status", opts(Object.entries(MS_STATUS), r.status))}</td>
+        <td style="width:104px">${sel(r, "status", opts(Object.entries(MS_STATUS), r.status))}${r.akkoord_op ? `<small class="muted" style="display:block;color:var(--ok)" title="Goedgekeurd door de klant in het portaal">✓ klant ${fmt(r.akkoord_op.slice(0, 10))}</small>` : ""}</td>
         <td class="r" style="width:36px"><button class="btn ghost sm danger" data-act="ms-del" data-id="${r.id}" aria-label="Verwijderen">✕</button></td></tr>`; }).join(""); }).join("");
-  return kpi + `<div class="panel"><div class="panel-head"><div><h3>Meetstaat</h3><div class="muted" style="font-size:12px;margin-top:2px">${rows.length ? `${rows.length} posten in ${lots.length} loten` : "Nog leeg"} · klik in een veld om het te wijzigen, bewaard bij verlaten van het veld</div></div>
-      <div class="actions"><button class="btn sm" data-act="ms-import" data-pid="${p.id}" title="Een bestaande meetstaat (Excel, elk BROS-sjabloon) inlezen als posten">Importeren uit Excel</button>${rows.length ? `<button class="btn sm" data-act="ms-export" data-pid="${p.id}" title="Excel in het BROS-sjabloon aanmaken in Documenten/Meetstaat van de projectmap">Exporteren naar Drive (Excel)</button>` : ""}<button class="btn sm" data-act="ms-add-post" data-pid="${p.id}">+ Post</button><button class="btn sm primary" data-act="ms-add-lot" data-pid="${p.id}">+ Lot toevoegen</button></div></div>
+  return kpi + vGoedkeuringen(p) + `<div class="panel"><div class="panel-head"><div><h3>Meetstaat</h3><div class="muted" style="font-size:12px;margin-top:2px">${rows.length ? `${rows.length} posten in ${lots.length} loten` : "Nog leeg"} · klik in een veld om het te wijzigen, bewaard bij verlaten van het veld</div></div>
+      <div class="actions">${schemaV() >= 13 && rows.some(r => gkKandidaat(r)) ? `<button class="btn sm" data-act="gk-new" data-pid="${p.id}" title="Offerte of meerwerk bevroren ter goedkeuring in het klantenportaal zetten">Ter goedkeuring voorleggen</button>` : ""}<button class="btn sm" data-act="ms-import" data-pid="${p.id}" title="Een bestaande meetstaat (Excel, elk BROS-sjabloon) inlezen als posten">Importeren uit Excel</button>${rows.length ? `<button class="btn sm" data-act="ms-export" data-pid="${p.id}" title="Excel in het BROS-sjabloon aanmaken in Documenten/Meetstaat van de projectmap">Exporteren naar Drive (Excel)</button>` : ""}<button class="btn sm" data-act="ms-add-post" data-pid="${p.id}">+ Post</button><button class="btn sm primary" data-act="ms-add-lot" data-pid="${p.id}">+ Lot toevoegen</button></div></div>
     ${rows.length ? `<div class="tw"><table class="t ms"><thead><tr><th>Nr</th><th>Omschrijving</th><th>Locatie</th><th>Hoev.</th><th>Eenh.</th>${beheer ? `<th title="Kostprijs / aannemersprijs excl. btw">Kost EP</th><th>Marge</th>` : ""}<th class="r">Klant EP</th><th class="r">Totaal excl.</th>${beheer ? `<th>Btw</th>` : ""}<th>Status</th><th></th></tr></thead><tbody>${body}</tbody></table></div>` : `<div class="empty"><b>Nog geen posten</b>Voeg een lot toe (met de standaardposten) of kies losse posten uit de bibliotheek.</div>`}</div>`;
+}
+/* ---------- Goedkeuringen: BROS legt de offerte of een meerwerkvoorstel voor, de klant beslist in het portaal ---------- */
+const GK_STATUS = { open: "Wacht op klant", akkoord: "Goedgekeurd", geweigerd: "Niet akkoord", ingetrokken: "Ingetrokken" };
+const gkOf = (pid) => Object.values(S.goedkeuringen).filter(g => g.project_id === pid).sort((a, b) => (b.voorgelegd_op || "").localeCompare(a.voorgelegd_op || ""));
+const gkOpenIds = (pid) => new Set(gkOf(pid).filter(g => g.status === "open" && !(g.geldig_tot && g.geldig_tot < todayIso)).flatMap(g => (g.posten || []).map(x => x.id)));
+/* post die nog voorgelegd kan worden: offerte zonder akkoord, of meer-/minwerk zonder akkoord, en niet in een open voorstel */
+const gkKandidaat = (r) => msTelt(r) && !r.akkoord_op && (r.status === "offerte" || isMw(r)) && !gkOpenIds(r.project_id).has(r.id);
+const gkSnapshot = (r) => ({ id: r.id, lot: r.lot, code: r.code, omschrijving: r.omschrijving, locatie: r.locatie || "", hoeveelheid: Number(r.hoeveelheid) || 0, eenheid: r.eenheid, prijs: Math.round(msVerkoopEP(r) * 100) / 100, totaal: Math.round(rowSigned(r) * 100) / 100, btw: Number(r.btw) || 0, status: r.status });
+function vGoedkeuringen(p) {
+  if (schemaV() < 13) return "";
+  const gs = gkOf(p.id); if (!gs.length) return "";
+  const klanten = contactsOf(p.id).filter(x => ["bouwheer", "contactpersoon"].includes(x.rol) && x.c.user_id);
+  return `<div class="panel" style="margin-bottom:16px"><div class="panel-head"><div><h3>Goedkeuringen door de klant</h3><div class="muted" style="font-size:12px;margin-top:2px">${klanten.length ? `Zichtbaar in het portaal voor ${klanten.map(x => esc(x.c.naam)).join(", ")}.` : `<span style="color:var(--warn)">Nog niemand van dit project heeft portaal-toegang (Dossier › Contacten).</span>`}</div></div></div>
+    <div class="tw"><table class="t"><thead><tr><th>Voorstel</th><th>Voorgelegd</th><th>Reageren vóór</th><th class="r">Excl. btw</th><th class="r">Incl. btw</th><th>Status</th><th>Beslist</th><th></th></tr></thead><tbody>
+    ${gs.map(g => { const verlopen = g.status === "open" && g.geldig_tot && g.geldig_tot < todayIso; return `<tr><td><b>${esc(g.titel || (g.soort === "meerwerk" ? "Meerwerk" : "Offerte"))}</b><small class="muted" style="display:block">${(g.posten || []).length} posten${g.toelichting ? " · " + esc(g.toelichting.slice(0, 80)) : ""}</small></td><td class="num">${fmtLong((g.voorgelegd_op || "").slice(0, 10))}<small class="muted" style="display:block">${esc(userById(g.voorgelegd_door).name)}</small></td><td class="num" style="${verlopen ? "color:var(--crit)" : ""}">${g.geldig_tot ? fmtLong(g.geldig_tot) : "—"}</td><td class="r num">${eur(g.totaal_excl)}</td><td class="r num">${eur(g.totaal_incl)}</td><td><span class="pill ${g.status === "akkoord" ? "st-afgerond" : verlopen ? "late" : g.status === "open" ? "st-lopend" : g.status === "geweigerd" ? "late" : "st-on_hold"}">${verlopen ? "Termijn verstreken" : GK_STATUS[g.status]}</span></td><td style="font-size:12px">${g.beslist_op ? `${fmtLong(g.beslist_op.slice(0, 10))} · ${esc(g.beslist_naam)}${g.opmerking ? `<div style="color:var(--crit)">“${esc(g.opmerking)}”</div>` : ""}` : "—"}</td>
+      <td class="r" style="white-space:nowrap"><button class="btn ghost sm" data-act="gk-view" data-id="${g.id}">Bekijken</button>${g.status === "open" ? `<button class="btn ghost sm danger" data-act="gk-withdraw" data-id="${g.id}">Intrekken</button>` : ""}${g.status === "geweigerd" || g.status === "ingetrokken" || verlopen ? `<button class="btn ghost sm" data-act="gk-new" data-pid="${p.id}" data-soort="${g.soort}">Opnieuw voorleggen</button>` : ""}</td></tr>`; }).join("")}</tbody></table></div></div>`;
+}
+function gkForm(pid, soortVoorkeur) {
+  const p = S.projecten[pid]; const rows = msRows(pid).filter(gkKandidaat);
+  const off = rows.filter(r => r.status === "offerte"), mw = rows.filter(isMw);
+  const soort = soortVoorkeur && (soortVoorkeur === "meerwerk" ? mw.length : off.length) ? soortVoorkeur : (off.length ? "offerte" : "meerwerk");
+  const klanten = contactsOf(pid).filter(x => ["bouwheer", "contactpersoon"].includes(x.rol) && x.c.user_id);
+  const lijst = (rs) => rs.map(r => `<label class="chk"><input type="checkbox" name="post" value="${r.id}" checked> <span>${esc(r.code)} ${esc(r.omschrijving)}${r.locatie ? ` <small class="muted">· ${esc(r.locatie)}</small>` : ""}<small class="muted" style="display:block">${nl(r.hoeveelheid, 2)} ${esc(r.eenheid)} × ${eur2(msVerkoopEP(r))} = <b>${eur2(rowSigned(r))}</b>${isMw(r) ? ` · ${MS_STATUS[r.status]}` : ""}</small></span></label>`).join("");
+  openModal("Ter goedkeuring voorleggen — " + p.klant, `<div class="form-grid">
+    <div class="field"><label for="gk_soort">Wat leg je voor?</label><select id="gk_soort" name="soort">${off.length ? `<option value="offerte" ${soort === "offerte" ? "selected" : ""}>Offerte (${off.length} posten in status Offerte)</option>` : ""}${mw.length ? `<option value="meerwerk" ${soort === "meerwerk" ? "selected" : ""}>Meerwerkvoorstel (${mw.length} meer-/minwerkposten)</option>` : ""}</select></div>
+    <div class="field"><label for="gk_titel">Titel (ziet de klant)</label><input id="gk_titel" name="titel" value="${esc(soort === "meerwerk" ? "Meerwerk " + fmtLong(todayIso) : "Offerte " + (p.naam && p.naam !== p.klant ? p.naam : p.klant))}"></div>
+    <div class="field"><label for="gk_tot">Reageren vóór</label><input id="gk_tot" name="geldig_tot" type="date" value="${addDays(todayIso, 14)}"><small class="muted">Na deze datum kan de klant niet meer goedkeuren; leeg = geen deadline.</small></div>
+    <div class="field span2"><label for="gk_toel">Toelichting voor de klant (optioneel)</label><textarea id="gk_toel" name="toelichting" rows="2" placeholder="bv. Zoals besproken op de werf van 12/09: extra stopcontacten in de keuken."></textarea></div>
+    <div class="field span2"><label>Posten in dit voorstel</label><div class="fase-list" id="gk_list" style="max-height:320px;overflow:auto">${lijst(soort === "meerwerk" ? mw : off)}</div></div>
+    <div class="field span2"><p class="muted" style="font-size:12px;margin:0">Het Planbord bewaart een bevroren kopie van deze posten met hoeveelheden en klantprijzen; latere wijzigingen in de meetstaat veranderen het voorstel niet. ${klanten.length ? `De klant (${klanten.map(x => esc(x.c.naam)).join(", ")}) krijgt een mail en ziet het voorstel in het portaal.` : `<span style="color:var(--warn)">Let op: niemand van dit project heeft nog portaal-toegang — geef die eerst via Dossier › Contacten, anders kan de klant niet reageren.</span>`}</p></div>
+  </div>`, {
+    saveLabel: "Voorleggen", wide: true,
+    onSave: async (d) => {
+      const ids = [...$("#mform").querySelectorAll('input[name="post"]:checked')].map(i => i.value); if (!ids.length) { toast("Vink minstens één post aan."); return false; }
+      const sel = ids.map(id => S.meetstaat_posten[id]).filter(Boolean); const posten = sel.map(gkSnapshot);
+      const excl = posten.reduce((s, x) => s + x.totaal, 0), btw = sel.reduce((s, r) => s + rowSigned(r) * (Number(r.btw) || 0), 0);
+      const row = { project_id: pid, soort: d.soort, titel: d.titel.trim(), toelichting: (d.toelichting || "").trim(), status: "open", geldig_tot: d.geldig_tot || null, posten, totaal_excl: Math.round(excl * 100) / 100, btw: Math.round(btw * 100) / 100, totaal_incl: Math.round((excl + btw) * 100) / 100, voorgelegd_door: S.me.id };
+      const g = await dbInsert("goedkeuringen", row);
+      toast("Voorstel staat klaar in het portaal");
+      if (driveReady() && klanten.length) driveCall("gkmail", { id: g.id, soort: "voorgelegd", token: S.session?.access_token || "" }).then(j => toast(`Mail gestuurd naar ${(j.naar || []).join(", ") || "de klant"}`)).catch(e => toast("Mail niet verstuurd: " + e.message, 6000));
+    },
+  });
+  $("#gk_soort").addEventListener("change", () => { const srt = $("#gk_soort").value; $("#gk_list").innerHTML = lijst(srt === "meerwerk" ? mw : off); $("#gk_titel").value = srt === "meerwerk" ? "Meerwerk " + fmtLong(todayIso) : "Offerte " + (p.naam && p.naam !== p.klant ? p.naam : p.klant); });
+}
+function gkView(id) {
+  const g = S.goedkeuringen[id]; if (!g) return; const ps = g.posten || [];
+  openModal(`${g.titel || GK_STATUS[g.status]} — ${GK_STATUS[g.status]}`, `<div class="form-grid"><div class="field span2">
+    <p style="margin:0 0 8px">${g.toelichting ? esc(g.toelichting) + "<br>" : ""}<span class="muted" style="font-size:12px">Voorgelegd ${fmtLong((g.voorgelegd_op || "").slice(0, 10))} door ${esc(userById(g.voorgelegd_door).name)}${g.geldig_tot ? ` · reageren vóór ${fmtLong(g.geldig_tot)}` : ""}${g.beslist_op ? ` · ${GK_STATUS[g.status]} op ${fmtLong(g.beslist_op.slice(0, 10))} door ${esc(g.beslist_naam)} (${esc(g.beslist_email)})` : ""}</span>${g.opmerking ? `<p style="margin:8px 0 0;color:var(--crit)">Opmerking van de klant: “${esc(g.opmerking)}”</p>` : ""}</p>
+    <div class="tw"><table class="t"><thead><tr><th>Nr</th><th>Omschrijving</th><th class="r">Hoev.</th><th class="r">Prijs</th><th class="r">Totaal</th></tr></thead><tbody>${ps.map(x => `<tr><td class="num muted">${esc(x.code)}</td><td>${esc(x.omschrijving)}${x.locatie ? ` <small class="muted">· ${esc(x.locatie)}</small>` : ""}</td><td class="r num">${nl(x.hoeveelheid, 2)} ${esc(x.eenheid)}</td><td class="r num">${eur2(x.prijs)}</td><td class="r num">${eur2(x.totaal)}</td></tr>`).join("")}
+    <tr class="tot"><td colspan="4"><b>Totaal excl. btw</b></td><td class="r num"><b>${eur2(g.totaal_excl)}</b></td></tr><tr><td colspan="4">Btw</td><td class="r num">${eur2(g.btw)}</td></tr><tr><td colspan="4"><b>Totaal incl. btw</b></td><td class="r num"><b>${eur2(g.totaal_incl)}</b></td></tr></tbody></table></div></div></div>`, { saveLabel: "Sluiten", wide: true, onSave: async () => { } });
+}
+async function gkWithdraw(id) {
+  const g = S.goedkeuringen[id]; if (!g || g.status !== "open" || !confirm("Dit voorstel intrekken? De klant ziet het dan niet meer in het portaal.")) return;
+  await dbUpdate("goedkeuringen", id, { status: "ingetrokken" }).catch(() => { });
 }
 function msNextCode(pid, lot) { const n = msRows(pid).filter(r => r.lot === lot).length + 1; return `${lot}.${n}`; }
 function msRowFromPost(pid, x, lot, i) {
@@ -1652,6 +1706,9 @@ document.addEventListener("click", (e) => {
   if (d.act === "ms-del") { const r = S.meetstaat_posten[d.id]; if (r && confirm(`"${r.omschrijving}" verwijderen?`)) dbDelete("meetstaat_posten", d.id).catch(() => { }); return; }
   if (d.act === "ms-del-lot") return msDelLot(d.pid, Number(d.lot));
   if (d.act === "ms-import") return msImportPick(d.pid);
+  if (d.act === "gk-new") return gkForm(d.pid, d.soort || null);
+  if (d.act === "gk-view") return gkView(d.id);
+  if (d.act === "gk-withdraw") return gkWithdraw(d.id);
   if (d.act === "ms-export") return exportMeetstaat(S.projecten[d.pid]).catch(err => { loader.fail(); toast("Export: " + err.message); });
   if (d.act === "post-new") return postAdd(Number(d.lot));
   if (d.act === "vord-new") return vordForm(d.pid, d.soort);

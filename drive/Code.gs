@@ -28,6 +28,7 @@ function doPost(e) {
     if (body.action === "put") return json(putFile(body));
     if (body.action === "invite") return json(portaalInvite(body));
     if (body.action === "share") return json(portaalShare(body));
+    if (body.action === "gkmail") return json(goedkeuringMail(body));
     return json({ ok: false, error: "Onbekende actie." });
   } catch (err) {
     return json({ ok: false, error: String(err && err.message || err) });
@@ -301,6 +302,49 @@ function portaalReset(body) {
       "<div style=\"font-family:Helvetica,Arial,sans-serif;font-size:15px;line-height:1.5;color:#1B1E1C\"><p>Beste " + naam + ",</p><p>Via de knop hieronder kies je een nieuw wachtwoord voor het BROS-klantenportaal.</p><p style=\"margin:24px 0\"><a href=\"" + link + "\" style=\"background:#1B1E1C;color:#fff;text-decoration:none;padding:12px 20px;border-radius:8px;font-weight:600;display:inline-block\">Nieuw wachtwoord kiezen</a></p><p style=\"color:#767D78;font-size:13px\">Vroeg je dit niet aan, dan mag je deze mail negeren.</p><p>BROS</p></div>");
   } catch (e) { Logger.log("reset: " + e); }
   return { ok: true };
+}
+/** Wie roept aan (team of klant)? Geeft {id, name, role}; gooit als het token niet klopt. */
+function callerAny(token) {
+  if (!token) throw new Error("Geen login meegestuurd.");
+  const u = pbReq("/auth/v1/user", "get", null, token);
+  const prof = pbReq("/rest/v1/profiles?id=eq." + u.id + "&select=role,name,email", "get", null, token);
+  if (!prof || !prof[0]) throw new Error("Geen profiel.");
+  return { id: u.id, name: prof[0].name, role: prof[0].role, email: prof[0].email || u.email };
+}
+/** Goedkeuringsmails: "voorgelegd" (team → klant: er wacht een voorstel) en "beslist" (klant → BROS-melding + bevestiging aan de klant). */
+function goedkeuringMail(body) {
+  const wie = callerAny(body.token); const soort = String(body.soort || "");
+  const g = (pbAdmin("/rest/v1/goedkeuringen?id=eq." + encodeURIComponent(String(body.id || "")) + "&select=*", "get") || [])[0];
+  if (!g) return { ok: false, error: "Voorstel niet gevonden." };
+  if (soort === "voorgelegd" && wie.role !== "beheer" && wie.role !== "medewerker") return { ok: false, error: "Geen toegang." };
+  if (soort === "beslist" && (wie.role !== "klant" || g.beslist_door !== wie.id)) return { ok: false, error: "Geen toegang." };
+  const p = (pbAdmin("/rest/v1/projecten?id=eq." + g.project_id + "&select=nummer,klant,naam,lead", "get") || [])[0] || {};
+  const pcs = pbAdmin("/rest/v1/project_contacten?project_id=eq." + g.project_id + "&rol=in.(bouwheer,contactpersoon)&select=contact_id", "get") || [];
+  const klanten = pcs.length ? (pbAdmin("/rest/v1/contacten?id=in.(" + pcs.map(x => x.contact_id).join(",") + ")&user_id=not.is.null&select=naam,email", "get") || []).filter(c => c.email) : [];
+  const eur = (n) => "€ " + Number(n || 0).toLocaleString("nl-BE", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+  const nl = (n) => Number(n || 0).toLocaleString("nl-BE", { maximumFractionDigits: 2 });
+  const rows = (g.posten || []).map(x => "<tr><td style=\"padding:4px 8px;color:#767D78;font-family:monospace\">" + x.code + "</td><td style=\"padding:4px 8px\">" + String(x.omschrijving || "").replace(/</g, "&lt;") + (x.locatie ? " <span style=\"color:#767D78\">· " + x.locatie + "</span>" : "") + "</td><td style=\"padding:4px 8px;text-align:right;white-space:nowrap\">" + nl(x.hoeveelheid) + " " + x.eenheid + "</td><td style=\"padding:4px 8px;text-align:right;white-space:nowrap\">" + eur(x.prijs) + "</td><td style=\"padding:4px 8px;text-align:right;white-space:nowrap\">" + eur(x.totaal) + "</td></tr>").join("");
+  const tabel = "<table style=\"border-collapse:collapse;width:100%;font-size:13px\"><thead><tr style=\"color:#767D78;font-size:11px;text-transform:uppercase\"><th align=\"left\" style=\"padding:4px 8px\">Nr</th><th align=\"left\" style=\"padding:4px 8px\">Omschrijving</th><th align=\"right\" style=\"padding:4px 8px\">Hoev.</th><th align=\"right\" style=\"padding:4px 8px\">Prijs</th><th align=\"right\" style=\"padding:4px 8px\">Totaal</th></tr></thead><tbody>" + rows
+    + "<tr><td colspan=\"4\" style=\"padding:6px 8px;border-top:2px solid #C6C3B9\"><b>Totaal excl. btw</b></td><td style=\"padding:6px 8px;text-align:right;border-top:2px solid #C6C3B9\"><b>" + eur(g.totaal_excl) + "</b></td></tr><tr><td colspan=\"4\" style=\"padding:2px 8px\">Btw</td><td style=\"padding:2px 8px;text-align:right\">" + eur(g.btw) + "</td></tr><tr><td colspan=\"4\" style=\"padding:2px 8px\"><b>Totaal incl. btw</b></td><td style=\"padding:2px 8px;text-align:right\"><b>" + eur(g.totaal_incl) + "</b></td></tr></tbody></table>";
+  const kop = (g.soort === "meerwerk" ? "Meerwerkvoorstel" : "Offerte") + " · " + (p.klant || "") + (p.naam && p.naam !== p.klant ? " · " + p.naam : "");
+  const wrap = (inner) => "<div style=\"font-family:Helvetica,Arial,sans-serif;font-size:15px;line-height:1.5;color:#1B1E1C;max-width:720px\">" + inner + "</div>";
+  const naar = [];
+  if (soort === "voorgelegd") {
+    klanten.forEach(c => {
+      const tot = g.geldig_tot ? " Graag je reactie vóór <b>" + g.geldig_tot.split("-").reverse().join("/") + "</b>." : "";
+      const html = wrap("<p>Beste " + (c.naam || "") + ",</p><p>Er staat een voorstel voor je klaar in je BROS-klantenportaal: <b>" + g.titel + "</b>." + tot + (g.toelichting ? "</p><p style=\"white-space:pre-line\">" + g.toelichting.replace(/</g, "&lt;") : "") + "</p><p style=\"margin:24px 0\"><a href=\"" + PORTAAL.URL + "\" style=\"background:#1B1E1C;color:#fff;text-decoration:none;padding:12px 20px;border-radius:8px;font-weight:600;display:inline-block\">Bekijken en goedkeuren</a></p>" + tabel + "<p style=\"margin-top:20px\">Vragen? Antwoord gerust op deze mail.<br>" + wie.name + " — BROS</p>");
+      portaalMail(c.email, "Voorstel ter goedkeuring: " + g.titel, "Beste " + (c.naam || "") + ",\n\nEr staat een voorstel voor je klaar in je BROS-klantenportaal: " + g.titel + " (" + eur(g.totaal_incl) + " incl. btw).\nBekijken en goedkeuren: " + PORTAAL.URL + "\n\n" + wie.name + " — BROS", html); naar.push(c.email);
+    });
+  } else {
+    const ok = g.status === "akkoord"; const wanneer = g.beslist_op ? new Date(g.beslist_op).toLocaleString("nl-BE", { timeZone: "Europe/Brussels" }) : "";
+    const melding = wrap("<p>" + (ok ? "<b>Akkoord</b> van de klant" : "<b>Niet akkoord</b> / vraag van de klant") + " voor <b>" + kop + "</b>.</p><p>Voorstel: <b>" + g.titel + "</b> (" + eur(g.totaal_incl) + " incl. btw)<br>Beslist door: " + g.beslist_naam + " (" + g.beslist_email + ") op " + wanneer + "</p>" + (g.opmerking ? "<p style=\"padding:10px 14px;border-left:3px solid #B93A34;background:#F7DEDC\">“" + g.opmerking.replace(/</g, "&lt;") + "”</p>" : "") + tabel + "<p style=\"color:#767D78;font-size:13px\">Automatische melding uit het BROS Planbord — de posten staan " + (ok ? "op Akkoord" : "ongewijzigd") + " in de meetstaat van project " + (p.nummer || "") + ".</p>");
+    portaalMail(YUKI.REPORT_TO, (ok ? "✔ Akkoord" : "✖ Niet akkoord") + " — " + kop + " — " + g.titel, (ok ? "Akkoord" : "Niet akkoord") + " van " + g.beslist_naam + " voor " + g.titel + " (" + kop + ")" + (g.opmerking ? "\n\nOpmerking: " + g.opmerking : ""), melding); naar.push(YUKI.REPORT_TO);
+    if (g.beslist_email) {
+      const bevestiging = wrap("<p>Beste " + g.beslist_naam + ",</p>" + (ok ? "<p>Bedankt voor je akkoord op <b>" + g.titel + "</b>. Dit is je bevestiging; hieronder staat wat je hebt goedgekeurd.</p>" : "<p>We hebben je reactie op <b>" + g.titel + "</b> goed ontvangen en nemen contact met je op.</p><p style=\"padding:10px 14px;border-left:3px solid #C6C3B9;background:#ECEAE3\">“" + (g.opmerking || "").replace(/</g, "&lt;") + "”</p>") + tabel + "<p style=\"color:#767D78;font-size:13px\">Vastgelegd op " + wanneer + " door " + g.beslist_naam + " (" + g.beslist_email + ").</p><p>BROS</p>");
+      portaalMail(g.beslist_email, (ok ? "Bevestiging van je akkoord: " : "Je reactie op: ") + g.titel, (ok ? "Bedankt voor je akkoord op " : "We ontvingen je reactie op ") + g.titel + " (" + eur(g.totaal_incl) + " incl. btw).\n\nBROS", bevestiging); naar.push(g.beslist_email);
+    }
+  }
+  return { ok: true, naar: naar };
 }
 /** Bestand delen met de klant: "iedereen met de link mag lezen" aan- of uitzetten. */
 function portaalShare(body) {
