@@ -228,8 +228,17 @@ const PORTAAL = {
   SERVICE_KEY: "VUL-IN",
   URL: "https://brosinterior.github.io/BROS-planbord/klant/",   // ook toevoegen bij Supabase → Authentication → URL Configuration → Redirect URLs
   AFZENDER: "BROS",
+  VAN: "info@bros.be",   // afzender van de mails naar klanten — moet in Gmail van brosburo@gmail.com ingesteld staan als "Send mail as"-alias; anders vertrekt de mail van brosburo met dit adres als antwoordadres
   ONDERWERP: "Welkom in je BROS-klantenportaal",
 };
+/** Mail naar de klant: vanuit PORTAAL.VAN als dat een Gmail-alias is, anders vanuit het scriptaccount met PORTAAL.VAN als reply-to. */
+function portaalMail(to, subject, text, html) {
+  const opt = { htmlBody: html, name: PORTAAL.AFZENDER };
+  if (PORTAAL.VAN) { const aliases = GmailApp.getAliases(); if (aliases.indexOf(PORTAAL.VAN) >= 0) opt.from = PORTAAL.VAN; else opt.replyTo = PORTAAL.VAN; }
+  GmailApp.sendEmail(to, subject, text, opt);
+}
+/** Controle: welke afzenders kan dit account gebruiken? (Uitvoeren in de editor → Logboek.) */
+function portaalAliassen() { Logger.log("Aliassen van " + Session.getActiveUser().getEmail() + ": " + JSON.stringify(GmailApp.getAliases()) + " — PORTAAL.VAN = " + PORTAAL.VAN); }
 function pbAdmin(path, method, body) {
   if (!PORTAAL.SERVICE_KEY || PORTAAL.SERVICE_KEY === "VUL-IN") throw new Error("PORTAAL.SERVICE_KEY is niet ingevuld in het Drive-script.");
   const opt = { method: method || "get", contentType: "application/json", headers: { apikey: PORTAAL.SERVICE_KEY, Authorization: "Bearer " + PORTAAL.SERVICE_KEY }, muteHttpExceptions: true };
@@ -272,7 +281,7 @@ function portaalInvite(body) {
     + "<p style=\"margin:24px 0\"><a href=\"" + link + "\" style=\"background:#1B1E1C;color:#fff;text-decoration:none;padding:12px 20px;border-radius:8px;font-weight:600;display:inline-block\">Kies je wachtwoord</a></p>"
     + "<p>Daarna log je altijd in op <a href=\"" + PORTAAL.URL + "\">" + PORTAAL.URL + "</a> met je e-mailadres en wachtwoord.<br><span style=\"color:#767D78;font-size:13px\">De knop hierboven is beperkt geldig; is hij vervallen, klik dan op het portaal op \"Wachtwoord vergeten\" en je krijgt een nieuwe link.</span></p>"
     + "<p>Tot snel,<br>" + wie.name + " — BROS</p></div>";
-  GmailApp.sendEmail(email, PORTAAL.ONDERWERP, tekst, { htmlBody: html, name: PORTAAL.AFZENDER });
+  portaalMail(email, PORTAAL.ONDERWERP, tekst, html);
   return { ok: true, bestaand: bestaand, user_id: userId || null };
 }
 /** "Wachtwoord vergeten" op het portaal: herstellink per Gmail, enkel voor klantlogins; geeft nooit prijs of een adres bestaat. */
@@ -288,8 +297,8 @@ function portaalReset(body) {
     const j = pbAdmin("/auth/v1/admin/generate_link", "post", { type: "recovery", email: email, redirect_to: PORTAAL.URL });
     const link = j.action_link || (j.properties && j.properties.action_link); if (!link) return { ok: true };
     const naam = prof[0].name || "";
-    GmailApp.sendEmail(email, "Nieuw wachtwoord voor je BROS-klantenportaal", "Beste " + naam + ",\n\nVia deze link kies je een nieuw wachtwoord voor het BROS-klantenportaal:\n" + link + "\n\nVroeg je dit niet aan, dan mag je deze mail negeren.\n\nBROS",
-      { htmlBody: "<div style=\"font-family:Helvetica,Arial,sans-serif;font-size:15px;line-height:1.5;color:#1B1E1C\"><p>Beste " + naam + ",</p><p>Via de knop hieronder kies je een nieuw wachtwoord voor het BROS-klantenportaal.</p><p style=\"margin:24px 0\"><a href=\"" + link + "\" style=\"background:#1B1E1C;color:#fff;text-decoration:none;padding:12px 20px;border-radius:8px;font-weight:600;display:inline-block\">Nieuw wachtwoord kiezen</a></p><p style=\"color:#767D78;font-size:13px\">Vroeg je dit niet aan, dan mag je deze mail negeren.</p><p>BROS</p></div>", name: PORTAAL.AFZENDER });
+    portaalMail(email, "Nieuw wachtwoord voor je BROS-klantenportaal", "Beste " + naam + ",\n\nVia deze link kies je een nieuw wachtwoord voor het BROS-klantenportaal:\n" + link + "\n\nVroeg je dit niet aan, dan mag je deze mail negeren.\n\nBROS",
+      "<div style=\"font-family:Helvetica,Arial,sans-serif;font-size:15px;line-height:1.5;color:#1B1E1C\"><p>Beste " + naam + ",</p><p>Via de knop hieronder kies je een nieuw wachtwoord voor het BROS-klantenportaal.</p><p style=\"margin:24px 0\"><a href=\"" + link + "\" style=\"background:#1B1E1C;color:#fff;text-decoration:none;padding:12px 20px;border-radius:8px;font-weight:600;display:inline-block\">Nieuw wachtwoord kiezen</a></p><p style=\"color:#767D78;font-size:13px\">Vroeg je dit niet aan, dan mag je deze mail negeren.</p><p>BROS</p></div>");
   } catch (e) { Logger.log("reset: " + e); }
   return { ok: true };
 }

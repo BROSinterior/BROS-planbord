@@ -2,7 +2,7 @@
    BROS Planbord — app v1.0
    Statische webapp op Supabase (login, live-synchronisatie, rechten)
    ===================================================================== */
-const APP_VERSION = "1.12.0";
+const APP_VERSION = "1.12.1";
 const PROJ_STATUS = { offerte: "In offerte", lopend: "Lopend", on_hold: "On hold", afgerond: "Afgerond", verloren: "Verloren" };
 const KLANTTYPE = { particulier: "Particulier", zakelijk: "Zakelijk" };
 const KLANTCODE = { particulier: "PAR", zakelijk: "ZAK" };
@@ -325,7 +325,7 @@ function portaalInviteForm(cid, pid) {
   const c = S.contacten[cid], p = S.projecten[pid]; if (!c || !p) return;
   const opnieuw = !!c.user_id;
   openModal(opnieuw ? "Portaallink opnieuw sturen" : "Portaal-toegang geven", `<div class="form-grid">
-    <div class="field span2"><p style="margin:0">${opnieuw ? `<b>${esc(c.naam)}</b> heeft al toegang. We sturen een nieuwe mail met een link om een (nieuw) wachtwoord te kiezen.` : `<b>${esc(c.naam)}</b> krijgt een e-mail vanuit ${esc(driveCfg().afzender || "brosburo@gmail.com")} met een persoonlijke link naar het klantenportaal. Daar kiest hij/zij een wachtwoord en ziet daarna het project <b>${esc(p.klant)}${p.naam && p.naam !== p.klant ? " · " + esc(p.naam) : ""}</b>${Object.values(S.project_contacten).filter(x => x.contact_id === cid && ["bouwheer", "contactpersoon"].includes(x.rol)).length > 1 ? " (en de andere projecten waar dit contact bouwheer of contactpersoon van is)" : ""}.`}</p></div>
+    <div class="field span2"><p style="margin:0">${opnieuw ? `<b>${esc(c.naam)}</b> heeft al toegang. We sturen een nieuwe mail met een link om een (nieuw) wachtwoord te kiezen.` : `<b>${esc(c.naam)}</b> krijgt een e-mail van BROS (info@bros.be) met een persoonlijke link naar het klantenportaal. Daar kiest hij/zij een wachtwoord en ziet daarna het project <b>${esc(p.klant)}${p.naam && p.naam !== p.klant ? " · " + esc(p.naam) : ""}</b>${Object.values(S.project_contacten).filter(x => x.contact_id === cid && ["bouwheer", "contactpersoon"].includes(x.rol)).length > 1 ? " (en de andere projecten waar dit contact bouwheer of contactpersoon van is)" : ""}.`}</p></div>
     <div class="field"><label for="pi_email">E-mailadres</label><input id="pi_email" name="email" type="email" required value="${esc(c.email)}"></div>
     <div class="field"><label for="pi_naam">Aanspreking in de mail</label><input id="pi_naam" name="naam" value="${esc(c.contactpersoon || c.naam)}"></div>
     <div class="field span2"><p class="muted" style="margin:0;font-size:12px">Wat de klant ziet: meetstaat met verkoopprijzen, facturen, planning, gedeelde documenten en het team. Geen kostprijzen, marges, forfait of interne notities. De uren van een taak zijn enkel zichtbaar als de schakelaar Klant bij die taak aanstaat.</p></div>
