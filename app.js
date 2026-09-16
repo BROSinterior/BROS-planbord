@@ -2,7 +2,7 @@
    BROS Planbord — app v1.0
    Statische webapp op Supabase (login, live-synchronisatie, rechten)
    ===================================================================== */
-const APP_VERSION = "1.13.0";
+const APP_VERSION = "1.13.1";
 const PROJ_STATUS = { offerte: "In offerte", lopend: "Lopend", on_hold: "On hold", afgerond: "Afgerond", verloren: "Verloren" };
 const KLANTTYPE = { particulier: "Particulier", zakelijk: "Zakelijk" };
 const KLANTCODE = { particulier: "PAR", zakelijk: "ZAK" };
@@ -1326,9 +1326,34 @@ function faseForm(f) {
       else { const { data, error } = await sb.from("fasen").update({ naam: d.naam.trim(), actief: d.actief === "1" }).eq("nr", f.nr).select().single(); if (error) { toast("Mislukt: " + error.message); return false; } S.fasen[f.nr] = data; render(); toast("Fase bewaard"); }
     },
     onDelete: isNew ? null : async () => {
-      const { error } = await sb.from("fasen").delete().eq("nr", f.nr);
-      if (error) { toast(/foreign key|violates/i.test(error.message) ? "Deze fase wordt nog gebruikt door een project — zet ze op verborgen." : "Mislukt: " + error.message); throw error; }
-      delete S.fasen[f.nr]; S.standaardtaken = S.standaardtaken.filter(t => t.fase_nr !== f.nr); S.selFase = null; render(); toast("Fase verwijderd");
+      const projs = Object.values(S.projecten).filter(p => p.fase_nr === f.nr), tasks = Object.values(S.taken).filter(t => t.fase_nr === f.nr);
+      if (projs.length || tasks.length) { setTimeout(() => faseMoveForm(f, projs, tasks), 50); return; }   // eerst verhuizen, dan verwijderen
+      await faseDelete(f);
+    },
+  });
+}
+async function faseDelete(f) {
+  const { error } = await sb.from("fasen").delete().eq("nr", f.nr);
+  if (error) { toast(/foreign key|violates/i.test(error.message) ? "Deze fase wordt nog gebruikt — verhuis eerst de projecten en taken." : "Mislukt: " + error.message); throw error; }
+  delete S.fasen[f.nr]; S.standaardtaken = S.standaardtaken.filter(t => t.fase_nr !== f.nr); if (S.selFase === f.nr) S.selFase = null; render(); toast("Fase verwijderd");
+}
+/* fase in gebruik: projecten en taken naar een andere fase verplaatsen en daarna de fase verwijderen */
+function faseMoveForm(f, projs, tasks) {
+  const andere = Object.values(S.fasen).filter(x => x.nr !== f.nr).sort((a, b) => a.nr - b.nr);
+  if (!andere.length) return toast("Er is geen andere fase om naar te verhuizen.");
+  const std = S.standaardtaken.filter(t => t.fase_nr === f.nr).length;
+  openModal(`Fase ${f.nr} · ${f.naam} verwijderen`, `<div class="form-grid">
+    <div class="field span2"><p style="margin:0">Deze fase wordt nog gebruikt door <b>${projs.length} project${projs.length === 1 ? "" : "en"}</b> en <b>${tasks.length} ta${tasks.length === 1 ? "ak" : "ken"}</b>${std ? ` (en heeft ${std} standaardta${std === 1 ? "ak" : "ken"}, die mee verdwijnen)` : ""}. Kies naar welke fase die verhuizen; daarna wordt fase ${f.nr} verwijderd.</p>
+      ${projs.length ? `<p class="muted" style="font-size:12px;margin:8px 0 0">Projecten: ${projs.slice(0, 8).map(p => esc(p.klant)).join(", ")}${projs.length > 8 ? ", …" : ""}</p>` : ""}</div>
+    <div class="field span2"><label for="fm_naar">Verhuizen naar</label><select id="fm_naar" name="naar">${opts(andere.map(x => [x.nr, `${x.nr} · ${x.naam}`]), andere.find(x => x.nr > f.nr)?.nr ?? andere[andere.length - 1].nr)}</select></div>
+    <div class="field span2"><p class="muted" style="font-size:12px;margin:0">Liever niets verhuizen? Annuleer en zet de fase via Bewerken op "Zichtbaar bij nieuwe projecten: Nee"; ze blijft dan bestaan maar verdwijnt uit de keuzelijsten.</p></div>
+  </div>`, {
+    saveLabel: "Verhuizen en verwijderen", onSave: async (d) => {
+      const naar = Number(d.naar); if (!S.fasen[naar]) { toast("Kies een fase."); return false; }
+      if (projs.length) { const { error } = await sb.from("projecten").update({ fase_nr: naar }).eq("fase_nr", f.nr); if (error) { toast("Projecten niet verplaatst: " + error.message); return false; } projs.forEach(p => { if (S.projecten[p.id]) S.projecten[p.id].fase_nr = naar; }); }
+      if (tasks.length) { const { error } = await sb.from("taken").update({ fase_nr: naar }).eq("fase_nr", f.nr); if (error) { toast("Taken niet verplaatst: " + error.message); return false; } tasks.forEach(t => { if (S.taken[t.id]) S.taken[t.id].fase_nr = naar; }); }
+      try { await faseDelete(f); } catch (e) { return false; }
+      toast(`Fase ${f.nr} verwijderd · ${projs.length} project${projs.length === 1 ? "" : "en"} en ${tasks.length} ta${tasks.length === 1 ? "ak" : "ken"} verhuisd naar fase ${naar}`);
     },
   });
 }
