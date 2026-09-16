@@ -68,3 +68,10 @@ Statische webapp (geen build-stap) op een Supabase-database.
 - Yuki mailt elke verkoopfactuur ("Factuur van BROS: Factuur voor <klant>") naar de klant en naar accounting@bros.be. Een Gmail-filter in accounting@ stuurt die mails door naar brosburo@gmail.com; daar draait elk uur `yukiSync()` (Apps Script): factuurnummer, datum, klant en totaal uit de mail, maatstaf/btw uit de pdf, en de factuur wordt aan de juiste vordering in het Planbord gekoppeld (factuurnummer, datum, bedrag, status verzonden = bevroren).
 - Herkenning: projectnummer in de pdf/klantnaam, anders klantnaam ≈ klant/bedrijf van het project; dan de openstaande vordering met hetzelfde bedrag incl. btw (± 1 €). Twijfel of een afwijkend bedrag wordt gemeld, niet geraden. Verwerkte mails krijgen het label "Planbord/verwerkt"; na elke run met resultaat gaat een samenvatting naar info@bros.be.
 - Instellen: `YUKI` bovenaan het script invullen (Supabase-URL, key, bot-gebruiker), `autoriseer()` uitvoeren (Gmail-recht), daarna éénmaal `yukiInstall()` (label + uurlijkse trigger). Het script logt in als een aparte Planbord-gebruiker met de rechten van een teamlid.
+
+## Contacten (script 009)
+
+- Tabblad **Contacten**: klanten, aannemers, leveranciers, architecten, studiebureaus. Per contact: naam/bedrijf, contactpersoon, e-mail, gsm, adres (postcode ⇄ gemeente), btw-nummer, vakgebied en typische loten, interne notities, actief/inactief. Klik op een contact voor de gekoppelde projecten.
+- Koppeling aan projecten met een **rol** (bouwheer, contactpersoon, aannemer, leverancier, architect, studiebureau) en voor aannemers/leveranciers de loten van dat project. Bouwheer en contactpersoon zijn zichtbaar voor de klant; de rest is intern (`intern = true`).
+- Nieuw project: kies de bouwheer uit de contacten (gegevens worden overgenomen) of laat het veld leeg — dan wordt uit de klantgegevens automatisch een contact aangemaakt en gekoppeld. Bestaande projecten kregen bij script 009 hun bouwheer als contact.
+- Voorbereiding portaal: `contacten.user_id` koppelt later een login aan een contact; een aannemer ziet dan enkel de projecten (en loten) waaraan hij gekoppeld is.

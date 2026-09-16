@@ -2,7 +2,7 @@
    BROS Planbord — app v1.0
    Statische webapp op Supabase (login, live-synchronisatie, rechten)
    ===================================================================== */
-const APP_VERSION = "1.7.0";
+const APP_VERSION = "1.8.0";
 const PROJ_STATUS = { offerte: "In offerte", lopend: "Lopend", on_hold: "On hold", afgerond: "Afgerond", verloren: "Verloren" };
 const KLANTTYPE = { particulier: "Particulier", zakelijk: "Zakelijk" };
 const KLANTCODE = { particulier: "PAR", zakelijk: "ZAK" };
@@ -35,9 +35,9 @@ const workdays = (a, b) => { let n = 0; for (let s = a; s <= b; s = addDays(s, 1
 /* ---------- state ---------- */
 const S = {
   session: null, me: null,
-  profiles: {}, tarieven: {}, fasen: {}, standaardtaken: [], projecten: {}, taken: {}, uren: {}, documenten: {}, instellingen: {}, loten: {}, posten: {}, meetstaat_posten: {}, vorderingen: {}, vordering_regels: {},
+  profiles: {}, tarieven: {}, fasen: {}, standaardtaken: [], projecten: {}, taken: {}, uren: {}, documenten: {}, instellingen: {}, loten: {}, posten: {}, meetstaat_posten: {}, vorderingen: {}, vordering_regels: {}, contacten: {}, project_contacten: {},
   view: "overzicht", project: null, ptab: "taken",
-  filters: { user: "", status: "", project: "", q: "" },
+  filters: { user: "", status: "", project: "", q: "" }, cfilters: { soort: "", q: "" },
   ganttStart: addDays(mondayOf(todayIso), -14), ganttDays: 112, ganttOpen: {},
   weekStart: mondayOf(todayIso), hoursUser: null, sort: { key: "nummer", dir: "desc" },
   ready: false, loadError: null,
@@ -70,8 +70,8 @@ const projKost = (pid, soort) => Object.values(S.uren).filter(h => h.project_id 
 let toastT; function toast(msg) { const t = $("#toast"); t.textContent = msg; t.classList.add("show"); clearTimeout(toastT); toastT = setTimeout(() => t.classList.remove("show"), 2800); }
 
 /* ---------- data laden en live houden ---------- */
-const TABLES = { profiles: "profiles", tarieven: "tarieven", fasen: "fasen", standaardtaken: "standaardtaken", projecten: "projecten", taken: "taken", uren: "uren", documenten: "documenten", instellingen: "instellingen", loten: "loten", posten: "posten", meetstaat_posten: "meetstaat_posten", vorderingen: "vorderingen", vordering_regels: "vordering_regels" };
-const OPTIONAL_TABLES = ["tarieven", "documenten", "instellingen", "loten", "posten", "meetstaat_posten", "vorderingen", "vordering_regels"]; // ontbreken zolang het bijbehorende sql-script niet is uitgevoerd
+const TABLES = { profiles: "profiles", tarieven: "tarieven", fasen: "fasen", standaardtaken: "standaardtaken", projecten: "projecten", taken: "taken", uren: "uren", documenten: "documenten", instellingen: "instellingen", loten: "loten", posten: "posten", meetstaat_posten: "meetstaat_posten", vorderingen: "vorderingen", vordering_regels: "vordering_regels", contacten: "contacten", project_contacten: "project_contacten" };
+const OPTIONAL_TABLES = ["tarieven", "documenten", "instellingen", "loten", "posten", "meetstaat_posten", "vorderingen", "vordering_regels", "contacten", "project_contacten"]; // ontbreken zolang het bijbehorende sql-script niet is uitgevoerd
 const rowKey = (t, r) => t === "fasen" || t === "loten" ? r.nr : t === "tarieven" ? r.user_id : t === "instellingen" ? r.key : t === "vordering_regels" ? (r.id || r.vordering_id + "|" + r.lot + "|" + (r.post_id || "")) : r.id;
 function ingest(table, rows) {
   if (table === "standaardtaken") { S.standaardtaken = rows.sort((a, b) => a.fase_nr - b.fase_nr || a.volgorde - b.volgorde); return; }
@@ -84,7 +84,7 @@ async function loadAll() {
 }
 function subscribe() {
   const ch = sb.channel("planbord");
-  ["profiles", "tarieven", "fasen", "standaardtaken", "projecten", "taken", "uren", "documenten", "loten", "posten", "meetstaat_posten", "vorderingen", "vordering_regels"].forEach(t => {
+  ["profiles", "tarieven", "fasen", "standaardtaken", "projecten", "taken", "uren", "documenten", "loten", "posten", "meetstaat_posten", "vorderingen", "vordering_regels", "contacten", "project_contacten"].forEach(t => {
     ch.on("postgres_changes", { event: "*", schema: "public", table: t }, (payload) => {
       if (t === "standaardtaken") { refetch(t); return; }
       if (payload.eventType === "DELETE") { delete S[t][rowKey(t, payload.old)]; }
@@ -173,6 +173,109 @@ async function driveSync(p, action) {
   } catch (e) { loader.fail(); throw e; }
 }
 const docsOf = (pid) => Object.values(S.documenten).filter(d => d.project_id === pid).sort((a, b) => (a.pad || "").localeCompare(b.pad || "") || a.naam.localeCompare(b.naam));
+
+
+/* ---------- Contacten: klanten, aannemers, leveranciers, … en hun koppeling aan projecten ---------- */
+const CONTACT_SOORT = { klant: "Klant", aannemer: "Aannemer", leverancier: "Leverancier", architect: "Architect", studiebureau: "Studiebureau", andere: "Andere" };
+const CONTACT_ROL = { bouwheer: "Bouwheer", contactpersoon: "Contactpersoon", aannemer: "Aannemer", leverancier: "Leverancier", architect: "Architect", studiebureau: "Studiebureau", andere: "Andere" };
+const ROL_INTERN = { bouwheer: false, contactpersoon: false, architect: false, aannemer: true, leverancier: true, studiebureau: true, andere: true };
+const contactsReady = () => S.contacten && Object.keys(S.contacten).length > 0 || Object.keys(S.project_contacten || {}).length > 0;
+const contactsOf = (pid) => Object.values(S.project_contacten).filter(x => x.project_id === pid).map(x => ({ ...x, c: S.contacten[x.contact_id] })).filter(x => x.c).sort((a, b) => Object.keys(CONTACT_ROL).indexOf(a.rol) - Object.keys(CONTACT_ROL).indexOf(b.rol) || a.c.naam.localeCompare(b.c.naam));
+const projectsOfContact = (cid) => Object.values(S.project_contacten).filter(x => x.contact_id === cid).map(x => ({ ...x, p: S.projecten[x.project_id] })).filter(x => x.p).sort((a, b) => (b.p.nummer || "").localeCompare(a.p.nummer || ""));
+const contactLabel = (c) => c.bedrijf && c.bedrijf !== c.naam ? `${c.naam} · ${c.bedrijf}` : c.naam;
+function vContacten() {
+  if (!Object.keys(S.contacten).length && !Object.keys(S.project_contacten).length) return `<div class="page-head"><div><div class="eyebrow">0 contacten</div><h1>Contacten</h1></div></div><div class="panel"><div class="empty"><b>Contacten nog niet beschikbaar</b>Voer databasescript <code>sql/009_contacten.sql</code> uit in Supabase; bestaande projecten krijgen dan meteen hun bouwheer als contact.</div></div>`;
+  const q = (S.cfilters.q || "").toLowerCase();
+  const list = Object.values(S.contacten).filter(c => c.actief !== false || S.cfilters.soort === "inactief").filter(c => !S.cfilters.soort || S.cfilters.soort === "inactief" ? (S.cfilters.soort !== "inactief" || c.actief === false) : c.soort === S.cfilters.soort)
+    .filter(c => !q || [c.naam, c.bedrijf, c.contactpersoon, c.gemeente, c.email, c.gsm, c.vakgebied].some(v => (v || "").toLowerCase().includes(q))).sort((a, b) => a.naam.localeCompare(b.naam));
+  const beheer = isBeheer();
+  return `
+  <div class="page-head"><div><div class="eyebrow">${list.length} contacten</div><h1>Contacten</h1><div class="sub">Klanten, aannemers, leveranciers en andere partijen — gekoppeld aan projecten. Aannemers en leveranciers zijn intern en straks de basis voor het aannemersportaal (elke aannemer ziet enkel zijn eigen projecten).</div></div>
+    <div class="actions"><button class="btn primary" data-act="contact-new">+ Contact</button></div></div>
+  <div class="filters"><input data-cfilter="q" placeholder="Zoeken op naam, bedrijf, gemeente, e-mail…" value="${esc(S.cfilters.q || "")}" style="min-width:260px"><select data-cfilter="soort"><option value="">Alle soorten</option>${opts(Object.entries(CONTACT_SOORT), S.cfilters.soort)}<option value="inactief" ${S.cfilters.soort === "inactief" ? "selected" : ""}>Inactief</option></select></div>
+  <div class="panel tw"><table class="t"><thead><tr><th>Naam</th><th>Soort</th><th>Gemeente</th><th>E-mail</th><th>GSM</th><th>Vakgebied / loten</th><th class="r">Projecten</th></tr></thead><tbody>
+    ${list.map(c => { const ps = projectsOfContact(c.id); return `<tr class="click" data-contact="${c.id}"><td><div class="row-title">${esc(c.naam)}<small>${[c.bedrijf && c.bedrijf !== c.naam ? c.bedrijf : "", c.contactpersoon, c.soort === "klant" ? KLANTCODE[c.klanttype] : ""].filter(Boolean).map(esc).join(" · ")}</small></div></td>
+      <td><span class="pill ${c.soort === "klant" ? "st-lopend" : c.soort === "aannemer" || c.soort === "leverancier" ? "st-on_hold" : "st-offerte"}">${CONTACT_SOORT[c.soort] || c.soort}</span></td><td>${esc(c.gemeente || "—")}</td>
+      <td>${c.email ? `<a href="mailto:${esc(c.email)}">${esc(c.email)}</a>` : "—"}</td><td class="num">${c.gsm ? `<a href="tel:${esc(c.gsm)}">${esc(c.gsm)}</a>` : "—"}</td>
+      <td class="muted" style="font-size:12px">${esc(c.vakgebied || "")}${(c.loten || []).length ? `<br>loten ${c.loten.join(", ")}` : ""}</td>
+      <td class="r num">${ps.length}</td></tr>`; }).join("") || `<tr><td colspan="7"><div class="empty"><b>Geen contacten gevonden</b>Pas de zoekopdracht aan of maak een nieuw contact.</div></td></tr>`}
+  </tbody></table></div>`;
+}
+function contactForm(c = {}, after) {
+  const isNew = !c.id; const ps = isNew ? [] : projectsOfContact(c.id);
+  openModal(isNew ? "Nieuw contact" : "Contact bewerken", `<div class="form-grid">
+    <div class="field"><label for="c_soort">Soort</label><select id="c_soort" name="soort">${opts(Object.entries(CONTACT_SOORT), c.soort || "klant")}</select></div>
+    <div class="field klant"><label>Type klant</label><div class="seg"><label><input type="radio" name="klanttype" value="particulier" ${(c.klanttype || "particulier") === "particulier" ? "checked" : ""}> Particulier</label><label><input type="radio" name="klanttype" value="zakelijk" ${c.klanttype === "zakelijk" ? "checked" : ""}> Zakelijk</label></div></div>
+    <div class="field"><label for="c_naam">Naam <span class="muted" style="font-weight:400">(persoon of bedrijf, zoals in de projectmap)</span></label><input id="c_naam" name="naam" required value="${esc(c.naam || "")}"></div>
+    <div class="field"><label for="c_bedrijf">Bedrijfsnaam</label><input id="c_bedrijf" name="bedrijf" value="${esc(c.bedrijf || "")}"></div>
+    <div class="field"><label for="c_cp">Contactpersoon</label><input id="c_cp" name="contactpersoon" value="${esc(c.contactpersoon || "")}"></div>
+    <div class="field"><label for="c_btw">BTW-nummer</label><input id="c_btw" name="btw_nummer" value="${esc(c.btw_nummer || "")}" placeholder="BE 0123.456.789"></div>
+    <div class="field"><label for="c_email">E-mail</label><input id="c_email" name="email" type="email" value="${esc(c.email || "")}"></div>
+    <div class="field"><label for="c_email2">E-mail 2</label><input id="c_email2" name="email2" type="email" value="${esc(c.email2 || "")}"></div>
+    <div class="field"><label for="c_gsm">GSM</label><input id="c_gsm" name="gsm" type="tel" value="${esc(c.gsm || "")}"></div>
+    <div class="field"><label for="c_tel">Telefoon</label><input id="c_tel" name="tel" type="tel" value="${esc(c.tel || "")}"></div>
+    <div class="field"><label for="f_adres">Adres (straat + nr)</label><input id="f_adres" name="adres" value="${esc(c.adres || "")}"></div>
+    <div class="field"><label for="f_pc">Postcode</label><input id="f_pc" name="postcode" inputmode="numeric" maxlength="4" value="${esc(c.postcode || "")}" list="pc_list" autocomplete="off"><datalist id="pc_list"></datalist></div>
+    <div class="field"><label for="f_gem">Gemeente</label><input id="f_gem" name="gemeente" value="${esc(c.gemeente || "")}" list="gem_list" autocomplete="off"><datalist id="gem_list"></datalist></div>
+    <div class="field vak"><label for="c_vak">Vakgebied</label><input id="c_vak" name="vakgebied" value="${esc(c.vakgebied || "")}" placeholder="bv. schrijnwerk, keukens, elektriciteit"></div>
+    <div class="field span2 vak"><label>Typische loten <span class="muted" style="font-weight:400">— waarvoor je deze partij inschakelt</span></label><div class="fase-list">${lotenList().map(l => `<label class="chk"><input type="checkbox" name="lot" value="${l.nr}" ${(c.loten || []).includes(l.nr) ? "checked" : ""}> <span>${esc(lotName(l.nr))}</span></label>`).join("")}</div></div>
+    <div class="field span2"><label for="c_not">Notities <span class="muted" style="font-weight:400">(intern)</span></label><textarea id="c_not" name="notities">${esc(c.notities || "")}</textarea></div>
+    ${isNew ? "" : `<div class="field"><label for="c_act">Actief</label><select id="c_act" name="actief"><option value="1" ${c.actief !== false ? "selected" : ""}>Ja</option><option value="0" ${c.actief === false ? "selected" : ""}>Nee (verborgen)</option></select></div>`}
+    ${ps.length ? `<div class="field span2"><label>Projecten</label><div class="tw"><table class="t"><tbody>${ps.map(x => `<tr class="click" data-open="${x.p.id}" data-close="1"><td class="num muted" style="width:70px">${esc(x.p.nummer || "")}</td><td>${esc(projName(x.p))}</td><td><span class="pill st-offerte">${CONTACT_ROL[x.rol] || x.rol}</span>${(x.loten || []).length ? ` <small class="muted">loten ${x.loten.join(", ")}</small>` : ""}</td><td><span class="pill st-${x.p.status}">${PROJ_STATUS[x.p.status] || x.p.status}</span></td></tr>`).join("")}</tbody></table></div></div>` : ""}
+  </div>`, {
+    wide: true,
+    onSave: async (d) => {
+      const row = { soort: d.soort, naam: d.naam.trim(), bedrijf: (d.bedrijf || "").trim(), contactpersoon: (d.contactpersoon || "").trim(), klanttype: d.klanttype || "particulier", btw_nummer: (d.btw_nummer || "").trim(), email: (d.email || "").trim(), email2: (d.email2 || "").trim(), gsm: (d.gsm || "").trim(), tel: (d.tel || "").trim(), adres: (d.adres || "").trim(), postcode: (d.postcode || "").trim(), gemeente: (d.gemeente || "").trim(), vakgebied: (d.vakgebied || "").trim(), loten: [...$("#mform").querySelectorAll('input[name="lot"]:checked')].map(i => Number(i.value)), notities: d.notities || "", updated_at: new Date().toISOString() };
+      if (!isNew) row.actief = d.actief === "1";
+      const saved = isNew ? await dbInsert("contacten", row) : await dbUpdate("contacten", c.id, row);
+      toast(isNew ? "Contact aangemaakt" : "Contact bewaard"); if (after) after(saved);
+    },
+    onDelete: isNew ? null : async () => {
+      if (projectsOfContact(c.id).length) { toast("Dit contact is aan projecten gekoppeld — zet het op inactief of verwijder eerst de koppelingen."); throw new Error("gekoppeld"); }
+      await dbDelete("contacten", c.id); toast("Contact verwijderd");
+    },
+  });
+  wirePostcode();
+  const form = $("#mform"); const sync = () => { const soort = form.querySelector("#c_soort").value; form.querySelectorAll(".field.klant").forEach(el => el.style.display = soort === "klant" ? "" : "none"); form.querySelectorAll(".field.vak").forEach(el => el.style.display = soort === "aannemer" || soort === "leverancier" || soort === "studiebureau" ? "" : "none"); };
+  form.addEventListener("change", sync); sync();
+}
+/* koppeling contact ↔ project */
+function linkContactForm(pid, rol) {
+  const p = S.projecten[pid]; const present = new Set(contactsOf(pid).map(x => x.contact_id + "|" + x.rol));
+  const cs = Object.values(S.contacten).filter(c => c.actief !== false).sort((a, b) => a.naam.localeCompare(b.naam));
+  const soortFor = (r) => ({ bouwheer: "klant", contactpersoon: "klant", aannemer: "aannemer", leverancier: "leverancier", architect: "architect", studiebureau: "studiebureau" })[r] || "";
+  openModal("Contact koppelen aan " + p.klant, `<div class="form-grid">
+    <div class="field"><label for="lc_rol">Rol in dit project</label><select id="lc_rol" name="rol">${opts(Object.entries(CONTACT_ROL), rol || "aannemer")}</select></div>
+    <div class="field"><label for="lc_q">Zoeken</label><input id="lc_q" placeholder="naam, bedrijf, vakgebied…" autocomplete="off"></div>
+    <div class="field span2"><label for="lc_c">Contact</label><select id="lc_c" name="contact_id" size="8" style="height:auto">${cs.map(c => `<option value="${c.id}" data-soort="${c.soort}">${esc(contactLabel(c))} — ${CONTACT_SOORT[c.soort]}${c.vakgebied ? " · " + esc(c.vakgebied) : ""}${c.gemeente ? " · " + esc(c.gemeente) : ""}</option>`).join("")}</select><span class="muted" style="font-size:12px">Staat de partij er nog niet bij? <button type="button" class="btn ghost sm" data-act="contact-new-inline">+ Nieuw contact</button></span></div>
+    <div class="field span2 lot"><label>Loten van dit project voor deze partij</label><div class="fase-list">${lotenList().map(l => `<label class="chk"><input type="checkbox" name="lot" value="${l.nr}"> <span>${esc(lotName(l.nr))}</span></label>`).join("")}</div></div>
+    <div class="field span2"><label for="lc_not">Notitie</label><input id="lc_not" name="notitie" placeholder="bv. offerte gevraagd op 12/09"></div>
+  </div>`, {
+    saveLabel: "Koppelen", wide: true,
+    onSave: async (d) => {
+      if (!d.contact_id) { toast("Kies een contact."); return false; }
+      if (present.has(d.contact_id + "|" + d.rol)) { toast("Dit contact is al met die rol gekoppeld."); return false; }
+      const row = { project_id: pid, contact_id: d.contact_id, rol: d.rol, intern: ROL_INTERN[d.rol] !== false, loten: [...$("#mform").querySelectorAll('input[name="lot"]:checked')].map(i => Number(i.value)), notitie: (d.notitie || "").trim() };
+      await dbInsert("project_contacten", row); toast("Contact gekoppeld");
+    },
+  });
+  const form = $("#mform"); const sel = $("#lc_c"), q = $("#lc_q"), rolSel = $("#lc_rol");
+  const sync = () => { const soort = soortFor(rolSel.value); const qq = q.value.trim().toLowerCase(); let first = null;
+    [...sel.options].forEach(o => { const c = S.contacten[o.value]; const hit = (!qq || o.textContent.toLowerCase().includes(qq)) && (!soort || c.soort === soort || qq); o.hidden = !hit; if (hit && !first) first = o; });
+    if (![...sel.selectedOptions].some(o => !o.hidden) && first) first.selected = true;
+    form.querySelectorAll(".field.lot").forEach(el => el.style.display = ["aannemer", "leverancier", "studiebureau"].includes(rolSel.value) ? "" : "none"); };
+  q.addEventListener("input", sync); rolSel.addEventListener("change", sync); sync();
+  form.querySelector("[data-act=contact-new-inline]").onclick = () => { const rolNow = rolSel.value; closeModal(); contactForm({ soort: soortFor(rolNow) || "andere" }, () => linkContactForm(pid, rolNow)); };
+}
+function vProjectContacten(p) {
+  const rows = contactsOf(p.id); const beheer = isBeheer();
+  return `<div class="panel" style="margin-bottom:16px"><div class="panel-head"><div><h3>Contacten bij dit project</h3><div class="muted" style="font-size:12px;margin-top:2px">Bouwheer en contactpersonen zijn zichtbaar voor de klant in het portaal; aannemers, leveranciers en studiebureaus zijn intern en zien straks enkel hun eigen loten.</div></div>
+      <div class="actions"><button class="btn sm" data-act="contact-link" data-pid="${p.id}" data-rol="aannemer">+ Aannemer</button><button class="btn sm" data-act="contact-link" data-pid="${p.id}" data-rol="leverancier">+ Leverancier</button><button class="btn sm" data-act="contact-link" data-pid="${p.id}" data-rol="contactpersoon">+ Contact</button></div></div>
+    ${rows.length ? `<div class="tw"><table class="t"><thead><tr><th>Rol</th><th>Contact</th><th>E-mail · GSM</th><th>Loten</th><th>Zichtbaar</th><th></th></tr></thead><tbody>
+      ${rows.map(x => `<tr class="click" data-contact="${x.c.id}"><td><span class="pill ${x.rol === "bouwheer" ? "st-lopend" : x.intern ? "st-on_hold" : "st-offerte"}">${CONTACT_ROL[x.rol] || x.rol}</span></td><td><div class="row-title">${esc(x.c.naam)}<small>${[x.c.bedrijf && x.c.bedrijf !== x.c.naam ? x.c.bedrijf : "", x.c.contactpersoon, x.c.vakgebied].filter(Boolean).map(esc).join(" · ")}${x.notitie ? " · " + esc(x.notitie) : ""}</small></div></td>
+        <td style="font-size:12px">${x.c.email ? `<a href="mailto:${esc(x.c.email)}">${esc(x.c.email)}</a>` : ""}${x.c.gsm ? `<br><a href="tel:${esc(x.c.gsm)}">${esc(x.c.gsm)}</a>` : ""}</td><td class="muted" style="font-size:12px">${(x.loten || []).map(l => esc(lotName(l))).join("<br>") || "—"}</td><td class="muted" style="font-size:12px">${x.intern ? "intern" : "klant + intern"}</td>
+        <td class="r"><button class="btn ghost sm danger" data-act="contact-unlink" data-id="${x.id}" aria-label="Ontkoppelen">✕</button></td></tr>`).join("")}</tbody></table></div>` : `<div class="empty"><b>Nog geen contacten gekoppeld</b>Koppel de bouwheer, aannemers en leveranciers van dit project.</div>`}</div>`;
+}
 
 /* ---------- Meetstaat: loten, postenbibliotheek en meetstaatregels per project ---------- */
 const MS_STATUS = { offerte: "Offerte", akkoord: "Akkoord", meerwerk: "Meerwerk", minwerk: "Minwerk", vervallen: "Vervallen" };
@@ -271,7 +374,7 @@ function msAddPostForm(pid, lot) {
       const rows = []; const cnt = {}; const next = (l) => { cnt[l] = (cnt[l] ?? msRows(pid).filter(r => r.lot === l).length) + 1; return cnt[l]; };
       const zoekend = !!$("#ap_q").value.trim();
       ids.forEach(id => { const x = S.posten[id]; const l = zoekend ? x.lot : lotNr; rows.push(msRowFromPost(pid, x, l, next(l))); });
-      if (d.vrij && d.vrij.trim()) { const n = next(lotNr); rows.push(msRowFromPost(pid, { omschrijving: d.vrij.trim(), eenheid: d.eenheid, prijstype: d.eenheid === "sog" ? "SOG" : "EP", richtprijs: Number(d.prijs) || 0, btw: 0.06, volgorde: 9000 + n }, lotNr, n)); }
+      if (d.vrij && d.vrij.trim()) { const n = next(lotNr); const row = msRowFromPost(pid, { omschrijving: d.vrij.trim(), eenheid: d.eenheid, prijstype: d.eenheid === "sog" ? "SOG" : "EP", richtprijs: Number(d.prijs) || 0, btw: 0.06, volgorde: 9000 + n }, lotNr, n); row.hoeveelheid = 1; rows.push(row); }
       if (!rows.length) { toast("Vink een post aan of typ een vrije post."); return false; }
       await msInsert(rows); toast(`${rows.length} post${rows.length > 1 ? "en" : ""} toegevoegd`);
     },
@@ -336,7 +439,9 @@ function vFacturatie(p) {
     <div class="panel"><div class="k">Gefactureerd excl. btw</div><div class="v">${eur(gefact)}</div><div class="muted" style="font-size:12px">${contract + meerwerk ? nl(gefact / (contract + meerwerk) * 100, 0) : 0} % · betaald ${eur(betaald)}</div></div>
     <div class="panel"><div class="k">Op te maken</div><div class="v">${open ? eur(open) : "—"}</div></div>
     <div class="panel"><div class="k">Nog te factureren</div><div class="v ${contract + meerwerk - gefact - open < -0.5 ? "neg" : ""}">${eur(contract + meerwerk - gefact - open)}</div></div></div>`;
-  if (!lots.length) return kpi + `<div class="panel"><div class="empty"><b>Nog geen meetstaat</b>Maak eerst de meetstaat op (tabblad Meetstaat); de vorderingsstaat rekent op de loten en posten daarvan.</div></div>`;
+  const zonderHoev = msRows(p.id).filter(r => msTelt(r) && !(Number(r.hoeveelheid) > 0) && Number(r.eenheidsprijs) > 0);
+  const waarschuwing = zonderHoev.length ? `<div class="banner show" style="border:1px solid var(--line);border-radius:8px;margin-bottom:16px">${zonderHoev.length} post${zonderHoev.length > 1 ? "en" : ""} in de meetstaat ${zonderHoev.length > 1 ? "hebben" : "heeft"} wel een prijs maar nog geen hoeveelheid (${zonderHoev.slice(0, 3).map(r => esc(r.code + " " + r.omschrijving.slice(0, 30))).join(", ")}${zonderHoev.length > 3 ? ", …" : ""}) — die tellen voor € 0 mee in het contract. Vul de hoeveelheid in op het tabblad Meetstaat.</div>` : "";
+  if (!lots.length || contract + Math.abs(meerwerk) < 0.005) return kpi + waarschuwing + `<div class="panel"><div class="empty"><b>${lots.length ? "Het contract staat op € 0" : "Nog geen meetstaat"}</b>${lots.length ? "De vorderingsstaat rekent op hoeveelheid × prijs van de posten in de meetstaat; vul eerst de hoeveelheden in." : "Maak eerst de meetstaat op (tabblad Meetstaat); de vorderingsstaat rekent op de loten en posten daarvan."}</div></div>`;
   const heeftVoorschot = vs.some(v => v.soort === "voorschot");
   S.vordOpen = S.vordOpen || {};
   const pctFmt = (x) => Math.round(x * 1000) / 10;
@@ -377,7 +482,7 @@ function vFacturatie(p) {
       ${vs.map(v => { const c = calcs[v.id]; const excl = vordBedrag(v, c); const btw = c.excl ? excl * (c.btw / c.excl) : c.btw; const lotsTxt = v.soort === "voorschot" ? "alle loten" : Object.keys(c.perLot).filter(l => Math.abs(c.perLot[l].excl) > 0.005).map(l => lotName(Number(l))).join(", ");
         return `<tr><td class="num">${v.nr === 0 ? "V" : v.nr}</td><td class="num">${fmtLong(v.datum)}</td><td>${esc(v.omschrijving || VORD_SOORT[v.soort])}${v.factuurnummer ? `<small class="muted" style="display:block">factuur ${esc(v.factuurnummer)}</small>` : ""}</td><td class="muted" style="font-size:12px;max-width:260px">${esc(lotsTxt)}</td><td class="r num">${eur(excl)}</td><td class="r num">${eur(btw)}</td><td class="r num"><b>${eur(excl + btw)}</b></td><td><span class="pill st-${v.status === "betaald" ? "afgerond" : v.status === "verzonden" ? "lopend" : "offerte"}">${VORD_STATUS[v.status]}</span></td></tr>`; }).join("") || `<tr><td class="muted" colspan="8">Nog geen facturen.</td></tr>`}
       <tr class="tot"><td colspan="4"><b>Nog te factureren (contract + meerwerk − gefactureerd/opgemaakt)</b></td><td class="r num"><b>${eur(contract + meerwerk - gefact - open)}</b></td><td></td><td></td><td></td></tr></tbody></table></div></div>`;
-  return kpi + grid + klant;
+  return kpi + waarschuwing + grid + klant;
 }
 /* regels voor "de rest" van gekozen loten: lot-% als alle posten gelijk staan, anders per post */
 function restRegels(pid, soort, lots, calcs) {
@@ -519,7 +624,7 @@ async function postDel(id) {
 const docIcon = (m, n) => /spreadsheet|excel/.test(m) ? "xls" : /word|document/.test(m) ? "doc" : /pdf/.test(m) ? "pdf" : /skp|sketchup|vwx|dwg|dxf/i.test(n) ? "dwg" : "map";
 
 /* ---------- render root ---------- */
-const TABS = [["overzicht", "Overzicht"], ["projecten", "Projecten"], ["taken", "Taken"], ["planning", "Planning"], ["uren", "Uren"], ["team", "Team"], ["rapporten", "Rapporten"], ["instellingen", "Instellingen", "beheer"]];
+const TABS = [["overzicht", "Overzicht"], ["projecten", "Projecten"], ["taken", "Taken"], ["planning", "Planning"], ["uren", "Uren"], ["contacten", "Contacten"], ["team", "Team"], ["rapporten", "Rapporten"], ["instellingen", "Instellingen", "beheer"]];
 function render() {
   const app = $("#app");
   if (!configured) { app.innerHTML = `<div class="login"><div class="card"><h1>BROS Planbord</h1><p>De app is nog niet gekoppeld aan de database. Vul <code>config.js</code> in (Project URL en anon public-sleutel uit Supabase) en herlaad.</p></div></div>`; return; }
@@ -527,7 +632,7 @@ function render() {
   if (S.loadError) { app.innerHTML = `<div class="login"><div class="card"><h1>Kon de gegevens niet laden</h1><p class="err">${esc(S.loadError)}</p><button class="btn" data-act="logout">Uitloggen</button> <button class="btn primary" data-act="reload">Opnieuw proberen</button></div></div>`; return; }
   if (!S.ready) { app.innerHTML = `<div class="login"><div class="card"><h1>BROS Planbord</h1><p>Gegevens laden…</p></div></div>`; return; }
   if (!S.me) { app.innerHTML = `<div class="login"><div class="card"><h1>Nog geen profiel</h1><p>Je login werkt, maar er is nog geen medewerkersprofiel gekoppeld. Vraag de beheerder om je uit te nodigen, of herlaad de pagina.</p><button class="btn" data-act="logout">Uitloggen</button> <button class="btn primary" data-act="reload">Herladen</button></div></div>`; return; }
-  const views = { overzicht: vOverzicht, projecten: vProjecten, taken: vTaken, planning: vPlanning, uren: vUren, team: vTeam, rapporten: vRapporten, instellingen: vInstellingen };
+  const views = { overzicht: vOverzicht, projecten: vProjecten, taken: vTaken, planning: vPlanning, uren: vUren, contacten: vContacten, team: vTeam, rapporten: vRapporten, instellingen: vInstellingen };
   app.innerHTML = `
   <header class="top">
     <div class="top-in">
@@ -670,7 +775,7 @@ function vProjectDetail(p) {
   } else {
     const map = p.drive_map || ("PROJECTEN/" + (p.klant || ""));
     const docs = docsOf(p.id); const groups = [...new Set(docs.map(d => d.pad || ""))];
-    body = `<div class="panel" style="margin-bottom:16px"><div class="panel-head"><div><h3>Projectmap op Google Drive</h3><div class="muted" style="font-size:12px;margin-top:2px"><span class="drive-path">${esc(map)}</span></div></div>
+    body = vProjectContacten(p) + `<div class="panel" style="margin-bottom:16px"><div class="panel-head"><div><h3>Projectmap op Google Drive</h3><div class="muted" style="font-size:12px;margin-top:2px"><span class="drive-path">${esc(map)}</span></div></div>
       <div class="actions">${p.drive_url ? `<a class="btn" href="${esc(p.drive_url)}" target="_blank" rel="noopener">Open map in Drive ↗</a><button class="btn sm" data-act="drive-list" data-pid="${p.id}">Vernieuwen</button>` : driveReady() ? `<button class="btn sm" data-act="drive-link" data-pid="${p.id}">Bestaande map koppelen</button><button class="btn sm primary" data-act="drive-create" data-pid="${p.id}">Map aanmaken uit sjabloon</button>` : `<span class="pill st-offerte">Drive-koppeling nog niet ingesteld</span>`}</div></div>
       ${docs.length ? `<div class="panel-body"><div class="docs">${groups.map(g => `${g ? `<div style="grid-column:1/-1" class="eyebrow">${esc(g)}</div>` : ""}${docs.filter(d => (d.pad || "") === g).map(d => `<a class="doc" href="${esc(d.url)}" target="_blank" rel="noopener" style="text-decoration:none;color:inherit"><div class="ico ${docIcon(d.mime, d.naam)}">${docIcon(d.mime, d.naam) === "map" ? "DOC" : docIcon(d.mime, d.naam).toUpperCase()}</div><div style="min-width:0"><div class="n" style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(d.naam)}</div><div class="s">${d.gewijzigd ? "gewijzigd " + fmtLong(d.gewijzigd.slice(0, 10)) : ""}</div></div></a>`).join("")}`).join("")}</div>
         <p class="muted" style="font-size:12px;margin:12px 0 0">Laatst gesynchroniseerd ${docs[0].gesynct_op ? fmtLong(docs[0].gesynct_op.slice(0, 10)) : "—"}. Nieuwe bestanden in Drive verschijnen hier na "Vernieuwen"; foto's en video's worden niet opgesomd (die open je via de map).</p></div>` : `<div class="empty">${p.drive_url ? "Nog geen bestanden gevonden — klik op Vernieuwen." : "Nog geen map gekoppeld. \"Bestaande map koppelen\" zoekt in PROJECTEN naar een map met de naam uit het veld Drive-map (of de klantnaam)."}</div>`}</div>
@@ -993,7 +1098,9 @@ const faseOpts = (sel, allowEmpty) => (allowEmpty ? `<option value="">— geen f
 
 function projectForm(p = {}) {
   const isNew = !p.id;
+  const klanten = Object.values(S.contacten).filter(c => c.soort === "klant" && c.actief !== false).sort((a, b) => a.naam.localeCompare(b.naam));
   openModal(isNew ? "Nieuw project" : "Project bewerken", `<div class="form-grid">
+    ${isNew && klanten.length ? `<div class="field span2"><label for="f_cid">Bouwheer (contact)</label><select id="f_cid" name="contact_id"><option value="">— nieuw contact aanmaken uit de klantgegevens hieronder —</option>${opts(klanten.map(c => [c.id, contactLabel(c) + (c.gemeente ? " · " + c.gemeente : "")]), "")}</select><span class="muted" style="font-size:12px">Kies een bestaand contact om de gegevens over te nemen; het project wordt eraan gekoppeld. Aannemers en leveranciers koppel je daarna op de projectfiche (Dossier).</span></div>` : ""}
     <div class="field"><label for="f_klant">Klant (naam van de projectmap)</label><input id="f_klant" name="klant" required value="${esc(p.klant || "")}" placeholder="bv. Chantor - Mansi"></div>
     <div class="field"><label for="f_naam">Projectnaam</label><input id="f_naam" name="naam" value="${esc(p.naam || "")}" placeholder="bv. Renovatie gelijkvloers"></div>
     <div class="field span2"><div class="eyebrow" style="margin-top:4px">Klantgegevens</div></div>
@@ -1040,6 +1147,11 @@ function projectForm(p = {}) {
         const created = await dbInsert("projecten", row);
         const tasks = S.standaardtaken.filter(t => d._fasen.includes(t.fase_nr)).map(t => ({ project_id: created.id, titel: t.titel, fase_nr: t.fase_nr, assignee: row.lead, volgorde: t.fase_nr * 100 + t.volgorde, status: "todo", uren_gepland: 0 }));
         if (tasks.length) { const { data, error } = await sb.from("taken").insert(tasks).select(); if (error) toast("Standaardtaken niet aangemaakt: " + error.message); else (data || []).forEach(t => S.taken[t.id] = t); }
+        // bouwheer koppelen: bestaand contact of nieuw contact uit de klantgegevens
+        try { if (Object.keys(S.contacten).length || Object.keys(S.project_contacten).length || d.contact_id) {
+          let cid = d.contact_id || null;
+          if (!cid) { const c = await dbInsert("contacten", { soort: "klant", naam: row.klant, bedrijf: row.bedrijf, contactpersoon: row.contact, klanttype: row.klanttype, btw_nummer: row.btw_nummer, email: row.email1, email2: row.email2, gsm: row.gsm1, tel: row.gsm2, adres: row.adres, postcode: row.postcode, gemeente: row.gemeente }); cid = c.id; }
+          await dbInsert("project_contacten", { project_id: created.id, contact_id: cid, rol: "bouwheer", intern: false }); } } catch (e) { }
         toast(`Project aangemaakt met ${tasks.length} standaardtaken`);
         S.view = "projecten"; S.project = created.id; S.ptab = "taken"; render();
         if (driveReady()) { try { await driveSync(S.projecten[created.id], "create"); } catch (e) { toast("Drive-map niet aangemaakt: " + e.message); } }
@@ -1048,6 +1160,9 @@ function projectForm(p = {}) {
     onDelete: isNew ? null : async () => { await dbDelete("projecten", p.id); Object.values(S.taken).filter(t => t.project_id === p.id).forEach(t => delete S.taken[t.id]); Object.values(S.uren).filter(h => h.project_id === p.id).forEach(h => delete S.uren[h.id]); S.project = null; render(); toast("Project verwijderd"); },
   });
   wirePostcode();
+  const cidSel = $("#f_cid"); if (cidSel) cidSel.addEventListener("change", () => { const c = S.contacten[cidSel.value]; if (!c) return; const f = $("#mform"); const set = (n, v) => { const el = f.querySelector(`[name="${n}"]`); if (el) el.value = v || ""; };
+    set("klant", c.naam); set("bedrijf", c.bedrijf); set("btw_nummer", c.btw_nummer); set("contact", c.contactpersoon); set("adres", c.adres); set("postcode", c.postcode); set("gemeente", c.gemeente); set("gsm1", c.gsm); set("gsm2", c.tel); set("email1", c.email); set("email2", c.email2);
+    const kt = f.querySelector(`input[name="klanttype"][value="${c.klanttype || "particulier"}"]`); if (kt) kt.checked = true; f.dispatchEvent(new Event("change")); });
   const form = $("#mform"); const sync = () => { const zak = form.querySelector('input[name="klanttype"]:checked')?.value === "zakelijk"; form.querySelectorAll(".field.zak").forEach(el => el.style.display = zak ? "" : "none"); form.querySelectorAll(".field.verloren").forEach(el => el.style.display = form.querySelector("#f_status").value === "verloren" ? "" : "none"); };
   form.addEventListener("change", sync); sync();
 }
@@ -1162,10 +1277,11 @@ function userForm(u) {
 /* ---------- events ---------- */
 document.addEventListener("click", (e) => {
   if (e.target.closest("a[href][target=_blank]")) return; // externe links (bv. Drive-map) gewoon laten openen
-  const el = e.target.closest("[data-nav],[data-act],[data-open],[data-back],[data-ptab],[data-edit-task],[data-edit-hours],[data-gnav],[data-wnav],[data-gtoggle],[data-close],[data-selfase],[data-sellot],[data-sort],[data-vtoggle]");
+  const el = e.target.closest("[data-nav],[data-act],[data-open],[data-back],[data-ptab],[data-edit-task],[data-edit-hours],[data-gnav],[data-wnav],[data-gtoggle],[data-close],[data-selfase],[data-sellot],[data-sort],[data-vtoggle],[data-contact]");
   if (!el) { if (e.target === $("#modalBg")) closeModal(); return; }
   if (e.target.matches(".task-check") || e.target.matches("input,select")) { if (!e.target.closest("[data-act]")) return; }
   const d = el.dataset;
+  if (d.close != null && d.open) { closeModal(); S.view = "projecten"; S.project = d.open; S.ptab = S.ptab || "taken"; return render(); }
   if (d.close != null) return closeModal();
   if (d.sort) { S.sort = { key: d.sort, dir: S.sort.key === d.sort && S.sort.dir === "asc" ? "desc" : S.sort.key === d.sort ? "asc" : (["klant", "lead", "status", "fase"].includes(d.sort) ? "asc" : "desc") }; try { localStorage.setItem("bros.sort", JSON.stringify(S.sort)); } catch (err) { } return render(); }
   if (d.nav) { S.view = d.nav; S.project = null; if (d.nav === "planning") S.filters.project = ""; return render(); }
@@ -1204,6 +1320,10 @@ document.addEventListener("click", (e) => {
   if (d.act === "ms-export") return exportMeetstaat(S.projecten[d.pid]).catch(err => { loader.fail(); toast("Export: " + err.message); });
   if (d.act === "post-new") return postAdd(Number(d.lot));
   if (d.act === "vord-new") return vordForm(d.pid, d.soort);
+  if (d.act === "contact-new") return contactForm({});
+  if (d.act === "contact-link") return linkContactForm(d.pid, d.rol);
+  if (d.act === "contact-unlink") { const x = S.project_contacten[d.id]; if (x && confirm(`${S.contacten[x.contact_id]?.naam || "Contact"} ontkoppelen van dit project?`)) dbDelete("project_contacten", d.id).catch(() => { }); return; }
+  if (d.contact) { e.stopPropagation(); return contactForm(S.contacten[d.contact]); }
   if (d.act === "vord-del") return vordDel(d.id);
   if (d.act === "post-del") return postDel(d.id);
   if (d.act === "logout") return sb.auth.signOut().then(() => location.reload());
@@ -1223,6 +1343,7 @@ document.addEventListener("focusout", (e) => {
 document.addEventListener("change", (e) => {
   const el = e.target;
   if (el.dataset.filter) { S.filters[el.dataset.filter] = el.value; return render(); }
+  if (el.dataset.cfilter) { S.cfilters[el.dataset.cfilter] = el.value; return render(); }
   if (el.dataset.hoursUser != null) { S.hoursUser = el.value; return render(); }
   if (el.dataset.rapjaar != null) { S.rapJaar = el.value; return render(); }
   if (el.dataset.toggle) { const t = S.taken[el.dataset.toggle]; if (t) dbUpdate("taken", t.id, { status: el.checked ? "done" : "todo" }).catch(() => { }); }
@@ -1231,7 +1352,10 @@ document.addEventListener("change", (e) => {
   if (el.dataset.lot && el.type === "checkbox") return lotEdit(Number(el.dataset.lot), el.dataset.f, null, el.checked);
   if (el.dataset.vf && (el.tagName === "SELECT" || el.type === "date")) return vordEdit(el.dataset.vf, el.dataset.f, el.value);
 });
-document.addEventListener("input", (e) => { if (e.target.dataset.filter === "q") { S.filters.q = e.target.value; render(); const i = $("[data-filter=q]"); i.focus(); i.setSelectionRange(i.value.length, i.value.length); } });
+document.addEventListener("input", (e) => {
+  if (e.target.dataset.filter === "q") { S.filters.q = e.target.value; render(); const i = $("[data-filter=q]"); i.focus(); i.setSelectionRange(i.value.length, i.value.length); }
+  if (e.target.dataset.cfilter === "q") { S.cfilters.q = e.target.value; render(); const i = $("[data-cfilter=q]"); i.focus(); i.setSelectionRange(i.value.length, i.value.length); }
+});
 document.addEventListener("keydown", (e) => { if (e.key === "Escape") closeModal(); if (e.key === "Enter" && e.target.classList && e.target.classList.contains("inline") && e.target.tagName === "INPUT") { e.preventDefault(); e.target.blur(); } });
 
 /* ---------- versiecontrole: melden als er een nieuwe versie online staat ---------- */
