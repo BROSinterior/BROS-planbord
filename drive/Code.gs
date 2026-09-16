@@ -228,7 +228,7 @@ const PORTAAL = {
   SERVICE_KEY: "VUL-IN",
   URL: "https://brosinterior.github.io/BROS-planbord/klant/",   // ook toevoegen bij Supabase → Authentication → URL Configuration → Redirect URLs
   AFZENDER: "BROS",
-  VAN: "info@bros.be",   // afzender van de mails naar klanten — moet in Gmail van brosburo@gmail.com ingesteld staan als "Send mail as"-alias; anders vertrekt de mail van brosburo met dit adres als antwoordadres
+  VAN: "archief@bros.be",   // afzender van de mails naar klanten — moet in Gmail van brosburo@gmail.com ingesteld staan als "E-mail verzenden als"-alias; anders vertrekt de mail van brosburo met dit adres als antwoordadres
   ONDERWERP: "Welkom in je BROS-klantenportaal",
 };
 /** Mail naar de klant: vanuit PORTAAL.VAN als dat een Gmail-alias is, anders vanuit het scriptaccount met PORTAAL.VAN als reply-to. */
