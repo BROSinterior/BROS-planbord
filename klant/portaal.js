@@ -2,7 +2,7 @@
    BROS Klantenportaal — alleen-lezen zicht van de bouwheer op zijn project
    Leest uitsluitend de klant_*-views (databasescript 011): geen kostprijzen, marges of interne notities.
    ===================================================================== */
-const PORTAAL_VERSION = "1.15.0";
+const PORTAAL_VERSION = "1.15.1";
 const cfg = window.PLANBORD_CONFIG || {};
 const sb = window.supabase.createClient(cfg.supabaseUrl, cfg.supabaseAnonKey);
 const $ = (s, r = document) => r.querySelector(s);
@@ -35,7 +35,7 @@ function toast(msg, ms = 3500) { const t = document.createElement("div"); t.clas
 /* ---------- gegevens ---------- */
 async function loadAll() {
   const q = (v, sel = "*") => sb.from(v).select(sel).then(r => { if (r.error) throw new Error(v + ": " + r.error.message); return r.data || []; });
-  const [me, projecten, meetstaat, vorderingen, regels, planning, uren, documenten, team, ik, fasen, loten, inst, goedkeuringen, notities, notitieTaken] = await Promise.all([
+  const [me, projecten, meetstaat, vorderingen, regels, planning, uren, documenten, team, ik, fasen, loten, inst, goedkeuringen, notities, notitieTaken, mijnTaken] = await Promise.all([
     sb.from("profiles").select("id,name,email,role").eq("id", S.session.user.id).maybeSingle().then(r => r.data),
     q("klant_project"), q("klant_meetstaat"), q("klant_vorderingen"), q("klant_vordering_regels"), q("klant_planning"), q("klant_uren"),
     q("klant_documenten"), q("klant_team"), q("klant_ik"), q("fasen"), sb.from("loten_v").select("*").then(r => r.error || !(r.data || []).length ? q("loten") : r.data),
@@ -43,9 +43,10 @@ async function loadAll() {
     sb.from("klant_goedkeuringen").select("*").then(r => r.error ? [] : (r.data || [])),
     sb.from("klant_notities").select("*").then(r => r.error ? [] : (r.data || [])),
     sb.from("klant_notitie_taken").select("*").then(r => r.error ? [] : (r.data || [])),
+    sb.from("klant_taken").select("*").then(r => r.error ? [] : (r.data || [])),
   ]);
   S.me = me;
-  S.data = { projecten: projecten.sort((a, b) => (b.nummer || "").localeCompare(a.nummer || "")), meetstaat, vorderingen, regels, planning, uren, documenten, team, ik, fasen: fasen.filter(f => f.actief !== false).sort((a, b) => a.nr - b.nr), loten: Object.fromEntries(loten.map(l => [l.nr, l])), inst, goedkeuringen: goedkeuringen.sort((a, b) => (b.voorgelegd_op || "").localeCompare(a.voorgelegd_op || "")), notities: notities.sort((a, b) => (b.datum || "").localeCompare(a.datum || "")), notitieTaken };
+  S.data = { projecten: projecten.sort((a, b) => (b.nummer || "").localeCompare(a.nummer || "")), meetstaat, vorderingen, regels, planning, uren, documenten, team, ik, fasen: fasen.filter(f => f.actief !== false).sort((a, b) => a.nr - b.nr), loten: Object.fromEntries(loten.map(l => [l.nr, l])), inst, goedkeuringen: goedkeuringen.sort((a, b) => (b.voorgelegd_op || "").localeCompare(a.voorgelegd_op || "")), notities: notities.sort((a, b) => (b.datum || "").localeCompare(a.datum || "")), notitieTaken, mijnTaken: mijnTaken.sort((a, b) => (a.status === "done") - (b.status === "done") || (a.eind || "9").localeCompare(b.eind || "9")) };
   if (!S.project || !projecten.some(p => p.id === S.project)) S.project = projecten[0]?.id || null;
   S.eersteBezoek = ik.length > 0 && ik.every(x => !x.portaal_login);
   sb.rpc("portaal_bezoek").then(() => { });
@@ -79,7 +80,7 @@ function render() {
   if (!D().projecten.length) { $("#app").innerHTML = `<div class="login"><div class="card"><div class="brand" style="margin-bottom:14px"><span class="mark">BROS</span><span class="name">Klantenportaal</span></div><h1>Nog geen project gekoppeld</h1><p>Je login werkt, maar er is nog geen project aan je gekoppeld. Laat het ons even weten via ${esc(D().inst.contact_email || "info@bros.be")}.</p><p><button class="btn ghost" data-act="logout">Uitloggen</button></p></div></div>`; return; }
   const p = P();
   const openGk = D().goedkeuringen.filter(g => g.project_id === p.id && g.status === "open" && !(g.geldig_tot && g.geldig_tot < new Date().toISOString().slice(0, 10))).length;
-  const tabs = [["welkom", "Welkom"], ["akkoord", "Akkoord" + (openGk ? ` <span class="badge">${openGk}</span>` : "")], ["meetstaat", "Meetstaat"], ["facturatie", "Facturatie"], ["planning", "Planning"], ["verslagen", "Verslagen"], ["documenten", "Documenten"], ["team", "Wie is wie"]];
+  const tabs = [["welkom", "Welkom"], ["akkoord", "Akkoord" + (openGk ? ` <span class="badge">${openGk}</span>` : "")], ["meetstaat", "Meetstaat"], ["facturatie", "Facturatie"], ["planning", "Planning"], ["verslagen", "Verslagen" + (D().mijnTaken.filter(t => t.project_id === p.id && t.status !== "done").length ? ` <span class="badge">${D().mijnTaken.filter(t => t.project_id === p.id && t.status !== "done").length}</span>` : "")], ["documenten", "Documenten"], ["team", "Wie is wie"]];
   $("#app").innerHTML = `<header class="top"><div class="top-in"><div class="brand"><span class="mark">BROS</span><span class="name">Klantenportaal</span></div>
       <div class="who">${D().projecten.length > 1 ? `<select id="projSel" class="btn sm">${D().projecten.map(x => `<option value="${x.id}" ${x.id === p.id ? "selected" : ""}>${esc(x.nummer ? x.nummer + " · " : "")}${esc(x.naam || x.klant)}</option>`).join("")}</select>` : ""}<span>${esc(S.me?.name || "")}</span><button class="btn ghost sm" data-act="logout">Uitloggen</button></div></div>
     <nav class="tabs">${tabs.map(([k, l]) => `<button class="${S.tab === k ? "on" : ""}" data-tab="${k}">${l}</button>`).join("")}</nav></header>
@@ -95,6 +96,7 @@ function vWelkom(p) {
   const open = D().goedkeuringen.filter(g => g.project_id === p.id && g.status === "open" && !(g.geldig_tot && g.geldig_tot < new Date().toISOString().slice(0, 10)));
   return `<div class="hero"><div class="eyebrow">${esc(p.nummer || "")} · ${esc(p.naam || "")}</div><h1>Welkom, ${esc(voornaam())}</h1>
       <p class="lead">${esc(inst.welkom || "")}</p></div>
+    ${(() => { const mt = D().mijnTaken.filter(t => t.project_id === p.id && t.status !== "done"); return mt.length ? `<div class="notice" style="border-color:var(--blue);background:var(--blue-soft)"><div><b>${mt.length === 1 ? "Er staat een actiepunt voor jou open" : `Er staan ${mt.length} actiepunten voor jou open`}</b><div class="muted" style="font-size:13px">${mt.slice(0, 3).map(t => esc(t.titel) + (t.eind ? " · vóór " + fmt(t.eind) : "")).join(" · ")}${mt.length > 3 ? " · …" : ""}</div></div><button class="btn primary" data-tab="verslagen">Bekijken →</button></div>` : ""; })()}
     ${open.length ? `<div class="notice"><div><b>${open.length === 1 ? "Er wacht een voorstel op je akkoord" : `Er wachten ${open.length} voorstellen op je akkoord`}</b><div class="muted" style="font-size:13px">${open.map(g => esc(g.titel) + " · " + eur(g.totaal_incl, 0) + " incl. btw" + (g.geldig_tot ? " · vóór " + fmt(g.geldig_tot) : "")).join(" · ")}</div></div><button class="btn primary" data-tab="akkoord">Bekijken en goedkeuren →</button></div>` : ""}
     <div class="two"><div class="stack">
       <div class="panel"><div class="panel-head"><h2>Waar staat je project?</h2><span class="pill grijs">${PROJ_STATUS[p.status] || esc(p.status)}</span></div><div class="panel-body">
@@ -193,10 +195,12 @@ function vPlanning(p) {
 const NOTE_SOORT = { vergadering: "Vergadering", werfverslag: "Werfverslag", bespreking: "Bespreking", feedback: "Feedback", notitie: "Notitie" };
 function vVerslagen(p) {
   const ns = D().notities.filter(n => n.project_id === p.id);
+  const mt = D().mijnTaken.filter(t => t.project_id === p.id);
   return `<h1 style="margin-bottom:6px">Verslagen</h1><p class="muted" style="margin-bottom:16px">Verslagen van vergaderingen en werfbezoeken die BROS met je deelt, met de afgesproken actiepunten.</p>
+    ${mt.length ? `<div class="panel" style="margin-bottom:16px;border-color:var(--blue)"><div class="panel-head"><h2>Jouw actiepunten</h2><span class="muted" style="font-size:13px">${mt.filter(t => t.status !== "done").length} open · vink af wat gedaan is</span></div><table class="t"><tbody>${mt.map(t => `<tr style="${t.status === "done" ? "opacity:.55" : ""}"><td style="width:34px"><input type="checkbox" data-mijntaak="${t.id}" ${t.status === "done" ? "checked" : ""} style="width:18px;height:18px"></td><td>${esc(t.titel)}${t.notitie_titel ? `<div class="muted" style="font-size:12px">uit: ${esc(t.notitie_titel)}</div>` : ""}</td><td class="num muted" style="font-size:13px;${t.status !== "done" && t.eind && t.eind < new Date().toISOString().slice(0, 10) ? "color:var(--crit)" : ""}">${t.eind ? fmt(t.eind) : ""}</td></tr>`).join("")}</tbody></table></div>` : ""}
     ${ns.length ? `<div class="stack">${ns.map(n => { const ts = D().notitieTaken.filter(t => t.notitie_id === n.id).sort((a, b) => (a.eind || "9").localeCompare(b.eind || "9")); const open = S.noteOpen === n.id || ns.length <= 3;
       return `<div class="panel"><div class="panel-head" style="cursor:pointer" data-act="note-toggle" data-id="${n.id}"><div><h2 style="font-size:17px">${esc(n.titel || NOTE_SOORT[n.soort])}</h2><div class="muted" style="font-size:13px">${NOTE_SOORT[n.soort] || esc(n.soort)} · ${fmtLang(n.datum)}${n.auteur_naam ? " · " + esc(n.auteur_naam) : ""}${n.deelnemers ? " · aanwezig: " + esc(n.deelnemers) : ""}</div></div><span class="muted">${open ? "▾" : "▸"}</span></div>
-        ${open ? `<div class="panel-body" style="white-space:pre-line;font-size:14px">${esc(n.inhoud)}</div>${ts.length ? `<div class="panel-body" style="border-top:1px solid var(--line)"><h3 style="margin-bottom:8px">Actiepunten</h3><table class="t"><tbody>${ts.map(t => `<tr><td style="width:28px">${t.status === "done" ? "✅" : "◻︎"}</td><td>${esc(t.titel)}</td><td class="muted" style="font-size:13px">${esc(t.wie || "")}</td><td class="num muted" style="font-size:13px">${t.eind ? fmt(t.eind) : ""}</td></tr>`).join("")}</tbody></table></div>` : ""}` : ""}</div>`; }).join("")}</div>` : `<div class="panel"><div class="empty"><b>Nog geen verslagen gedeeld</b>Zodra we een verslag met je delen, staat het hier.</div></div>`}`;
+        ${open ? `<div class="panel-body" style="white-space:pre-line;font-size:14px">${esc(n.inhoud)}</div>${ts.length ? `<div class="panel-body" style="border-top:1px solid var(--line)"><h3 style="margin-bottom:8px">Actiepunten</h3><table class="t"><tbody>${ts.map(t => `<tr><td style="width:28px">${t.voor_mij ? `<input type="checkbox" data-mijntaak="${t.id}" ${t.status === "done" ? "checked" : ""} style="width:18px;height:18px">` : t.status === "done" ? "✅" : "◻︎"}</td><td>${esc(t.titel)}${t.voor_mij ? ` <span class="pill verzonden">voor jou</span>` : ""}</td><td class="muted" style="font-size:13px">${esc(t.wie || "")}</td><td class="num muted" style="font-size:13px">${t.eind ? fmt(t.eind) : ""}</td></tr>`).join("")}</tbody></table></div>` : ""}` : ""}</div>`; }).join("")}</div>` : `<div class="panel"><div class="empty"><b>Nog geen verslagen gedeeld</b>Zodra we een verslag met je delen, staat het hier.</div></div>`}`;
 }
 function vDocumenten(p) {
   const docs = D().documenten.filter(d => d.project_id === p.id).sort((a, b) => (a.pad || "").localeCompare(b.pad || "") || (b.gewijzigd || "").localeCompare(a.gewijzigd || ""));
@@ -290,7 +294,13 @@ document.addEventListener("submit", (e) => {
   if (beslissing === "akkoord") { if (!form.querySelector('[name="ok"]').checked) { m.className = "msg err"; m.textContent = "Vink aan dat je akkoord gaat."; return; } gkBeslis(id, true, naam, "", form); }
   else { const opm = form.querySelector('[name="opmerking"]').value.trim(); if (!opm) { m.className = "msg err"; m.textContent = "Schrijf kort wat je wil aanpassen of vragen."; return; } gkBeslis(id, false, naam, opm, form); }
 });
-document.addEventListener("change", (e) => { if (e.target.id === "projSel") { S.project = e.target.value; render(); } });
+document.addEventListener("change", async (e) => {
+  if (e.target.id === "projSel") { S.project = e.target.value; render(); }
+  if (e.target.dataset.mijntaak) { const id = e.target.dataset.mijntaak, klaar = e.target.checked; e.target.disabled = true;
+    const { error } = await sb.rpc("klant_taak_klaar", { p_id: id, p_klaar: klaar });
+    if (error) { toast("Dat lukte niet: " + error.message); e.target.checked = !klaar; e.target.disabled = false; return; }
+    D().mijnTaken.forEach(t => { if (t.id === id) t.status = klaar ? "done" : "todo"; }); D().notitieTaken.forEach(t => { if (t.id === id) t.status = klaar ? "done" : "todo"; }); render(); toast(klaar ? "Afgevinkt — bedankt!" : "Weer open gezet"); }
+});
 
 async function start() {
   S.ready = false; render();

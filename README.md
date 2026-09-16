@@ -40,7 +40,7 @@ Statische webapp (geen build-stap) op een Supabase-database.
 - Nieuwe versie = bestanden vervangen in deze map → GitHub Desktop → *Commit* → *Push*. Na ± 1 minuut staat ze online.
 - `version.json` krijgt bij elke update een nieuw nummer; wie de app open heeft, ziet "nieuwe versie beschikbaar" en herlaadt wanneer het past.
 - Bij elke update ook het `?v=…` achter de scripts in `index.html` gelijkzetten met het versienummer (Claude doet dit mee bij elke levering); zo laadt geen enkele browser nog een oude app.js uit zijn cache. Ziet iemand toch een oude versie: ⌘⇧R (harde herlaad).
-- Databasewijzigingen komen als genummerde scripts in `sql/` (002 … 014), altijd toevoegingen, nooit verwijderingen. Vóór elk script: Supabase → Database → Backups.
+- Databasewijzigingen komen als genummerde scripts in `sql/` (002 … 015), altijd toevoegingen, nooit verwijderingen. Vóór elk script: Supabase → Database → Backups.
 - Een volgende versie eerst testen: in de map `next/` zetten; die is bereikbaar op `…/BROS-planbord/next/` met dezelfde database.
 
 ## Rollen
@@ -98,7 +98,8 @@ Gebruik per project: projectfiche → Dossier → Contacten → bij de bouwheer 
 - Projectfiche → tabblad **Notities** (+ Notitie) en hoofdnavigatie **Notities** (alle projecten, zoeken, eigen open actiepunten). Soorten: vergadering, werfverslag, bespreking, feedback klant, notitie — elk met een sjabloon (aanwezig, besproken, beslissingen, afspraken, volgende stap) dat je met "Sjabloon invullen" in het verslag zet.
 - Per notitie: datum, aanwezigen (vrije tekst), verslag, verantwoordelijken uit het team én uit de aan het project gekoppelde contacten (aannemers, architect, …), en **actiepunten**: elke regel wordt een taak op het project (wie, deadline, gekoppeld aan de notitie). In de notitie vink je ze af; in de takenlijst staat "📝 <verslag>" bij zo'n taak, en in het taakformulier kan je een taak aan een verslag koppelen. Bij een nieuwe notitie zie je de nog open actiepunten uit vorige verslagen.
 - **Delen met de klant**: het verslag en zijn actiepunten (titel, wie, deadline, klaar/open) verschijnen in het portaal onder **Verslagen**; de klant krijgt een mail met het verslag (Drive-script, actie `notitiemail`). Interne opmerkingen horen dan niet in dat verslag — maak daarvoor een aparte notitie zonder deling.
-- Vereist `sql/014_notities.sql` en het nieuwe `drive/Code.gs`.
+- **Toewijzen aan de klant of een aannemer** (script 015): in het taakformulier en bij de actiepunten kies je onder "Klant en contacten van dit project" een contact in plaats van een teamlid (`taken.contact_id`). De klant ziet zijn actiepunten in het portaal (Welkom-banner, "Jouw actiepunten" onder Verslagen, ook zonder gedeeld verslag) en vinkt ze zelf af via `klant_taak_klaar()`; het Planbord toont de taak met naam en label klant/aannemer.
+- Vereist `sql/014_notities.sql`, `sql/015_taken_klant.sql` en het nieuwe `drive/Code.gs`.
 
 ## Yuki-koppeling (in drive/Code.gs)
 
