@@ -2,7 +2,7 @@
    BROS Planbord — app v1.0
    Statische webapp op Supabase (login, live-synchronisatie, rechten)
    ===================================================================== */
-const APP_VERSION = "1.11.1";
+const APP_VERSION = "1.12.0";
 const PROJ_STATUS = { offerte: "In offerte", lopend: "Lopend", on_hold: "On hold", afgerond: "Afgerond", verloren: "Verloren" };
 const KLANTTYPE = { particulier: "Particulier", zakelijk: "Zakelijk" };
 const KLANTCODE = { particulier: "PAR", zakelijk: "ZAK" };
@@ -57,7 +57,7 @@ const sb = configured ? window.supabase.createClient(cfg.supabaseUrl, cfg.supaba
 
 /* ---------- helpers ---------- */
 const isBeheer = () => S.me?.role === "beheer";
-const users = () => Object.values(S.profiles).filter(u => u.active !== false).sort((a, b) => a.name.localeCompare(b.name));
+const users = () => Object.values(S.profiles).filter(u => u.active !== false && u.role !== "klant").sort((a, b) => a.name.localeCompare(b.name));
 const projects = () => Object.values(S.projecten).sort((a, b) => (b.nummer || "").localeCompare(a.nummer || "") || (a.klant || "").localeCompare(b.klant || ""));
 const tasksOf = (pid) => Object.values(S.taken).filter(t => t.project_id === pid).sort((a, b) => (a.volgorde ?? 0) - (b.volgorde ?? 0) || (a.start || "9").localeCompare(b.start || "9"));
 const hoursOf = (pred) => Object.values(S.uren).filter(pred).reduce((s, h) => s + (Number(h.uren) || 0), 0);
@@ -209,6 +209,14 @@ async function driveSync(p, action) {
     render(); toast(j.created ? `Map aangemaakt met ${rows.length} bestanden` : `Map gekoppeld · ${rows.length} bestanden`);
   } catch (e) { loader.fail(); throw e; }
 }
+/* document delen met de klant: eerst de Drive-rechten (iedereen met de link mag lezen), dan het vinkje in de database */
+async function docShare(id, on) {
+  const d = S.documenten[id]; if (!d) return;
+  try { if (driveReady()) await driveCall("share", { fileId: d.drive_id, on, token: S.session?.access_token || "" }); }
+  catch (e) { toast("Drive-rechten niet aangepast: " + e.message, 6000); render(); return; }
+  await dbUpdate("documenten", id, { gedeeld: on }).catch(() => { });
+  toast(on ? "Gedeeld met de klant" : "Niet meer gedeeld");
+}
 const docsOf = (pid) => Object.values(S.documenten).filter(d => d.project_id === pid).sort((a, b) => (a.pad || "").localeCompare(b.pad || "") || a.naam.localeCompare(b.naam));
 
 
@@ -304,13 +312,42 @@ function linkContactForm(pid, rol) {
   q.addEventListener("input", sync); rolSel.addEventListener("change", sync); sync();
   form.querySelector("[data-act=contact-new-inline]").onclick = () => { const rolNow = rolSel.value; closeModal(); contactForm({ soort: soortFor(rolNow) || "andere" }, () => linkContactForm(pid, rolNow)); };
 }
+/* portaalkolom bij een contact: toegang geven (beheer, via het Drive-script), status en laatste bezoek */
+function portaalCel(x) {
+  if (!["bouwheer", "contactpersoon"].includes(x.rol)) return `<span class="muted">—</span>`;
+  const c = x.c;
+  if (c.user_id) return `<span class="pill st-afgerond">actief</span><small class="muted" style="display:block">${c.portaal_login ? "laatst " + fmtLong(c.portaal_login.slice(0, 10)) : "nog niet ingelogd"}</small>${isBeheer() && driveReady() ? `<button class="btn ghost sm" data-act="portaal-invite" data-cid="${c.id}" data-pid="${x.project_id}" title="Nieuwe link om (opnieuw) een wachtwoord te kiezen">Link opnieuw sturen</button>` : ""}`;
+  if (!c.email) return `<span class="muted">geen e-mail</span>`;
+  if (!isBeheer()) return `<span class="muted">geen toegang</span>`;
+  return driveReady() ? `<button class="btn sm" data-act="portaal-invite" data-cid="${c.id}" data-pid="${x.project_id}">Portaal-toegang geven</button>` : `<span class="muted">Drive-script nodig</span>`;
+}
+function portaalInviteForm(cid, pid) {
+  const c = S.contacten[cid], p = S.projecten[pid]; if (!c || !p) return;
+  const opnieuw = !!c.user_id;
+  openModal(opnieuw ? "Portaallink opnieuw sturen" : "Portaal-toegang geven", `<div class="form-grid">
+    <div class="field span2"><p style="margin:0">${opnieuw ? `<b>${esc(c.naam)}</b> heeft al toegang. We sturen een nieuwe mail met een link om een (nieuw) wachtwoord te kiezen.` : `<b>${esc(c.naam)}</b> krijgt een e-mail vanuit ${esc(driveCfg().afzender || "brosburo@gmail.com")} met een persoonlijke link naar het klantenportaal. Daar kiest hij/zij een wachtwoord en ziet daarna het project <b>${esc(p.klant)}${p.naam && p.naam !== p.klant ? " · " + esc(p.naam) : ""}</b>${Object.values(S.project_contacten).filter(x => x.contact_id === cid && ["bouwheer", "contactpersoon"].includes(x.rol)).length > 1 ? " (en de andere projecten waar dit contact bouwheer of contactpersoon van is)" : ""}.`}</p></div>
+    <div class="field"><label for="pi_email">E-mailadres</label><input id="pi_email" name="email" type="email" required value="${esc(c.email)}"></div>
+    <div class="field"><label for="pi_naam">Aanspreking in de mail</label><input id="pi_naam" name="naam" value="${esc(c.contactpersoon || c.naam)}"></div>
+    <div class="field span2"><p class="muted" style="margin:0;font-size:12px">Wat de klant ziet: meetstaat met verkoopprijzen, facturen, planning, gedeelde documenten en het team. Geen kostprijzen, marges, forfait of interne notities. De uren van een taak zijn enkel zichtbaar als de schakelaar Klant bij die taak aanstaat.</p></div>
+  </div>`, {
+    saveLabel: opnieuw ? "Link sturen" : "Uitnodigen", onSave: async (d) => {
+      loader.start("portaal.invite", "Uitnodiging versturen…", 6000);
+      try {
+        const j = await driveCall("invite", { email: d.email.trim(), naam: d.naam.trim(), contact_id: cid, token: S.session?.access_token || "" });
+        const { data } = await sb.from("contacten").select("*").eq("id", cid).single(); if (data) S.contacten[cid] = data; if (j.user_id && !S.contacten[cid].user_id) S.contacten[cid] = { ...S.contacten[cid], user_id: j.user_id, portaal_sinds: new Date().toISOString() };
+        loader.done("portaal.invite"); render(); toast(j.bestaand ? `Nieuwe link gestuurd naar ${d.email.trim()}` : `Uitnodiging gestuurd naar ${d.email.trim()}`);
+      } catch (e) { loader.fail(); toast("Uitnodigen mislukt: " + e.message, 6000); return false; }
+    },
+  });
+}
 function vProjectContacten(p) {
-  const rows = contactsOf(p.id); const beheer = isBeheer();
+  const rows = contactsOf(p.id); const beheer = isBeheer(); const v11 = schemaV() >= 11;
   return `<div class="panel" style="margin-bottom:16px"><div class="panel-head"><div><h3>Contacten bij dit project</h3><div class="muted" style="font-size:12px;margin-top:2px">Bouwheer en contactpersonen zijn zichtbaar voor de klant in het portaal; aannemers, leveranciers en studiebureaus zijn intern en zien straks enkel hun eigen loten.</div></div>
       <div class="actions"><button class="btn sm" data-act="contact-link" data-pid="${p.id}" data-rol="aannemer">+ Aannemer</button><button class="btn sm" data-act="contact-link" data-pid="${p.id}" data-rol="leverancier">+ Leverancier</button><button class="btn sm" data-act="contact-link" data-pid="${p.id}" data-rol="contactpersoon">+ Contact</button></div></div>
-    ${rows.length ? `<div class="tw"><table class="t"><thead><tr><th>Rol</th><th>Contact</th><th>E-mail · GSM</th><th>Loten</th><th>Zichtbaar</th><th></th></tr></thead><tbody>
+    ${rows.length ? `<div class="tw"><table class="t"><thead><tr><th>Rol</th><th>Contact</th><th>E-mail · GSM</th><th>Loten</th><th>Zichtbaar</th>${v11 ? `<th>Portaal</th>` : ""}<th></th></tr></thead><tbody>
       ${rows.map(x => `<tr class="click" data-contact="${x.c.id}"><td><span class="pill ${x.rol === "bouwheer" ? "st-lopend" : x.intern ? "st-on_hold" : "st-offerte"}">${CONTACT_ROL[x.rol] || x.rol}</span></td><td><div class="row-title">${esc(x.c.naam)}<small>${[x.c.bedrijf && x.c.bedrijf !== x.c.naam ? x.c.bedrijf : "", x.c.contactpersoon, x.c.vakgebied].filter(Boolean).map(esc).join(" · ")}${x.notitie ? " · " + esc(x.notitie) : ""}</small></div></td>
         <td style="font-size:12px">${x.c.email ? `<a href="mailto:${esc(x.c.email)}">${esc(x.c.email)}</a>` : ""}${x.c.gsm ? `<br><a href="tel:${esc(x.c.gsm)}">${esc(x.c.gsm)}</a>` : ""}</td><td class="muted" style="font-size:12px">${(x.loten || []).map(l => esc(lotName(l))).join("<br>") || "—"}</td><td class="muted" style="font-size:12px">${x.intern ? "intern" : "klant + intern"}</td>
+        ${v11 ? `<td style="font-size:12px">${portaalCel(x)}</td>` : ""}
         <td class="r"><button class="btn ghost sm danger" data-act="contact-unlink" data-id="${x.id}" aria-label="Ontkoppelen">✕</button></td></tr>`).join("")}</tbody></table></div>` : `<div class="empty"><b>Nog geen contacten gekoppeld</b>Koppel de bouwheer, aannemers en leveranciers van dit project.</div>`}</div>`;
 }
 
@@ -949,7 +986,7 @@ function vProjectDetail(p) {
     const docs = docsOf(p.id); const groups = [...new Set(docs.map(d => d.pad || ""))];
     body = vProjectContacten(p) + `<div class="panel" style="margin-bottom:16px"><div class="panel-head"><div><h3>Projectmap op Google Drive</h3><div class="muted" style="font-size:12px;margin-top:2px"><span class="drive-path">${esc(map)}</span></div></div>
       <div class="actions">${p.drive_url ? `<a class="btn" href="${esc(p.drive_url)}" target="_blank" rel="noopener">Open map in Drive ↗</a><button class="btn sm" data-act="drive-list" data-pid="${p.id}">Vernieuwen</button>` : driveReady() ? `<button class="btn sm" data-act="drive-link" data-pid="${p.id}">Bestaande map koppelen</button><button class="btn sm primary" data-act="drive-create" data-pid="${p.id}">Map aanmaken uit sjabloon</button>` : `<span class="pill st-offerte">Drive-koppeling nog niet ingesteld</span>`}</div></div>
-      ${docs.length ? `<div class="panel-body"><div class="docs">${groups.map(g => `${g ? `<div style="grid-column:1/-1" class="eyebrow">${esc(g)}</div>` : ""}${docs.filter(d => (d.pad || "") === g).map(d => `<a class="doc" href="${esc(d.url)}" target="_blank" rel="noopener" style="text-decoration:none;color:inherit"><div class="ico ${docIcon(d.mime, d.naam)}">${docIcon(d.mime, d.naam) === "map" ? "DOC" : docIcon(d.mime, d.naam).toUpperCase()}</div><div style="min-width:0"><div class="n" style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(d.naam)}</div><div class="s">${d.gewijzigd ? "gewijzigd " + fmtLong(d.gewijzigd.slice(0, 10)) : ""}</div></div></a>`).join("")}`).join("")}</div>
+      ${docs.length ? `<div class="panel-body">${schemaV() >= 11 ? `<p class="muted" style="font-size:12px;margin:0 0 10px">Schakelaar bij een bestand = <b>delen met de klant</b> in het portaal (het bestand wordt dan leesbaar via de link). ${docs.filter(d => d.gedeeld).length} gedeeld.</p>` : ""}<div class="docs">${groups.map(g => `${g ? `<div style="grid-column:1/-1" class="eyebrow">${esc(g)}</div>` : ""}${docs.filter(d => (d.pad || "") === g).map(d => `<div class="doc-wrap ${d.gedeeld ? "shared" : ""}"><a class="doc" href="${esc(d.url)}" target="_blank" rel="noopener" style="text-decoration:none;color:inherit"><div class="ico ${docIcon(d.mime, d.naam)}">${docIcon(d.mime, d.naam) === "map" ? "DOC" : docIcon(d.mime, d.naam).toUpperCase()}</div><div style="min-width:0"><div class="n" style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(d.naam)}</div><div class="s">${d.gewijzigd ? "gewijzigd " + fmtLong(d.gewijzigd.slice(0, 10)) : ""}${d.gedeeld ? ` · <span style="color:var(--ok)">klant</span>` : ""}</div></div></a>${schemaV() >= 11 ? `<input type="checkbox" class="sw" data-dshare="${d.id}" ${d.gedeeld ? "checked" : ""} title="${d.gedeeld ? "Gedeeld met de klant" : "Delen met de klant"}" aria-label="Delen met de klant">` : ""}</div>`).join("")}`).join("")}</div>
         <p class="muted" style="font-size:12px;margin:12px 0 0">Laatst gesynchroniseerd ${docs[0].gesynct_op ? fmtLong(docs[0].gesynct_op.slice(0, 10)) : "—"}. Nieuwe bestanden in Drive verschijnen hier na "Vernieuwen"; foto's en video's worden niet opgesomd (die open je via de map).</p></div>` : `<div class="empty">${p.drive_url ? "Nog geen bestanden gevonden — klik op Vernieuwen." : "Nog geen map gekoppeld. \"Bestaande map koppelen\" zoekt in PROJECTEN naar een map met de naam uit het veld Drive-map (of de klantnaam)."}</div>`}</div>
       <div class="panel"><div class="panel-head"><h3>Gegevens</h3></div>
       <div class="panel-body"><div class="meta">
@@ -1115,11 +1152,11 @@ function printKlantUren(p) {
 function vTeam() {
   const wk = Array.from({ length: 4 }, (_, i) => addDays(mondayOf(todayIso), i * 7));
   const load = (uid, ws) => { const we = addDays(ws, 6); return Object.values(S.taken).filter(t => t.assignee === uid && t.status !== "done" && t.start && t.eind && t.eind >= ws && t.start <= we).reduce((s, t) => { const a = t.start > ws ? t.start : ws, b = t.eind < we ? t.eind : we; return s + (Number(t.uren_gepland) || 0) * workdays(a, b) / workdays(t.start, t.eind); }, 0); };
-  const all = Object.values(S.profiles).sort((a, b) => (a.active === false) - (b.active === false) || a.name.localeCompare(b.name));
+  const all = Object.values(S.profiles).filter(u => u.role !== "klant").sort((a, b) => (a.active === false) - (b.active === false) || a.name.localeCompare(b.name));
   return `
   <div class="page-head"><div><div class="eyebrow">${users().length} medewerkers</div><h1>Team</h1></div>${isBeheer() ? `<div class="actions"><span class="muted" style="font-size:13px">Nieuwe medewerkers nodig je uit via Supabase (Authentication → Users → Invite user). Ze krijgen een mail, kiezen bij de eerste keer een wachtwoord en verschijnen daarna hier.</span></div>` : ""}</div>
   <div class="panel tw"><table class="t"><thead><tr><th>Naam</th><th>Rol</th><th class="r">Open taken</th><th class="r">Uren dit jaar</th>${wk.map(w => `<th class="r">wk ${weekNr(w)}</th>`).join("")}${isBeheer() ? `<th class="r">Tarief int / ext</th>` : ""}<th></th></tr></thead><tbody>
-  ${all.map(u => `<tr style="${u.active === false ? "opacity:.5" : ""}"><td><span class="who-cell">${avatar(u.id)}<b>${esc(u.name)}</b>${u.id === S.me.id ? `<span class="muted" style="font-size:12px">(ik)</span>` : ""}</span><small class="muted" style="display:block">${esc(u.email || "")}</small></td><td class="muted">${u.role === "beheer" ? "Beheer" : "Medewerker"}${u.active === false ? " · inactief" : ""}</td>
+  ${all.map(u => `<tr style="${u.active === false ? "opacity:.5" : ""}"><td><span class="who-cell">${avatar(u.id)}<b>${esc(u.name)}</b>${u.id === S.me.id ? `<span class="muted" style="font-size:12px">(ik)</span>` : ""}</span><small class="muted" style="display:block">${esc(u.email || "")}${u.functie ? " · " + esc(u.functie) : ""}</small></td><td class="muted">${u.role === "beheer" ? "Beheer" : "Medewerker"}${u.active === false ? " · inactief" : ""}</td>
     <td class="r num">${Object.values(S.taken).filter(t => t.assignee === u.id && t.status !== "done").length}</td>
     <td class="r num">${nl(hoursOf(h => h.user_id === u.id && h.datum.slice(0, 4) === todayIso.slice(0, 4)))} u</td>
     ${wk.map(w => { const l = load(u.id, w); return `<td class="r num" style="color:${l > 40 ? "var(--crit)" : l > 32 ? "var(--warn)" : "inherit"}">${nl(l, 0)} u</td>`; }).join("")}
@@ -1206,6 +1243,7 @@ function vInstellingen() {
       <div class="field"><label for="dr_secret">Secret (zelfde als in het script)</label><input id="dr_secret" type="password" value="${esc(driveCfg().secret || "")}"></div>
       <div class="field span2"><div class="actions"><button class="btn primary" data-act="drive-save">Bewaren</button><button class="btn" data-act="drive-test">Verbinding testen</button><span class="muted" style="font-size:12px">Het script staat in de map <code>drive/Code.gs</code>; de installatie staat bovenaan in dat bestand. Nieuwe projecten krijgen daarna automatisch hun map met de sjabloonbestanden.</span></div></div>
     </div></div></div>
+  ${vPortaalBeheer()}
   ${vPostenBeheer()}
   <div class="grid two" style="grid-template-columns: 1fr 1.4fr">
     <div class="panel"><div class="panel-head"><h3>Fasen</h3><button class="btn sm" data-act="fase-new">+ Fase</button></div>
@@ -1215,6 +1253,25 @@ function vInstellingen() {
       ${ts.length ? `<div class="tw"><table class="t"><tbody>${ts.map((t, i) => `<tr><td class="num" style="width:40px;color:var(--muted)">${t.volgorde}</td><td><input class="inline" data-st-title="${t.id}" value="${esc(t.titel)}" aria-label="Titel"></td><td class="r" style="white-space:nowrap"><button class="btn ghost sm" data-act="st-move" data-id="${t.id}" data-dir="-1" ${i === 0 ? "disabled" : ""} aria-label="Omhoog">↑</button><button class="btn ghost sm" data-act="st-move" data-id="${t.id}" data-dir="1" ${i === ts.length - 1 ? "disabled" : ""} aria-label="Omlaag">↓</button><button class="btn ghost sm danger" data-act="st-del" data-id="${t.id}" aria-label="Verwijderen">✕</button></td></tr>`).join("")}</tbody></table></div>` : `<div class="empty"><b>Geen standaardtaken</b>Voeg er een toe voor deze fase.</div>`}
       <div class="panel-body muted" style="font-size:12px;border-top:1px solid var(--line)">Klik in een titel om ze te wijzigen; de wijziging wordt bewaard zodra je het veld verlaat.</div></div>
   </div>`;
+}
+/* Klantenportaal: teksten en overzicht van wie toegang heeft */
+const portaalCfg = () => (S.instellingen.portaal && S.instellingen.portaal.value) || {};
+function vPortaalBeheer() {
+  if (schemaV() < 11) return `<div class="panel" style="margin-bottom:16px"><div class="panel-head"><h3>Klantenportaal</h3><span class="pill st-offerte">nog niet geactiveerd</span></div><div class="panel-body">${SCHEMA_HINT(11)}<p class="muted" style="font-size:12px;margin:0">Daarna: in het Drive-script de <code>PORTAAL.SERVICE_KEY</code> invullen en opnieuw deployen, en in Supabase de portaal-URL toevoegen bij Redirect URLs (zie README).</p></div></div>`;
+  const c = portaalCfg(); const url = c.url || (location.origin + location.pathname.replace(/[^/]*$/, "") + "klant/");
+  const klanten = Object.values(S.contacten).filter(x => x.user_id).sort((a, b) => a.naam.localeCompare(b.naam));
+  return `<div class="panel" style="margin-bottom:16px"><div class="panel-head"><div><h3>Klantenportaal</h3><div class="muted" style="font-size:12px;margin-top:2px">Wat de bouwheer ziet na het inloggen op <a href="${esc(url)}" target="_blank" rel="noopener">${esc(url)}</a>. Toegang geef je per project: Dossier → Contacten → "Portaal-toegang geven".</div></div><span class="pill st-afgerond">${klanten.length} klant${klanten.length === 1 ? "" : "en"} met toegang</span></div>
+    <div class="panel-body"><div class="form-grid">
+      <div class="field span2"><label for="po_welkom">Welkomtekst (bovenaan de startpagina)</label><textarea id="po_welkom" rows="2">${esc(c.welkom || "")}</textarea></div>
+      <div class="field span2"><label for="po_werk">Inleiding bij "Zo werkt het bij BROS" (de fasen uit Instellingen staan eronder)</label><textarea id="po_werk" rows="2">${esc(c.werkwijze || "")}</textarea></div>
+      <div class="field span2"><label for="po_contact">Contactblok ("Vragen?")</label><textarea id="po_contact" rows="2">${esc(c.contact || "")}</textarea></div>
+      <div class="field span2"><div class="actions"><button class="btn primary" data-act="portaal-save">Bewaren</button><span class="muted" style="font-size:12px">Teamfoto's, functie en biografie voor "Wie is wie": Team → Bewerken.</span></div></div>
+    </div>${klanten.length ? `<div class="tw" style="margin-top:12px"><table class="t"><thead><tr><th>Klant</th><th>E-mail</th><th>Projecten</th><th>Uitgenodigd</th><th>Laatste bezoek</th></tr></thead><tbody>${klanten.map(k => `<tr class="click" data-contact="${k.id}"><td>${esc(k.naam)}</td><td class="muted" style="font-size:12px">${esc(k.email)}</td><td class="muted" style="font-size:12px">${projectsOfContact(k.id).filter(x => ["bouwheer", "contactpersoon"].includes(x.rol)).map(x => esc(x.p.klant)).join(", ") || "—"}</td><td class="num">${k.portaal_sinds ? fmtLong(k.portaal_sinds.slice(0, 10)) : "—"}</td><td class="num">${k.portaal_login ? fmtLong(k.portaal_login.slice(0, 10)) : "nog niet"}</td></tr>`).join("")}</tbody></table></div>` : ""}</div></div>`;
+}
+async function portaalSaveSettings() {
+  const value = { ...portaalCfg(), welkom: $("#po_welkom").value.trim(), werkwijze: $("#po_werk").value.trim(), contact: $("#po_contact").value.trim() };
+  const { data, error } = await sb.from("instellingen").upsert({ key: "portaal", value, updated_at: new Date().toISOString() }).select().single();
+  if (error) { toast("Bewaren mislukt: " + error.message); return; } S.instellingen.portaal = data; render(); toast("Portaalteksten bewaard");
 }
 async function driveSaveSettings() {
   const value = { url: $("#dr_url").value.trim(), secret: $("#dr_secret").value.trim() };
@@ -1460,6 +1517,11 @@ function userForm(u) {
     <div class="field"><label for="u_name">Naam</label><input id="u_name" name="name" required value="${esc(u.name || "")}"></div>
     <div class="field"><label for="u_ini">Initialen</label><input id="u_ini" name="initials" maxlength="3" value="${esc(u.initials || "")}"></div>
     <div class="field"><label for="u_color">Kleur</label><select id="u_color" name="color">${opts(PALETTE.map((c, i) => [c, "Kleur " + (i + 1)]), u.color)}</select></div>
+    ${schemaV() >= 11 ? `<div class="field span2" style="border-top:1px solid var(--line);padding-top:10px"><label>Klantenportaal — pagina "Wie is wie"</label></div>
+    <div class="field"><label for="u_functie">Functie</label><input id="u_functie" name="functie" value="${esc(u.functie || "")}" placeholder="bv. Co-founder · Creative Director"></div>
+    <div class="field"><label for="u_foto">Foto</label><div style="display:flex;gap:10px;align-items:center">${u.foto_url ? `<img src="${esc(u.foto_url)}" alt="" style="width:44px;height:44px;border-radius:50%;object-fit:cover">` : avatar(u.id)}<input id="u_foto" name="foto" type="file" accept="image/*" style="font-size:12px"></div></div>
+    <div class="field span2"><label for="u_bio">Korte biografie (2–3 zinnen)</label><textarea id="u_bio" name="bio" rows="3">${esc(u.bio || "")}</textarea></div>
+    <div class="field span2"><label class="sw-row"><input type="checkbox" class="sw" name="portaal_zichtbaar" ${u.portaal_zichtbaar !== false ? "checked" : ""}><span>Tonen op de pagina "Wie is wie" in het klantenportaal</span></label></div>` : ""}
     ${isBeheer() ? `<div class="field"><label for="u_role">Rol</label><select id="u_role" name="role">${opts([["medewerker", "Medewerker"], ["beheer", "Beheer"]], u.role)}</select></div>
     <div class="field"><label for="u_active">Actief</label><select id="u_active" name="active"><option value="1" ${u.active !== false ? "selected" : ""}>Ja</option><option value="0" ${u.active === false ? "selected" : ""}>Nee (verbergen)</option></select></div>
     <div class="field"><label for="u_ti">Uurtarief intern (€)</label><input id="u_ti" type="number" step="1" name="intern" value="${esc(tar.intern ?? 0)}"></div>
@@ -1468,6 +1530,14 @@ function userForm(u) {
     onSave: async (d) => {
       const patch = { name: d.name.trim(), initials: (d.initials || d.name.slice(0, 2)).toUpperCase(), color: d.color };
       if (isBeheer()) { patch.role = d.role; patch.active = d.active === "1"; }
+      if (schemaV() >= 11) {
+        patch.functie = (d.functie || "").trim(); patch.bio = (d.bio || "").trim(); patch.portaal_zichtbaar = d.portaal_zichtbaar === "on";
+        const f = $("#u_foto")?.files?.[0];
+        if (f) { const ext = (f.name.match(/\.([a-z0-9]+)$/i) || [, "jpg"])[1].toLowerCase(); const path = `team/${u.id}.${ext}`;
+          const up = await sb.storage.from("portaal").upload(path, f, { upsert: true, contentType: f.type || "image/jpeg" });
+          if (up.error) { toast("Foto niet opgeladen: " + up.error.message + " — is databasescript 011 uitgevoerd?", 6000); return false; }
+          patch.foto_url = sb.storage.from("portaal").getPublicUrl(path).data.publicUrl + "?t=" + Date.now(); }
+      }
       await dbUpdate("profiles", u.id, patch);
       if (isBeheer()) await dbUpsert("tarieven", { user_id: u.id, intern: Number(d.intern) || 0, extern: Number(d.extern) || 0 });
       toast("Profiel bewaard");
@@ -1505,6 +1575,8 @@ document.addEventListener("click", (e) => {
   if (d.act === "export-projects") return exportProjects();
   if (d.act === "drive-create" || d.act === "drive-link" || d.act === "drive-list") { const p = S.projecten[d.pid]; const a = d.act.replace("drive-", ""); driveSync(p, a).catch(err => toast("Drive: " + err.message)); return; }
   if (d.act === "drive-save") return driveSaveSettings();
+  if (d.act === "portaal-save") return portaalSaveSettings();
+  if (d.act === "portaal-invite") return portaalInviteForm(d.cid, d.pid);
   if (d.act === "drive-test") return driveCall("ping", {}).then(j => toast(`OK — mappen: ${j.projecten} / ${j.sjabloon}`)).catch(err => toast("Drive: " + err.message));
   if (d.selfase) { S.selFase = Number(d.selfase); return render(); }
   if (d.act === "fase-new") return faseForm(null);
@@ -1557,6 +1629,7 @@ document.addEventListener("change", (e) => {
   if (el.dataset.post && (el.type === "checkbox" || el.tagName === "SELECT")) return postEdit(el.dataset.post, el.dataset.f, el.value, el.checked);
   if (el.dataset.lot && el.type === "checkbox") return lotEdit(Number(el.dataset.lot), el.dataset.f, null, el.checked);
   if (el.dataset.vf && (el.tagName === "SELECT" || el.type === "date")) return vordEdit(el.dataset.vf, el.dataset.f, el.value);
+  if (el.dataset.dshare) return docShare(el.dataset.dshare, el.checked);
 });
 document.addEventListener("input", (e) => {
   if (e.target.dataset.filter === "q") { S.filters.q = e.target.value; render(); const i = $("[data-filter=q]"); i.focus(); i.setSelectionRange(i.value.length, i.value.length); }
@@ -1566,7 +1639,7 @@ document.addEventListener("keydown", (e) => { if (e.key === "Escape") closeModal
 
 /* ---------- versiecontrole: melden als er een nieuwe versie online staat ---------- */
 let updateAvailable = false;
-const APP_FILES = ["index.html", "app.js", "config.js", "postcodes.js", "meetstaat-export.js", "meetstaat-import.js", "version.json"];
+const APP_FILES = ["index.html", "app.js", "config.js", "postcodes.js", "meetstaat-export.js", "meetstaat-import.js", "version.json", "klant/index.html", "klant/portaal.js"];
 /* de browser-cache omzeilen: alle bestanden van de app vers ophalen (cache: "reload" ververst de HTTP-cache) en dan herladen */
 async function hardReload() {
   try { await Promise.all(APP_FILES.map(f => fetch(f, { cache: "reload" }).catch(() => { }))); } catch (e) { }
@@ -1603,7 +1676,7 @@ async function boot() {
 }
 async function start() {
   loader.start("app.load", "Planbord laden…", 2500);
-  try { await loadAll(); S.ready = true; S.loadError = null; render(); loader.done("app.load"); subscribe(); setInterval(checkVersion, 5 * 60 * 1000); setTimeout(checkVersion, 20000); }
+  try { await loadAll(); if (S.me && S.me.role === "klant") { location.replace("klant/"); return; } S.ready = true; S.loadError = null; render(); loader.done("app.load"); subscribe(); setInterval(checkVersion, 5 * 60 * 1000); setTimeout(checkVersion, 20000); }
   catch (e) { loader.fail(); S.loadError = e.message || String(e); render(); }
 }
 boot();

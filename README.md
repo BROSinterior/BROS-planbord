@@ -14,6 +14,7 @@ Statische webapp (geen build-stap) op een Supabase-database.
 | `sql/001_init.sql` | databasescript 1: tabellen, rechten, live-sync, fasen en standaardtaken |
 | `drive/Code.gs` | Google Apps Script dat projectmappen aanmaakt/koppelt op Drive en de meetstaat-export wegschrijft (installatie: zie bovenaan dat bestand) |
 | `meetstaat-export.js` | schrijft de meetstaat van een project in het Excel-sjabloon (zip/XML, opmaak en formules blijven intact) |
+| `klant/` | het klantenportaal (index.html + portaal.js): alleen-lezen zicht van de bouwheer op zijn project |
 | `next/` | (later) testversie van een volgende update |
 
 ## In gebruik nemen (eenmalig)
@@ -39,7 +40,7 @@ Statische webapp (geen build-stap) op een Supabase-database.
 - Nieuwe versie = bestanden vervangen in deze map → GitHub Desktop → *Commit* → *Push*. Na ± 1 minuut staat ze online.
 - `version.json` krijgt bij elke update een nieuw nummer; wie de app open heeft, ziet "nieuwe versie beschikbaar" en herlaadt wanneer het past.
 - Bij elke update ook het `?v=…` achter de scripts in `index.html` gelijkzetten met het versienummer (Claude doet dit mee bij elke levering); zo laadt geen enkele browser nog een oude app.js uit zijn cache. Ziet iemand toch een oude versie: ⌘⇧R (harde herlaad).
-- Databasewijzigingen komen als genummerde scripts in `sql/` (002 … 010), altijd toevoegingen, nooit verwijderingen. Vóór elk script: Supabase → Database → Backups.
+- Databasewijzigingen komen als genummerde scripts in `sql/` (002 … 011), altijd toevoegingen, nooit verwijderingen. Vóór elk script: Supabase → Database → Backups.
 - Een volgende versie eerst testen: in de map `next/` zetten; die is bereikbaar op `…/BROS-planbord/next/` met dezelfde database.
 
 ## Rollen
@@ -69,6 +70,21 @@ Statische webapp (geen build-stap) op een Supabase-database.
 - Op bedrag in plaats van op %: vul bij het aanmaken 'Bedrag excl. btw' in (of bij een voorschot 'Of een bedrag'); de percentages van de gekozen loten worden dan zo berekend dat de vordering precies op dat bedrag uitkomt en het wordt van de rest afgehouden — handig voor facturen die al verstuurd waren vóór de meetstaat in het Planbord stond. Bij een nog open vordering kan dat achteraf ook: factuurbedrag invullen → 'Percentages afleiden uit € …'. Is het bedrag groter dan wat nog openstaat, dan gaan de percentages naar het maximum en wordt het verschil gemeld.
 - Per vordering: omschrijving, datum, Yuki-factuurnummer, berekend bedrag (excl./btw/incl.) en het factuurbedrag. Zet je de status op verzonden of betaald, dan wordt het bedrag bevroren (latere wijzigingen in de meetstaat veranderen de factuur niet meer) en toont het Planbord een verschil als factuur en berekening uiteenlopen.
 - Onderaan staat het klantoverzicht (facturen, bedragen, status, nog te factureren) — dit wordt de basis voor het klantportaal. De Excel-export krijgt een tabblad VORDERINGSSTAAT met hetzelfde overzicht plus de percentages per lot en per post.
+
+## Klantenportaal (script 011 + drive/Code.gs)
+
+De bouwheer logt in op `…/BROS-planbord/klant/` met e-mail + wachtwoord en ziet alleen zijn eigen project(en), alleen-lezen: Welkom (status, "zo werkt het bij BROS" = de fasen, aanspreekpunt), Meetstaat met verkoopprijzen (geen kostprijs/marge), Facturatie (verzonden en betaalde facturen, nog te factureren), Planning per fase plus de uren van taken met de schakelaar Klant, gedeelde Documenten en Wie is wie. Bij het eerste bezoek: vuurwerk en "Welkom".
+
+Hoe het afgeschermd is: klanten krijgen rol `klant`; alle interne tabellen zijn enkel leesbaar voor het team (`is_intern()`), klanten lezen via views `klant_*` die alleen de eigen projecten (bouwheer/contactpersoon in Contacten) en alleen klantvriendelijke kolommen bevatten. Een klant die op het Planbord inlogt, wordt naar het portaal gestuurd.
+
+Activeren (eenmalig):
+1. Supabase → SQL Editor → `sql/011_klantportaal.sql` → Run (moet `9` teruggeven).
+2. Supabase → Authentication → URL Configuration → Redirect URLs: `https://brosinterior.github.io/BROS-planbord/klant/` toevoegen (naast de bestaande).
+3. Drive-script: nieuwste `drive/Code.gs` plakken, in `PORTAAL.SERVICE_KEY` de **service_role**-sleutel zetten (Supabase → Project Settings → API → service_role; die sleutel hoort alleen in het script, nooit in de app of in git) → Deploy → Manage deployments → Version: New. Het script stuurt de uitnodigings- en herstelmails via Gmail (brosburo@gmail.com), dus er is geen SMTP-instelling nodig in Supabase.
+4. `config.js`: `driveScriptUrl` = de Web app-URL van het script (staat er al in); het portaal gebruikt die voor "Wachtwoord vergeten".
+5. Instellingen → Klantenportaal: welkomtekst, inleiding werkwijze en contactblok nakijken. Team → Bewerken: functie, foto en korte biografie per medewerker (pagina Wie is wie).
+
+Gebruik per project: projectfiche → Dossier → Contacten → bij de bouwheer "Portaal-toegang geven" (beheer). De klant krijgt een mail met een persoonlijke link, kiest een wachtwoord en is binnen. "Link opnieuw sturen" stuurt een nieuwe link (bv. wachtwoord kwijt). Documenten: schakelaar bij een bestand = delen met de klant (het bestand wordt dan "iedereen met de link mag lezen" op Drive; uitzetten draait dat terug). Uren: de schakelaar Klant bij een taak (Uren-tabblad) bepaalt welke uren de klant ziet. Facturen verschijnen pas bij status verzonden of betaald.
 
 ## Yuki-koppeling (in drive/Code.gs)
 

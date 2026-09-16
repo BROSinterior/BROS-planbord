@@ -1,0 +1,153 @@
+<!doctype html>
+<html lang="nl">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>BROS — Klantenportaal</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%231B1E1C'/%3E%3Ctext x='16' y='21' font-family='Arial' font-weight='bold' font-size='13' text-anchor='middle' fill='white'%3EB%3C/text%3E%3C/svg%3E">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Manrope:wght@500;600;700;800&family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap">
+<style>
+  :root {
+    --ground: #F5F4F0; --surface: #FFFFFF; --surface-2: #ECEAE3;
+    --ink: #1B1E1C; --ink-2: #4A504C; --muted: #7A7F79; --line: #DAD8D0; --line-2: #C6C3B9;
+    --accent: #1B1E1C; --accent-ink: #FFFFFF; --accent-soft: #E8E6DE;
+    --ok: #2E7D4F; --ok-soft: #DDF0E3; --warn: #B8720F; --warn-soft: #F8EBD2; --crit: #B93A34; --crit-soft: #F7DEDC;
+    --blue: #2A4DD0; --blue-soft: #E3E8FA;
+    --shadow: 0 10px 30px rgba(20,24,40,.10);
+    --font-display: "Manrope", "Avenir Next", "Segoe UI", sans-serif;
+    --font-body: "IBM Plex Sans", "Helvetica Neue", Arial, sans-serif;
+    --font-mono: "IBM Plex Mono", "SFMono-Regular", Menlo, monospace;
+    color-scheme: light;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --ground: #141618; --surface: #1C1F22; --surface-2: #24282C; --ink: #ECEEEA; --ink-2: #C3C7C1; --muted: #8E958F;
+      --line: #2E3337; --line-2: #3C4247; --accent: #ECEEEA; --accent-ink: #141618; --accent-soft: #2A2E32;
+      --ok: #6FC591; --ok-soft: #1F3A2A; --warn: #E2A84C; --warn-soft: #3E2F12; --crit: #EF7B74; --crit-soft: #442020;
+      --blue: #8CA2F5; --blue-soft: #26304F; --shadow: 0 10px 30px rgba(0,0,0,.5); color-scheme: dark;
+    }
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; background: var(--ground); color: var(--ink); font-family: var(--font-body); font-size: 15px; line-height: 1.5; -webkit-font-smoothing: antialiased; }
+  h1, h2, h3 { font-family: var(--font-display); margin: 0; letter-spacing: -.01em; }
+  h1 { font-size: 30px; font-weight: 800; line-height: 1.15; }
+  h2 { font-size: 20px; font-weight: 700; }
+  h3 { font-size: 15px; font-weight: 700; }
+  p { margin: 0 0 10px; }
+  a { color: var(--blue); }
+  .num { font-family: var(--font-mono); font-variant-numeric: tabular-nums; }
+  .muted { color: var(--muted); }
+  .r { text-align: right; }
+  .c { text-align: center; }
+  .brand { display: flex; align-items: baseline; gap: 10px; }
+  .brand .mark { font-family: var(--font-display); font-weight: 800; letter-spacing: .18em; font-size: 18px; background: var(--ink); color: var(--ground); padding: 3px 9px 3px 11px; border-radius: 6px; }
+  .brand .name { font-family: var(--font-display); font-weight: 600; font-size: 14px; color: var(--ink-2); }
+  /* ---- kopbalk + navigatie ---- */
+  header.top { position: sticky; top: 0; z-index: 5; background: color-mix(in srgb, var(--ground) 88%, transparent); backdrop-filter: blur(10px); border-bottom: 1px solid var(--line); }
+  .top-in { max-width: 1080px; margin: 0 auto; padding: 12px 20px; display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+  .who { display: flex; align-items: center; gap: 10px; font-size: 13px; color: var(--ink-2); }
+  nav.tabs { max-width: 1080px; margin: 0 auto; padding: 0 12px; display: flex; gap: 2px; overflow-x: auto; scrollbar-width: none; }
+  nav.tabs::-webkit-scrollbar { display: none; }
+  nav.tabs button { flex: none; background: none; border: 0; border-bottom: 2px solid transparent; padding: 10px 12px; font: inherit; font-weight: 600; font-size: 14px; color: var(--muted); cursor: pointer; white-space: nowrap; }
+  nav.tabs button.on { color: var(--ink); border-bottom-color: var(--ink); }
+  main { max-width: 1080px; margin: 0 auto; padding: 24px 20px 60px; }
+  @media (max-width: 640px) { main { padding: 18px 14px 50px; } h1 { font-size: 24px; } .top-in { padding: 10px 14px; } .who > span { display: none; } }
+  /* ---- bouwstenen ---- */
+  .btn { display: inline-flex; align-items: center; gap: 6px; padding: 8px 14px; border-radius: 8px; border: 1px solid var(--line-2); background: var(--surface); color: var(--ink); font: inherit; font-size: 14px; font-weight: 600; cursor: pointer; text-decoration: none; }
+  .btn:hover { border-color: var(--muted); }
+  .btn.primary { background: var(--accent); color: var(--accent-ink); border-color: var(--accent); }
+  .btn.ghost { border-color: transparent; background: transparent; }
+  .btn.sm { padding: 4px 10px; font-size: 12px; }
+  .btn:disabled { opacity: .5; cursor: default; }
+  .field { display: flex; flex-direction: column; gap: 5px; margin-bottom: 14px; }
+  .field label { font-size: 12px; font-weight: 600; color: var(--ink-2); }
+  .field input { font: inherit; padding: 10px 12px; border: 1px solid var(--line-2); border-radius: 8px; background: var(--surface); color: var(--ink); }
+  .field input:focus { outline: 2px solid var(--blue); outline-offset: 1px; border-color: var(--blue); }
+  .msg { min-height: 20px; font-size: 13px; color: var(--ink-2); margin-top: 10px; }
+  .msg.err { color: var(--crit); }
+  .panel { background: var(--surface); border: 1px solid var(--line); border-radius: 14px; }
+  .panel-head { padding: 14px 18px; border-bottom: 1px solid var(--line); display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
+  .panel-body { padding: 16px 18px; }
+  .tw { overflow-x: auto; }
+  table.t { width: 100%; border-collapse: collapse; font-size: 14px; }
+  table.t th { text-align: left; font-size: 11px; font-weight: 600; letter-spacing: .06em; text-transform: uppercase; color: var(--muted); padding: 8px 10px; border-bottom: 1px solid var(--line); white-space: nowrap; }
+  table.t td { padding: 9px 10px; border-bottom: 1px solid var(--line); vertical-align: top; }
+  table.t td.num { white-space: nowrap; }
+  table.t tr:last-child td { border-bottom: 0; }
+  table.t tr.groep td { background: var(--surface-2); font-weight: 600; font-size: 12px; letter-spacing: .04em; text-transform: uppercase; color: var(--ink-2); padding: 6px 10px; }
+  table.t tr.tot td { font-weight: 700; border-top: 2px solid var(--line-2); background: var(--surface-2); }
+  .pill { display: inline-flex; align-items: center; gap: 5px; padding: 2px 9px; border-radius: 999px; font-size: 12px; font-weight: 600; white-space: nowrap; }
+  .pill.offerte { background: var(--warn-soft); color: var(--warn); }
+  .pill.akkoord { background: var(--ok-soft); color: var(--ok); }
+  .pill.meerwerk { background: var(--blue-soft); color: var(--blue); }
+  .pill.minwerk { background: var(--crit-soft); color: var(--crit); }
+  .pill.grijs { background: var(--surface-2); color: var(--ink-2); }
+  .pill.betaald { background: var(--ok-soft); color: var(--ok); }
+  .pill.verzonden { background: var(--blue-soft); color: var(--blue); }
+  .kpis { display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap: 12px; margin-bottom: 18px; }
+  .kpi { background: var(--surface); border: 1px solid var(--line); border-radius: 12px; padding: 14px 16px; }
+  .kpi .k { font-size: 11px; font-weight: 600; letter-spacing: .06em; text-transform: uppercase; color: var(--muted); }
+  .kpi .v { font-family: var(--font-display); font-weight: 800; font-size: 22px; margin-top: 4px; }
+  .empty { padding: 28px 18px; text-align: center; color: var(--muted); }
+  .empty b { display: block; color: var(--ink); margin-bottom: 4px; }
+  .stack { display: grid; gap: 16px; }
+  .two { display: grid; grid-template-columns: 1.4fr 1fr; gap: 16px; }
+  @media (max-width: 760px) { .two { grid-template-columns: 1fr; } }
+  /* ---- welkom ---- */
+  .hero { padding: 8px 0 22px; }
+  .hero .eyebrow { font-size: 12px; font-weight: 600; letter-spacing: .1em; text-transform: uppercase; color: var(--muted); margin-bottom: 8px; }
+  .hero p.lead { font-size: 16px; color: var(--ink-2); max-width: 640px; margin-top: 8px; }
+  .steps { list-style: none; margin: 0; padding: 0; display: grid; gap: 0; }
+  .steps li { display: grid; grid-template-columns: 34px 1fr auto; gap: 12px; align-items: center; padding: 10px 0; border-bottom: 1px solid var(--line); }
+  .steps li:last-child { border-bottom: 0; }
+  .steps .n { width: 30px; height: 30px; border-radius: 50%; display: grid; place-items: center; font-family: var(--font-mono); font-size: 12px; font-weight: 600; background: var(--surface-2); color: var(--ink-2); }
+  .steps li.done .n { background: var(--ok-soft); color: var(--ok); }
+  .steps li.now .n { background: var(--ink); color: var(--ground); }
+  .steps li.now .nm { font-weight: 700; }
+  .steps li.todo { color: var(--muted); }
+  .steps .when { font-size: 12px; color: var(--muted); white-space: nowrap; }
+  .person { display: flex; gap: 14px; align-items: flex-start; }
+  .avatar { width: 56px; height: 56px; border-radius: 50%; object-fit: cover; flex: none; background: var(--surface-2); display: grid; place-items: center; font-family: var(--font-display); font-weight: 800; color: white; font-size: 18px; }
+  .team { display: grid; grid-template-columns: repeat(auto-fill, minmax(240px, 1fr)); gap: 16px; }
+  .team .card { background: var(--surface); border: 1px solid var(--line); border-radius: 14px; overflow: hidden; }
+  .team .foto { width: 100%; aspect-ratio: 4/3; object-fit: cover; display: block; background: var(--surface-2); }
+  .team .nofoto { width: 100%; aspect-ratio: 4/3; display: grid; place-items: center; font-family: var(--font-display); font-weight: 800; font-size: 40px; color: white; }
+  .team .body { padding: 14px 16px 16px; }
+  .team .fn { font-size: 13px; color: var(--muted); margin-bottom: 8px; }
+  .team .bio { font-size: 14px; color: var(--ink-2); white-space: pre-line; }
+  /* ---- planning ---- */
+  .bar { position: relative; height: 10px; border-radius: 5px; background: var(--surface-2); overflow: hidden; }
+  .bar i { position: absolute; top: 0; bottom: 0; border-radius: 5px; background: var(--ink); opacity: .8; }
+  .bar i.done { background: var(--ok); }
+  .doc { display: flex; align-items: center; gap: 12px; padding: 10px 0; border-bottom: 1px solid var(--line); text-decoration: none; color: inherit; }
+  .doc:last-child { border-bottom: 0; }
+  .doc .ic { width: 36px; height: 36px; border-radius: 8px; background: var(--surface-2); display: grid; place-items: center; font-size: 11px; font-weight: 700; font-family: var(--font-mono); color: var(--ink-2); flex: none; }
+  .doc .nm { font-weight: 600; }
+  .doc small { color: var(--muted); font-size: 12px; }
+  /* ---- login ---- */
+  .login { min-height: 100vh; display: grid; place-items: center; padding: 20px; }
+  .login .card { width: 100%; max-width: 420px; background: var(--surface); border: 1px solid var(--line); border-radius: 16px; padding: 28px; box-shadow: var(--shadow); }
+  .login h1 { font-size: 24px; margin: 6px 0 4px; }
+  .login p { color: var(--ink-2); font-size: 14px; }
+  /* ---- vuurwerk bij eerste bezoek ---- */
+  #fx { position: fixed; inset: 0; z-index: 50; display: none; }
+  #fx canvas { position: absolute; inset: 0; width: 100%; height: 100%; }
+  #fx .wel { position: absolute; inset: 0; display: grid; place-items: center; text-align: center; pointer-events: none; }
+  #fx .wel div { font-family: var(--font-display); font-weight: 800; font-size: clamp(36px, 8vw, 84px); color: var(--ink); letter-spacing: -.02em; text-shadow: 0 2px 30px var(--ground); animation: pop .9s cubic-bezier(.2,1.2,.3,1) both; }
+  #fx .wel small { display: block; font-family: var(--font-body); font-weight: 500; font-size: clamp(15px, 2.4vw, 22px); color: var(--ink-2); margin-top: 8px; animation: pop 1.2s .3s cubic-bezier(.2,1.2,.3,1) both; }
+  @keyframes pop { from { opacity: 0; transform: scale(.6) translateY(20px); } to { opacity: 1; transform: none; } }
+  #fx.show { display: block; background: color-mix(in srgb, var(--ground) 70%, transparent); animation: fadeout 1s 4.2s forwards; }
+  @keyframes fadeout { to { opacity: 0; visibility: hidden; } }
+  .toast { position: fixed; left: 50%; bottom: 24px; transform: translateX(-50%); background: var(--ink); color: var(--ground); padding: 10px 16px; border-radius: 10px; font-size: 14px; z-index: 60; box-shadow: var(--shadow); }
+  .loading { display: grid; place-items: center; min-height: 60vh; color: var(--muted); }
+</style>
+</head>
+<body>
+<div id="app"></div>
+<div id="fx"><canvas></canvas><div class="wel"><div id="fxTxt">Welkom</div></div></div>
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.45.4/dist/umd/supabase.min.js"></script>
+<script src="../config.js?v=1.12.0"></script>
+<script src="portaal.js?v=1.12.0"></script>
+</body>
+</html>

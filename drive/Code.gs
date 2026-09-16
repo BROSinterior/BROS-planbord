@@ -18,6 +18,7 @@ const CONFIG = {
 function doPost(e) {
   try {
     const body = JSON.parse((e.postData && e.postData.contents) || "{}");
+    if (body.action === "reset") return json(portaalReset(body));   // klantenportaal: "wachtwoord vergeten" — bewust zonder secret, stuurt enkel een mail naar een bestaande klantlogin
     if (!body.secret || body.secret !== CONFIG.SECRET) return json({ ok: false, error: "Geen toegang (secret klopt niet)." });
     if (body.action === "ping") return json({ ok: true, info: "Verbinding en secret in orde.", projecten: DriveApp.getFolderById(CONFIG.PROJECTEN_FOLDER_ID).getName(), sjabloon: DriveApp.getFolderById(CONFIG.SJABLOON_FOLDER_ID).getName() });
     if (body.action === "create") return json(createOrLink(String(body.klant || "").trim(), true));
@@ -25,6 +26,8 @@ function doPost(e) {
     if (body.action === "list") return json(listById(String(body.folderId || "")));
     if (body.action === "template") return json(getTemplate(String(body.match || "MEETSTAAT")));
     if (body.action === "put") return json(putFile(body));
+    if (body.action === "invite") return json(portaalInvite(body));
+    if (body.action === "share") return json(portaalShare(body));
     return json({ ok: false, error: "Onbekende actie." });
   } catch (err) {
     return json({ ok: false, error: String(err && err.message || err) });
@@ -215,6 +218,96 @@ const YUKI = {
   LABEL_CHECK: "Planbord/te bekijken",   // niet gekoppeld: één keer gemeld; label weghalen in Gmail = opnieuw proberen
   TOL: 1.0,                        // toegelaten verschil in euro tussen factuur en berekend bedrag
 };
+/* =====================================================================
+   Klantenportaal — uitnodigen en bestanden delen (vanuit het Planbord, actie "invite" en "share")
+   Vereist PORTAAL.SERVICE_KEY: Supabase → Project Settings → API → service_role (secret). Die sleutel mag
+   ALLEEN hier staan (Code.ingevuld.gs, buiten git) — nooit in de app of in config.js.
+   De uitnodigingsmail vertrekt uit de Gmail van het script (brosburo@gmail.com), zodat er geen SMTP-instelling nodig is.
+   ===================================================================== */
+const PORTAAL = {
+  SERVICE_KEY: "VUL-IN",
+  URL: "https://brosinterior.github.io/BROS-planbord/klant/",   // ook toevoegen bij Supabase → Authentication → URL Configuration → Redirect URLs
+  AFZENDER: "BROS",
+  ONDERWERP: "Welkom in je BROS-klantenportaal",
+};
+function pbAdmin(path, method, body) {
+  if (!PORTAAL.SERVICE_KEY || PORTAAL.SERVICE_KEY === "VUL-IN") throw new Error("PORTAAL.SERVICE_KEY is niet ingevuld in het Drive-script.");
+  const opt = { method: method || "get", contentType: "application/json", headers: { apikey: PORTAAL.SERVICE_KEY, Authorization: "Bearer " + PORTAAL.SERVICE_KEY }, muteHttpExceptions: true };
+  if (body) opt.payload = JSON.stringify(body);
+  const r = UrlFetchApp.fetch(YUKI.PLANBORD_URL + path, opt); const t = r.getContentText();
+  if (r.getResponseCode() >= 300) throw new Error("Supabase " + r.getResponseCode() + ": " + t.slice(0, 300));
+  return t ? JSON.parse(t) : null;
+}
+/** Wie roept het script aan? Het Planbord stuurt het login-token mee; we lezen zijn profiel (rol) met dat token. */
+function caller(token, beheerOnly) {
+  if (!token) throw new Error("Geen login meegestuurd — log opnieuw in op het Planbord.");
+  const u = pbReq("/auth/v1/user", "get", null, token);
+  const prof = pbReq("/rest/v1/profiles?id=eq." + u.id + "&select=role,name", "get", null, token);
+  const role = prof && prof[0] ? prof[0].role : "";
+  if (beheerOnly ? role !== "beheer" : (role !== "beheer" && role !== "medewerker")) throw new Error(beheerOnly ? "Alleen beheerders kunnen portaaltoegang geven." : "Geen toegang.");
+  return { id: u.id, name: prof[0].name, role: role };
+}
+function portaalInvite(body) {
+  const wie = caller(body.token, true);
+  const email = String(body.email || "").trim().toLowerCase();
+  if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email)) return { ok: false, error: "Geen geldig e-mailadres: " + email };
+  const naam = String(body.naam || "").trim(); const contactId = String(body.contact_id || "");
+  let j, bestaand = false;
+  try { j = pbAdmin("/auth/v1/admin/generate_link", "post", { type: "invite", email: email, data: { name: naam, rol: "klant", contact_id: contactId }, redirect_to: PORTAAL.URL }); }
+  catch (e) {
+    if (!/already|exists|registered|duplicate/i.test(String(e))) throw e;
+    bestaand = true;
+    j = pbAdmin("/auth/v1/admin/generate_link", "post", { type: "recovery", email: email, redirect_to: PORTAAL.URL });
+  }
+  const link = j.action_link || (j.properties && j.properties.action_link); const userId = j.id || (j.user && j.user.id);
+  if (!link) throw new Error("Geen uitnodigingslink gekregen van Supabase.");
+  if (bestaand && userId) {
+    const prof = pbAdmin("/rest/v1/profiles?id=eq." + userId + "&select=role", "get");
+    if (prof && prof[0] && prof[0].role !== "klant") return { ok: false, error: "Dit e-mailadres hoort bij een teamlid van het Planbord; een klant heeft een ander adres nodig." };
+  }
+  if (contactId && userId) pbAdmin("/rest/v1/contacten?id=eq." + contactId, "patch", { user_id: userId, portaal_sinds: new Date().toISOString() });
+  const aanhef = naam ? "Beste " + naam : "Beste";
+  const tekst = aanhef + ",\n\nWelkom in je persoonlijke BROS-klantenportaal. Daar volg je je project op de voet: de meetstaat, de facturatie, de planning en de documenten die we met je delen.\n\nKies je wachtwoord via deze link:\n" + link + "\n\nDaarna log je altijd in op " + PORTAAL.URL + " met je e-mailadres en wachtwoord.\nDe link hierboven is beperkt geldig; is hij vervallen, klik dan op het portaal op \"Wachtwoord vergeten\" en je krijgt een nieuwe.\n\nTot snel,\n" + wie.name + " — BROS";
+  const html = "<div style=\"font-family:Helvetica,Arial,sans-serif;font-size:15px;line-height:1.5;color:#1B1E1C\"><p>" + aanhef + ",</p><p>Welkom in je persoonlijke <b>BROS-klantenportaal</b>. Daar volg je je project op de voet: de meetstaat, de facturatie, de planning en de documenten die we met je delen.</p>"
+    + "<p style=\"margin:24px 0\"><a href=\"" + link + "\" style=\"background:#1B1E1C;color:#fff;text-decoration:none;padding:12px 20px;border-radius:8px;font-weight:600;display:inline-block\">Kies je wachtwoord</a></p>"
+    + "<p>Daarna log je altijd in op <a href=\"" + PORTAAL.URL + "\">" + PORTAAL.URL + "</a> met je e-mailadres en wachtwoord.<br><span style=\"color:#767D78;font-size:13px\">De knop hierboven is beperkt geldig; is hij vervallen, klik dan op het portaal op \"Wachtwoord vergeten\" en je krijgt een nieuwe link.</span></p>"
+    + "<p>Tot snel,<br>" + wie.name + " — BROS</p></div>";
+  GmailApp.sendEmail(email, PORTAAL.ONDERWERP, tekst, { htmlBody: html, name: PORTAAL.AFZENDER });
+  return { ok: true, bestaand: bestaand, user_id: userId || null };
+}
+/** "Wachtwoord vergeten" op het portaal: herstellink per Gmail, enkel voor klantlogins; geeft nooit prijs of een adres bestaat. */
+function portaalReset(body) {
+  const email = String(body.email || "").trim().toLowerCase();
+  if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email)) return { ok: true };
+  const cache = CacheService.getScriptCache(); const key = "reset:" + email;
+  if (cache.get(key)) return { ok: true };            // max. één mail per 10 minuten per adres
+  cache.put(key, "1", 600);
+  try {
+    const prof = pbAdmin("/rest/v1/profiles?email=eq." + encodeURIComponent(email) + "&role=eq.klant&select=id,name", "get");
+    if (!prof || !prof.length) return { ok: true };
+    const j = pbAdmin("/auth/v1/admin/generate_link", "post", { type: "recovery", email: email, redirect_to: PORTAAL.URL });
+    const link = j.action_link || (j.properties && j.properties.action_link); if (!link) return { ok: true };
+    const naam = prof[0].name || "";
+    GmailApp.sendEmail(email, "Nieuw wachtwoord voor je BROS-klantenportaal", "Beste " + naam + ",\n\nVia deze link kies je een nieuw wachtwoord voor het BROS-klantenportaal:\n" + link + "\n\nVroeg je dit niet aan, dan mag je deze mail negeren.\n\nBROS",
+      { htmlBody: "<div style=\"font-family:Helvetica,Arial,sans-serif;font-size:15px;line-height:1.5;color:#1B1E1C\"><p>Beste " + naam + ",</p><p>Via de knop hieronder kies je een nieuw wachtwoord voor het BROS-klantenportaal.</p><p style=\"margin:24px 0\"><a href=\"" + link + "\" style=\"background:#1B1E1C;color:#fff;text-decoration:none;padding:12px 20px;border-radius:8px;font-weight:600;display:inline-block\">Nieuw wachtwoord kiezen</a></p><p style=\"color:#767D78;font-size:13px\">Vroeg je dit niet aan, dan mag je deze mail negeren.</p><p>BROS</p></div>", name: PORTAAL.AFZENDER });
+  } catch (e) { Logger.log("reset: " + e); }
+  return { ok: true };
+}
+/** Bestand delen met de klant: "iedereen met de link mag lezen" aan- of uitzetten. */
+function portaalShare(body) {
+  caller(body.token, false);
+  const id = String(body.fileId || ""); if (!id) return { ok: false, error: "Geen bestand." };
+  const token = ScriptApp.getOAuthToken(); const base = "https://www.googleapis.com/drive/v3/files/" + id;
+  if (body.on) {
+    const r = UrlFetchApp.fetch(base + "/permissions?supportsAllDrives=true", { method: "post", contentType: "application/json", payload: JSON.stringify({ role: "reader", type: "anyone" }), headers: { Authorization: "Bearer " + token }, muteHttpExceptions: true });
+    if (r.getResponseCode() >= 300) throw new Error("Drive: " + r.getContentText().slice(0, 200));
+  } else {
+    const r = UrlFetchApp.fetch(base + "/permissions/anyoneWithLink?supportsAllDrives=true", { method: "delete", headers: { Authorization: "Bearer " + token }, muteHttpExceptions: true });
+    if (r.getResponseCode() >= 300 && r.getResponseCode() !== 404) throw new Error("Drive: " + r.getContentText().slice(0, 200));
+  }
+  return { ok: true };
+}
+
 function yukiInstall() {
   GmailApp.createLabel(YUKI.LABEL); GmailApp.createLabel(YUKI.LABEL_CHECK);
   ScriptApp.getProjectTriggers().filter(t => t.getHandlerFunction() === "yukiSync").forEach(t => ScriptApp.deleteTrigger(t));
