@@ -2,7 +2,7 @@
    BROS Planbord — app v1.0
    Statische webapp op Supabase (login, live-synchronisatie, rechten)
    ===================================================================== */
-const APP_VERSION = "1.15.1";
+const APP_VERSION = "1.15.2";
 const PROJ_STATUS = { offerte: "In offerte", lopend: "Lopend", on_hold: "On hold", afgerond: "Afgerond", verloren: "Verloren" };
 const KLANTTYPE = { particulier: "Particulier", zakelijk: "Zakelijk" };
 const KLANTCODE = { particulier: "PAR", zakelijk: "ZAK" };
@@ -476,7 +476,7 @@ function noteForm(n = {}, pid) {
   const isNew = !n.id; const projectId = n.project_id || pid; const p = S.projecten[projectId]; if (!p) return;
   const soort = n.soort || "vergadering"; const ts = isNew ? [] : noteTasks(n.id);
   const vorige = isNew ? Object.values(S.taken).filter(t => t.project_id === projectId && t.notitie_id && t.status !== "done") : [];
-  const team = users(); const pcs = contactsOf(projectId).filter(x => x.rol !== "bouwheer" && x.rol !== "contactpersoon");
+  const team = users(); const pcs = contactsOf(projectId);
   const vr = new Set(n.verantwoordelijken || []), cr = new Set(n.contact_ids || []);
   const taakRij = (i) => `<div class="ap-row"><input name="ap_titel_${i}" placeholder="Actiepunt / taak" style="flex:2"><select name="ap_wie_${i}">${schemaV() >= 15 ? wieOpts(projectId, { assignee: S.me.id }) : userOpts(S.me.id, true)}</select><input name="ap_eind_${i}" type="date" title="Deadline"></div>`;
   openModal(isNew ? "Nieuwe notitie — " + p.klant : (n.titel || NOTE_SOORT[n.soort]), `<div class="form-grid">
@@ -486,7 +486,7 @@ function noteForm(n = {}, pid) {
     <div class="field span2"><label for="n_deel">Aanwezig / betrokken (vrije tekst)</label><input id="n_deel" name="deelnemers" value="${esc(n.deelnemers || "")}" placeholder="bv. Phil, Noa, Jo Appelmans, schrijnwerker Peeters"></div>
     <div class="field span2"><label for="n_inhoud">Verslag ${isNew ? `<button type="button" class="btn ghost sm" data-note-sjabloon>Sjabloon invullen</button>` : ""}</label><textarea id="n_inhoud" name="inhoud" rows="14" style="font-family:var(--font-body);line-height:1.5">${esc(n.inhoud || "")}</textarea></div>
     <div class="field"><label>Verantwoordelijken — team</label><div class="fase-list">${team.map(u => `<label class="chk"><input type="checkbox" name="vr" value="${u.id}" ${vr.has(u.id) ? "checked" : ""}> <span>${esc(u.name)}</span></label>`).join("")}</div></div>
-    <div class="field"><label>Verantwoordelijken — aannemers en andere contacten</label>${pcs.length ? `<div class="fase-list">${pcs.map(x => `<label class="chk"><input type="checkbox" name="cr" value="${x.c.id}" ${cr.has(x.c.id) ? "checked" : ""}> <span>${esc(x.c.naam)}<small class="muted" style="display:block">${CONTACT_ROL[x.rol] || x.rol}${x.c.vakgebied ? " · " + esc(x.c.vakgebied) : ""}</small></span></label>`).join("")}</div>` : `<div class="muted" style="font-size:12px;padding:6px 0">Koppel aannemers aan dit project via Dossier › Contacten; dan kan je ze hier aanduiden.</div>`}</div>
+    <div class="field"><label>Verantwoordelijken — klant, aannemers en andere contacten</label>${pcs.length ? `<div class="fase-list">${pcs.map(x => `<label class="chk"><input type="checkbox" name="cr" value="${x.c.id}" ${cr.has(x.c.id) ? "checked" : ""}> <span>${esc(x.c.naam)}<small class="muted" style="display:block">${CONTACT_ROL[x.rol] || x.rol}${x.c.vakgebied ? " · " + esc(x.c.vakgebied) : ""}</small></span></label>`).join("")}</div>` : `<div class="muted" style="font-size:12px;padding:6px 0">Koppel de klant en aannemers aan dit project via Dossier › Contacten; dan kan je ze hier aanduiden.</div>`}</div>
     <div class="field span2"><label>Actiepunten → taken op dit project <span class="muted" style="font-weight:400">— ook toe te wijzen aan de klant of een aannemer; die ziet ze in het portaal</span></label>
       ${ts.length ? `<div class="tw" style="margin-bottom:8px"><table class="t"><tbody>${ts.map(t => `<tr><td style="width:28px"><input type="checkbox" name="ap_done_${t.id}" ${t.status === "done" ? "checked" : ""} title="Klaar"></td><td>${esc(t.titel)}</td><td>${wieCell(t)}</td><td class="num">${fmt(t.eind)}</td><td class="r"><button type="button" class="btn ghost sm" data-act="edit-task-from-note" data-tid="${t.id}">Bewerken</button></td></tr>`).join("")}</tbody></table></div>` : ""}
       <div id="ap_rows">${taakRij(0)}${taakRij(1)}${taakRij(2)}</div><button type="button" class="btn ghost sm" data-ap-more>+ Nog een actiepunt</button>
