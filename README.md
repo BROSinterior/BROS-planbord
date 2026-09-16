@@ -34,7 +34,7 @@ Statische webapp (geen build-stap) op een Supabase-database.
 - Code en gegevens staan los van elkaar: een nieuwe versie van de app raakt de database niet.
 - Nieuwe versie = bestanden vervangen in deze map → GitHub Desktop → *Commit* → *Push*. Na ± 1 minuut staat ze online.
 - `version.json` krijgt bij elke update een nieuw nummer; wie de app open heeft, ziet "nieuwe versie beschikbaar" en herlaadt wanneer het past.
-- Databasewijzigingen komen als genummerde scripts in `sql/` (002 … 007 meetstaat), altijd toevoegingen, nooit verwijderingen. Vóór elk script: Supabase → Database → Backups.
+- Databasewijzigingen komen als genummerde scripts in `sql/` (002 … 010), altijd toevoegingen, nooit verwijderingen. Vóór elk script: Supabase → Database → Backups.
 - Een volgende versie eerst testen: in de map `next/` zetten; die is bereikbaar op `…/bros-planbord/next/` met dezelfde database.
 
 ## Rollen
@@ -75,3 +75,10 @@ Statische webapp (geen build-stap) op een Supabase-database.
 - Koppeling aan projecten met een **rol** (bouwheer, contactpersoon, aannemer, leverancier, architect, studiebureau) en voor aannemers/leveranciers de loten van dat project. Bouwheer en contactpersoon zijn zichtbaar voor de klant; de rest is intern (`intern = true`).
 - Nieuw project: kies de bouwheer uit de contacten (gegevens worden overgenomen) of laat het veld leeg — dan wordt uit de klantgegevens automatisch een contact aangemaakt en gekoppeld. Bestaande projecten kregen bij script 009 hun bouwheer als contact.
 - Voorbereiding portaal: `contacten.user_id` koppelt later een login aan een contact; een aannemer ziet dan enkel de projecten (en loten) waaraan hij gekoppeld is.
+
+## Uren met tijd en klantweergave (script 010)
+
+- Uren kunnen ook op **afgewerkte taken** geregistreerd worden: ze staan onderaan in de takenkeuze (met ✓), of klik op **+ Uren** naast de taak op de projectfiche › Uren.
+- Per registratie optioneel een **begin- en einduur**; de uren worden dan berekend (op kwartieren). Zichtbaar in de weekstaat, de projectfiche en de CSV-export (kolommen Van/Tot).
+- Per taak een schakelaar **Klant** (in de taak zelf of in de kolom Klant op de projectfiche › Uren): staat ze aan, dan zijn de gepresteerde uren van die taak — met datum en tijdstip — zichtbaar voor de klant. Standaard uit. Het paneel **Wat de klant ziet** toont precies die lijst; **Afdrukken / pdf** maakt er een nette klantversie van. Dit is ook wat het klantportaal later toont.
+- Script 010 zet bovendien **alle tabellen in de realtime-publicatie** (tarieven ontbrak; daardoor werkten de live-updates tussen gebruikers niet) en de app gebruikt nu één kanaal per tabel.

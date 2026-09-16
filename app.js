@@ -2,7 +2,7 @@
    BROS Planbord — app v1.0
    Statische webapp op Supabase (login, live-synchronisatie, rechten)
    ===================================================================== */
-const APP_VERSION = "1.8.0";
+const APP_VERSION = "1.9.0";
 const PROJ_STATUS = { offerte: "In offerte", lopend: "Lopend", on_hold: "On hold", afgerond: "Afgerond", verloren: "Verloren" };
 const KLANTTYPE = { particulier: "Particulier", zakelijk: "Zakelijk" };
 const KLANTCODE = { particulier: "PAR", zakelijk: "ZAK" };
@@ -28,7 +28,7 @@ const fmtLong = (s) => { if (!s) return "—"; const d = pd(s); return `${String
 const weekNr = (s) => { const t = pd(s); const day = t.getUTCDay() || 7; t.setUTCDate(t.getUTCDate() + 4 - day); const y0 = new Date(Date.UTC(t.getUTCFullYear(), 0, 1)); return Math.ceil(((t - y0) / DAY + 1) / 7); };
 const MONTHS = ["jan", "feb", "mrt", "apr", "mei", "jun", "jul", "aug", "sep", "okt", "nov", "dec"];
 const DAYS = ["ma", "di", "wo", "do", "vr", "za", "zo"];
-const nl = (n, dec = 1) => (Math.round((Number(n) || 0) * 10 ** dec) / 10 ** dec).toLocaleString("nl-BE", { minimumFractionDigits: 0, maximumFractionDigits: dec });
+const nl = (n, dec = 1) => { const v = Number(n) || 0; if (dec === 1 && Math.abs(v * 4 - Math.round(v * 4)) < 1e-9 && Math.abs(v * 2 - Math.round(v * 2)) > 1e-9) dec = 2; /* kwartieren (2,25 / 2,75) niet afronden */ return (Math.round(v * 10 ** dec) / 10 ** dec).toLocaleString("nl-BE", { minimumFractionDigits: 0, maximumFractionDigits: dec }); };
 const eur = (n) => n == null || n === "" ? "—" : Number(n).toLocaleString("nl-BE", { style: "currency", currency: "EUR", maximumFractionDigits: 0 });
 const workdays = (a, b) => { let n = 0; for (let s = a; s <= b; s = addDays(s, 1)) { const d = pd(s).getUTCDay(); if (d !== 0 && d !== 6) n++; } return Math.max(n, 1); };
 
@@ -64,6 +64,7 @@ const faseShort = (nr) => nr && S.fasen[nr] ? S.fasen[nr].naam : "";
 const fasenList = () => Object.values(S.fasen).filter(f => f.actief !== false).sort((a, b) => a.nr - b.nr);
 const projSpan = (p) => { const ts = tasksOf(p.id); const st = [p.start, ...ts.map(t => t.start)].filter(Boolean).sort()[0]; const en = [p.eind, ...ts.map(t => t.eind)].filter(Boolean).sort().pop(); return [st, en]; };
 const avatar = (id) => { const u = userById(id); return `<span class="avatar" style="background:${u.color}" title="${esc(u.name)}">${esc(u.initials)}</span>`; };
+const klantTag = (t) => t.uren_klant ? ` <span class="pill kl" title="Uren van deze taak zijn zichtbaar voor de klant">uren → klant</span>` : "";
 const pill = (t) => isLate(t) ? `<span class="pill late">Te laat</span>` : `<span class="pill ${t.status}">${TASK_STATUS[t.status] || t.status}</span>`;
 const kost = (uid, uren, soort) => (Number(S.tarieven[uid]?.[soort]) || 0) * uren;
 const projKost = (pid, soort) => Object.values(S.uren).filter(h => h.project_id === pid).reduce((s, h) => s + kost(h.user_id, Number(h.uren) || 0, soort), 0);
@@ -77,14 +78,26 @@ function ingest(table, rows) {
   if (table === "standaardtaken") { S.standaardtaken = rows.sort((a, b) => a.fase_nr - b.fase_nr || a.volgorde - b.volgorde); return; }
   const o = {}; rows.forEach(r => o[rowKey(table, r)] = r); S[table] = o;
 }
+// Supabase geeft max. 1000 rijen per aanvraag terug: in pagina's ophalen tot alles binnen is.
+async function fetchAllRows(t) {
+  const PAGE = 1000; let from = 0, all = [];
+  for (; ;) {
+    const { data, error } = await sb.from(t).select("*").range(from, from + PAGE - 1);
+    if (error) return { error };
+    all = all.concat(data || []);
+    if (!data || data.length < PAGE) return { data: all };
+    from += PAGE;
+  }
+}
 async function loadAll() {
-  const res = await Promise.all(Object.keys(TABLES).map(t => sb.from(t).select("*").limit(5000)));
+  const res = await Promise.all(Object.keys(TABLES).map(t => fetchAllRows(t)));
   Object.keys(TABLES).forEach((t, i) => { if (res[i].error) { if (!OPTIONAL_TABLES.includes(t)) throw res[i].error; } else ingest(t, res[i].data || []); });
   S.me = S.profiles[S.session.user.id] || null;
 }
 function subscribe() {
-  const ch = sb.channel("planbord");
+  // Eén kanaal per tabel: als één tabel niet in de realtime-publicatie zit, blijven de andere werken.
   ["profiles", "tarieven", "fasen", "standaardtaken", "projecten", "taken", "uren", "documenten", "loten", "posten", "meetstaat_posten", "vorderingen", "vordering_regels", "contacten", "project_contacten"].forEach(t => {
+    const ch = sb.channel("pb-" + t);
     ch.on("postgres_changes", { event: "*", schema: "public", table: t }, (payload) => {
       if (t === "standaardtaken") { refetch(t); return; }
       if (payload.eventType === "DELETE") { delete S[t][rowKey(t, payload.old)]; }
@@ -92,12 +105,13 @@ function subscribe() {
       if (t === "profiles") S.me = S.profiles[S.session.user.id] || S.me;
       render();
     });
+    ch.on("system", {}, (msg) => { if (msg && msg.status === "error") console.warn("Realtime niet actief voor tabel " + t + " — voer het laatste databasescript uit.", msg.message); });
+    ch.subscribe((status) => { if (status === "CHANNEL_ERROR" || status === "TIMED_OUT") setTimeout(() => refetch(t), 3000); });
   });
-  ch.subscribe((status) => { if (status === "CHANNEL_ERROR" || status === "TIMED_OUT") setTimeout(() => refetchAll(), 3000); });
   // Veiligheidsnet: bij terugkeer naar het tabblad alles verversen
   document.addEventListener("visibilitychange", () => { if (document.visibilityState === "visible") refetchAll(); });
 }
-async function refetch(t) { const { data, error } = await sb.from(t).select("*").limit(5000); if (!error) { ingest(t, data || []); render(); } }
+async function refetch(t) { const { data, error } = await fetchAllRows(t); if (!error) { ingest(t, data || []); render(); } }
 async function refetchAll() { try { await loadAll(); render(); } catch (e) { } }
 
 /* ---------- schrijven (optimistisch: eerst lokaal, dan database) ---------- */
@@ -128,6 +142,8 @@ async function dbDelete(table, id) {
 
 /* ---------- Drive-koppeling (Google Apps Script als brosburo@gmail.com) ---------- */
 const driveCfg = () => (S.instellingen.drive && S.instellingen.drive.value) || {};
+const schemaV = () => Number(S.instellingen.app?.value?.versie_schema) || 0;   // welk databasescript is al uitgevoerd
+const SCHEMA_HINT = (n) => `<div class="empty" style="padding:10px 12px;margin-bottom:12px"><b>Databasescript ${String(n).padStart(3, "0")} nog niet uitgevoerd</b>Voer <code>sql/${String(n).padStart(3, "0")}_*.sql</code> uit in Supabase om deze functie te activeren.</div>`;
 const driveReady = () => !!(driveCfg().url && driveCfg().secret);
 async function driveCall(action, payload) {
   const c = driveCfg(); if (!c.url) throw new Error("Drive-koppeling niet ingesteld (Instellingen → Drive).");
@@ -703,7 +719,7 @@ function taskRow(t, withProject) {
   const p = S.projecten[t.project_id];
   return `<tr class="click" data-edit-task="${t.id}">
     <td style="width:28px"><input type="checkbox" class="task-check" data-toggle="${t.id}" ${t.status === "done" ? "checked" : ""} aria-label="Klaar"></td>
-    <td><div class="row-title">${esc(t.titel)}<small>${esc(faseName(t.fase_nr))}</small></div></td>
+    <td><div class="row-title">${esc(t.titel)}${klantTag(t)}<small>${esc(faseName(t.fase_nr))}</small></div></td>
     ${withProject ? `<td>${esc(p ? p.klant : "—")}</td>` : ""}
     <td class="num" style="color:${isLate(t) ? "var(--crit)" : "inherit"}">${fmt(t.eind)}</td>
     <td class="r num">${nl(taskDone(t.id))} / ${nl(t.uren_gepland)}</td>
@@ -747,7 +763,7 @@ function vProjectDetail(p) {
     body = `<div class="panel"><div class="panel-head"><h3>Taken</h3><div class="actions"><button class="btn sm" data-act="add-fase" data-pid="${p.id}">+ Fase toevoegen</button><button class="btn sm primary" data-act="new-task" data-pid="${p.id}">+ Taak</button></div></div>
       ${ts.length ? `<div class="tw"><table class="t"><thead><tr><th></th><th>Taak</th><th>Wie</th><th>Start</th><th>Einde</th><th class="r">Uren</th><th>Status</th></tr></thead><tbody>
       ${groups.map(nr => { const g = byFase[nr]; const done = g.filter(t => t.status === "done").length; return `<tr><td colspan="7" style="background:var(--surface-2);font-weight:700;font-family:var(--font-display)">${esc(faseName(nr) || "Zonder fase")} <span class="muted num" style="font-weight:400">${done}/${g.length}</span></td></tr>` + g.map(t => `<tr class="click" data-edit-task="${t.id}"><td style="width:28px"><input type="checkbox" class="task-check" data-toggle="${t.id}" ${t.status === "done" ? "checked" : ""} aria-label="Klaar"></td>
-        <td><div class="row-title">${esc(t.titel)}${t.notitie ? `<small>${esc(t.notitie)}</small>` : ""}</div></td><td><span class="who-cell">${t.assignee ? avatar(t.assignee) : ""}${esc(userById(t.assignee).name)}</span></td>
+        <td><div class="row-title">${esc(t.titel)}${klantTag(t)}${t.notitie ? `<small>${esc(t.notitie)}</small>` : ""}</div></td><td><span class="who-cell">${t.assignee ? avatar(t.assignee) : ""}${esc(userById(t.assignee).name)}</span></td>
         <td class="num">${fmt(t.start)}</td><td class="num" style="color:${isLate(t) ? "var(--crit)" : "inherit"}">${fmt(t.eind)}</td><td class="r num">${nl(taskDone(t.id))} / ${nl(t.uren_gepland)}</td><td>${pill(t)}</td></tr>`).join(""); }).join("")}</tbody></table></div>` : `<div class="empty"><b>Nog geen taken</b>Voeg een fase toe (met de standaardtaken) of maak een losse taak.</div>`}</div>`;
   } else if (S.ptab === "meetstaat") {
     body = vMeetstaat(p);
@@ -756,22 +772,27 @@ function vProjectDetail(p) {
   } else if (S.ptab === "planning") {
     body = ganttHtml([p], { expanded: true, title: "Timing " + p.klant });
   } else if (S.ptab === "uren") {
-    const byTask = ts.map(t => ({ t, d: taskDone(t.id) })).filter(x => x.d > 0 || x.t.uren_gepland > 0);
+    const byTask = ts.map(t => ({ t, d: taskDone(t.id) })).filter(x => x.d > 0 || x.t.uren_gepland > 0 || x.t.status === "done");
     const byUser = users().map(u => ({ u, d: hoursOf(h => h.project_id === p.id && h.user_id === u.id) })).filter(x => x.d > 0);
-    const logs = Object.values(S.uren).filter(h => h.project_id === p.id).sort((a, b) => b.datum.localeCompare(a.datum)).slice(0, 30);
+    const logs = Object.values(S.uren).filter(h => h.project_id === p.id).sort((a, b) => b.datum.localeCompare(a.datum) || String(b.tijd_van || "").localeCompare(String(a.tijd_van || ""))).slice(0, 30);
+    const v10 = schemaV() >= 10;
+    const klantRows = v10 ? Object.values(S.uren).filter(h => h.project_id === p.id && S.taken[h.taak_id]?.uren_klant).sort((a, b) => a.datum.localeCompare(b.datum) || String(a.tijd_van || "").localeCompare(String(b.tijd_van || ""))) : [];
+    const klantTot = klantRows.reduce((s, h) => s + (Number(h.uren) || 0), 0);
+    const klantPanel = v10 ? `<div class="panel"><div class="panel-head"><div><h3>Wat de klant ziet</h3><div class="muted" style="font-size:12px;margin-top:2px">Uren van taken met de schakelaar <b>Klant</b> aan · ${ts.filter(t => t.uren_klant).length} ${ts.filter(t => t.uren_klant).length === 1 ? "taak" : "taken"}</div></div><div class="actions">${klantRows.length ? `<button class="btn sm" data-act="uren-klant-print" data-pid="${p.id}">Afdrukken / pdf</button>` : ""}</div></div>
+        ${klantRows.length ? `<div class="tw"><table class="t"><thead><tr><th>Datum</th><th>Tijd</th><th>Taak</th><th>Wie</th><th class="r">Uren</th></tr></thead><tbody>${klantRows.map(h => `<tr><td class="num">${fmt(h.datum)}</td><td class="num muted">${tijdSpan(h) || "—"}</td><td>${esc(S.taken[h.taak_id]?.titel || "")}${h.notitie ? `<small class="muted" style="display:block">${esc(h.notitie)}</small>` : ""}</td><td>${esc(userById(h.user_id).name)}</td><td class="r num">${nl(h.uren)} u</td></tr>`).join("")}<tr><td colspan="4"><b>Totaal</b></td><td class="r num"><b>${nl(klantTot)} u</b></td></tr></tbody></table></div>` : `<div class="empty">Nog niets zichtbaar voor de klant. Zet per taak de schakelaar <b>Klant</b> aan (hiernaast of in de taak zelf).</div>`}</div>` : "";
     const rend = isBeheer() ? (() => { const ki = projKost(p.id, "intern"), ke = projKost(p.id, "extern"), f = Number(p.forfait) || 0; return `<div class="rend">
         <div class="panel"><div class="k">Forfait</div><div class="v">${eur(p.forfait)}</div></div>
         <div class="panel"><div class="k">Interne kost</div><div class="v">${eur(ki)}</div></div>
         <div class="panel"><div class="k">Externe waarde uren</div><div class="v">${eur(ke)}</div></div>
         <div class="panel"><div class="k">Marge t.o.v. interne kost</div><div class="v ${f ? (f - ki >= 0 ? "pos" : "neg") : ""}">${f ? eur(f - ki) : "—"}</div></div></div>`; })() : "";
     body = rend + `<div class="grid two">
-      <div class="panel"><div class="panel-head"><h3>Per taak</h3><button class="btn sm" data-act="log-hours" data-pid="${p.id}">+ Uren</button></div><div class="tw"><table class="t"><thead><tr><th>Taak</th><th class="r">Gepresteerd</th><th class="r">Gepland</th><th style="min-width:120px"></th></tr></thead><tbody>
-        ${byTask.map(({ t, d }) => `<tr><td>${esc(t.titel)}<small class="muted" style="display:block">${esc(faseShort(t.fase_nr))}</small></td><td class="r num">${nl(d)} u</td><td class="r num">${nl(t.uren_gepland)} u</td><td><div class="bar"><i class="${d > t.uren_gepland && t.uren_gepland ? "over" : t.status === "done" ? "done" : ""}" style="width:${t.uren_gepland ? Math.min(d / t.uren_gepland, 1) * 100 : 0}%"></i></div></td></tr>`).join("") || `<tr><td class="muted" colspan="4">Nog geen uren of geplande uren.</td></tr>`}
-        <tr><td><b>Totaal</b></td><td class="r num"><b>${nl(dn)} u</b></td><td class="r num"><b>${nl(pl)} u</b></td><td></td></tr></tbody></table></div></div>
+      <div class="panel"><div class="panel-head"><div><h3>Per taak</h3>${v10 ? `<div class="muted" style="font-size:12px;margin-top:2px">Schakelaar <b>Klant</b>: uren van die taak (met datum/tijd) zichtbaar voor de klant</div>` : ""}</div><button class="btn sm" data-act="log-hours" data-pid="${p.id}">+ Uren</button></div><div class="tw"><table class="t"><thead><tr><th>Taak</th><th class="r">Gepresteerd</th><th class="r">Gepland</th><th style="min-width:100px"></th>${v10 ? `<th class="c" title="Zichtbaar voor de klant">Klant</th>` : ""}<th></th></tr></thead><tbody>
+        ${byTask.map(({ t, d }) => `<tr><td>${esc(t.titel)}${t.status === "done" ? ` <span class="pill done" style="margin-left:4px">Klaar</span>` : ""}<small class="muted" style="display:block">${esc(faseShort(t.fase_nr))}</small></td><td class="r num">${nl(d)} u</td><td class="r num">${nl(t.uren_gepland)} u</td><td><div class="bar"><i class="${d > t.uren_gepland && t.uren_gepland ? "over" : t.status === "done" ? "done" : ""}" style="width:${t.uren_gepland ? Math.min(d / t.uren_gepland, 1) * 100 : 0}%"></i></div></td>${v10 ? `<td class="c"><input type="checkbox" class="sw" data-ktoggle="${t.id}" ${t.uren_klant ? "checked" : ""} title="${t.uren_klant ? "Klant ziet de uren van deze taak" : "Verborgen voor de klant"}" aria-label="Zichtbaar voor klant"></td>` : ""}<td class="r"><button class="btn ghost sm" data-act="log-hours" data-pid="${p.id}" data-tid="${t.id}" title="Uren registreren op deze taak">+ Uren</button></td></tr>`).join("") || `<tr><td class="muted" colspan="6">Nog geen uren of geplande uren.</td></tr>`}
+        <tr><td><b>Totaal</b></td><td class="r num"><b>${nl(dn)} u</b></td><td class="r num"><b>${nl(pl)} u</b></td><td colspan="${v10 ? 3 : 2}"></td></tr></tbody></table></div></div>
       <div style="display:grid;gap:16px;align-content:start">
         <div class="panel"><div class="panel-head"><h3>Per persoon</h3></div><div class="tw"><table class="t"><tbody>${byUser.map(({ u, d }) => `<tr><td><span class="who-cell">${avatar(u.id)}${esc(u.name)}</span></td><td class="r num">${nl(d)} u</td></tr>`).join("") || `<tr><td class="muted">Nog geen uren.</td></tr>`}</tbody></table></div></div>
-        <div class="panel"><div class="panel-head"><h3>Laatste registraties</h3></div><div class="tw"><table class="t"><tbody>${logs.map(h => `<tr class="click" data-edit-hours="${h.id}"><td class="num">${fmt(h.datum)}</td><td>${avatar(h.user_id)}</td><td>${esc(S.taken[h.taak_id]?.titel || "—")}${h.notitie ? `<small class="muted"> · ${esc(h.notitie)}</small>` : ""}</td><td class="r num">${nl(h.uren)} u</td></tr>`).join("") || `<tr><td class="muted">Nog geen registraties.</td></tr>`}</tbody></table></div></div>
-      </div></div>`;
+        <div class="panel"><div class="panel-head"><h3>Laatste registraties</h3></div><div class="tw"><table class="t"><tbody>${logs.map(h => `<tr class="click" data-edit-hours="${h.id}"><td class="num">${fmt(h.datum)}${tijdSpan(h) ? `<small class="muted" style="display:block">${tijdSpan(h)}</small>` : ""}</td><td>${avatar(h.user_id)}</td><td>${esc(S.taken[h.taak_id]?.titel || "—")}${h.notitie ? `<small class="muted"> · ${esc(h.notitie)}</small>` : ""}</td><td class="r num">${nl(h.uren)} u</td></tr>`).join("") || `<tr><td class="muted">Nog geen registraties.</td></tr>`}</tbody></table></div></div>
+      </div></div>` + (klantPanel ? `<div style="margin-top:16px">${klantPanel}</div>` : "");
   } else {
     const map = p.drive_map || ("PROJECTEN/" + (p.klant || ""));
     const docs = docsOf(p.id); const groups = [...new Set(docs.map(d => d.pad || ""))];
@@ -831,7 +852,7 @@ function vTaken() {
   </div>
   <div class="panel">${ts.length ? `<div class="tw"><table class="t"><thead><tr><th></th><th>Taak</th><th>Project</th><th>Wie</th><th>Start</th><th>Einde</th><th class="r">Uren</th><th>Status</th></tr></thead><tbody>
     ${ts.map(t => `<tr class="click" data-edit-task="${t.id}"><td style="width:28px"><input type="checkbox" class="task-check" data-toggle="${t.id}" ${t.status === "done" ? "checked" : ""} aria-label="Klaar"></td>
-      <td><div class="row-title">${esc(t.titel)}<small>${esc(faseName(t.fase_nr))}</small></div></td><td>${esc(S.projecten[t.project_id]?.klant || "—")}</td><td>${t.assignee ? avatar(t.assignee) : "—"}</td>
+      <td><div class="row-title">${esc(t.titel)}${klantTag(t)}<small>${esc(faseName(t.fase_nr))}</small></div></td><td>${esc(S.projecten[t.project_id]?.klant || "—")}</td><td>${t.assignee ? avatar(t.assignee) : "—"}</td>
       <td class="num">${fmt(t.start)}</td><td class="num" style="color:${isLate(t) ? "var(--crit)" : "inherit"}">${fmt(t.eind)}</td><td class="r num">${nl(taskDone(t.id))} / ${nl(t.uren_gepland)}</td><td>${pill(t)}</td></tr>`).join("")}</tbody></table></div>` : `<div class="empty"><b>Geen taken gevonden</b>Pas de filters aan of maak een nieuwe taak.</div>`}</div>`;
 }
 
@@ -892,7 +913,7 @@ function ganttHtml(ps, opt = {}) {
 /* ---------- Uren ---------- */
 function vUren() {
   const u = S.hoursUser || S.me.id, ws = S.weekStart, we = addDays(ws, 6);
-  const entries = Object.values(S.uren).filter(h => h.user_id === u && h.datum >= ws && h.datum <= we).sort((a, b) => a.datum.localeCompare(b.datum));
+  const entries = Object.values(S.uren).filter(h => h.user_id === u && h.datum >= ws && h.datum <= we).sort((a, b) => a.datum.localeCompare(b.datum) || String(a.tijd_van || "").localeCompare(String(b.tijd_van || "")));
   const perDay = Array.from({ length: 7 }, (_, i) => { const d = addDays(ws, i); return { d, sum: entries.filter(h => h.datum === d).reduce((s, h) => s + Number(h.uren || 0), 0) }; });
   const tot = perDay.reduce((s, x) => s + x.sum, 0);
   const perProj = projects().map(p => ({ p, d: entries.filter(h => h.project_id === p.id).reduce((s, h) => s + Number(h.uren || 0), 0) })).filter(x => x.d > 0);
@@ -907,8 +928,8 @@ function vUren() {
     <div class="day" style="background:var(--surface-2)"><div class="dn">Week</div><div class="dh">${nl(tot)}<small> u</small></div></div></div>
   <div class="grid two">
     <div class="panel"><div class="panel-head"><h3>Registraties · ${esc(userById(u).name)}</h3></div>
-      ${entries.length ? `<div class="tw"><table class="t"><thead><tr><th>Datum</th><th>Project</th><th>Taak</th><th>Notitie</th><th class="r">Uren</th></tr></thead><tbody>
-      ${entries.map(h => `<tr class="click" data-edit-hours="${h.id}"><td class="num">${DAYS[(pd(h.datum).getUTCDay() + 6) % 7]} ${fmt(h.datum)}</td><td>${esc(S.projecten[h.project_id]?.klant || "—")}</td><td>${esc(S.taken[h.taak_id]?.titel || "—")}</td><td class="muted">${esc(h.notitie || "")}</td><td class="r num">${nl(h.uren)}</td></tr>`).join("")}</tbody></table></div>` : `<div class="empty"><b>Geen uren deze week</b>Registreer uren met de knop rechtsboven.</div>`}</div>
+      ${entries.length ? `<div class="tw"><table class="t"><thead><tr><th>Datum</th><th>Tijd</th><th>Project</th><th>Taak</th><th>Notitie</th><th class="r">Uren</th></tr></thead><tbody>
+      ${entries.map(h => `<tr class="click" data-edit-hours="${h.id}"><td class="num">${DAYS[(pd(h.datum).getUTCDay() + 6) % 7]} ${fmt(h.datum)}</td><td class="num muted">${tijdSpan(h)}</td><td>${esc(S.projecten[h.project_id]?.klant || "—")}</td><td>${esc(S.taken[h.taak_id]?.titel || "—")}</td><td class="muted">${esc(h.notitie || "")}</td><td class="r num">${nl(h.uren)}</td></tr>`).join("")}</tbody></table></div>` : `<div class="empty"><b>Geen uren deze week</b>Registreer uren met de knop rechtsboven.</div>`}</div>
     <div style="display:grid;gap:16px;align-content:start">
       <div class="panel"><div class="panel-head"><h3>Per project deze week</h3></div><div class="tw"><table class="t"><tbody>${perProj.map(x => `<tr><td>${esc(projName(x.p))}</td><td class="r num">${nl(x.d)} u</td></tr>`).join("") || `<tr><td class="muted">—</td></tr>`}</tbody></table></div></div>
       <div class="panel"><div class="panel-head"><h3>Team deze week</h3></div><div class="tw"><table class="t"><tbody>${allTot.map(x => `<tr><td><span class="who-cell">${avatar(x.u.id)}${esc(x.u.name)}</span></td><td class="r num">${nl(x.d)} u</td></tr>`).join("")}</tbody></table></div></div>
@@ -916,10 +937,27 @@ function vUren() {
 }
 function exportHours() {
   const rows = Object.values(S.uren).sort((a, b) => a.datum.localeCompare(b.datum));
-  const head = ["Datum", "Week", "Medewerker", "Projectnummer", "Klant", "Project", "Fase", "Taak", "Uren", "Notitie"];
-  const lines = [head.join(";")].concat(rows.map(h => { const p = S.projecten[h.project_id] || {}, t = S.taken[h.taak_id] || {}; return [fmtLong(h.datum), weekNr(h.datum), userById(h.user_id).name, p.nummer || "", p.klant || "", p.naam || "", faseShort(t.fase_nr), t.titel || "", String(h.uren).replace(".", ","), (h.notitie || "").replace(/[;\r\n]/g, " ")].map(v => `"${String(v).replace(/"/g, '""')}"`).join(";"); }));
+  const head = ["Datum", "Week", "Van", "Tot", "Medewerker", "Projectnummer", "Klant", "Project", "Fase", "Taak", "Uren", "Zichtbaar klant", "Notitie"];
+  const lines = [head.join(";")].concat(rows.map(h => { const p = S.projecten[h.project_id] || {}, t = S.taken[h.taak_id] || {}; return [fmtLong(h.datum), weekNr(h.datum), tijd(h.tijd_van), tijd(h.tijd_tot), userById(h.user_id).name, p.nummer || "", p.klant || "", p.naam || "", faseShort(t.fase_nr), t.titel || "", String(h.uren).replace(".", ","), t.uren_klant ? "ja" : "nee", (h.notitie || "").replace(/[;\r\n]/g, " ")].map(v => `"${String(v).replace(/"/g, '""')}"`).join(";"); }));
   const blob = new Blob(["﻿" + lines.join("\r\n")], { type: "text/csv;charset=utf-8" });
   const a = document.createElement("a"); a.href = URL.createObjectURL(blob); a.download = `bros-uren-${todayIso}.csv`; a.click(); URL.revokeObjectURL(a.href);
+}
+/* Klantversie van de gepresteerde uren: alleen taken met de schakelaar "Klant" aan, met datum en tijd. Opent als afdrukbare pagina. */
+function printKlantUren(p) {
+  const rows = Object.values(S.uren).filter(h => h.project_id === p.id && S.taken[h.taak_id]?.uren_klant).sort((a, b) => a.datum.localeCompare(b.datum) || String(a.tijd_van || "").localeCompare(String(b.tijd_van || "")));
+  if (!rows.length) return toast("Geen uren zichtbaar voor de klant.");
+  const tot = rows.reduce((s, h) => s + (Number(h.uren) || 0), 0);
+  const perTaak = {}; rows.forEach(h => { const k = S.taken[h.taak_id]?.titel || "—"; perTaak[k] = (perTaak[k] || 0) + (Number(h.uren) || 0); });
+  const html = `<!doctype html><html lang="nl"><head><meta charset="utf-8"><title>Gepresteerde uren · ${esc(p.klant)}</title>
+  <style>body{font:13px/1.5 -apple-system,Segoe UI,Helvetica,Arial,sans-serif;color:#111;margin:40px;max-width:820px}h1{font-size:20px;margin:0 0 2px}h2{font-size:13px;font-weight:600;margin:24px 0 8px;text-transform:uppercase;letter-spacing:.06em;color:#666}.sub{color:#666;margin-bottom:24px}table{width:100%;border-collapse:collapse}th,td{padding:7px 8px;border-bottom:1px solid #e5e5e5;text-align:left;vertical-align:top}th{font-size:11px;text-transform:uppercase;letter-spacing:.05em;color:#666}td.r,th.r{text-align:right;font-variant-numeric:tabular-nums}tr.tot td{border-top:2px solid #111;font-weight:700}small{color:#666;display:block}.foot{margin-top:32px;color:#888;font-size:11px}@media print{body{margin:16mm}}</style></head><body>
+  <h1>Gepresteerde uren</h1><div class="sub">${esc(projName(p))}${p.adres ? ` · ${esc(p.adres)}, ${esc(p.postcode || "")} ${esc(p.gemeente || "")}` : ""} · stand ${fmtLong(todayIso)}</div>
+  <h2>Detail</h2><table><thead><tr><th>Datum</th><th>Tijd</th><th>Taak</th><th>Uitgevoerd door</th><th class="r">Uren</th></tr></thead><tbody>
+  ${rows.map(h => `<tr><td>${fmtLong(h.datum)}</td><td>${tijdSpan(h) || "—"}</td><td>${esc(S.taken[h.taak_id]?.titel || "")}${h.notitie ? `<small>${esc(h.notitie)}</small>` : ""}</td><td>${esc(userById(h.user_id).name)}</td><td class="r">${nl(h.uren)}</td></tr>`).join("")}
+  <tr class="tot"><td colspan="4">Totaal</td><td class="r">${nl(tot)} u</td></tr></tbody></table>
+  <h2>Per taak</h2><table><tbody>${Object.entries(perTaak).map(([k, v]) => `<tr><td>${esc(k)}</td><td class="r">${nl(v)} u</td></tr>`).join("")}</tbody></table>
+  <div class="foot">BROS · overzicht van gepresteerde uren, gegenereerd uit het BROS Planbord.</div>
+  <script>window.onload=()=>setTimeout(()=>window.print(),300)</script></body></html>`;
+  const w = window.open("", "_blank"); if (!w) return toast("Pop-up geblokkeerd — sta pop-ups toe voor het Planbord."); w.document.write(html); w.document.close();
 }
 
 /* ---------- Team ---------- */
@@ -1221,9 +1259,11 @@ function taskForm(t = {}, pid) {
     <div class="field"><label for="t_eind">Einde</label><input id="t_eind" type="date" name="eind" value="${esc(t.eind || "")}"></div>
     <div class="field"><label for="t_uren">Geplande uren</label><input id="t_uren" type="number" step="0.5" min="0" name="uren_gepland" value="${esc(t.uren_gepland ?? 0)}"></div>
     <div class="field"><label for="t_not">Notitie</label><input id="t_not" name="notitie" value="${esc(t.notitie || "")}"></div>
+    ${schemaV() >= 10 ? `<div class="field span2"><label class="sw-row"><input type="checkbox" class="sw" name="uren_klant" value="1" ${t.uren_klant ? "checked" : ""}><span><b>Gepresteerde uren zichtbaar voor de klant</b><small class="muted" style="display:block">De klant ziet de geregistreerde uren van deze taak, met datum en tijdstip. Staat standaard uit.</small></span></label></div>` : ""}
   </div>`, {
     onSave: async (d) => {
       const row = { titel: d.titel.trim(), project_id: d.project_id, fase_nr: d.fase_nr ? Number(d.fase_nr) : null, assignee: d.assignee || null, status: d.status, start: d.start || null, eind: d.eind || null, uren_gepland: Number(d.uren_gepland) || 0, notitie: d.notitie };
+      if (schemaV() >= 10) row.uren_klant = !!d.uren_klant;
       if (row.start && !row.eind) row.eind = row.start; if (row.eind && !row.start) row.start = row.eind; if (row.eind < row.start) row.eind = row.start;
       if (isNew) { row.volgorde = (row.fase_nr || 99) * 100 + 90; await dbInsert("taken", row); toast("Taak aangemaakt"); }
       else { await dbUpdate("taken", t.id, row); toast("Taak bewaard"); }
@@ -1235,24 +1275,32 @@ function hoursForm(h = {}, pid) {
   const isNew = !h.id;
   const projectId = h.project_id || pid || S.project || projects()[0]?.id;
   if (!projectId) { toast("Maak eerst een project aan."); return; }
-  const taskOptsFor = (p, sel) => { const ts = tasksOf(p).filter(t => t.status !== "done" || t.id === sel); return `<option value="">— algemeen (geen taak) —</option>` + opts(ts.map(t => [t.id, (t.fase_nr ? t.fase_nr + " · " : "") + t.titel]), sel); };
+  // Ook afgewerkte taken zijn kiesbaar (bv. uren achteraf inboeken); ze staan onderaan met een vinkje.
+  const taskOptsFor = (p, sel) => { const ts = tasksOf(p); const open = ts.filter(t => t.status !== "done"), done = ts.filter(t => t.status === "done"); const lbl = t => (t.fase_nr ? t.fase_nr + " · " : "") + t.titel; return `<option value="">— algemeen (geen taak) —</option>` + opts(open.map(t => [t.id, lbl(t)]), sel) + (done.length ? `<optgroup label="Afgewerkte taken">${opts(done.map(t => [t.id, "✓ " + lbl(t)]), sel)}</optgroup>` : ""); };
   openModal(isNew ? "Uren registreren" : "Registratie bewerken", `<div class="form-grid">
     <div class="field"><label for="h_who">Wie</label><select id="h_who" name="user_id" ${isBeheer() ? "" : "disabled"}>${userOpts(h.user_id || S.me.id)}</select></div>
     <div class="field"><label for="h_datum">Datum</label><input id="h_datum" type="date" name="datum" required value="${esc(h.datum || todayIso)}"></div>
     <div class="field"><label for="h_proj">Project</label><select id="h_proj" name="project_id">${projOpts(projectId)}</select></div>
     <div class="field"><label for="h_task">Taak</label><select id="h_task" name="taak_id">${taskOptsFor(projectId, h.taak_id)}</select></div>
-    <div class="field"><label for="h_uren">Uren</label><input id="h_uren" type="number" step="0.25" min="0.25" name="uren" required value="${esc(h.uren ?? 1)}"></div>
+    ${schemaV() >= 10 ? `<div class="field"><label for="h_van">Van <span class="muted">(optioneel)</span></label><input id="h_van" type="time" name="tijd_van" step="900" value="${esc(tijd(h.tijd_van))}"></div>
+    <div class="field"><label for="h_tot">Tot</label><input id="h_tot" type="time" name="tijd_tot" step="900" value="${esc(tijd(h.tijd_tot))}"></div>` : ""}
+    <div class="field"><label for="h_uren">Uren</label><input id="h_uren" type="number" step="0.25" min="0.25" name="uren" required value="${esc(h.uren ?? 1)}">${schemaV() >= 10 ? `<small class="muted" id="h_hint">Vul van/tot in en de uren worden berekend.</small>` : ""}</div>
     <div class="field"><label for="h_not">Notitie</label><input id="h_not" name="notitie" value="${esc(h.notitie || "")}" placeholder="wat heb je gedaan?"></div>
   </div>`, {
     onSave: async (d) => {
       const row = { user_id: isBeheer() ? d.user_id : (h.user_id || S.me.id), datum: d.datum, project_id: d.project_id, taak_id: d.taak_id || null, uren: Number(d.uren) || 0, notitie: d.notitie };
+      if (schemaV() >= 10) { row.tijd_van = d.tijd_van || null; row.tijd_tot = d.tijd_tot || null; if (row.tijd_van && row.tijd_tot && row.tijd_tot <= row.tijd_van) { toast("Het einduur moet na het beginuur liggen."); return false; } }
       if (isNew) await dbInsert("uren", row); else await dbUpdate("uren", h.id, row);
       toast(`${nl(row.uren)} u geregistreerd`);
     },
     onDelete: isNew ? null : async () => { await dbDelete("uren", h.id); toast("Registratie verwijderd"); },
   });
   $("#h_proj").onchange = (e) => { $("#h_task").innerHTML = taskOptsFor(e.target.value); };
+  if ($("#h_van")) { const calc = () => { const a = $("#h_van").value, b = $("#h_tot").value; if (a && b && b > a) { const u = Math.round(tijdDiff(a, b) * 4) / 4; if (u > 0) { $("#h_uren").value = u; $("#h_hint").textContent = `${a} – ${b} = ${nl(u, 2)} u`; } } }; $("#h_van").onchange = calc; $("#h_tot").onchange = calc; }
 }
+const tijd = (t) => (t || "").slice(0, 5);
+const tijdDiff = (a, b) => { const [h1, m1] = a.split(":").map(Number), [h2, m2] = b.split(":").map(Number); return (h2 * 60 + m2 - h1 * 60 - m1) / 60; };
+const tijdSpan = (h) => h.tijd_van && h.tijd_tot ? `${tijd(h.tijd_van)}–${tijd(h.tijd_tot)}` : h.tijd_van ? `vanaf ${tijd(h.tijd_van)}` : "";
 function userForm(u) {
   const self = u.id === S.me.id, tar = S.tarieven[u.id] || {};
   openModal(self ? "Mijn profiel" : "Medewerker bewerken", `<div class="form-grid">
@@ -1297,7 +1345,8 @@ document.addEventListener("click", (e) => {
   if (d.act === "edit-project") return projectForm(S.projecten[d.pid]);
   if (d.act === "add-fase") return addFaseForm(d.pid);
   if (d.act === "new-task") return taskForm({}, d.pid);
-  if (d.act === "log-hours") return hoursForm({}, d.pid);
+  if (d.act === "log-hours") return hoursForm(d.tid ? { taak_id: d.tid, project_id: d.pid } : {}, d.pid);
+  if (d.act === "uren-klant-print") return printKlantUren(S.projecten[d.pid]);
   if (d.act === "edit-user") return userForm(S.profiles[d.uid]);
   if (d.act === "export-hours") return exportHours();
   if (d.act === "export-projects") return exportProjects();
@@ -1347,6 +1396,7 @@ document.addEventListener("change", (e) => {
   if (el.dataset.hoursUser != null) { S.hoursUser = el.value; return render(); }
   if (el.dataset.rapjaar != null) { S.rapJaar = el.value; return render(); }
   if (el.dataset.toggle) { const t = S.taken[el.dataset.toggle]; if (t) dbUpdate("taken", t.id, { status: el.checked ? "done" : "todo" }).catch(() => { }); }
+  if (el.dataset.ktoggle) { const t = S.taken[el.dataset.ktoggle]; if (t) dbUpdate("taken", t.id, { uren_klant: el.checked }).then(() => toast(el.checked ? "Uren van deze taak zijn zichtbaar voor de klant" : "Uren verborgen voor de klant")).catch(() => { }); }
   if (el.dataset.ms && el.tagName === "SELECT") return msEdit(el.dataset.ms, el.dataset.f, el.value);
   if (el.dataset.post && (el.type === "checkbox" || el.tagName === "SELECT")) return postEdit(el.dataset.post, el.dataset.f, el.value, el.checked);
   if (el.dataset.lot && el.type === "checkbox") return lotEdit(Number(el.dataset.lot), el.dataset.f, null, el.checked);
