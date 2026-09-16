@@ -2,7 +2,7 @@
    BROS Planbord — app v1.0
    Statische webapp op Supabase (login, live-synchronisatie, rechten)
    ===================================================================== */
-const APP_VERSION = "1.12.2";
+const APP_VERSION = "1.13.0";
 const PROJ_STATUS = { offerte: "In offerte", lopend: "Lopend", on_hold: "On hold", afgerond: "Afgerond", verloren: "Verloren" };
 const KLANTTYPE = { particulier: "Particulier", zakelijk: "Zakelijk" };
 const KLANTCODE = { particulier: "PAR", zakelijk: "ZAK" };
@@ -87,11 +87,16 @@ function ingest(table, rows) {
   if (table === "standaardtaken") { S.standaardtaken = rows.sort((a, b) => a.fase_nr - b.fase_nr || a.volgorde - b.volgorde); return; }
   const o = {}; rows.forEach(r => o[rowKey(table, r)] = r); S[table] = o;
 }
+// Sinds script 012 leest het team de meetstaat, loten en postenbibliotheek via views: kostprijs, marge en richtprijs
+// zijn daarin leeg voor medewerkers en de verkoopprijs (verkoop_ep) komt berekend mee. Bestaat de view nog niet → de tabel.
+const VIEW_OF = { meetstaat_posten: "meetstaat_posten_v", loten: "loten_v", posten: "posten_v" };
+const srcOf = (t) => VIEW_OF[t] && S.viewsOk !== false ? VIEW_OF[t] : t;
 // Supabase geeft max. 1000 rijen per aanvraag terug: in pagina's ophalen tot alles binnen is.
 async function fetchAllRows(t) {
-  const PAGE = 1000; let from = 0, all = [];
+  const PAGE = 1000; let from = 0, all = []; let src = srcOf(t);
   for (; ;) {
-    const { data, error } = await sb.from(t).select("*").range(from, from + PAGE - 1);
+    let { data, error } = await sb.from(src).select("*").range(from, from + PAGE - 1);
+    if (error && src !== t && /does not exist|42P01|schema cache/i.test(error.message || "")) { S.viewsOk = false; src = t; ({ data, error } = await sb.from(src).select("*").range(from, from + PAGE - 1)); }
     if (error) return { error };
     all = all.concat(data || []);
     if (!data || data.length < PAGE) return { data: all };
@@ -105,10 +110,12 @@ async function loadAll() {
 }
 function subscribe() {
   // Eén kanaal per tabel: als één tabel niet in de realtime-publicatie zit, blijven de andere werken.
-  ["profiles", "tarieven", "fasen", "standaardtaken", "projecten", "taken", "uren", "documenten", "loten", "posten", "meetstaat_posten", "vorderingen", "vordering_regels", "contacten", "project_contacten"].forEach(t => {
+  ["profiles", "tarieven", "fasen", "standaardtaken", "projecten", "taken", "uren", "documenten", "loten", "posten", "meetstaat_posten", "meetstaat_prijzen", "vorderingen", "vordering_regels", "contacten", "project_contacten"].forEach(t => {
     const ch = sb.channel("pb-" + t);
     ch.on("postgres_changes", { event: "*", schema: "public", table: t }, (payload) => {
       if (t === "standaardtaken") { refetch(t); return; }
+      if (t === "meetstaat_prijzen") { const pid = (payload.new || payload.old || {}).post_id; if (pid && S.meetstaat_posten[pid]) msRefetch([pid]); return; }
+      if (VIEW_OF[t] && S.viewsOk !== false) { if (payload.eventType === "DELETE") { delete S[t][rowKey(t, payload.old)]; render(); } else rowRefetch(t, rowKey(t, payload.new)); return; }
       if (payload.eventType === "DELETE") { delete S[t][rowKey(t, payload.old)]; }
       else { S[t][rowKey(t, payload.new)] = payload.new; }
       if (t === "profiles") S.me = S.profiles[S.session.user.id] || S.me;
@@ -121,6 +128,17 @@ function subscribe() {
   document.addEventListener("visibilitychange", () => { if (document.visibilityState === "visible") refetchAll(); });
 }
 async function refetch(t) { const { data, error } = await fetchAllRows(t); if (!error) { ingest(t, data || []); render(); } }
+/* één rij opnieuw uit de view halen (na een wijziging: verkoopprijs en beheer-kolommen komen zo mee) */
+async function rowRefetch(t, key) {
+  const col = t === "loten" ? "nr" : "id";
+  const { data, error } = await sb.from(srcOf(t)).select("*").eq(col, key).maybeSingle();
+  if (!error && data) { S[t][rowKey(t, data)] = data; render(); }
+}
+async function msRefetch(ids) {
+  if (!ids.length) return;
+  const { data, error } = await sb.from(srcOf("meetstaat_posten")).select("*").in("id", ids);
+  if (!error) { (data || []).forEach(r => S.meetstaat_posten[r.id] = r); render(); }
+}
 async function refetchAll() { try { await loadAll(); render(); } catch (e) { } }
 
 /* ---------- schrijven (optimistisch: eerst lokaal, dan database) ---------- */
@@ -134,7 +152,9 @@ async function dbUpdate(table, id, patch) {
   const prev = S[table][id]; S[table][id] = { ...prev, ...patch }; render();
   const { data, error } = await sb.from(table).update(patch).eq(key, id).select().single();
   if (error) { S[table][id] = prev; render(); toast("Bewaren mislukt: " + error.message); throw error; }
-  S[table][id] = data; render(); return data;
+  S[table][id] = VIEW_OF[table] ? { ...prev, ...data } : data; render();
+  if (VIEW_OF[table] && S.viewsOk !== false) rowRefetch(table, id);
+  return data;
 }
 async function dbUpsert(table, row) {
   const key = table === "tarieven" ? "user_id" : "id";
@@ -361,7 +381,7 @@ const postenOf = (lot) => Object.values(S.posten).filter(x => x.lot === lot && x
 const msRows = (pid) => Object.values(S.meetstaat_posten).filter(r => r.project_id === pid).sort((a, b) => a.lot - b.lot || (a.volgorde ?? 0) - (b.volgorde ?? 0) || (a.code || "").localeCompare(b.code || ""));
 const msMarge = (r) => r.marge != null && r.marge !== "" ? Number(r.marge) : Number(S.loten[r.lot]?.marge) || 0;
 const msKost = (r) => (Number(r.hoeveelheid) || 0) * (Number(r.eenheidsprijs) || 0);
-const msVerkoopEP = (r) => (Number(r.eenheidsprijs) || 0) * (1 + msMarge(r));
+const msVerkoopEP = (r) => r.verkoop_ep != null ? Number(r.verkoop_ep) : (Number(r.eenheidsprijs) || 0) * (1 + msMarge(r));
 const msVerkoop = (r) => (Number(r.hoeveelheid) || 0) * msVerkoopEP(r);
 const msTelt = (r) => r.status !== "vervallen";
 const eur2 = (n) => Number(n || 0).toLocaleString("nl-BE", { style: "currency", currency: "EUR", minimumFractionDigits: 2, maximumFractionDigits: 2 });
@@ -412,9 +432,18 @@ function msRowFromPost(pid, x, lot, i) {
 }
 async function msInsert(rows) {
   if (!rows.length) return [];
-  const { data, error } = await sb.from("meetstaat_posten").insert(rows).select();
+  const v12 = schemaV() >= 12;
+  const clean = v12 ? rows.map(({ eenheidsprijs, marge, ...r }) => r) : rows;
+  const { data, error } = await sb.from("meetstaat_posten").insert(clean).select();
   if (error) { toast("Mislukt: " + error.message); throw error; }
-  (data || []).forEach(r => S.meetstaat_posten[r.id] = r); render(); return data || [];
+  (data || []).forEach(r => S.meetstaat_posten[r.id] = r);
+  if (v12 && data) {
+    // vrije posten en geïmporteerde regels: prijs expliciet bewaren (bibliotheekposten krijgen hun richtprijs via de trigger)
+    const prijzen = data.map((r, i) => ({ post_id: r.id, eenheidsprijs: Number(rows[i].eenheidsprijs) || 0, marge: rows[i].marge == null || rows[i].marge === "" ? null : Number(rows[i].marge) })).filter((p, i) => !rows[i].post_id || Number(rows[i].eenheidsprijs) > 0 && isBeheer());
+    for (let i = 0; i < prijzen.length; i += 200) { const chunk = prijzen.slice(i, i + 200); const { error: e2 } = await (isBeheer() ? sb.from("meetstaat_prijzen").upsert(chunk) : sb.from("meetstaat_prijzen").insert(chunk)); if (e2) toast("Prijzen niet bewaard: " + e2.message); }
+    await msRefetch(data.map(r => r.id));
+  }
+  render(); return data || [];
 }
 function msAddLotForm(pid) {
   const p = S.projecten[pid]; const present = new Set(msRows(pid).map(r => r.lot));
@@ -440,7 +469,7 @@ function msAddPostForm(pid, lot) {
       <div class="field span2"><div id="ap_list" class="fase-list" style="max-height:300px;overflow:auto">${listHtml(curLot)}</div></div>
       <div class="field span2"><label for="ap_vrij">Of een vrije post (omschrijving)</label><input id="ap_vrij" name="vrij" placeholder="eigen omschrijving — komt in het gekozen lot"></div>
       <div class="field"><label for="ap_een">Eenheid vrije post</label><select id="ap_een" name="eenheid">${opts(EENHEDEN.map(e => [e, e]), "stk")}</select></div>
-      <div class="field"><label for="ap_prijs">Kostprijs vrije post (excl. btw)</label><input id="ap_prijs" name="prijs" type="number" step="any" placeholder="0"></div>
+      ${isBeheer() ? `<div class="field"><label for="ap_prijs">Kostprijs vrije post (excl. btw)</label><input id="ap_prijs" name="prijs" type="number" step="any" placeholder="0"></div>` : `<div class="field"><label>Prijs</label><div class="muted" style="font-size:13px;padding:8px 0">Prijzen vult beheer in.</div></div>`}
     </div>`, {
     saveLabel: "Toevoegen", wide: true,
     onSave: async (d) => {
@@ -463,7 +492,13 @@ async function msEdit(id, f, raw) {
   if (f === "marge") v = raw === "" ? null : Number(String(raw).replace(",", ".")) / 100;
   if (String(r[f] ?? "") === String(v ?? "")) return;
   const active = document.activeElement; const keep = active && active.dataset ? { ms: active.dataset.ms, f: active.dataset.f, sel: active.selectionStart } : null;
-  try { await dbUpdate("meetstaat_posten", id, { [f]: v, updated_at: new Date().toISOString() }); } catch (e) { return; }
+  try {
+    if (schemaV() >= 12 && (f === "eenheidsprijs" || f === "marge")) {
+      const { error } = await sb.from("meetstaat_prijzen").upsert({ post_id: id, eenheidsprijs: f === "eenheidsprijs" ? v : (Number(r.eenheidsprijs) || 0), marge: f === "marge" ? v : (r.marge == null || r.marge === "" ? null : Number(r.marge)), updated_at: new Date().toISOString() });
+      if (error) { toast("Bewaren mislukt: " + error.message); return; }
+      S.meetstaat_posten[id] = { ...r, [f]: v }; await msRefetch([id]);
+    } else await dbUpdate("meetstaat_posten", id, { [f]: v, updated_at: new Date().toISOString() });
+  } catch (e) { return; }
   if (keep && keep.ms) { const el = document.querySelector(`[data-ms="${keep.ms}"][data-f="${keep.f}"]`); if (el) { el.focus(); try { if (keep.sel != null) el.setSelectionRange(keep.sel, keep.sel); } catch (e) { } } }
 }
 async function msDelLot(pid, lot) {

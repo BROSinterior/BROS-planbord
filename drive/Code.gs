@@ -389,8 +389,10 @@ function yukiCalc(v, rows, regels, loten) {
   let excl = 0, btw = 0;
   rows.forEach(r => { if (r.project_id !== v.project_id || r.status === "vervallen") return; if ((r.status === "meerwerk" || r.status === "minwerk") !== mw) return;
     const pct = postRg[r.id] != null ? postRg[r.id] : lotRg[r.lot]; if (pct == null) return;
+    // verkoopprijs: sinds script 012 berekend in de view (verkoop_ep); daarvoor kostprijs × (1 + marge)
     const marge = r.marge != null && r.marge !== "" ? Number(r.marge) : Number((loten[r.lot] || {}).marge) || 0;
-    const a = pct * Number(r.hoeveelheid || 0) * Number(r.eenheidsprijs || 0) * (1 + marge) * (r.status === "minwerk" ? -1 : 1);
+    const ep = r.verkoop_ep != null ? Number(r.verkoop_ep) : Number(r.eenheidsprijs || 0) * (1 + marge);
+    const a = pct * Number(r.hoeveelheid || 0) * ep * (r.status === "minwerk" ? -1 : 1);
     excl += a; btw += a * (Number(r.btw) || 0); });
   return { excl: Math.round(excl * 100) / 100, btw: Math.round(btw * 100) / 100, incl: Math.round((excl + btw) * 100) / 100 };
 }
@@ -399,8 +401,9 @@ function yukiKoppel(facturen) {
   const projecten = pbReq("/rest/v1/projecten?select=id,nummer,klant,naam,bedrijf,status", "get", null, token);
   const vorderingen = pbReq("/rest/v1/vorderingen?select=*", "get", null, token);
   const regels = pbReq("/rest/v1/vordering_regels?select=*", "get", null, token);
-  const rows = pbReq("/rest/v1/meetstaat_posten?select=id,project_id,lot,status,hoeveelheid,eenheidsprijs,marge,btw", "get", null, token);
-  const loten = {}; pbReq("/rest/v1/loten?select=nr,marge", "get", null, token).forEach(l => loten[l.nr] = l);
+  let rows, loten = {};
+  try { rows = pbReq("/rest/v1/meetstaat_posten_v?select=id,project_id,lot,status,hoeveelheid,verkoop_ep,btw", "get", null, token); }
+  catch (e) { rows = pbReq("/rest/v1/meetstaat_posten?select=id,project_id,lot,status,hoeveelheid,eenheidsprijs,marge,btw", "get", null, token); pbReq("/rest/v1/loten?select=nr,marge", "get", null, token).forEach(l => loten[l.nr] = l); }
   const calc = {}; vorderingen.forEach(v => calc[v.id] = yukiCalc(v, rows, regels, loten));
   const bestaand = {}; vorderingen.forEach(v => { if (v.factuurnummer) bestaand[String(v.factuurnummer).trim()] = v; });
   const TOL = YUKI.TOL; const rapport = [];
