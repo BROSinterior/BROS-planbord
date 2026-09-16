@@ -2,7 +2,7 @@
    BROS Planbord — app v1.0
    Statische webapp op Supabase (login, live-synchronisatie, rechten)
    ===================================================================== */
-const APP_VERSION = "1.9.0";
+const APP_VERSION = "1.10.1";
 const PROJ_STATUS = { offerte: "In offerte", lopend: "Lopend", on_hold: "On hold", afgerond: "Afgerond", verloren: "Verloren" };
 const KLANTTYPE = { particulier: "Particulier", zakelijk: "Zakelijk" };
 const KLANTCODE = { particulier: "PAR", zakelijk: "ZAK" };
@@ -34,7 +34,7 @@ const workdays = (a, b) => { let n = 0; for (let s = a; s <= b; s = addDays(s, 1
 
 /* ---------- state ---------- */
 const S = {
-  session: null, me: null,
+  session: null, me: null, setPassword: false, passwordForced: false,
   profiles: {}, tarieven: {}, fasen: {}, standaardtaken: [], projecten: {}, taken: {}, uren: {}, documenten: {}, instellingen: {}, loten: {}, posten: {}, meetstaat_posten: {}, vorderingen: {}, vordering_regels: {}, contacten: {}, project_contacten: {},
   view: "overzicht", project: null, ptab: "taken",
   filters: { user: "", status: "", project: "", q: "" }, cfilters: { soort: "", q: "" },
@@ -43,6 +43,15 @@ const S = {
   ready: false, loadError: null,
 };
 const cfg = window.PLANBORD_CONFIG || {};
+/* ---------- auth-link in de URL (uitnodiging, wachtwoordherstel, vervallen link) — vóór supabase-js de hash opruimt ---------- */
+const URL_AUTH = (() => {
+  const h = location.hash.startsWith("#") ? location.hash.slice(1) : "";
+  const q = location.search.startsWith("?") ? location.search.slice(1) : "";
+  const p = new URLSearchParams(h.includes("=") ? h : q);
+  const err = p.get("error_description") || p.get("error_code") || p.get("error") || "";
+  if (err) history.replaceState(null, "", location.pathname);
+  return { type: p.get("type") || "", error: err };
+})();
 const configured = cfg.supabaseUrl && !cfg.supabaseUrl.includes("VUL-IN") && cfg.supabaseAnonKey && cfg.supabaseAnonKey !== "VUL-IN";
 const sb = configured ? window.supabase.createClient(cfg.supabaseUrl, cfg.supabaseAnonKey) : null;
 
@@ -344,7 +353,7 @@ function vMeetstaat(p) {
         <td style="width:104px">${sel(r, "status", opts(Object.entries(MS_STATUS), r.status))}</td>
         <td class="r" style="width:36px"><button class="btn ghost sm danger" data-act="ms-del" data-id="${r.id}" aria-label="Verwijderen">✕</button></td></tr>`; }).join(""); }).join("");
   return kpi + `<div class="panel"><div class="panel-head"><div><h3>Meetstaat</h3><div class="muted" style="font-size:12px;margin-top:2px">${rows.length ? `${rows.length} posten in ${lots.length} loten` : "Nog leeg"} · klik in een veld om het te wijzigen, bewaard bij verlaten van het veld</div></div>
-      <div class="actions">${rows.length ? `<button class="btn sm" data-act="ms-export" data-pid="${p.id}" title="Excel in het BROS-sjabloon aanmaken in Documenten/Meetstaat van de projectmap">Exporteren naar Drive (Excel)</button>` : ""}<button class="btn sm" data-act="ms-add-post" data-pid="${p.id}">+ Post</button><button class="btn sm primary" data-act="ms-add-lot" data-pid="${p.id}">+ Lot toevoegen</button></div></div>
+      <div class="actions"><button class="btn sm" data-act="ms-import" data-pid="${p.id}" title="Een bestaande meetstaat (Excel, elk BROS-sjabloon) inlezen als posten">Importeren uit Excel</button>${rows.length ? `<button class="btn sm" data-act="ms-export" data-pid="${p.id}" title="Excel in het BROS-sjabloon aanmaken in Documenten/Meetstaat van de projectmap">Exporteren naar Drive (Excel)</button>` : ""}<button class="btn sm" data-act="ms-add-post" data-pid="${p.id}">+ Post</button><button class="btn sm primary" data-act="ms-add-lot" data-pid="${p.id}">+ Lot toevoegen</button></div></div>
     ${rows.length ? `<div class="tw"><table class="t ms"><thead><tr><th>Nr</th><th>Omschrijving</th><th>Locatie</th><th>Hoev.</th><th>Eenh.</th>${beheer ? `<th title="Kostprijs / aannemersprijs excl. btw">Kost EP</th><th>Marge</th>` : ""}<th class="r">Klant EP</th><th class="r">Totaal excl.</th>${beheer ? `<th>Btw</th>` : ""}<th>Status</th><th></th></tr></thead><tbody>${body}</tbody></table></div>` : `<div class="empty"><b>Nog geen posten</b>Voeg een lot toe (met de standaardposten) of kies losse posten uit de bibliotheek.</div>`}</div>`;
 }
 function msNextCode(pid, lot) { const n = msRows(pid).filter(r => r.lot === lot).length + 1; return `${lot}.${n}`; }
@@ -581,6 +590,62 @@ async function vordDel(vid) {
 
 /* export naar het Excel-sjabloon in de projectmap (Documenten/Meetstaat) */
 let templateCache = null; // { name, bytes } — sjabloon één keer per sessie ophalen
+/* ---------- Meetstaat importeren uit een bestaand Excel-bestand ---------- */
+function msImportPick(pid) {
+  if (!window.JSZip || !window.MeetstaatImport) return toast("Importmodule niet geladen — herlaad de pagina.");
+  const inp = document.createElement("input"); inp.type = "file"; inp.accept = ".xlsx,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet";
+  inp.onchange = () => { const f = inp.files && inp.files[0]; if (f) msImportFile(pid, f).catch(err => { loader.fail(); toast("Import: " + err.message); }); };
+  inp.click();
+}
+async function msImportPlaceholders() {
+  // regels van het lege sjabloon: onaangeroerde sjabloonregels (zonder cijfers) worden niet geïmporteerd
+  if (msImportPlaceholders.cache) return msImportPlaceholders.cache;
+  try {
+    if (!templateCache && driveReady()) { const j = await driveCall("template", { match: "MEETSTAAT" }); const bin = atob(j.base64); const bytes = new Uint8Array(bin.length); for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i); templateCache = { name: j.name, bytes }; }
+    if (!templateCache) return [];
+    const t = await window.MeetstaatImport.parse(templateCache.bytes, window.JSZip, []);
+    msImportPlaceholders.cache = t.lots.flatMap(l => l.posts.filter(p => !p._groep).map(p => p.omschrijving.split("\n")[0]));
+  } catch (e) { msImportPlaceholders.cache = []; }
+  return msImportPlaceholders.cache;
+}
+async function msImportFile(pid, file) {
+  const p = S.projecten[pid]; if (!p) return;
+  loader.start("ms.import", "Excel lezen…", 3000);
+  const bytes = new Uint8Array(await file.arrayBuffer());
+  const ph = await msImportPlaceholders();
+  loader.step("Posten herkennen…");
+  const parsed = await window.MeetstaatImport.parse(bytes, window.JSZip, ph);
+  loader.done("ms.import");
+  if (!parsed.lots.length) return toast("Geen loten met posten gevonden in dit bestand.");
+  const existing = msRows(pid).length;
+  const ov = parsed.overzicht.onvoorzien;
+  const lotRows = parsed.lots.map(l => `<tr><td class="num">${l.lot}</td><td>${esc(l.naam)}${S.loten[l.lot] ? "" : ` <span class="pill late">lot ${l.lot} bestaat niet in het Planbord</span>`}</td><td class="r num">${l.posts.filter(x => !x._groep).length}</td><td class="r num">${eur(l.som)}</td></tr>`).join("");
+  openModal("Meetstaat importeren", `<div class="muted" style="margin-bottom:10px"><b>${esc(file.name)}</b>${parsed.head.titel ? ` · ${esc(parsed.head.titel)}` : ""}</div>
+    <div class="tw" style="max-height:300px;overflow:auto"><table class="t"><thead><tr><th>Lot</th><th>Naam in Excel</th><th class="r">Posten</th><th class="r">Excl. btw</th></tr></thead><tbody>${lotRows}
+    ${ov ? `<tr><td class="num">21</td><td>Onvoorziene kost / extra budget (10 %) <span class="muted">uit het blad OVERZICHT</span></td><td class="r num">1</td><td class="r num">${eur(ov)}</td></tr>` : ""}
+    <tr class="tot"><td></td><td><b>Totaal</b></td><td class="r num"><b>${parsed.posts}</b></td><td class="r num"><b>${eur(parsed.totaal + (ov || 0))}</b></td></tr></tbody></table></div>
+    <div class="form-grid" style="margin-top:12px">
+      <div class="field"><label for="mi_status">Status van de posten</label><select id="mi_status" name="status"><option value="akkoord">Akkoord (getekend contract)</option><option value="offerte">Offerte</option></select></div>
+      ${existing ? `<div class="field"><label for="mi_mode">Dit project heeft al ${existing} posten</label><select id="mi_mode" name="mode"><option value="replace">Bestaande posten vervangen</option><option value="append">Toevoegen aan de bestaande posten</option></select></div>` : `<div class="field"><label>Bestaande posten</label><div class="muted" style="padding:7px 0">Nog geen — alles wordt nieuw aangemaakt.</div></div>`}
+      ${ov ? `<div class="field span2"><label class="chk"><input type="checkbox" name="budget21" value="1" checked> Onvoorziene kost (10 %) overnemen als post in lot 21</label></div>` : ""}
+    </div>
+    <div class="muted" style="font-size:12px;margin-top:10px">De eenheidsprijs in de Excel is de klantprijs: die komt binnen als prijs met marge 0 %, zodat de totalen exact gelijk blijven. Vul daarna per post de echte kost en marge in. Lege sjabloonregels worden overgeslagen.</div>
+    ${parsed.warnings.length ? `<details style="margin-top:10px"><summary class="muted" style="cursor:pointer">${parsed.warnings.length} opmerking${parsed.warnings.length === 1 ? "" : "en"} bij het inlezen</summary><ul class="muted" style="font-size:12px;margin:6px 0 0 16px">${parsed.warnings.slice(0, 40).map(w => `<li>${esc(w)}</li>`).join("")}</ul></details>` : ""}`, {
+    saveLabel: "Importeren", wide: true,
+    onSave: async (d) => {
+      const rows = window.MeetstaatImport.toRows(parsed, pid, { status: d.status, budget21: !!d.budget21, opmerking: `Import uit ${file.name} · ${fmtLong(todayIso)}` });
+      const missing = [...new Set(rows.map(r => r.lot))].filter(l => !S.loten[l]);
+      if (missing.length) { toast(`Lot ${missing.join(", ")} bestaat niet in het Planbord — voeg dat lot eerst toe onder Instellingen › Loten.`); return false; }
+      loader.start("ms.import2", "Posten bewaren…", 4000);
+      try {
+        if (existing && d.mode === "replace") { const { error } = await sb.from("meetstaat_posten").delete().eq("project_id", pid); if (error) throw error; }
+        for (let i = 0; i < rows.length; i += 200) { const { error } = await sb.from("meetstaat_posten").insert(rows.slice(i, i + 200)); if (error) throw error; }
+        await refetch("meetstaat_posten"); loader.done("ms.import2");
+        toast(`${rows.length} posten geïmporteerd uit ${file.name}`);
+      } catch (e) { loader.fail(); toast("Import mislukt: " + e.message); await refetch("meetstaat_posten"); return false; }
+    },
+  });
+}
 async function exportMeetstaat(p) {
   if (!driveReady()) throw new Error("Drive-koppeling niet ingesteld (Instellingen → Drive).");
   if (!p.drive_folder_id) throw new Error("Dit project heeft nog geen Drive-map (Dossier → map koppelen of aanmaken).");
@@ -645,6 +710,7 @@ function render() {
   const app = $("#app");
   if (!configured) { app.innerHTML = `<div class="login"><div class="card"><h1>BROS Planbord</h1><p>De app is nog niet gekoppeld aan de database. Vul <code>config.js</code> in (Project URL en anon public-sleutel uit Supabase) en herlaad.</p></div></div>`; return; }
   if (!S.session) { renderLogin(); return; }
+  if (S.setPassword) { renderSetPassword(); return; }
   if (S.loadError) { app.innerHTML = `<div class="login"><div class="card"><h1>Kon de gegevens niet laden</h1><p class="err">${esc(S.loadError)}</p><button class="btn" data-act="logout">Uitloggen</button> <button class="btn primary" data-act="reload">Opnieuw proberen</button></div></div>`; return; }
   if (!S.ready) { app.innerHTML = `<div class="login"><div class="card"><h1>BROS Planbord</h1><p>Gegevens laden…</p></div></div>`; return; }
   if (!S.me) { app.innerHTML = `<div class="login"><div class="card"><h1>Nog geen profiel</h1><p>Je login werkt, maar er is nog geen medewerkersprofiel gekoppeld. Vraag de beheerder om je uit te nodigen, of herlaad de pagina.</p><button class="btn" data-act="logout">Uitloggen</button> <button class="btn primary" data-act="reload">Herladen</button></div></div>`; return; }
@@ -654,7 +720,7 @@ function render() {
     <div class="top-in">
       <div class="brand"><span class="mark">BROS</span><span class="name">Planbord</span></div>
       <nav class="tabs" aria-label="Hoofdnavigatie">${TABS.filter(([, , r]) => !r || isBeheer()).map(([k, l]) => `<button data-nav="${k}" ${S.view === k ? 'aria-current="page"' : ""}>${l}</button>`).join("")}</nav>
-      <div class="who"><span class="who-cell">${avatar(S.me.id)}<span style="font-weight:600">${esc(S.me.name)}</span></span><button class="btn ghost sm" data-act="logout" title="Uitloggen">Uitloggen</button></div>
+      <div class="who"><span class="who-cell">${avatar(S.me.id)}<span style="font-weight:600">${esc(S.me.name)}</span></span><button class="btn ghost sm" data-act="change-password" title="Wachtwoord wijzigen">Wachtwoord</button><button class="btn ghost sm" data-act="logout" title="Uitloggen">Uitloggen</button></div>
     </div>
     <div class="update" id="updateBar"><span>Er is een nieuwe versie van het Planbord.</span><button class="btn sm primary" data-act="reload">Nu herladen</button><button class="btn sm ghost" data-act="update-later">Later</button></div>
   </header>
@@ -663,6 +729,7 @@ function render() {
   if (updateAvailable) $("#updateBar").classList.add("show");
 }
 let loginMode = "password";
+let loginNotice = URL_AUTH.error ? (/expired|invalid|otp/i.test(URL_AUTH.error) ? "Deze link is vervallen of al gebruikt. Log in met je wachtwoord, of vraag hieronder een nieuwe link aan." : "Inloggen via de link lukte niet: " + URL_AUTH.error.replace(/\+/g, " ")) : "";
 function renderLogin() {
   const pw = loginMode === "password";
   $("#app").innerHTML = `<div class="login"><div class="card">
@@ -671,11 +738,19 @@ function renderLogin() {
     <form id="loginForm"><div class="field"><label for="email">E-mailadres</label><input id="email" type="email" required autocomplete="username" placeholder="naam@bros.be"></div>
     ${pw ? `<div class="field"><label for="password">Wachtwoord</label><input id="password" type="password" required autocomplete="current-password"></div>` : ""}
     <button class="btn primary" type="submit" id="loginBtn">${pw ? "Inloggen" : "Stuur mij een inloglink"}</button></form>
-    <div class="msg" id="loginMsg"></div>
-    <p style="margin:16px 0 0;font-size:13px"><button class="btn ghost sm" type="button" id="loginSwitch">${pw ? "Liever een inloglink per e-mail?" : "Liever met wachtwoord inloggen?"}</button></p></div></div>`;
+    <div class="msg${loginNotice ? " err" : ""}" id="loginMsg">${esc(loginNotice)}</div>
+    <p style="margin:16px 0 0;font-size:13px;display:flex;gap:6px;flex-wrap:wrap"><button class="btn ghost sm" type="button" id="loginSwitch">${pw ? "Liever een inloglink per e-mail?" : "Liever met wachtwoord inloggen?"}</button>${pw ? `<button class="btn ghost sm" type="button" id="loginForgot">Wachtwoord vergeten?</button>` : ""}</p></div></div>`;
   $("#loginSwitch").onclick = () => { loginMode = pw ? "otp" : "password"; renderLogin(); };
+  if (pw) $("#loginForgot").onclick = async () => {
+    loginNotice = ""; const email = $("#email").value.trim(); const m = $("#loginMsg"); m.className = "msg"; m.textContent = "";
+    if (!email) { m.className = "msg err"; m.textContent = "Vul eerst je e-mailadres in."; $("#email").focus(); return; }
+    $("#loginForgot").disabled = true;
+    const { error } = await sb.auth.resetPasswordForEmail(email, { redirectTo: location.origin + location.pathname });
+    if (error) { m.className = "msg err"; m.textContent = "Dat lukte niet: " + error.message; $("#loginForgot").disabled = false; }
+    else m.textContent = "Mail verstuurd naar " + email + " (kijk ook bij spam). Klik op de link en kies een nieuw wachtwoord.";
+  };
   $("#loginForm").onsubmit = async (e) => {
-    e.preventDefault(); const email = $("#email").value.trim(); const btn = $("#loginBtn"); btn.disabled = true; const m = $("#loginMsg"); m.className = "msg"; m.textContent = "";
+    e.preventDefault(); loginNotice = ""; const email = $("#email").value.trim(); const btn = $("#loginBtn"); btn.disabled = true; const m = $("#loginMsg"); m.className = "msg"; m.textContent = "";
     if (pw) {
       const { error } = await sb.auth.signInWithPassword({ email, password: $("#password").value });
       if (error) { m.className = "msg err"; m.textContent = /invalid/i.test(error.message) ? "E-mailadres of wachtwoord klopt niet." : "Dat lukte niet: " + error.message; btn.disabled = false; }
@@ -684,6 +759,37 @@ function renderLogin() {
       if (error) { m.className = "msg err"; m.textContent = "Dat lukte niet: " + error.message + (/signup/i.test(error.message) ? " — dit adres is nog niet uitgenodigd of nog niet bevestigd." : ""); btn.disabled = false; }
       else { m.textContent = "Link verstuurd naar " + email + ". Kijk in je mailbox (ook bij spam) en klik op de link."; }
     }
+  };
+}
+
+/* ---------- wachtwoord kiezen (na uitnodiging/herstellink) of wijzigen ---------- */
+function renderSetPassword() {
+  const forced = S.passwordForced, email = S.session?.user?.email || "";
+  $("#app").innerHTML = `<div class="login"><div class="card">
+    <div class="brand" style="margin-bottom:14px"><span class="mark">BROS</span><span class="name">Planbord</span></div>
+    <h1>${forced ? "Kies een wachtwoord" : "Wachtwoord wijzigen"}</h1>
+    <p>${forced ? `Welkom${email ? ", " + esc(email) : ""}. Kies een wachtwoord waarmee je voortaan inlogt.` : `Kies een nieuw wachtwoord voor ${esc(email)}.`}</p>
+    <form id="pwForm">
+      <div class="field"><label for="pw1">Nieuw wachtwoord</label><input id="pw1" type="password" required minlength="8" autocomplete="new-password" placeholder="minstens 8 tekens"></div>
+      <div class="field"><label for="pw2">Nog eens, ter controle</label><input id="pw2" type="password" required minlength="8" autocomplete="new-password"></div>
+      <div class="actions" style="margin-top:4px"><button class="btn primary" type="submit" id="pwBtn">Opslaan</button>${forced ? "" : `<button class="btn ghost" type="button" id="pwCancel">Annuleren</button>`}</div>
+    </form>
+    <div class="msg" id="pwMsg"></div>
+    ${forced ? `<p style="margin:16px 0 0;font-size:13px"><button class="btn ghost sm" type="button" data-act="logout">Toch niet — uitloggen</button></p>` : ""}
+  </div></div>`;
+  $("#pw1").focus();
+  if (!forced) $("#pwCancel").onclick = () => { S.setPassword = false; render(); };
+  $("#pwForm").onsubmit = async (e) => {
+    e.preventDefault(); const m = $("#pwMsg"); m.className = "msg"; m.textContent = "";
+    const a = $("#pw1").value, b = $("#pw2").value;
+    if (a.length < 8) { m.className = "msg err"; m.textContent = "Kies minstens 8 tekens."; return; }
+    if (a !== b) { m.className = "msg err"; m.textContent = "De twee wachtwoorden zijn niet gelijk."; return; }
+    const btn = $("#pwBtn"); btn.disabled = true;
+    const { error } = await sb.auth.updateUser({ password: a });
+    if (error) { m.className = "msg err"; m.textContent = "Dat lukte niet: " + error.message; btn.disabled = false; return; }
+    history.replaceState(null, "", location.pathname);
+    S.setPassword = false; S.passwordForced = false;
+    if (S.ready) { render(); toast("Wachtwoord opgeslagen."); } else start();
   };
 }
 
@@ -966,7 +1072,7 @@ function vTeam() {
   const load = (uid, ws) => { const we = addDays(ws, 6); return Object.values(S.taken).filter(t => t.assignee === uid && t.status !== "done" && t.start && t.eind && t.eind >= ws && t.start <= we).reduce((s, t) => { const a = t.start > ws ? t.start : ws, b = t.eind < we ? t.eind : we; return s + (Number(t.uren_gepland) || 0) * workdays(a, b) / workdays(t.start, t.eind); }, 0); };
   const all = Object.values(S.profiles).sort((a, b) => (a.active === false) - (b.active === false) || a.name.localeCompare(b.name));
   return `
-  <div class="page-head"><div><div class="eyebrow">${users().length} medewerkers</div><h1>Team</h1></div>${isBeheer() ? `<div class="actions"><span class="muted" style="font-size:13px">Nieuwe medewerkers nodig je uit via Supabase (Authentication → Users → Invite); daarna verschijnen ze hier.</span></div>` : ""}</div>
+  <div class="page-head"><div><div class="eyebrow">${users().length} medewerkers</div><h1>Team</h1></div>${isBeheer() ? `<div class="actions"><span class="muted" style="font-size:13px">Nieuwe medewerkers nodig je uit via Supabase (Authentication → Users → Invite user). Ze krijgen een mail, kiezen bij de eerste keer een wachtwoord en verschijnen daarna hier.</span></div>` : ""}</div>
   <div class="panel tw"><table class="t"><thead><tr><th>Naam</th><th>Rol</th><th class="r">Open taken</th><th class="r">Uren dit jaar</th>${wk.map(w => `<th class="r">wk ${weekNr(w)}</th>`).join("")}${isBeheer() ? `<th class="r">Tarief int / ext</th>` : ""}<th></th></tr></thead><tbody>
   ${all.map(u => `<tr style="${u.active === false ? "opacity:.5" : ""}"><td><span class="who-cell">${avatar(u.id)}<b>${esc(u.name)}</b>${u.id === S.me.id ? `<span class="muted" style="font-size:12px">(ik)</span>` : ""}</span><small class="muted" style="display:block">${esc(u.email || "")}</small></td><td class="muted">${u.role === "beheer" ? "Beheer" : "Medewerker"}${u.active === false ? " · inactief" : ""}</td>
     <td class="r num">${Object.values(S.taken).filter(t => t.assignee === u.id && t.status !== "done").length}</td>
@@ -1366,6 +1472,7 @@ document.addEventListener("click", (e) => {
   if (d.act === "ms-add-post") return msAddPostForm(d.pid, d.lot ? Number(d.lot) : null);
   if (d.act === "ms-del") { const r = S.meetstaat_posten[d.id]; if (r && confirm(`"${r.omschrijving}" verwijderen?`)) dbDelete("meetstaat_posten", d.id).catch(() => { }); return; }
   if (d.act === "ms-del-lot") return msDelLot(d.pid, Number(d.lot));
+  if (d.act === "ms-import") return msImportPick(d.pid);
   if (d.act === "ms-export") return exportMeetstaat(S.projecten[d.pid]).catch(err => { loader.fail(); toast("Export: " + err.message); });
   if (d.act === "post-new") return postAdd(Number(d.lot));
   if (d.act === "vord-new") return vordForm(d.pid, d.soort);
@@ -1376,6 +1483,7 @@ document.addEventListener("click", (e) => {
   if (d.act === "vord-del") return vordDel(d.id);
   if (d.act === "post-del") return postDel(d.id);
   if (d.act === "logout") return sb.auth.signOut().then(() => location.reload());
+  if (d.act === "change-password") { S.setPassword = true; S.passwordForced = false; render(); return; }
   if (d.act === "reload") return location.reload();
   if (d.act === "update-later") { updateAvailable = false; $("#updateBar")?.classList.remove("show"); }
 });
@@ -1420,9 +1528,16 @@ async function boot() {
   render();
   if (!configured) return;
   const { data: { session } } = await sb.auth.getSession();
-  S.session = session; render();
-  sb.auth.onAuthStateChange((_evt, sess) => { const had = !!S.session; S.session = sess; if (sess && !had) start(); if (!sess) { S.ready = false; render(); } });
-  if (session) start();
+  S.session = session;
+  if (session && (URL_AUTH.type === "invite" || URL_AUTH.type === "recovery")) { S.setPassword = true; S.passwordForced = true; }
+  render();
+  sb.auth.onAuthStateChange((evt, sess) => {
+    const had = !!S.session; S.session = sess;
+    if (evt === "PASSWORD_RECOVERY" && sess) { S.setPassword = true; S.passwordForced = true; render(); return; }
+    if (sess && !had && !S.setPassword) start();
+    if (!sess) { S.ready = false; S.setPassword = false; render(); }
+  });
+  if (session && !S.setPassword) start();
 }
 async function start() {
   loader.start("app.load", "Planbord laden…", 2500);

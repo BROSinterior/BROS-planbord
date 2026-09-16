@@ -22,12 +22,16 @@ Statische webapp (geen build-stap) op een Supabase-database.
 2. **Supabase** → Authentication → Providers → Email: aan; *Confirm email* mag uit.
    Authentication → Settings: **"Allow new user signups" UIT** (alleen uitgenodigde mensen kunnen inloggen).
 3. **Supabase** → Authentication → URL Configuration:
-   Site URL = het adres van de app (bv. `https://brosinterior.github.io/bros-planbord/`), en hetzelfde adres bij Redirect URLs.
+   Site URL = het adres van de app (bv. `https://brosinterior.github.io/BROS-planbord/`), en hetzelfde adres bij Redirect URLs.
 4. **Supabase** → Authentication → Users → *Invite user*: eerst de beheerder (Phil), daarna de anderen.
    De eerste uitgenodigde gebruiker wordt automatisch beheerder.
+   De genodigde klikt op *Accept invitation* in de mail, komt in de app en kiest daar een wachtwoord (sinds v1.10.1).
+   Komt hij op een 404 terecht, dan klopt de Site URL uit stap 3 niet (hoofdletters!). Een uitnodigingslink is beperkt geldig;
+   is ze vervallen, dan volstaat *Wachtwoord vergeten?* op het loginscherm (of in Supabase: *Send password recovery*).
+   Wachtwoord kwijt → *Wachtwoord vergeten?* op het loginscherm; wachtwoord wijzigen → knop *Wachtwoord* in de kopbalk.
 5. `config.js` invullen met Project URL + anon public key (Settings → API).
-6. **GitHub Desktop** → deze map publiceren als repository `bros-planbord` → op github.com: Settings → Pages → Branch `main` / root → Save.
-   Na een minuut staat de app op `https://<gebruikersnaam>.github.io/bros-planbord/`.
+6. **GitHub Desktop** → deze map publiceren als repository `BROS-planbord` → op github.com: Settings → Pages → Branch `main` / root → Save.
+   Na een minuut staat de app op `https://brosinterior.github.io/BROS-planbord/` (let op: hoofdletters tellen mee).
 
 ## Updaten tijdens gebruik
 
@@ -35,7 +39,7 @@ Statische webapp (geen build-stap) op een Supabase-database.
 - Nieuwe versie = bestanden vervangen in deze map → GitHub Desktop → *Commit* → *Push*. Na ± 1 minuut staat ze online.
 - `version.json` krijgt bij elke update een nieuw nummer; wie de app open heeft, ziet "nieuwe versie beschikbaar" en herlaadt wanneer het past.
 - Databasewijzigingen komen als genummerde scripts in `sql/` (002 … 010), altijd toevoegingen, nooit verwijderingen. Vóór elk script: Supabase → Database → Backups.
-- Een volgende versie eerst testen: in de map `next/` zetten; die is bereikbaar op `…/bros-planbord/next/` met dezelfde database.
+- Een volgende versie eerst testen: in de map `next/` zetten; die is bereikbaar op `…/BROS-planbord/next/` met dezelfde database.
 
 ## Rollen
 
@@ -82,3 +86,11 @@ Statische webapp (geen build-stap) op een Supabase-database.
 - Per registratie optioneel een **begin- en einduur**; de uren worden dan berekend (op kwartieren). Zichtbaar in de weekstaat, de projectfiche en de CSV-export (kolommen Van/Tot).
 - Per taak een schakelaar **Klant** (in de taak zelf of in de kolom Klant op de projectfiche › Uren): staat ze aan, dan zijn de gepresteerde uren van die taak — met datum en tijdstip — zichtbaar voor de klant. Standaard uit. Het paneel **Wat de klant ziet** toont precies die lijst; **Afdrukken / pdf** maakt er een nette klantversie van. Dit is ook wat het klantportaal later toont.
 - Script 010 zet bovendien **alle tabellen in de realtime-publicatie** (tarieven ontbrak; daardoor werkten de live-updates tussen gebruikers niet) en de app gebruikt nu één kanaal per tabel.
+
+## Meetstaat importeren uit Excel (v1.10)
+
+- Projectfiche › Meetstaat › **Importeren uit Excel**: kies een bestaande meetstaat (elk BROS-sjabloon van 2024 tot 2026 DEF). Het Planbord leest het blad MEETSTAAT (lotkoppen `N. NAAM`, per post: code, locatie, omschrijving, artikelnr., hoeveelheid, eenheid, eenheidsprijs, btw, bijgevraagd/weggelaten, bestel- en leverstatus, leverancier) en het blad OVERZICHT (controle per lot, onvoorziene kost 10 %).
+- Voorbeeld per lot met aantal posten en bedrag, daarna kies je de status (akkoord/offerte) en, als het project al posten heeft, vervangen of aanvullen. Groepskoppen en tekstregels zonder cijfers blijven bewaard; onaangeroerde regels van het lege sjabloon worden overgeslagen (daarvoor wordt het sjabloon uit Drive gelezen).
+- De eenheidsprijs in de Excel is de **klantprijs**: die komt binnen als prijs met marge 0 %, zodat de totalen exact gelijk blijven aan het document dat de klant kreeg. Vul daarna per post de echte kost en marge in.
+- Daarna werkt alles zoals bij een nieuwe meetstaat: bewerken in het Planbord, **Exporteren naar Drive** maakt de versie in het nieuwe sjabloon in `Documenten/Meetstaat/DEF` (de oude verhuist met datum naar `Documenten/Meetstaat`). Voorwaarde: de Drive-map van het project is gekoppeld (Dossier).
+- De code zit in `meetstaat-import.js` (werkt ook in Node voor tests). Op 16/09/2026 zijn de meetstaten van 20 lopende projecten op deze manier ingelezen (opmerking op elke post: "Import uit Excel 16/09/2026").
