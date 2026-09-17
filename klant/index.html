@@ -6,34 +6,34 @@
 <title>BROS — Klantenportaal</title>
 <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%231B1E1C'/%3E%3Ctext x='16' y='21' font-family='Arial' font-weight='bold' font-size='13' text-anchor='middle' fill='white'%3EB%3C/text%3E%3C/svg%3E">
 <link rel="preconnect" href="https://fonts.googleapis.com">
-<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Manrope:wght@500;600;700;800&family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap">
 <style>
   :root {
-    --ground: #F5F4F0; --surface: #FFFFFF; --surface-2: #ECEAE3;
-    --ink: #1B1E1C; --ink-2: #4A504C; --muted: #7A7F79; --line: #DAD8D0; --line-2: #C6C3B9;
-    --accent: #1B1E1C; --accent-ink: #FFFFFF; --accent-soft: #E8E6DE;
+    --ground: #F5F5F7; --surface: #FFFFFF; --surface-2: #F0F0F2;
+    --ink: #1D1D1F; --ink-2: #48484A; --muted: #86868B; --line: rgba(0,0,0,.08); --line-2: rgba(0,0,0,.16);
+    --accent: #1D1D1F; --accent-ink: #FFFFFF; --accent-soft: #E8E8ED;
     --ok: #2E7D4F; --ok-soft: #DDF0E3; --warn: #B8720F; --warn-soft: #F8EBD2; --crit: #B93A34; --crit-soft: #F7DEDC;
-    --blue: #2A4DD0; --blue-soft: #E3E8FA;
-    --shadow: 0 10px 30px rgba(20,24,40,.10);
-    --font-display: "Manrope", "Avenir Next", "Segoe UI", sans-serif;
-    --font-body: "IBM Plex Sans", "Helvetica Neue", Arial, sans-serif;
-    --font-mono: "IBM Plex Mono", "SFMono-Regular", Menlo, monospace;
+    --blue: #0071E3; --blue-soft: #E8F1FD;
+    --shadow: 0 12px 40px rgba(0,0,0,.12); --card: 0 1px 2px rgba(0,0,0,.04), 0 6px 20px rgba(0,0,0,.05);
+    --font-display: -apple-system, BlinkMacSystemFont, "SF Pro Display", "Inter", "Helvetica Neue", Arial, sans-serif;
+    --font-body: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Inter", "Helvetica Neue", Arial, sans-serif;
+    --font-mono: "SF Mono", ui-monospace, Menlo, monospace;
     color-scheme: light;
   }
   @media (prefers-color-scheme: dark) {
     :root:not([data-theme="light"]) {
-      --ground: #141618; --surface: #1C1F22; --surface-2: #24282C; --ink: #ECEEEA; --ink-2: #C3C7C1; --muted: #8E958F;
-      --line: #2E3337; --line-2: #3C4247; --accent: #ECEEEA; --accent-ink: #141618; --accent-soft: #2A2E32;
+      --ground: #000000; --surface: #1C1C1E; --surface-2: #2C2C2E; --ink: #F5F5F7; --ink-2: #C7C7CC; --muted: #98989D;
+      --line: rgba(255,255,255,.1); --line-2: rgba(255,255,255,.2); --accent: #F5F5F7; --accent-ink: #1D1D1F; --accent-soft: #2C2C2E;
       --ok: #6FC591; --ok-soft: #1F3A2A; --warn: #E2A84C; --warn-soft: #3E2F12; --crit: #EF7B74; --crit-soft: #442020;
-      --blue: #8CA2F5; --blue-soft: #26304F; --shadow: 0 10px 30px rgba(0,0,0,.5); color-scheme: dark;
+      --blue: #2997FF; --blue-soft: #0E2A47; --shadow: 0 12px 40px rgba(0,0,0,.6); --card: 0 1px 2px rgba(0,0,0,.3), 0 6px 20px rgba(0,0,0,.35); color-scheme: dark;
     }
   }
   * { box-sizing: border-box; }
   html, body { margin: 0; background: var(--ground); color: var(--ink); font-family: var(--font-body); font-size: 15px; line-height: 1.5; -webkit-font-smoothing: antialiased; }
-  h1, h2, h3 { font-family: var(--font-display); margin: 0; letter-spacing: -.01em; }
-  h1 { font-size: 30px; font-weight: 800; line-height: 1.15; }
-  h2 { font-size: 20px; font-weight: 700; }
-  h3 { font-size: 15px; font-weight: 700; }
+  h1, h2, h3 { font-family: var(--font-display); margin: 0; letter-spacing: -.025em; }
+  h1 { font-size: 32px; font-weight: 700; line-height: 1.15; }
+  h2 { font-size: 20px; font-weight: 600; }
+  h3 { font-size: 15px; font-weight: 600; }
   p { margin: 0 0 10px; }
   a { color: var(--blue); }
   .num { font-family: var(--font-mono); font-variant-numeric: tabular-nums; }
@@ -41,10 +41,11 @@
   .r { text-align: right; }
   .c { text-align: center; }
   .brand { display: flex; align-items: baseline; gap: 10px; }
-  .brand .mark { font-family: var(--font-display); font-weight: 800; letter-spacing: .18em; font-size: 18px; background: var(--ink); color: var(--ground); padding: 3px 9px 3px 11px; border-radius: 6px; }
-  .brand .name { font-family: var(--font-display); font-weight: 600; font-size: 14px; color: var(--ink-2); }
+  .brand { align-items: center; }
+  .brand .mark { display: inline-block; width: 72px; height: 22px; font-size: 0; color: transparent; background: var(--ink); -webkit-mask: url(../logo-mark.svg) no-repeat center / contain; mask: url(../logo-mark.svg) no-repeat center / contain; }
+  .brand .name { font-family: var(--font-display); font-weight: 500; font-size: 14px; color: var(--muted); }
   /* ---- kopbalk + navigatie ---- */
-  header.top { position: sticky; top: 0; z-index: 5; background: color-mix(in srgb, var(--ground) 88%, transparent); backdrop-filter: blur(10px); border-bottom: 1px solid var(--line); }
+  header.top { position: sticky; top: 0; z-index: 5; background: color-mix(in srgb, var(--ground) 80%, transparent); -webkit-backdrop-filter: saturate(180%) blur(20px); backdrop-filter: saturate(180%) blur(20px); border-bottom: 1px solid var(--line); }
   .top-in { max-width: 1080px; margin: 0 auto; padding: 12px 20px; display: flex; align-items: center; justify-content: space-between; gap: 12px; }
   .who { display: flex; align-items: center; gap: 10px; font-size: 13px; color: var(--ink-2); }
   nav.tabs { max-width: 1080px; margin: 0 auto; padding: 0 12px; display: flex; gap: 2px; overflow-x: auto; scrollbar-width: none; }
@@ -54,24 +55,25 @@
   main { max-width: 1080px; margin: 0 auto; padding: 24px 20px 60px; }
   @media (max-width: 640px) { main { padding: 18px 14px 50px; } h1 { font-size: 24px; } .top-in { padding: 10px 14px; } .who > span { display: none; } }
   /* ---- bouwstenen ---- */
-  .btn { display: inline-flex; align-items: center; gap: 6px; padding: 8px 14px; border-radius: 8px; border: 1px solid var(--line-2); background: var(--surface); color: var(--ink); font: inherit; font-size: 14px; font-weight: 600; cursor: pointer; text-decoration: none; }
-  .btn:hover { border-color: var(--muted); }
+  .btn { display: inline-flex; align-items: center; gap: 6px; padding: 9px 16px; border-radius: 999px; border: 1px solid var(--line-2); background: var(--surface); color: var(--ink); font: inherit; font-size: 14px; font-weight: 500; cursor: pointer; text-decoration: none; transition: background .15s, transform .1s; }
+  .btn:hover { background: var(--surface-2); }
+  .btn:active { transform: scale(.98); }
   .btn.primary { background: var(--accent); color: var(--accent-ink); border-color: var(--accent); }
   .btn.ghost { border-color: transparent; background: transparent; }
   .btn.sm { padding: 4px 10px; font-size: 12px; }
   .btn:disabled { opacity: .5; cursor: default; }
   .field { display: flex; flex-direction: column; gap: 5px; margin-bottom: 14px; }
   .field label { font-size: 12px; font-weight: 600; color: var(--ink-2); }
-  .field input { font: inherit; padding: 10px 12px; border: 1px solid var(--line-2); border-radius: 8px; background: var(--surface); color: var(--ink); }
-  .field input:focus { outline: 2px solid var(--blue); outline-offset: 1px; border-color: var(--blue); }
+  .field input { font: inherit; padding: 11px 13px; border: 1px solid var(--line-2); border-radius: 10px; background: var(--surface); color: var(--ink); }
+  .field input:focus { outline: none; border-color: var(--blue); box-shadow: 0 0 0 3px color-mix(in srgb, var(--blue) 25%, transparent); }
   .msg { min-height: 20px; font-size: 13px; color: var(--ink-2); margin-top: 10px; }
   .msg.err { color: var(--crit); }
-  .panel { background: var(--surface); border: 1px solid var(--line); border-radius: 14px; }
+  .panel { background: var(--surface); border: 1px solid var(--line); border-radius: 16px; box-shadow: var(--card); }
   .panel-head { padding: 14px 18px; border-bottom: 1px solid var(--line); display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
   .panel-body { padding: 16px 18px; }
   .tw { overflow-x: auto; }
   table.t { width: 100%; border-collapse: collapse; font-size: 14px; }
-  table.t th { text-align: left; font-size: 11px; font-weight: 600; letter-spacing: .06em; text-transform: uppercase; color: var(--muted); padding: 8px 10px; border-bottom: 1px solid var(--line); white-space: nowrap; }
+  table.t th { text-align: left; font-size: 12px; font-weight: 500; letter-spacing: 0; text-transform: none; color: var(--muted); padding: 8px 10px; border-bottom: 1px solid var(--line); white-space: nowrap; }
   table.t td { padding: 9px 10px; border-bottom: 1px solid var(--line); vertical-align: top; }
   table.t td.num { white-space: nowrap; }
   table.t tr:last-child td { border-bottom: 0; }
@@ -86,9 +88,9 @@
   .pill.betaald { background: var(--ok-soft); color: var(--ok); }
   .pill.verzonden { background: var(--blue-soft); color: var(--blue); }
   .kpis { display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap: 12px; margin-bottom: 18px; }
-  .kpi { background: var(--surface); border: 1px solid var(--line); border-radius: 12px; padding: 14px 16px; }
-  .kpi .k { font-size: 11px; font-weight: 600; letter-spacing: .06em; text-transform: uppercase; color: var(--muted); }
-  .kpi .v { font-family: var(--font-display); font-weight: 800; font-size: 22px; margin-top: 4px; }
+  .kpi { background: var(--surface); border: 1px solid var(--line); border-radius: 14px; padding: 14px 16px; box-shadow: var(--card); }
+  .kpi .k { font-size: 12px; font-weight: 500; letter-spacing: 0; text-transform: none; color: var(--muted); }
+  .kpi .v { font-family: var(--font-display); font-weight: 700; font-size: 24px; margin-top: 4px; letter-spacing: -.02em; }
   .empty { padding: 28px 18px; text-align: center; color: var(--muted); }
   .empty b { display: block; color: var(--ink); margin-bottom: 4px; }
   .stack { display: grid; gap: 16px; }
@@ -96,7 +98,7 @@
   @media (max-width: 760px) { .two { grid-template-columns: 1fr; } }
   /* ---- welkom ---- */
   .hero { padding: 8px 0 22px; }
-  .hero .eyebrow { font-size: 12px; font-weight: 600; letter-spacing: .1em; text-transform: uppercase; color: var(--muted); margin-bottom: 8px; }
+  .hero .eyebrow { font-size: 13px; font-weight: 500; letter-spacing: 0; text-transform: none; color: var(--muted); margin-bottom: 8px; }
   .hero p.lead { font-size: 16px; color: var(--ink-2); max-width: 640px; margin-top: 8px; }
   .steps { list-style: none; margin: 0; padding: 0; display: grid; gap: 0; }
   .steps li { display: grid; grid-template-columns: 34px 1fr auto; gap: 12px; align-items: center; padding: 10px 0; border-bottom: 1px solid var(--line); }
@@ -127,14 +129,14 @@
   .doc small { color: var(--muted); font-size: 12px; }
   /* ---- login ---- */
   .login { min-height: 100vh; display: grid; place-items: center; padding: 20px; }
-  .login .card { width: 100%; max-width: 420px; background: var(--surface); border: 1px solid var(--line); border-radius: 16px; padding: 28px; box-shadow: var(--shadow); }
+  .login .card { width: 100%; max-width: 420px; background: var(--surface); border: 1px solid var(--line); border-radius: 22px; padding: 32px; box-shadow: var(--shadow); }
   .login h1 { font-size: 24px; margin: 6px 0 4px; }
   .login p { color: var(--ink-2); font-size: 14px; }
   /* ---- vuurwerk bij eerste bezoek ---- */
   #fx { position: fixed; inset: 0; z-index: 50; display: none; }
   #fx canvas { position: absolute; inset: 0; width: 100%; height: 100%; }
   #fx .wel { position: absolute; inset: 0; display: grid; place-items: center; text-align: center; pointer-events: none; }
-  #fx .wel div { font-family: var(--font-display); font-weight: 800; font-size: clamp(36px, 8vw, 84px); color: var(--ink); letter-spacing: -.02em; text-shadow: 0 2px 30px var(--ground); animation: pop .9s cubic-bezier(.2,1.2,.3,1) both; }
+  #fx .wel div { font-family: var(--font-display); font-weight: 700; font-size: clamp(36px, 8vw, 84px); color: var(--ink); letter-spacing: -.02em; text-shadow: 0 2px 30px var(--ground); animation: pop .9s cubic-bezier(.2,1.2,.3,1) both; }
   #fx .wel small { display: block; font-family: var(--font-body); font-weight: 500; font-size: clamp(15px, 2.4vw, 22px); color: var(--ink-2); margin-top: 8px; animation: pop 1.2s .3s cubic-bezier(.2,1.2,.3,1) both; }
   @keyframes pop { from { opacity: 0; transform: scale(.6) translateY(20px); } to { opacity: 1; transform: none; } }
   #fx.show { display: block; background: color-mix(in srgb, var(--ground) 70%, transparent); animation: fadeout 1s 4.2s forwards; }
@@ -157,7 +159,7 @@
 <div id="app"></div>
 <div id="fx"><canvas></canvas><div class="wel"><div id="fxTxt">Welkom</div></div></div>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.45.4/dist/umd/supabase.min.js"></script>
-<script src="../config.js?v=1.15.1"></script>
-<script src="portaal.js?v=1.15.1"></script>
+<script src="../config.js?v=1.16.0"></script>
+<script src="portaal.js?v=1.16.0"></script>
 </body>
 </html>

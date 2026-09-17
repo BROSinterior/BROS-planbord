@@ -15,6 +15,7 @@ Statische webapp (geen build-stap) op een Supabase-database.
 | `drive/Code.gs` | Google Apps Script dat projectmappen aanmaakt/koppelt op Drive en de meetstaat-export wegschrijft (installatie: zie bovenaan dat bestand) |
 | `meetstaat-export.js` | schrijft de meetstaat van een project in het Excel-sjabloon (zip/XML, opmaak en formules blijven intact) |
 | `klant/` | het klantenportaal (index.html + portaal.js): alleen-lezen zicht van de bouwheer op zijn project |
+| `werf/` | de werfmodus voor op de smartphone (vaststellingen met foto's, werkt ook zonder bereik; installeerbaar als app) |
 | `next/` | (later) testversie van een volgende update |
 
 ## In gebruik nemen (eenmalig)
@@ -100,6 +101,18 @@ Gebruik per project: projectfiche → Dossier → Contacten → bij de bouwheer 
 - **Delen met de klant**: het verslag en zijn actiepunten (titel, wie, deadline, klaar/open) verschijnen in het portaal onder **Verslagen**; de klant krijgt een mail met het verslag (Drive-script, actie `notitiemail`). Interne opmerkingen horen dan niet in dat verslag — maak daarvoor een aparte notitie zonder deling.
 - **Toewijzen aan de klant of een aannemer** (script 015): in het taakformulier en bij de actiepunten kies je onder "Klant en contacten van dit project" een contact in plaats van een teamlid (`taken.contact_id`). De klant ziet zijn actiepunten in het portaal (Welkom-banner, "Jouw actiepunten" onder Verslagen, ook zonder gedeeld verslag) en vinkt ze zelf af via `klant_taak_klaar()`; het Planbord toont de taak met naam en label klant/aannemer.
 - Vereist `sql/014_notities.sql`, `sql/015_taken_klant.sql` en het nieuwe `drive/Code.gs`.
+
+## Werfopvolging (script 016) — stap 1
+
+Vervangt ArchiSnapper stap voor stap. Stap 1 = vaststellingen met foto's registreren en opvolgen.
+
+- Projectfiche → tabblad **Werf**: kerncijfers (open, te laat, opgelost/te controleren, gecontroleerd), de vaststellingen als kaarten met foto, nummer (V-001, V-002, … per project), ruimte, lot, verantwoordelijke (aannemer of teamlid), deadline en status; filters op status en verantwoordelijke, zoeken, en **Per aannemer** groeperen (met e-mailadres, handig om te mailen). Daaronder de **werfbezoeken** (datum, aanwezigen, weer, algemene opmerkingen) waaraan de vaststellingen hangen.
+- Vaststelling: foto's (worden in de browser verkleind tot 1600 px en in de storage-bucket `werf` gezet), omschrijving, ruimte (met suggesties), lot, verantwoordelijke, deadline, prioriteit, status open → opgelost (datum en wie) → gecontroleerd, of vervallen; opmerking/reactie; schakelaar "zichtbaar voor de klant" (gebruikt in stap 2 voor het werfverslag). Klik op een foto voor groot.
+- **Werfmodus** (`werf/`, knop 📱 Werfmodus op het tabblad Werf, of rechtstreeks `…/BROS-planbord/werf/`): mobiele app voor op de werf. Aanmelden met je Planbord-account (niet voor klanten), project kiezen, lijst open/opgelost/alles, 📷 Vaststelling (foto nemen of uit de galerij, omschrijving, ruimte, aannemer, prioriteit, deadline), tik op een punt voor detail → **Opgelost met bewijsfoto**, Gecontroleerd, Heropenen, foto toevoegen, bewerken, vervallen. **Bezoek starten** maakt een werfbezoek waaraan de nieuwe vaststellingen gekoppeld worden tot je het afsluit.
+- **Zonder bereik**: alles wat je bewaart, komt in een wachtrij op het toestel (IndexedDB, foto's inbegrepen) en wordt verzonden zodra er weer verbinding is (bolletje rechtsboven: groen = gesynchroniseerd, oranje = wachtend, grijs = offline; tik erop om te verzenden). De lijst van het laatst geopende project blijft offline zichtbaar. Voorwaarde: de werfmodus één keer met bereik openen (de app-bestanden worden dan lokaal bewaard door een service worker). Aanmelden lukt niet offline; blijf dus aangemeld.
+- Op de smartphone: Safari → Delen → **Zet op beginscherm** (Android: Chrome → Toevoegen aan startscherm). De app opent dan schermvullend als "BROS Werf".
+- Vereist `sql/016_werf.sql` (tabellen `werfbezoeken`, `vaststellingen`, bucket `werf`, realtime). Alleen het team (beheer + medewerker) kan lezen en schrijven; de klant ziet in stap 1 nog niets.
+- Volgende stappen: (2) pin op het plan + werfverslag als pdf naar aannemers en klant (Drive-map Werfcontrole, mail), (3) aannemersportaal (eigen login, punten afwerken met foto), (4) checklists en oplevering.
 
 ## Yuki-koppeling (in drive/Code.gs)
 

@@ -2,7 +2,7 @@
    BROS Planbord — app v1.0
    Statische webapp op Supabase (login, live-synchronisatie, rechten)
    ===================================================================== */
-const APP_VERSION = "1.15.2";
+const APP_VERSION = "1.17.0";
 const PROJ_STATUS = { offerte: "In offerte", lopend: "Lopend", on_hold: "On hold", afgerond: "Afgerond", verloren: "Verloren" };
 const KLANTTYPE = { particulier: "Particulier", zakelijk: "Zakelijk" };
 const KLANTCODE = { particulier: "PAR", zakelijk: "ZAK" };
@@ -35,7 +35,7 @@ const workdays = (a, b) => { let n = 0; for (let s = a; s <= b; s = addDays(s, 1
 /* ---------- state ---------- */
 const S = {
   session: null, me: null, setPassword: false, passwordForced: false,
-  profiles: {}, tarieven: {}, fasen: {}, standaardtaken: [], projecten: {}, taken: {}, uren: {}, documenten: {}, instellingen: {}, loten: {}, posten: {}, meetstaat_posten: {}, vorderingen: {}, vordering_regels: {}, contacten: {}, project_contacten: {}, goedkeuringen: {}, notities: {},
+  profiles: {}, tarieven: {}, fasen: {}, standaardtaken: [], projecten: {}, taken: {}, uren: {}, documenten: {}, instellingen: {}, loten: {}, posten: {}, meetstaat_posten: {}, vorderingen: {}, vordering_regels: {}, contacten: {}, project_contacten: {}, goedkeuringen: {}, notities: {}, werfbezoeken: {}, vaststellingen: {},
   view: "overzicht", project: null, ptab: "taken",
   filters: { user: "", status: "", project: "", q: "" }, cfilters: { soort: "", q: "" },
   ganttStart: addDays(mondayOf(todayIso), -14), ganttDays: 112, ganttOpen: {},
@@ -87,8 +87,8 @@ const projKost = (pid, soort) => Object.values(S.uren).filter(h => h.project_id 
 let toastT; function toast(msg) { const t = $("#toast"); t.textContent = msg; t.classList.add("show"); clearTimeout(toastT); toastT = setTimeout(() => t.classList.remove("show"), 2800); }
 
 /* ---------- data laden en live houden ---------- */
-const TABLES = { profiles: "profiles", tarieven: "tarieven", fasen: "fasen", standaardtaken: "standaardtaken", projecten: "projecten", taken: "taken", uren: "uren", documenten: "documenten", instellingen: "instellingen", loten: "loten", posten: "posten", meetstaat_posten: "meetstaat_posten", vorderingen: "vorderingen", vordering_regels: "vordering_regels", contacten: "contacten", project_contacten: "project_contacten", goedkeuringen: "goedkeuringen", notities: "notities" };
-const OPTIONAL_TABLES = ["tarieven", "documenten", "instellingen", "loten", "posten", "meetstaat_posten", "vorderingen", "vordering_regels", "contacten", "project_contacten", "goedkeuringen", "notities"]; // ontbreken zolang het bijbehorende sql-script niet is uitgevoerd
+const TABLES = { profiles: "profiles", tarieven: "tarieven", fasen: "fasen", standaardtaken: "standaardtaken", projecten: "projecten", taken: "taken", uren: "uren", documenten: "documenten", instellingen: "instellingen", loten: "loten", posten: "posten", meetstaat_posten: "meetstaat_posten", vorderingen: "vorderingen", vordering_regels: "vordering_regels", contacten: "contacten", project_contacten: "project_contacten", goedkeuringen: "goedkeuringen", notities: "notities", werfbezoeken: "werfbezoeken", vaststellingen: "vaststellingen" };
+const OPTIONAL_TABLES = ["tarieven", "documenten", "instellingen", "loten", "posten", "meetstaat_posten", "vorderingen", "vordering_regels", "contacten", "project_contacten", "goedkeuringen", "notities", "werfbezoeken", "vaststellingen"]; // ontbreken zolang het bijbehorende sql-script niet is uitgevoerd
 const rowKey = (t, r) => t === "fasen" || t === "loten" ? r.nr : t === "tarieven" ? r.user_id : t === "instellingen" ? r.key : t === "vordering_regels" ? (r.id || r.vordering_id + "|" + r.lot + "|" + (r.post_id || "")) : r.id;
 function ingest(table, rows) {
   if (table === "standaardtaken") { S.standaardtaken = rows.sort((a, b) => a.fase_nr - b.fase_nr || a.volgorde - b.volgorde); return; }
@@ -117,7 +117,7 @@ async function loadAll() {
 }
 function subscribe() {
   // Eén kanaal per tabel: als één tabel niet in de realtime-publicatie zit, blijven de andere werken.
-  ["profiles", "tarieven", "fasen", "standaardtaken", "projecten", "taken", "uren", "documenten", "loten", "posten", "meetstaat_posten", "meetstaat_prijzen", "vorderingen", "vordering_regels", "contacten", "project_contacten", "goedkeuringen", "notities"].forEach(t => {
+  ["profiles", "tarieven", "fasen", "standaardtaken", "projecten", "taken", "uren", "documenten", "loten", "posten", "meetstaat_posten", "meetstaat_prijzen", "vorderingen", "vordering_regels", "contacten", "project_contacten", "goedkeuringen", "notities", "werfbezoeken", "vaststellingen"].forEach(t => {
     const ch = sb.channel("pb-" + t);
     ch.on("postgres_changes", { event: "*", schema: "public", table: t }, (payload) => {
       if (t === "standaardtaken") { refetch(t); return; }
@@ -517,6 +517,152 @@ function noteForm(n = {}, pid) {
   $("#n_soort").addEventListener("change", () => { if (isNew && !$("#n_inhoud").value.trim()) $("#n_inhoud").value = NOTE_SJABLOON[$("#n_soort").value] || ""; });
   if (isNew && !$("#n_inhoud").value) $("#n_inhoud").value = NOTE_SJABLOON[soort] || "";
   f.querySelectorAll("[data-act=edit-task-from-note]").forEach(b => b.onclick = (e) => { e.preventDefault(); const t = S.taken[b.dataset.tid]; closeModal(); if (t) taskForm(t); });
+}
+/* ---------- Werfopvolging (stap 1): werfbezoeken en vaststellingen met foto's, aannemer, deadline en status ---------- */
+const VS_STATUS = { open: "Open", opgelost: "Opgelost", gecontroleerd: "Gecontroleerd", vervallen: "Vervallen" };
+const VS_PRIO = { laag: "Laag", normaal: "Normaal", hoog: "Hoog" };
+const WEER = ["", "Zonnig", "Bewolkt", "Regen", "Wind", "Vriezend", "Sneeuw"];
+const vsNr = (v) => "V-" + String(v.nr || 0).padStart(3, "0");
+const vsOf = (pid) => Object.values(S.vaststellingen).filter(v => v.project_id === pid).sort((a, b) => (b.nr || 0) - (a.nr || 0));
+const wbOf = (pid) => Object.values(S.werfbezoeken).filter(b => b.project_id === pid).sort((a, b) => (b.datum || "").localeCompare(a.datum || "") || (b.nr || 0) - (a.nr || 0));
+const vsLate = (v) => v.status === "open" && v.deadline && v.deadline < todayIso;
+const vsActief = (v) => v.status === "open" || v.status === "opgelost";
+const vsWie = (v) => v.contact_id && S.contacten[v.contact_id] ? S.contacten[v.contact_id].naam : v.assignee ? userById(v.assignee).name : "";
+const vsWieCell = (v) => v.contact_id || v.assignee ? wieCell(v) : `<span class="muted">niet toegewezen</span>`;
+const vsPill = (v) => vsLate(v) ? `<span class="pill late">Te laat</span>` : `<span class="pill vs-${v.status}">${VS_STATUS[v.status] || esc(v.status)}</span>`;
+const vsThumb = (f, cls = "") => `<img class="vs-thumb ${cls}" src="${esc(f.url)}" alt="" loading="lazy" data-foto="${esc(f.url)}">`;
+const werfUrl = (pid) => new URL("werf/" + (pid ? "?p=" + pid : ""), location.href).href;
+/* keuzelijst "verantwoordelijke": aannemers en andere contacten van het project, daarna het team */
+const vsWieOpts = (pid, v) => { const cur = v.contact_id ? "c:" + v.contact_id : (v.assignee || ""); const pcs = contactsOf(pid).filter(x => x.rol !== "bouwheer" && x.rol !== "contactpersoon"); return `<option value="">— nog niet toegewezen —</option>${pcs.length ? `<optgroup label="Aannemers en contacten van dit project">${opts(pcs.map(x => ["c:" + x.c.id, x.c.naam + (x.c.vakgebied ? " · " + x.c.vakgebied : "") + " · " + (CONTACT_ROL[x.rol] || x.rol)]), cur)}</optgroup>` : ""}<optgroup label="Team">${opts(users().map(u => [u.id, u.name]), cur)}</optgroup>`; };
+/* foto's: verkleinen in de browser (max. 1600 px, jpeg) en uploaden naar de bucket 'werf' */
+async function fotoVerklein(file, max = 1600, q = 0.82) {
+  let img = null;
+  if (window.createImageBitmap) img = await createImageBitmap(file, { imageOrientation: "from-image" }).catch(() => null);
+  if (!img) img = await new Promise((res, rej) => { const i = new Image(); i.onload = () => res(i); i.onerror = () => rej(new Error("Foto niet leesbaar")); i.src = URL.createObjectURL(file); });
+  const w = img.width, h = img.height, s = Math.min(1, max / Math.max(w, h));
+  const c = document.createElement("canvas"); c.width = Math.max(1, Math.round(w * s)); c.height = Math.max(1, Math.round(h * s));
+  c.getContext("2d").drawImage(img, 0, 0, c.width, c.height);
+  const blob = await new Promise(r => c.toBlob(r, "image/jpeg", q));
+  return { blob, w: c.width, h: c.height };
+}
+async function fotoUpload(pid, vid, file) {
+  const { blob, w, h } = await fotoVerklein(file);
+  const path = `${pid}/${vid}/${Date.now()}-${Math.random().toString(36).slice(2, 7)}.jpg`;
+  const { error } = await sb.storage.from("werf").upload(path, blob, { contentType: "image/jpeg", upsert: false });
+  if (error) throw error;
+  return { path, url: sb.storage.from("werf").getPublicUrl(path).data.publicUrl, w, h, op: new Date().toISOString() };
+}
+function fotoLightbox(url) {
+  let lb = $("#lightbox"); if (!lb) { lb = document.createElement("div"); lb.id = "lightbox"; lb.className = "lightbox"; lb.onclick = () => lb.classList.remove("show"); document.body.appendChild(lb); }
+  lb.innerHTML = `<img src="${esc(url)}" alt=""><a class="btn sm" href="${esc(url)}" target="_blank" rel="noopener" onclick="event.stopPropagation()">Origineel openen</a>`; lb.classList.add("show");
+}
+function vsCard(v, withProject) {
+  const fotos = v.fotos || []; const wie = vsWie(v);
+  return `<div class="vs ${vsActief(v) ? "" : "vs-dim"}" data-act="vs-open" data-id="${v.id}">
+    ${fotos.length ? `<div class="vs-fotos"><img class="vs-thumb main" src="${esc(fotos[0].url)}" alt="" loading="lazy">${fotos.length > 1 ? `<span class="vs-more">+${fotos.length - 1}</span>` : ""}</div>` : `<div class="vs-fotos vs-nofoto"><span>geen foto</span></div>`}
+    <div class="vs-body">
+      <div class="vs-head"><b class="num">${vsNr(v)}</b>${v.prioriteit === "hoog" ? `<span class="pill late" title="Hoge prioriteit">!</span>` : v.prioriteit === "laag" ? `<span class="pill kl">laag</span>` : ""}${vsPill(v)}${v.klant_zichtbaar ? `<span class="pill st-afgerond" title="Zichtbaar voor de klant">klant</span>` : ""}${withProject && S.projecten[v.project_id] ? `<span class="muted">· ${esc(projName(S.projecten[v.project_id]))}</span>` : ""}</div>
+      <div class="vs-text">${esc(v.omschrijving || "—")}</div>
+      <div class="vs-meta muted">${[v.ruimte, v.lot ? lotName(v.lot) : ""].filter(Boolean).map(esc).join(" · ")}</div>
+      <div class="vs-foot"><span>${vsWieCell(v)}</span><span class="num ${vsLate(v) ? "late-txt" : "muted"}">${v.deadline ? "tegen " + fmt(v.deadline) : ""}</span></div>
+    </div></div>`;
+}
+function vWerf(p) {
+  if (schemaV() < 16) return SCHEMA_HINT(16);
+  const all = vsOf(p.id); const f = S.werfF = S.werfF || { status: "actief", wie: "", q: "", groep: false };
+  const q = (f.q || "").toLowerCase();
+  const list = all.filter(v => (f.status === "actief" ? vsActief(v) : f.status === "alle" ? true : v.status === f.status) && (!f.wie || (f.wie.startsWith("c:") ? v.contact_id === f.wie.slice(2) : v.assignee === f.wie)) && (!q || [v.omschrijving, v.ruimte, vsNr(v), vsWie(v), v.lot ? lotName(v.lot) : ""].some(x => (x || "").toLowerCase().includes(q))))
+    .sort((a, b) => (a.status === "open" ? 0 : 1) - (b.status === "open" ? 0 : 1) || (b.nr || 0) - (a.nr || 0));
+  const n = { open: all.filter(v => v.status === "open").length, laat: all.filter(vsLate).length, opgelost: all.filter(v => v.status === "opgelost").length, klaar: all.filter(v => v.status === "gecontroleerd").length };
+  const wieKeys = [...new Set(all.map(v => v.contact_id ? "c:" + v.contact_id : v.assignee || ""))].filter(Boolean);
+  const wieLabel = (k) => k.startsWith("c:") ? (S.contacten[k.slice(2)]?.naam || "?") : userById(k).name;
+  const bezoeken = wbOf(p.id);
+  const kpi = `<div class="rend">
+    <div class="panel"><div class="k">Open</div><div class="v">${n.open}</div></div>
+    <div class="panel"><div class="k">Te laat</div><div class="v ${n.laat ? "neg" : ""}">${n.laat}</div></div>
+    <div class="panel"><div class="k">Opgelost · te controleren</div><div class="v">${n.opgelost}</div></div>
+    <div class="panel"><div class="k">Gecontroleerd</div><div class="v pos">${n.klaar}</div></div></div>`;
+  let cards;
+  if (f.groep) {
+    const groups = {}; list.forEach(v => { const k = v.contact_id ? "c:" + v.contact_id : v.assignee || ""; (groups[k] = groups[k] || []).push(v); });
+    cards = Object.keys(groups).sort((a, b) => (a ? 0 : 1) - (b ? 0 : 1) || wieLabel(a).localeCompare(wieLabel(b))).map(k => `<div class="vs-group"><h4>${k ? esc(wieLabel(k)) : "Nog niet toegewezen"} <span class="muted num" style="font-weight:400">${groups[k].filter(v => v.status === "open").length} open · ${groups[k].length}</span>${k.startsWith("c:") && S.contacten[k.slice(2)]?.email ? ` <a class="muted" href="mailto:${esc(S.contacten[k.slice(2)].email)}" target="_blank" rel="noopener" style="font-weight:400;font-size:12px">${esc(S.contacten[k.slice(2)].email)}</a>` : ""}</h4><div class="vs-grid">${groups[k].map(v => vsCard(v)).join("")}</div></div>`).join("");
+  } else cards = `<div class="vs-grid">${list.map(v => vsCard(v)).join("")}</div>`;
+  return kpi + `<div class="panel" style="margin-bottom:16px"><div class="panel-head"><div><h3>Vaststellingen</h3><div class="muted" style="font-size:12px;margin-top:2px">Punten van de werf met foto's, verantwoordelijke aannemer en deadline · ${all.length} in totaal</div></div>
+      <div class="actions"><a class="btn sm" href="${esc(werfUrl(p.id))}" target="_blank" rel="noopener" title="Werfmodus voor op de smartphone: foto's nemen, ook zonder bereik">📱 Werfmodus</a><button class="btn sm" data-act="wb-new" data-pid="${p.id}">+ Werfbezoek</button><button class="btn sm primary" data-act="vs-new" data-pid="${p.id}">+ Vaststelling</button></div></div>
+    <div class="filters" style="padding:10px 16px;border-bottom:1px solid var(--line)"><select data-werff="status">${opts([["actief", "Open en opgelost"], ["open", "Alleen open"], ["opgelost", "Opgelost · te controleren"], ["gecontroleerd", "Gecontroleerd"], ["vervallen", "Vervallen"], ["alle", "Alles"]], f.status)}</select><select data-werff="wie"><option value="">Alle verantwoordelijken</option>${opts(wieKeys.map(k => [k, wieLabel(k)]), f.wie)}</select><input data-werff="q" placeholder="Zoeken: omschrijving, ruimte, nummer…" value="${esc(f.q || "")}" style="min-width:220px"><label class="chk" style="font-size:13px"><input type="checkbox" data-werff="groep" ${f.groep ? "checked" : ""}> Per aannemer</label></div>
+    ${list.length ? cards : `<div class="empty"><b>${all.length ? "Niets gevonden met deze filter" : "Nog geen vaststellingen"}</b>${all.length ? "" : "Maak een vaststelling met foto's, of open de werfmodus op je smartphone tijdens het werfbezoek."}</div>`}</div>
+    <div class="panel"><div class="panel-head"><div><h3>Werfbezoeken</h3><div class="muted" style="font-size:12px;margin-top:2px">Datum, aanwezigen en algemene opmerkingen; vaststellingen hangen aan een bezoek</div></div><div class="actions"><button class="btn sm" data-act="wb-new" data-pid="${p.id}">+ Werfbezoek</button></div></div>
+      ${bezoeken.length ? `<div class="tw"><table class="t"><thead><tr><th>Nr</th><th>Datum</th><th>Aanwezig</th><th>Weer</th><th>Opmerkingen</th><th class="r">Vaststellingen</th></tr></thead><tbody>${bezoeken.map(b => { const vs = all.filter(v => v.bezoek_id === b.id); return `<tr class="click" data-act="wb-open" data-id="${b.id}"><td class="num muted">${b.nr}</td><td class="num">${fmtLong(b.datum)}</td><td>${esc(b.aanwezigen || "—")}</td><td>${esc(b.weer || "—")}</td><td class="muted">${esc(noteExcerpt(b.notities, 90) || "—")}</td><td class="r num">${vs.length}${vs.filter(v => v.status === "open").length ? ` <span class="pill busy">${vs.filter(v => v.status === "open").length} open</span>` : ""}</td></tr>`; }).join("")}</tbody></table></div>` : `<div class="empty">Nog geen werfbezoeken geregistreerd.</div>`}</div>`;
+}
+function vsForm(v = {}, pid, bezoekId) {
+  const isNew = !v.id; const projectId = v.project_id || pid; const p = S.projecten[projectId]; if (!p) return;
+  const fotos = [...(v.fotos || [])]; let nieuw = [];   // nieuw: File-objecten die bij bewaren geüpload worden
+  const ruimtes = [...new Set(vsOf(projectId).map(x => x.ruimte).filter(Boolean))].sort();
+  const lots = [...new Set(msRows(projectId).map(r => r.lot))].sort((a, b) => a - b);
+  const bezoeken = wbOf(projectId);
+  openModal(isNew ? "Nieuwe vaststelling — " + p.klant : `${vsNr(v)} — ${p.klant}`, `<div class="form-grid">
+    <div class="field span2"><label>Foto's</label><div class="vs-foto-edit" id="vs_fotos"></div>
+      <div class="actions" style="margin-top:8px"><label class="btn sm">📷 Foto's toevoegen<input type="file" accept="image/*" multiple hidden id="vs_file"></label><span class="muted" style="font-size:12px;align-self:center">Worden verkleind tot 1600 px vóór het uploaden.</span></div></div>
+    <div class="field span2"><label for="vs_oms">Omschrijving</label><textarea id="vs_oms" name="omschrijving" rows="3" required placeholder="Wat is er vastgesteld en wat moet er gebeuren?">${esc(v.omschrijving || "")}</textarea></div>
+    <div class="field"><label for="vs_ruimte">Ruimte / locatie</label><input id="vs_ruimte" name="ruimte" list="vs_ruimtes" value="${esc(v.ruimte || "")}" placeholder="bv. Keuken, badkamer 1e verd."><datalist id="vs_ruimtes">${ruimtes.map(r => `<option value="${esc(r)}">`).join("")}</datalist></div>
+    <div class="field"><label for="vs_lot">Lot</label><select id="vs_lot" name="lot"><option value="">—</option>${opts(lots.map(l => [l, lotName(l)]), v.lot ?? "")}</select></div>
+    <div class="field"><label for="vs_wie">Verantwoordelijke</label><select id="vs_wie" name="wie">${vsWieOpts(projectId, v)}</select></div>
+    <div class="field"><label for="vs_deadline">Op te lossen tegen</label><input id="vs_deadline" name="deadline" type="date" value="${esc(v.deadline || "")}"></div>
+    <div class="field"><label for="vs_prio">Prioriteit</label><select id="vs_prio" name="prioriteit">${opts(Object.entries(VS_PRIO), v.prioriteit || "normaal")}</select></div>
+    <div class="field"><label for="vs_status">Status</label><select id="vs_status" name="status">${opts(Object.entries(VS_STATUS), v.status || "open")}</select>${v.opgelost_op ? `<small class="muted">Opgelost op ${fmtLong(v.opgelost_op.slice(0, 10))}${v.opgelost_door ? " door " + esc(userById(v.opgelost_door).name) : ""}</small>` : ""}</div>
+    <div class="field"><label for="vs_bezoek">Werfbezoek</label><select id="vs_bezoek" name="bezoek_id"><option value="">—</option>${opts(bezoeken.map(b => [b.id, `Bezoek ${b.nr} · ${fmtLong(b.datum)}`]), v.bezoek_id || bezoekId || "")}</select></div>
+    <div class="field"><label for="vs_opm">Opmerking / reactie</label><input id="vs_opm" name="opmerking" value="${esc(v.opmerking || "")}" placeholder="bv. antwoord van de aannemer"></div>
+    ${(v.opgelost_fotos || []).length ? `<div class="field span2"><label>Bewijsfoto's bij de oplossing</label><div class="vs-foto-edit">${v.opgelost_fotos.map(f => vsThumb(f)).join("")}</div></div>` : ""}
+    <div class="field span2"><label class="sw-row"><input type="checkbox" class="sw" name="klant_zichtbaar" ${v.klant_zichtbaar ? "checked" : ""}><span><b>Zichtbaar voor de klant</b> — deze vaststelling verschijnt (later) in het werfverslag voor de klant in het portaal.</span></label></div>
+  </div>`, {
+    wide: true,
+    onSave: async (d) => {
+      const f = $("#mform"); const btn = f.querySelector("button[type=submit]");
+      const row = { project_id: projectId, omschrijving: d.omschrijving.trim(), ruimte: (d.ruimte || "").trim(), lot: d.lot ? Number(d.lot) : null, ...wieSplit(d.wie), deadline: d.deadline || null, prioriteit: d.prioriteit, status: d.status, bezoek_id: d.bezoek_id || null, opmerking: (d.opmerking || "").trim(), klant_zichtbaar: d.klant_zichtbaar === "on" };
+      if (row.status === "opgelost" && v.status !== "opgelost" && v.status !== "gecontroleerd") { row.opgelost_op = new Date().toISOString(); row.opgelost_door = S.me.id; }
+      if (row.status === "open") { row.opgelost_op = null; row.opgelost_door = null; }
+      let saved;
+      if (isNew) { row.created_by = S.me.id; row.fotos = fotos; saved = await dbInsert("vaststellingen", row); }
+      else { saved = v; }
+      const geupload = [];
+      for (let i = 0; i < nieuw.length; i++) {
+        btn.textContent = `Foto ${i + 1}/${nieuw.length} uploaden…`;
+        try { geupload.push(await fotoUpload(projectId, saved.id, nieuw[i])); } catch (e) { toast("Foto niet geüpload: " + e.message); }
+      }
+      const alle = [...fotos, ...geupload];
+      if (isNew) { if (geupload.length) await dbUpdate("vaststellingen", saved.id, { fotos: alle }); }
+      else await dbUpdate("vaststellingen", v.id, { ...row, fotos: alle });
+      toast(isNew ? `${vsNr(S.vaststellingen[saved.id] || saved)} bewaard${geupload.length ? ` · ${geupload.length} foto${geupload.length === 1 ? "" : "'s"}` : ""}` : "Vaststelling bewaard");
+    },
+    onDelete: isNew ? null : async () => { const paths = [...(v.fotos || []), ...(v.opgelost_fotos || [])].map(f => f.path).filter(Boolean); await dbDelete("vaststellingen", v.id); if (paths.length) sb.storage.from("werf").remove(paths).catch(() => { }); toast("Vaststelling verwijderd"); },
+  });
+  const box = $("#vs_fotos");
+  const draw = () => { box.innerHTML = fotos.map((f, i) => `<span class="vs-foto-item">${vsThumb(f)}<button type="button" class="vs-foto-x" data-rm="${i}" title="Verwijderen">✕</button></span>`).join("") + nieuw.map((f, i) => `<span class="vs-foto-item"><img class="vs-thumb" src="${URL.createObjectURL(f)}" alt=""><button type="button" class="vs-foto-x" data-rmn="${i}" title="Verwijderen">✕</button><span class="vs-new">nieuw</span></span>`).join("") || `<span class="muted" style="font-size:12px">Nog geen foto's.</span>`;
+    box.querySelectorAll("[data-rm]").forEach(b => b.onclick = () => { fotos.splice(Number(b.dataset.rm), 1); draw(); }); box.querySelectorAll("[data-rmn]").forEach(b => b.onclick = () => { nieuw.splice(Number(b.dataset.rmn), 1); draw(); }); };
+  draw();
+  $("#vs_file").addEventListener("change", (e) => { nieuw = nieuw.concat([...e.target.files]); e.target.value = ""; draw(); });
+}
+function wbForm(b = {}, pid) {
+  const isNew = !b.id; const projectId = b.project_id || pid; const p = S.projecten[projectId]; if (!p) return;
+  const vs = isNew ? [] : vsOf(projectId).filter(v => v.bezoek_id === b.id).sort((a, c) => (a.nr || 0) - (c.nr || 0));
+  openModal(isNew ? "Werfbezoek — " + p.klant : `Werfbezoek ${b.nr} — ${p.klant}`, `<div class="form-grid">
+    <div class="field"><label for="wb_datum">Datum</label><input id="wb_datum" name="datum" type="date" value="${esc(b.datum || todayIso)}" required></div>
+    <div class="field"><label for="wb_weer">Weer</label><select id="wb_weer" name="weer">${opts(WEER.map(w => [w, w || "—"]), b.weer || "")}</select></div>
+    <div class="field span2"><label for="wb_aanw">Aanwezig</label><input id="wb_aanw" name="aanwezigen" value="${esc(b.aanwezigen || "")}" placeholder="bv. Phil, Jo Appelmans, schrijnwerker Peeters"></div>
+    <div class="field span2"><label for="wb_not">Algemene opmerkingen / stand van de werken</label><textarea id="wb_not" name="notities" rows="6">${esc(b.notities || "")}</textarea></div>
+    ${isNew ? "" : `<div class="field span2"><label>Vaststellingen bij dit bezoek <span class="muted" style="font-weight:400">${vs.length}</span> <button type="button" class="btn ghost sm" data-wb-vs>+ Vaststelling</button></label>${vs.length ? `<div class="tw"><table class="t"><tbody>${vs.map(v => `<tr class="click" data-wb-open="${v.id}"><td class="num" style="width:60px">${vsNr(v)}</td><td>${esc(noteExcerpt(v.omschrijving, 80))}<small class="muted" style="display:block">${esc(v.ruimte || "")}</small></td><td>${esc(vsWie(v) || "—")}</td><td>${vsPill(v)}</td></tr>`).join("")}</tbody></table></div>` : `<div class="muted" style="font-size:12px">Nog geen vaststellingen aan dit bezoek gekoppeld.</div>`}</div>`}
+  </div>`, {
+    wide: true,
+    onSave: async (d) => {
+      const row = { project_id: projectId, datum: d.datum || todayIso, weer: d.weer || "", aanwezigen: (d.aanwezigen || "").trim(), notities: d.notities || "" };
+      if (isNew) { row.auteur = S.me.id; const saved = await dbInsert("werfbezoeken", row); toast(`Werfbezoek ${saved.nr} bewaard`); }
+      else { await dbUpdate("werfbezoeken", b.id, row); toast("Werfbezoek bewaard"); }
+    },
+    onDelete: isNew ? null : async () => { await dbDelete("werfbezoeken", b.id); toast("Werfbezoek verwijderd"); },
+  });
+  const f = $("#mform");
+  const add = f.querySelector("[data-wb-vs]"); if (add) add.onclick = () => { closeModal(); vsForm({}, projectId, b.id); };
+  f.querySelectorAll("[data-wb-open]").forEach(r => r.onclick = () => { closeModal(); vsForm(S.vaststellingen[r.dataset.wbOpen]); });
 }
 /* ---------- Goedkeuringen: BROS legt de offerte of een meerwerkvoorstel voor, de klant beslist in het portaal ---------- */
 const GK_STATUS = { open: "Wacht op klant", akkoord: "Goedgekeurd", geweigerd: "Niet akkoord", ingetrokken: "Ingetrokken" };
@@ -1125,7 +1271,7 @@ function vProjecten() {
 function vProjectDetail(p) {
   const ts = tasksOf(p.id), pl = projPlanned(p.id), dn = projDone(p.id);
   const [st, en] = projSpan(p);
-  const tabs = [["taken", "Taken"], ["notities", "Notities" + (schemaV() >= 14 && notesOf(p.id).length ? ` <span class="cnt">${notesOf(p.id).length}</span>` : "")], ["meetstaat", "Meetstaat"], ["facturatie", "Facturatie"], ["planning", "Planning"], ["uren", "Uren"], ["dossier", "Dossier"]];
+  const tabs = [["taken", "Taken"], ["notities", "Notities" + (schemaV() >= 14 && notesOf(p.id).length ? ` <span class="cnt">${notesOf(p.id).length}</span>` : "")], ["meetstaat", "Meetstaat"], ["facturatie", "Facturatie"], ["werf", "Werf" + (schemaV() >= 16 && vsOf(p.id).some(v => v.status === "open") ? ` <span class="cnt">${vsOf(p.id).filter(v => v.status === "open").length}</span>` : "")], ["planning", "Planning"], ["uren", "Uren"], ["dossier", "Dossier"]];
   let body = "";
   if (S.ptab === "taken") {
     const byFase = {}; ts.forEach(t => { (byFase[t.fase_nr || 0] = byFase[t.fase_nr || 0] || []).push(t); });
@@ -1141,6 +1287,8 @@ function vProjectDetail(p) {
     body = vMeetstaat(p);
   } else if (S.ptab === "facturatie") {
     body = vFacturatie(p);
+  } else if (S.ptab === "werf") {
+    body = vWerf(p);
   } else if (S.ptab === "planning") {
     body = ganttHtml([p], { expanded: true, title: "Timing " + p.klant });
   } else if (S.ptab === "uren") {
@@ -1759,7 +1907,7 @@ function userForm(u) {
 document.addEventListener("click", (e) => {
   if (e.target.closest("a[href][target=_blank]")) return; // externe links (bv. Drive-map) gewoon laten openen
   const el = e.target.closest("[data-nav],[data-act],[data-open],[data-back],[data-ptab],[data-edit-task],[data-edit-hours],[data-gnav],[data-wnav],[data-gtoggle],[data-close],[data-selfase],[data-sellot],[data-sort],[data-vtoggle],[data-contact]");
-  if (!el) { if (e.target === $("#modalBg")) closeModal(); return; }
+  if (!el) { if (e.target === $("#modalBg")) closeModal(); else if (e.target.dataset && e.target.dataset.foto) fotoLightbox(e.target.dataset.foto); return; }
   if (e.target.matches(".task-check") || e.target.matches("input,select")) { if (!e.target.closest("[data-act]")) return; }
   const d = el.dataset;
   if (d.close != null && d.open) { closeModal(); S.view = "projecten"; S.project = d.open; S.ptab = S.ptab || "taken"; return render(); }
@@ -1804,6 +1952,10 @@ document.addEventListener("click", (e) => {
   if (d.act === "ms-import") return msImportPick(d.pid);
   if (d.act === "gk-new") return gkForm(d.pid, d.soort || null);
   if (d.act === "note-new") return noteForm({}, d.pid);
+  if (d.act === "vs-new") return vsForm({}, d.pid);
+  if (d.act === "vs-open") { if (e.target.dataset.foto) return fotoLightbox(e.target.dataset.foto); return vsForm(S.vaststellingen[d.id]); }
+  if (d.act === "wb-new") return wbForm({}, d.pid);
+  if (d.act === "wb-open") return wbForm(S.werfbezoeken[d.id]);
   if (d.act === "note-open") return noteForm(S.notities[d.id]);
   if (d.act === "gk-view") return gkView(d.id);
   if (d.act === "gk-withdraw") return gkWithdraw(d.id);
@@ -1832,11 +1984,13 @@ document.addEventListener("focusout", (e) => {
 
   if (d.vf && e.target.tagName !== "SELECT" && e.target.type !== "date") return vordEdit(d.vf, d.f, e.target.value);
 });
-document.addEventListener("input", (e) => { if (e.target.dataset && e.target.hasAttribute("data-noteq")) { S.noteQ = e.target.value; const pos = e.target.selectionStart; render(); const el = document.querySelector("[data-noteq]"); if (el) { el.focus(); try { el.setSelectionRange(pos, pos); } catch (x) { } } } });
+document.addEventListener("input", (e) => { if (e.target.dataset && e.target.dataset.werff === "q") { S.werfF.q = e.target.value; const pos = e.target.selectionStart; render(); const el = document.querySelector('[data-werff="q"]'); if (el) { el.focus(); try { el.setSelectionRange(pos, pos); } catch (x) { } } return; }
+  if (e.target.dataset && e.target.hasAttribute("data-noteq")) { S.noteQ = e.target.value; const pos = e.target.selectionStart; render(); const el = document.querySelector("[data-noteq]"); if (el) { el.focus(); try { el.setSelectionRange(pos, pos); } catch (x) { } } } });
 document.addEventListener("change", (e) => {
   const el = e.target;
   if (el.dataset.filter) { S.filters[el.dataset.filter] = el.value; return render(); }
   if (el.dataset.cfilter) { S.cfilters[el.dataset.cfilter] = el.value; return render(); }
+  if (el.dataset.werff) { S.werfF = S.werfF || { status: "actief", wie: "", q: "", groep: false }; S.werfF[el.dataset.werff] = el.type === "checkbox" ? el.checked : el.value; return render(); }
   if (el.dataset.hoursUser != null) { S.hoursUser = el.value; return render(); }
   if (el.dataset.rapjaar != null) { S.rapJaar = el.value; return render(); }
   if (el.dataset.toggle) { const t = S.taken[el.dataset.toggle]; if (t) dbUpdate("taken", t.id, { status: el.checked ? "done" : "todo" }).catch(() => { }); }
@@ -1855,7 +2009,7 @@ document.addEventListener("keydown", (e) => { if (e.key === "Escape") closeModal
 
 /* ---------- versiecontrole: melden als er een nieuwe versie online staat ---------- */
 let updateAvailable = false;
-const APP_FILES = ["index.html", "app.js", "config.js", "postcodes.js", "meetstaat-export.js", "meetstaat-import.js", "version.json", "klant/index.html", "klant/portaal.js"];
+const APP_FILES = ["index.html", "app.js", "config.js", "postcodes.js", "meetstaat-export.js", "meetstaat-import.js", "version.json", "klant/index.html", "klant/portaal.js", "logo-mark.svg", "werf/index.html", "werf/werf.js", "werf/sw.js"];
 /* de browser-cache omzeilen: alle bestanden van de app vers ophalen (cache: "reload" ververst de HTTP-cache) en dan herladen */
 async function hardReload() {
   try { await Promise.all(APP_FILES.map(f => fetch(f, { cache: "reload" }).catch(() => { }))); } catch (e) { }
