@@ -2,7 +2,7 @@
    BROS Planbord — app v1.0
    Statische webapp op Supabase (login, live-synchronisatie, rechten)
    ===================================================================== */
-const APP_VERSION = "1.18.0";
+const APP_VERSION = "1.19.0";
 const PROJ_STATUS = { offerte: "In offerte", lopend: "Lopend", on_hold: "On hold", afgerond: "Afgerond", verloren: "Verloren" };
 const KLANTTYPE = { particulier: "Particulier", zakelijk: "Zakelijk" };
 const KLANTCODE = { particulier: "PAR", zakelijk: "ZAK" };
@@ -80,7 +80,8 @@ const wieNaam = (t) => t.contact_id && S.contacten[t.contact_id] ? S.contacten[t
 const wieOpts = (pid, t) => { const cur = t.contact_id ? "c:" + t.contact_id : (t.assignee ?? S.me.id); const pcs = pid ? contactsOf(pid) : []; return `<option value="">— niemand —</option><optgroup label="Team">${opts(users().map(u => [u.id, u.name]), cur)}</optgroup>${pcs.length ? `<optgroup label="Klant en contacten van dit project">${opts(pcs.map(x => ["c:" + x.c.id, x.c.naam + " · " + (CONTACT_ROL[x.rol] || x.rol)]), cur)}</optgroup>` : ""}`; };
 const wieSplit = (v) => v && v.startsWith("c:") ? { assignee: null, contact_id: v.slice(2) } : { assignee: v || null, contact_id: null };
 const avatar = (id) => { const u = userById(id); return `<span class="avatar" style="background:${u.color}" title="${esc(u.name)}">${esc(u.initials)}</span>`; };
-const klantTag = (t) => (t.uren_klant ? ` <span class="pill kl" title="Uren van deze taak zijn zichtbaar voor de klant">uren → klant</span>` : "") + (t.timing_klant ? ` <span class="pill kl" title="Titel en timing van deze taak staan in de planning van de klant">timing → klant</span>` : "");
+const vsTag = (t) => t.vaststelling_id && S.vaststellingen[t.vaststelling_id] ? ` <span class="pill kl" data-vs="${t.vaststelling_id}" title="Uit een vaststelling op de werf — klik om ze te openen" style="cursor:pointer">📍 ${vsNr(S.vaststellingen[t.vaststelling_id])}</span>` : "";
+const klantTag = (t) => vsTag(t) + (t.uren_klant ? ` <span class="pill kl" title="Uren van deze taak zijn zichtbaar voor de klant">uren → klant</span>` : "") + (t.timing_klant ? ` <span class="pill kl" title="Titel en timing van deze taak staan in de planning van de klant">timing → klant</span>` : "");
 const pill = (t) => isLate(t) ? `<span class="pill late">Te laat</span>` : `<span class="pill ${t.status}">${TASK_STATUS[t.status] || t.status}</span>`;
 const kost = (uid, uren, soort) => (Number(S.tarieven[uid]?.[soort]) || 0) * uren;
 const projKost = (pid, soort) => Object.values(S.uren).filter(h => h.project_id === pid).reduce((s, h) => s + kost(h.user_id, Number(h.uren) || 0, soort), 0);
@@ -543,7 +544,7 @@ const vsPill = (v) => vsLate(v) ? `<span class="pill late">Te laat</span>` : `<s
 const vsThumb = (f, cls = "") => `<img class="vs-thumb ${cls}" src="${esc(f.url)}" alt="" loading="lazy" data-foto="${esc(f.url)}">`;
 const werfUrl = (pid) => new URL("werf/" + (pid ? "?p=" + pid : ""), location.href).href;
 /* keuzelijst "verantwoordelijke": aannemers en andere contacten van het project, daarna het team */
-const vsWieOpts = (pid, v) => { const cur = v.contact_id ? "c:" + v.contact_id : (v.assignee || ""); const pcs = contactsOf(pid).filter(x => x.rol !== "bouwheer" && x.rol !== "contactpersoon"); return `<option value="">— nog niet toegewezen —</option>${pcs.length ? `<optgroup label="Aannemers en contacten van dit project">${opts(pcs.map(x => ["c:" + x.c.id, x.c.naam + (x.c.vakgebied ? " · " + x.c.vakgebied : "") + " · " + (CONTACT_ROL[x.rol] || x.rol)]), cur)}</optgroup>` : ""}<optgroup label="Team">${opts(users().map(u => [u.id, u.name]), cur)}</optgroup>`; };
+const vsWieOpts = (pid, v) => { const cur = v.contact_id ? "c:" + v.contact_id : (v.assignee || ""); const pcs = contactsOf(pid); return `<option value="">— nog niet toegewezen —</option>${pcs.length ? `<optgroup label="Klant, aannemers en contacten van dit project">${opts(pcs.map(x => ["c:" + x.c.id, x.c.naam + (x.c.vakgebied ? " · " + x.c.vakgebied : "") + " · " + (CONTACT_ROL[x.rol] || x.rol)]), cur)}</optgroup>` : ""}<optgroup label="Team">${opts(users().map(u => [u.id, u.name]), cur)}</optgroup>`; };
 /* foto's: verkleinen in de browser (max. 1600 px, jpeg) en uploaden naar de bucket 'werf' */
 async function fotoVerklein(file, max = 1600, q = 0.82) {
   let img = null;
@@ -593,13 +594,19 @@ function vWerf(p) {
     <div class="panel"><div class="k">Opgelost · te controleren</div><div class="v">${n.opgelost}</div></div>
     <div class="panel"><div class="k">Gecontroleerd</div><div class="v pos">${n.klaar}</div></div></div>`;
   let cards;
-  if (f.groep) {
+  const groep = f.groep === true ? "wie" : f.groep;
+  if (groep === "wie") {
     const groups = {}; list.forEach(v => { const k = v.contact_id ? "c:" + v.contact_id : v.assignee || ""; (groups[k] = groups[k] || []).push(v); });
     cards = Object.keys(groups).sort((a, b) => (a ? 0 : 1) - (b ? 0 : 1) || wieLabel(a).localeCompare(wieLabel(b))).map(k => `<div class="vs-group"><h4>${k ? esc(wieLabel(k)) : "Nog niet toegewezen"} <span class="muted num" style="font-weight:400">${groups[k].filter(v => v.status === "open").length} open · ${groups[k].length}</span>${k.startsWith("c:") && S.contacten[k.slice(2)]?.email ? ` <a class="muted" href="mailto:${esc(S.contacten[k.slice(2)].email)}" target="_blank" rel="noopener" style="font-weight:400;font-size:12px">${esc(S.contacten[k.slice(2)].email)}</a>` : ""}</h4><div class="vs-grid">${groups[k].map(v => vsCard(v)).join("")}</div></div>`).join("");
+  } else if (groep === "lot" || groep === "ruimte") {
+    const key = (v) => groep === "lot" ? (v.lot ? String(v.lot) : "") : (v.ruimte || "").trim();
+    const label = (k) => !k ? (groep === "lot" ? "Zonder lot" : "Zonder ruimte") : groep === "lot" ? lotName(Number(k)) : k;
+    const groups = {}; list.forEach(v => { const k = key(v); (groups[k] = groups[k] || []).push(v); });
+    cards = Object.keys(groups).sort((a, b) => (a ? 0 : 1) - (b ? 0 : 1) || (groep === "lot" ? Number(a) - Number(b) : a.localeCompare(b))).map(k => `<div class="vs-group"><h4>${esc(label(k))} <span class="muted num" style="font-weight:400">${groups[k].filter(v => v.status === "open").length} open · ${groups[k].length}</span></h4><div class="vs-grid">${groups[k].map(v => vsCard(v)).join("")}</div></div>`).join("");
   } else cards = `<div class="vs-grid">${list.map(v => vsCard(v)).join("")}</div>`;
   return kpi + `<div class="panel" style="margin-bottom:16px"><div class="panel-head"><div><h3>Vaststellingen</h3><div class="muted" style="font-size:12px;margin-top:2px">Punten van de werf met foto's, verantwoordelijke aannemer en deadline · ${all.length} in totaal</div></div>
       <div class="actions"><a class="btn sm" href="${esc(werfUrl(p.id))}" target="_blank" rel="noopener" title="Werfmodus voor op de smartphone: foto's nemen, ook zonder bereik">📱 Werfmodus</a><button class="btn sm" data-act="wb-new" data-pid="${p.id}">+ Werfbezoek</button><button class="btn sm primary" data-act="vs-new" data-pid="${p.id}">+ Vaststelling</button></div></div>
-    <div class="filters" style="padding:10px 16px;border-bottom:1px solid var(--line)"><select data-werff="status">${opts([["actief", "Open en opgelost"], ["open", "Alleen open"], ["opgelost", "Opgelost · te controleren"], ["gecontroleerd", "Gecontroleerd"], ["vervallen", "Vervallen"], ["alle", "Alles"]], f.status)}</select><select data-werff="wie"><option value="">Alle verantwoordelijken</option>${opts(wieKeys.map(k => [k, wieLabel(k)]), f.wie)}</select><input data-werff="q" placeholder="Zoeken: omschrijving, ruimte, nummer…" value="${esc(f.q || "")}" style="min-width:220px"><label class="chk" style="font-size:13px"><input type="checkbox" data-werff="groep" ${f.groep ? "checked" : ""}> Per aannemer</label></div>
+    <div class="filters" style="padding:10px 16px;border-bottom:1px solid var(--line)"><select data-werff="status">${opts([["actief", "Open en opgelost"], ["open", "Alleen open"], ["opgelost", "Opgelost · te controleren"], ["gecontroleerd", "Gecontroleerd"], ["vervallen", "Vervallen"], ["alle", "Alles"]], f.status)}</select><select data-werff="wie"><option value="">Alle verantwoordelijken</option>${opts(wieKeys.map(k => [k, wieLabel(k)]), f.wie)}</select><input data-werff="q" placeholder="Zoeken: omschrijving, ruimte, nummer…" value="${esc(f.q || "")}" style="min-width:220px"><select data-werff="groep">${opts([["", "Niet groeperen"], ["wie", "Per verantwoordelijke"], ["lot", "Per lot"], ["ruimte", "Per ruimte"]], f.groep === true ? "wie" : (f.groep || ""))}</select></div>
     ${list.length ? cards : `<div class="empty"><b>${all.length ? "Niets gevonden met deze filter" : "Nog geen vaststellingen"}</b>${all.length ? "" : "Maak een vaststelling met foto's, of open de werfmodus op je smartphone tijdens het werfbezoek."}</div>`}</div>
     <div class="panel"><div class="panel-head"><div><h3>Werfbezoeken</h3><div class="muted" style="font-size:12px;margin-top:2px">Datum, aanwezigen en algemene opmerkingen; vaststellingen hangen aan een bezoek</div></div><div class="actions"><button class="btn sm" data-act="wb-new" data-pid="${p.id}">+ Werfbezoek</button></div></div>
       ${bezoeken.length ? `<div class="tw"><table class="t"><thead><tr><th>Nr</th><th>Datum</th><th>Aanwezig</th><th>Weer</th><th>Opmerkingen</th><th class="r">Vaststellingen</th></tr></thead><tbody>${bezoeken.map(b => { const vs = all.filter(v => v.bezoek_id === b.id); return `<tr class="click" data-act="wb-open" data-id="${b.id}"><td class="num muted">${b.nr}</td><td class="num">${fmtLong(b.datum)}</td><td>${esc(b.aanwezigen || "—")}</td><td>${esc(b.weer || "—")}</td><td class="muted">${esc(noteExcerpt(b.notities, 90) || "—")}</td><td class="r num">${vs.length}${vs.filter(v => v.status === "open").length ? ` <span class="pill busy">${vs.filter(v => v.status === "open").length} open</span>` : ""}</td></tr>`; }).join("")}</tbody></table></div>` : `<div class="empty">Nog geen werfbezoeken geregistreerd.</div>`}</div>`;
@@ -616,7 +623,7 @@ function vsForm(v = {}, pid, bezoekId) {
     <div class="field span2"><label for="vs_oms">Omschrijving</label><textarea id="vs_oms" name="omschrijving" rows="3" required placeholder="Wat is er vastgesteld en wat moet er gebeuren?">${esc(v.omschrijving || "")}</textarea></div>
     <div class="field"><label for="vs_ruimte">Ruimte / locatie</label><input id="vs_ruimte" name="ruimte" list="vs_ruimtes" value="${esc(v.ruimte || "")}" placeholder="bv. Keuken, badkamer 1e verd."><datalist id="vs_ruimtes">${ruimtes.map(r => `<option value="${esc(r)}">`).join("")}</datalist></div>
     <div class="field"><label for="vs_lot">Lot</label><select id="vs_lot" name="lot"><option value="">—</option>${opts(lots.map(l => [l, lotName(l)]), v.lot ?? "")}</select></div>
-    <div class="field"><label for="vs_wie">Verantwoordelijke</label><select id="vs_wie" name="wie">${vsWieOpts(projectId, v)}</select></div>
+    <div class="field"><label for="vs_wie">Verantwoordelijke</label><select id="vs_wie" name="wie">${vsWieOpts(projectId, v)}</select>${schemaV() >= 18 ? `<small class="muted">Wordt automatisch een taak in de takenlijst van die persoon (klant: in het portaal).</small>` : ""}</div>
     <div class="field"><label for="vs_deadline">Op te lossen tegen</label><input id="vs_deadline" name="deadline" type="date" value="${esc(v.deadline || "")}"></div>
     <div class="field"><label for="vs_prio">Prioriteit</label><select id="vs_prio" name="prioriteit">${opts(Object.entries(VS_PRIO), v.prioriteit || "normaal")}</select></div>
     <div class="field"><label for="vs_status">Status</label><select id="vs_status" name="status">${opts(Object.entries(VS_STATUS), v.status || "open")}</select>${v.opgelost_op ? `<small class="muted">Opgelost op ${fmtLong(v.opgelost_op.slice(0, 10))}${v.opgelost_door ? " door " + esc(userById(v.opgelost_door).name) : ""}</small>` : ""}</div>
@@ -654,13 +661,14 @@ function vsForm(v = {}, pid, bezoekId) {
 }
 function wbForm(b = {}, pid) {
   const isNew = !b.id; const projectId = b.project_id || pid; const p = S.projecten[projectId]; if (!p) return;
-  const vs = isNew ? [] : vsOf(projectId).filter(v => v.bezoek_id === b.id).sort((a, c) => (a.nr || 0) - (c.nr || 0));
+  const vs = isNew ? [] : vsOf(projectId).filter(v => v.bezoek_id === b.id).sort((a, c) => (a.lot || 999) - (c.lot || 999) || (a.nr || 0) - (c.nr || 0));
   openModal(isNew ? "Werfbezoek — " + p.klant : `Werfbezoek ${b.nr} — ${p.klant}`, `<div class="form-grid">
     <div class="field"><label for="wb_datum">Datum</label><input id="wb_datum" name="datum" type="date" value="${esc(b.datum || todayIso)}" required></div>
     <div class="field"><label for="wb_weer">Weer</label><select id="wb_weer" name="weer">${opts(WEER.map(w => [w, w || "—"]), b.weer || "")}</select></div>
     <div class="field span2"><label for="wb_aanw">Aanwezig</label><input id="wb_aanw" name="aanwezigen" value="${esc(b.aanwezigen || "")}" placeholder="bv. Phil, Jo Appelmans, schrijnwerker Peeters"></div>
     <div class="field span2"><label for="wb_not">Algemene opmerkingen / stand van de werken</label><textarea id="wb_not" name="notities" rows="6">${esc(b.notities || "")}</textarea></div>
-    ${isNew ? "" : `<div class="field span2"><label>Vaststellingen bij dit bezoek <span class="muted" style="font-weight:400">${vs.length}</span> <button type="button" class="btn ghost sm" data-wb-vs>+ Vaststelling</button></label>${vs.length ? `<div class="tw"><table class="t"><tbody>${vs.map(v => `<tr class="click" data-wb-open="${v.id}"><td class="num" style="width:60px">${vsNr(v)}</td><td>${esc(noteExcerpt(v.omschrijving, 80))}<small class="muted" style="display:block">${esc(v.ruimte || "")}</small></td><td>${esc(vsWie(v) || "—")}</td><td>${vsPill(v)}</td></tr>`).join("")}</tbody></table></div>` : `<div class="muted" style="font-size:12px">Nog geen vaststellingen aan dit bezoek gekoppeld.</div>`}</div>`}
+    ${isNew ? "" : `<div class="field span2"><label>Vaststellingen bij dit bezoek <span class="muted" style="font-weight:400">${vs.length}</span> <button type="button" class="btn ghost sm" data-wb-vs>+ Vaststelling</button></label>${vs.length ? (() => { const byLot = {}; vs.forEach(v => (byLot[v.lot || 0] = byLot[v.lot || 0] || []).push(v)); const lots = Object.keys(byLot).map(Number).sort((a, c) => (a ? 0 : 1) - (c ? 0 : 1) || a - c);
+        return `<div class="tw"><table class="t"><tbody>${lots.map(nr => `<tr><td colspan="4" style="background:var(--surface-2);font-weight:600;font-size:12px">${nr ? esc(lotName(nr)) : "Zonder lot"} <span class="muted num" style="font-weight:400">${byLot[nr].filter(v => v.status === "open").length} open · ${byLot[nr].length}</span></td></tr>` + byLot[nr].map(v => `<tr class="click" data-wb-open="${v.id}"><td class="num" style="width:60px">${vsNr(v)}</td><td>${esc(noteExcerpt(v.omschrijving, 80))}<small class="muted" style="display:block">${esc(v.ruimte || "")}</small></td><td>${esc(vsWie(v) || "—")}</td><td>${vsPill(v)}</td></tr>`).join("")).join("")}</tbody></table></div>`; })() : `<div class="muted" style="font-size:12px">Nog geen vaststellingen aan dit bezoek gekoppeld.</div>`}</div>`}
   </div>`, {
     wide: true,
     onSave: async (d) => {
@@ -1712,16 +1720,17 @@ async function ktClear(pid, nr) {
 function vKlantTiming(p) {
   if (schemaV() < 17) return `<div class="panel" style="margin-top:16px"><div class="panel-head"><h3>Timing voor de klant</h3></div>${SCHEMA_HINT(17)}</div>`;
   const fs = fasenList(); const ts = tasksOf(p.id); const shared = ts.filter(t => t.timing_klant);
-  const rows = fs.map(f => { const kt = ktOf(p.id, f.nr); const [ts0, ts1] = ktTaskSpan(p.id, f.nr); const n = ts.filter(t => (t.fase_nr || 0) === f.nr).length; const eig = kt && (kt.start || kt.eind);
-    return `<tr class="${p.fase_nr === f.nr ? "" : ""}"><td><b>${f.nr}. ${esc(f.naam)}</b>${p.fase_nr === f.nr ? ` <span class="pill busy">nu</span>` : ""}<small class="muted" style="display:block">${n ? `${n} ${n === 1 ? "taak" : "taken"}${ts0 ? ` · intern ${fmt(ts0)} → ${fmt(ts1)}` : ""}` : "geen taken"}</small></td>
-      <td style="width:150px"><input class="inline" type="date" data-kt="${f.nr}" data-pid="${p.id}" data-f="start" value="${esc(kt?.start || "")}"></td>
-      <td style="width:150px"><input class="inline" type="date" data-kt="${f.nr}" data-pid="${p.id}" data-f="eind" value="${esc(kt?.eind || "")}"></td>
+  const rows = fs.map(f => { const kt = ktOf(p.id, f.nr); const [ts0, ts1] = ktTaskSpan(p.id, f.nr); const n = ts.filter(t => (t.fase_nr || 0) === f.nr).length; const vast = !!(kt && (kt.start || kt.eind));
+    const toon = vast ? `${fmt(kt.start || ts0)} → ${fmt(kt.eind || ts1)}` : ts0 ? `${fmt(ts0)} → ${fmt(ts1)}` : "—";
+    return `<tr class="${vast ? "" : "kt-auto"}"><td><b>${f.nr}. ${esc(f.naam)}</b>${p.fase_nr === f.nr ? ` <span class="pill busy">nu</span>` : ""}<small class="muted" style="display:block">${n ? `${n} ${n === 1 ? "taak" : "taken"}${ts0 ? ` · ${fmt(ts0)} → ${fmt(ts1)}` : ""}` : "geen taken"}</small></td>
+      <td style="width:210px;white-space:nowrap">${vast ? `<span class="pill kl" style="background:var(--warn-soft);color:var(--warn)">vast</span>` : ts0 ? `<span class="pill kl">automatisch</span>` : `<span class="muted">—</span>`} <span class="num">${toon}</span></td>
+      <td style="width:150px"><input class="inline" type="date" data-kt="${f.nr}" data-pid="${p.id}" data-f="start" value="${esc(kt?.start || "")}" title="Leeg = volgt de taken"></td>
+      <td style="width:150px"><input class="inline" type="date" data-kt="${f.nr}" data-pid="${p.id}" data-f="eind" value="${esc(kt?.eind || "")}" title="Leeg = volgt de taken"></td>
       <td><input class="inline wide" data-kt="${f.nr}" data-pid="${p.id}" data-f="opmerking" value="${esc(kt?.opmerking || "")}" placeholder="toelichting voor de klant (optioneel)"></td>
-      <td class="r" style="white-space:nowrap">${ts0 ? `<button class="btn ghost sm" data-act="kt-fill" data-pid="${p.id}" data-nr="${f.nr}" title="Vroegste start en laatste einde van de taken van deze fase overnemen">↙ uit taken</button>` : ""}${eig ? `<button class="btn ghost sm danger" data-act="kt-clear" data-pid="${p.id}" data-nr="${f.nr}" title="Timing wissen">✕</button>` : ""}</td></tr>`; }).join("");
-  const filled = fs.filter(f => { const kt = ktOf(p.id, f.nr); return kt && (kt.start || kt.eind); }).length;
-  return `<div class="panel" style="margin-top:16px"><div class="panel-head"><div><h3>Timing voor de klant</h3><div class="muted" style="font-size:12px;margin-top:2px">Wat de klant in het portaal ziet onder Planning: per fase een van–tot die jij bepaalt (los van de interne taakplanning) · ${filled} van ${fs.length} fasen ingevuld</div></div>
-      <div class="actions"><button class="btn sm" data-act="kt-fill-all" data-pid="${p.id}" title="Voor elke fase zonder timing: vroegste start en laatste einde van haar taken overnemen">Lege fasen invullen uit de taken</button></div></div>
-    <div class="tw"><table class="t"><thead><tr><th>Fase</th><th>Van</th><th>Tot</th><th>Toelichting</th><th></th></tr></thead><tbody>${rows}</tbody></table></div>
+      <td class="r" style="white-space:nowrap">${!vast && ts0 ? `<button class="btn ghost sm" data-act="kt-fill" data-pid="${p.id}" data-nr="${f.nr}" title="De huidige taaktiming vastzetten: verschuift daarna niet meer mee met de taken">Vastzetten</button>` : ""}${kt ? `<button class="btn ghost sm danger" data-act="kt-clear" data-pid="${p.id}" data-nr="${f.nr}" title="Vaste timing en toelichting wissen → volgt weer de taken">✕</button>` : ""}</td></tr>`; }).join("");
+  const nVast = fs.filter(f => { const kt = ktOf(p.id, f.nr); return kt && (kt.start || kt.eind); }).length;
+  return `<div class="panel" style="margin-top:16px"><div class="panel-head"><div><h3>Timing voor de klant</h3><div class="muted" style="font-size:12px;margin-top:2px">Wat de klant onder Planning ziet. Elke fase volgt automatisch haar taken (vroegste start → laatste einde); vul Van/Tot in om een fase <b>vast te zetten</b> — die schuift dan niet meer mee. ${nVast ? `${nVast} ${nVast === 1 ? "fase" : "fasen"} vast.` : "Niets vastgezet."}</div></div></div>
+    <div class="tw"><table class="t"><thead><tr><th>Fase</th><th>Klant ziet</th><th>Van (vast)</th><th>Tot (vast)</th><th>Toelichting</th><th></th></tr></thead><tbody>${rows}</tbody></table></div>
     <div class="panel-head" style="border-top:1px solid var(--line)"><div><h3 style="font-size:14px">Taken met gedeelde timing</h3><div class="muted" style="font-size:12px;margin-top:2px">Vink per taak aan: titel en van–tot verschijnen onder de fase in de klantplanning (geen uren, geen wie). ${shared.length} gedeeld.</div></div></div>
     ${ts.length ? `<div class="tw"><table class="t"><tbody>${ts.map(t => `<tr><td style="width:28px"><input type="checkbox" data-ttoggle="${t.id}" ${t.timing_klant ? "checked" : ""} aria-label="Timing delen met de klant"></td><td><span class="row-title">${esc(t.titel)}</span><small class="muted" style="display:block">${esc(faseShort(t.fase_nr) || "zonder fase")}</small></td><td class="num">${fmt(t.start)} → ${fmt(t.eind)}</td><td>${pill(t)}</td></tr>`).join("")}</tbody></table></div>` : `<div class="empty">Nog geen taken op dit project.</div>`}</div>`;
 }
@@ -1951,7 +1960,7 @@ function userForm(u) {
 /* ---------- events ---------- */
 document.addEventListener("click", (e) => {
   if (e.target.closest("a[href][target=_blank]")) return; // externe links (bv. Drive-map) gewoon laten openen
-  const el = e.target.closest("[data-nav],[data-act],[data-open],[data-back],[data-ptab],[data-edit-task],[data-edit-hours],[data-gnav],[data-wnav],[data-gtoggle],[data-close],[data-selfase],[data-sellot],[data-sort],[data-vtoggle],[data-contact]");
+  const el = e.target.closest("[data-vs],[data-nav],[data-act],[data-open],[data-back],[data-ptab],[data-edit-task],[data-edit-hours],[data-gnav],[data-wnav],[data-gtoggle],[data-close],[data-selfase],[data-sellot],[data-sort],[data-vtoggle],[data-contact]");
   if (!el) { if (e.target === $("#modalBg")) closeModal(); else if (e.target.dataset && e.target.dataset.foto) fotoLightbox(e.target.dataset.foto); return; }
   if (e.target.matches(".task-check") || e.target.matches("input,select")) { if (!e.target.closest("[data-act]")) return; }
   const d = el.dataset;
@@ -1998,9 +2007,9 @@ document.addEventListener("click", (e) => {
   if (d.act === "gk-new") return gkForm(d.pid, d.soort || null);
   if (d.act === "note-new") return noteForm({}, d.pid);
   if (d.act === "vs-new") return vsForm({}, d.pid);
+  if (d.vs) { e.stopPropagation(); closeModal(); return vsForm(S.vaststellingen[d.vs]); }
   if (d.act === "kt-fill") { const [a, b] = ktTaskSpan(d.pid, Number(d.nr)); return ktSave(d.pid, Number(d.nr), { start: a, eind: b }); }
   if (d.act === "kt-clear") return ktClear(d.pid, Number(d.nr));
-  if (d.act === "kt-fill-all") { (async () => { let n = 0; for (const f of fasenList()) { const kt = ktOf(d.pid, f.nr); if (kt && (kt.start || kt.eind)) continue; const [a, b] = ktTaskSpan(d.pid, f.nr); if (!a) continue; await ktSave(d.pid, f.nr, { start: a, eind: b }); n++; } toast(n ? `${n} ${n === 1 ? "fase" : "fasen"} ingevuld uit de taken` : "Niets in te vullen: alle fasen met taken hebben al een timing"); })(); return; }
   if (d.act === "vs-open") { if (e.target.dataset.foto) return fotoLightbox(e.target.dataset.foto); return vsForm(S.vaststellingen[d.id]); }
   if (d.act === "wb-new") return wbForm({}, d.pid);
   if (d.act === "wb-open") return wbForm(S.werfbezoeken[d.id]);

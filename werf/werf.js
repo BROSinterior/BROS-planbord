@@ -3,7 +3,7 @@
    Zelfde database als het Planbord (Supabase). Werkt offline: foto's en punten wachten in een
    lokale wachtrij (IndexedDB) en worden verzonden zodra er weer verbinding is.
    ===================================================================== */
-const WERF_VERSION = "1.17.0";
+const WERF_VERSION = "1.19.0";
 const cfg = window.PLANBORD_CONFIG || {};
 if (!window.supabase) { document.getElementById("app").innerHTML = '<main><div class="empty"><b>De werfmodus is nog niet volledig geladen.</b><br>Open ze één keer met bereik; daarna werkt ze ook offline.<br><br><button class="btn" onclick="location.reload()">Opnieuw proberen</button></div></main>'; throw new Error("supabase-js niet geladen"); }
 const sb = window.supabase.createClient(cfg.supabaseUrl, cfg.supabaseAnonKey);
@@ -25,7 +25,7 @@ const S = {
   session: null, me: store.get("me", null), online: navigator.onLine, syncing: false, queue: [],
   project: store.get("p", null), bezoek: store.get("bezoek", null),
   base: store.get("base", { projecten: [], profiles: [], loten: [] }), data: { vaststellingen: [], werfbezoeken: [], contacten: [] },
-  view: "list", filter: "open", detail: null, form: null, loginErr: "", ready: false,
+  view: "list", filter: "open", perLot: store.get("perlot", false), detail: null, form: null, loginErr: "", ready: false,
 };
 const proj = () => S.base.projecten.find(p => p.id === S.project);
 const projName = (p) => p ? (p.klant + (p.naam && p.naam !== p.klant ? " · " + p.naam : "")) : "—";
@@ -80,19 +80,21 @@ async function loadBase() {
 }
 async function loadProject(pid) {
   if (!pid) return;
-  const [vs, wb, pc] = await Promise.all([
+  const [vs, wb, pc, lp] = await Promise.all([
     sb.from("vaststellingen").select("*").eq("project_id", pid).order("nr", { ascending: false }),
     sb.from("werfbezoeken").select("*").eq("project_id", pid).order("datum", { ascending: false }),
     sb.from("project_contacten").select("id,rol,contact_id").eq("project_id", pid),
+    sb.from("meetstaat_posten_v").select("lot").eq("project_id", pid).then(r => r.error ? sb.from("meetstaat_posten").select("lot").eq("project_id", pid) : r),
   ]);
   if (vs.error) throw vs.error;
   let contacten = [];
   if ((pc.data || []).length) { const ids = pc.data.map(x => x.contact_id); const { data } = await sb.from("contacten").select("id,naam,soort,vakgebied,email,gsm").in("id", ids); contacten = pc.data.map(x => ({ rol: x.rol, c: (data || []).find(c => c.id === x.contact_id) })).filter(x => x.c); }
-  S.data = { vaststellingen: vs.data || [], werfbezoeken: wb.data || [], contacten };
+  const lots = [...new Set((lp.data || []).map(x => x.lot).filter(Boolean))].sort((a, b) => a - b);
+  S.data = { vaststellingen: vs.data || [], werfbezoeken: wb.data || [], contacten, lots };
   store.set("cache." + pid, S.data);
   if (S.bezoek && !S.data.werfbezoeken.find(b => b.id === S.bezoek) && !S.queue.find(q => q.kind === "wb-new" && q.row.id === S.bezoek)) { S.bezoek = null; store.del("bezoek"); }
 }
-function useCache(pid) { S.data = store.get("cache." + pid, { vaststellingen: [], werfbezoeken: [], contacten: [] }); }
+function useCache(pid) { S.data = store.get("cache." + pid, { vaststellingen: [], werfbezoeken: [], contacten: [], lots: [] }); }
 async function refresh() {
   if (!S.online) return;
   try { await loadBase(); await loadProject(S.project); } catch (e) { console.warn(e); toast("Gegevens niet vernieuwd: " + (e.message || e)); }
@@ -174,9 +176,14 @@ function vList() {
   const list = all.filter(v => f === "open" ? v.status === "open" : f === "opgelost" ? v.status === "opgelost" : true);
   const b = S.bezoek ? allWb().find(x => x.id === S.bezoek) : null;
   const n = (k) => all.filter(v => k === "alle" ? true : v.status === k).length;
+  const perLot = S.perLot && list.some(v => v.lot);
+  const card = (v) => `<button class="card ${v.status === "gecontroleerd" || v.status === "vervallen" ? "dim" : ""}" data-act="open" data-id="${v.id}">${(v.fotos || [])[0] ? `<img class="th" src="${esc(v.fotos[0].url)}" alt="">` : `<div class="th">geen foto</div>`}<div class="bd"><div class="hd"><span class="nr">${vsNr(v)}</span>${v.prioriteit === "hoog" ? `<span class="pill late">!</span>` : ""}${pill(v)}${v._pending ? `<span class="pill pend">wacht</span>` : ""}</div><div class="tx">${esc(v.omschrijving || "—")}</div><div class="mt">${[v.ruimte, !perLot && v.lot ? lotName(v.lot) : "", wie(v), v.deadline ? (isLate(v) ? `<span class="late">tegen ${fmt(v.deadline)}</span>` : "tegen " + fmt(v.deadline)) : ""].filter(Boolean).join(" · ")}</div></div></button>`;
+  let body;
+  if (perLot) { const g = {}; list.forEach(v => (g[v.lot || 0] = g[v.lot || 0] || []).push(v)); body = Object.keys(g).map(Number).sort((a, b) => (a ? 0 : 1) - (b ? 0 : 1) || a - b).map(nr => `<h2 style="margin:14px 0 8px;font-size:15px">${nr ? esc(lotName(nr)) : "Zonder lot"} <span class="cnt">${g[nr].length}</span></h2>` + g[nr].map(card).join("")).join(""); }
+  else body = list.map(card).join("");
   return `${b ? `<div class="bezoek"><div><b>Werfbezoek ${b.nr || "(nieuw)"} · ${b.datum === todayIso ? "vandaag" : fmtLong(b.datum)}</b><small>${esc(b.aanwezigen || "nieuwe vaststellingen hangen aan dit bezoek")}</small></div><button class="btn" style="width:auto;padding:8px 12px;font-size:13px" data-act="bezoek-stop">Afsluiten</button></div>` : `<div class="bezoek"><div><b>Geen werfbezoek gestart</b><small>Start er een om vaststellingen te groeperen per bezoek</small></div><button class="btn" style="width:auto;padding:8px 12px;font-size:13px" data-act="bezoek">Bezoek starten</button></div>`}
-    <div class="chips">${[["open", `Open ${n("open")}`], ["opgelost", `Opgelost ${n("opgelost")}`], ["alle", `Alles ${n("alle")}`]].map(([k, l]) => `<button class="chip" data-act="filter" data-f="${k}" aria-current="${f === k}">${l}</button>`).join("")}</div>
-    ${list.map(v => `<button class="card ${v.status === "gecontroleerd" || v.status === "vervallen" ? "dim" : ""}" data-act="open" data-id="${v.id}">${(v.fotos || [])[0] ? `<img class="th" src="${esc(v.fotos[0].url)}" alt="">` : `<div class="th">geen foto</div>`}<div class="bd"><div class="hd"><span class="nr">${vsNr(v)}</span>${v.prioriteit === "hoog" ? `<span class="pill late">!</span>` : ""}${pill(v)}${v._pending ? `<span class="pill pend">wacht</span>` : ""}</div><div class="tx">${esc(v.omschrijving || "—")}</div><div class="mt">${[v.ruimte, wie(v), v.deadline ? (isLate(v) ? `<span class="late">tegen ${fmt(v.deadline)}</span>` : "tegen " + fmt(v.deadline)) : ""].filter(Boolean).join(" · ")}</div></div></button>`).join("") || `<div class="empty">${all.length ? "Niets in deze lijst." : "Nog geen vaststellingen. Tik op 📷 Vaststelling."}</div>`}`;
+    <div class="chips">${[["open", `Open ${n("open")}`], ["opgelost", `Opgelost ${n("opgelost")}`], ["alle", `Alles ${n("alle")}`]].map(([k, l]) => `<button class="chip" data-act="filter" data-f="${k}" aria-current="${f === k}">${l}</button>`).join("")}${all.some(v => v.lot) ? `<button class="chip" data-act="perlot" aria-current="${!!S.perLot}">Per lot</button>` : ""}</div>
+    ${body || `<div class="empty">${all.length ? "Niets in deze lijst." : "Nog geen vaststellingen. Tik op 📷 Vaststelling."}</div>`}`;
 }
 function vDetail() {
   const v = allVs().find(x => x.id === S.detail); if (!v) { S.view = "list"; return vList(); }
@@ -197,7 +204,7 @@ function vDetail() {
     </div>`;
 }
 function vForm() {
-  const v = S.form; const pcs = S.data.contacten.filter(x => x.rol !== "bouwheer" && x.rol !== "contactpersoon");
+  const v = S.form; const pcs = S.data.contacten; const lots = S.data.lots || [];
   const ruimtes = [...new Set(allVs().map(x => x.ruimte).filter(Boolean))].sort();
   const cur = v.contact_id ? "c:" + v.contact_id : (v.assignee || "");
   const opt = (val, label) => `<option value="${esc(val)}" ${String(val) === String(cur) ? "selected" : ""}>${esc(label)}</option>`;
@@ -206,7 +213,8 @@ function vForm() {
     <div class="fotos" id="f_fotos"></div>
     <div class="field" style="margin-top:12px"><label>Omschrijving</label><textarea id="f_oms" placeholder="Wat is er vastgesteld, wat moet er gebeuren?">${esc(v.omschrijving || "")}</textarea></div>
     <div class="field"><label>Ruimte / locatie</label><input id="f_ruimte" list="ruimtes" value="${esc(v.ruimte || "")}" placeholder="bv. Keuken"><datalist id="ruimtes">${ruimtes.map(r => `<option value="${esc(r)}">`).join("")}</datalist></div>
-    <div class="field"><label>Verantwoordelijke</label><select id="f_wie"><option value="">— nog niet toegewezen —</option>${pcs.length ? `<optgroup label="Aannemers en contacten">${pcs.map(x => opt("c:" + x.c.id, x.c.naam + (x.c.vakgebied ? " · " + x.c.vakgebied : ""))).join("")}</optgroup>` : ""}<optgroup label="Team">${S.base.profiles.map(u => opt(u.id, u.name)).join("")}</optgroup></select></div>
+    ${lots.length ? `<div class="field"><label>Lot</label><select id="f_lot"><option value="">—</option>${lots.map(l => `<option value="${l}" ${v.lot === l ? "selected" : ""}>${esc(lotName(l))}</option>`).join("")}</select></div>` : ""}
+    <div class="field"><label>Verantwoordelijke</label><select id="f_wie"><option value="">— nog niet toegewezen —</option>${pcs.length ? `<optgroup label="Klant, aannemers en contacten">${pcs.map(x => opt("c:" + x.c.id, x.c.naam + (x.c.vakgebied ? " · " + x.c.vakgebied : "") + " · " + (ROL[x.rol] || x.rol))).join("")}</optgroup>` : ""}<optgroup label="Team">${S.base.profiles.map(u => opt(u.id, u.name)).join("")}</optgroup></select></div>
     <div class="field"><label>Prioriteit</label><div class="seg" id="f_prio">${Object.entries(VS_PRIO).map(([k, l]) => `<button type="button" data-p="${k}" aria-pressed="${(v.prioriteit || "normaal") === k}">${l}</button>`).join("")}</div></div>
     <div class="field"><label>Op te lossen tegen</label><input id="f_deadline" type="date" value="${esc(v.deadline || "")}"></div>
     ${v.id ? `<div class="field"><label>Status</label><select id="f_status">${Object.entries(VS_STATUS).map(([k, l]) => `<option value="${k}" ${v.status === k ? "selected" : ""}>${l}</option>`).join("")}</select></div><div class="field"><label>Opmerking</label><input id="f_opm" value="${esc(v.opmerking || "")}"></div>` : ""}
@@ -226,7 +234,7 @@ function bindForm() {
   $("#f_save").onclick = async () => {
     const oms = $("#f_oms").value.trim(); if (!oms && !v._nieuw.length && !(v.fotos || []).length) { toast("Geef een omschrijving of neem een foto"); $("#f_oms").focus(); return; }
     const wieV = $("#f_wie").value; const wieP = wieV.startsWith("c:") ? { contact_id: wieV.slice(2), assignee: null } : { contact_id: null, assignee: wieV || null };
-    const patch = { omschrijving: oms, ruimte: $("#f_ruimte").value.trim(), ...wieP, prioriteit: prio, deadline: $("#f_deadline").value || null };
+    const patch = { omschrijving: oms, ruimte: $("#f_ruimte").value.trim(), lot: $("#f_lot") && $("#f_lot").value ? Number($("#f_lot").value) : null, ...wieP, prioriteit: prio, deadline: $("#f_deadline").value || null };
     $("#f_save").disabled = true;
     if (v.id) {
       const st = $("#f_status").value; patch.opmerking = $("#f_opm").value.trim();
@@ -267,6 +275,7 @@ document.addEventListener("click", async (e) => {
   if (d.act === "projects") { S.view = "projects"; return render(); }
   if (d.act === "pick") { S.project = d.id; store.set("p", d.id); S.bezoek = null; store.del("bezoek"); S.view = "list"; useCache(d.id); render(); if (S.online) { try { await loadProject(d.id); } catch (err) { toast("Niet geladen: " + err.message); } render(); } return; }
   if (d.act === "filter") { S.filter = d.f; return render(); }
+  if (d.act === "perlot") { S.perLot = !S.perLot; store.set("perlot", S.perLot); return render(); }
   if (d.act === "new") { S.form = {}; S.view = "new"; return render(); }
   if (d.act === "open") { S.detail = d.id; S.view = "detail"; return render(); }
   if (d.act === "back") { S.view = S.view === "edit" ? "detail" : "list"; S.form = null; return render(); }
