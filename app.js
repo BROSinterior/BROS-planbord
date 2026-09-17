@@ -2,7 +2,7 @@
    BROS Planbord — app v1.0
    Statische webapp op Supabase (login, live-synchronisatie, rechten)
    ===================================================================== */
-const APP_VERSION = "1.17.0";
+const APP_VERSION = "1.17.1";
 const PROJ_STATUS = { offerte: "In offerte", lopend: "Lopend", on_hold: "On hold", afgerond: "Afgerond", verloren: "Verloren" };
 const KLANTTYPE = { particulier: "Particulier", zakelijk: "Zakelijk" };
 const KLANTCODE = { particulier: "PAR", zakelijk: "ZAK" };
@@ -209,9 +209,9 @@ const loader = (() => {
     fail() { clearInterval(timer); $("#loader").classList.remove("show"); },
   };
 })();
-async function driveSync(p, action) {
+async function driveSync(p, action, quiet) {
   const label = action === "create" ? "Projectmap aanmaken op Drive" : action === "link" ? "Map zoeken op Drive" : "Bestanden vernieuwen";
-  loader.start("drive." + action, label + "…", action === "create" ? 12000 : 7000);
+  if (!quiet) loader.start("drive." + action, label + "…", action === "create" ? 12000 : 7000);
   try {
     const mapnaam = ((p.drive_map || "").replace(/^PROJECTEN\//, "").trim()) || p.klant;
     let j;
@@ -227,14 +227,24 @@ async function driveSync(p, action) {
       }
       if (fout) throw new Error(`Geen map gevonden in PROJECTEN. Geprobeerd: ${kandidaten.map(k => `"${k}"`).join(", ")}. Pas de Drive-map in het projectformulier aan naar de exacte mapnaam.`);
     }
-    loader.step("Bestanden bewaren…");
+    if (!quiet) loader.step("Bestanden bewaren…");
     await dbUpdate("projecten", p.id, { drive_folder_id: j.folder.id, drive_url: j.folder.url, drive_map: "PROJECTEN/" + j.folder.name });
     const rows = (j.files || []).filter(f => !/^\._|^Icon|^~\$|^\.DS_Store$|~\.skp$/i.test(f.name)).map(f => ({ project_id: p.id, drive_id: f.id, naam: f.name, pad: f.path || "", url: f.url, mime: f.mime || "", grootte: f.size || null, gewijzigd: f.updated || null, gesynct_op: new Date().toISOString() }));
     const { data, error } = await sb.from("documenten").upsert(rows, { onConflict: "project_id,drive_id" }).select();
     if (error) toast("Documenten niet bewaard: " + error.message); else { Object.values(S.documenten).filter(d => d.project_id === p.id && !rows.some(r => r.drive_id === d.drive_id)).forEach(d => { sb.from("documenten").delete().eq("id", d.id); delete S.documenten[d.id]; }); (data || []).forEach(d => S.documenten[d.id] = d); }
+    if (quiet) { render(); return; }
     loader.done("drive." + action);
     render(); toast(j.created ? `Map aangemaakt met ${rows.length} bestanden` : `Map gekoppeld · ${rows.length} bestanden`);
-  } catch (e) { loader.fail(); throw e; }
+  } catch (e) { if (!quiet) loader.fail(); throw e; }
+}
+/* Dossier geopend: bestandenlijst stil vernieuwen als de laatste synchronisatie ouder is dan een uur (één keer per project per sessie) */
+function driveAutoRefresh(p) {
+  if (!driveReady() || !p.drive_folder_id) return;
+  S.driveAuto = S.driveAuto || {}; if (S.driveAuto[p.id]) return;
+  const docs = docsOf(p.id); const last = docs.map(d => d.gesynct_op || "").sort().pop() || "";
+  if (last && Date.now() - new Date(last).getTime() < 3600000) return;
+  S.driveAuto[p.id] = Date.now();
+  driveSync(p, "list", true).catch(e => console.warn("Drive automatisch vernieuwen:", e.message));
 }
 /* document delen met de klant: eerst de Drive-rechten (iedereen met de link mag lezen), dan het vinkje in de database */
 async function docShare(id, on) {
@@ -1314,12 +1324,13 @@ function vProjectDetail(p) {
         <div class="panel"><div class="panel-head"><h3>Laatste registraties</h3></div><div class="tw"><table class="t"><tbody>${logs.map(h => `<tr class="click" data-edit-hours="${h.id}"><td class="num">${fmt(h.datum)}${tijdSpan(h) ? `<small class="muted" style="display:block">${tijdSpan(h)}</small>` : ""}</td><td>${avatar(h.user_id)}</td><td>${esc(S.taken[h.taak_id]?.titel || "—")}${h.notitie ? `<small class="muted"> · ${esc(h.notitie)}</small>` : ""}</td><td class="r num">${nl(h.uren)} u</td></tr>`).join("") || `<tr><td class="muted">Nog geen registraties.</td></tr>`}</tbody></table></div></div>
       </div></div>` + (klantPanel ? `<div style="margin-top:16px">${klantPanel}</div>` : "");
   } else {
+    driveAutoRefresh(p);
     const map = p.drive_map || ("PROJECTEN/" + (p.klant || ""));
     const docs = docsOf(p.id); const groups = [...new Set(docs.map(d => d.pad || ""))];
     body = vProjectContacten(p) + `<div class="panel" style="margin-bottom:16px"><div class="panel-head"><div><h3>Projectmap op Google Drive</h3><div class="muted" style="font-size:12px;margin-top:2px"><span class="drive-path">${esc(map)}</span></div></div>
       <div class="actions">${p.drive_url ? `<a class="btn" href="${esc(p.drive_url)}" target="_blank" rel="noopener">Open map in Drive ↗</a><button class="btn sm" data-act="drive-list" data-pid="${p.id}">Vernieuwen</button>` : driveReady() ? `<button class="btn sm" data-act="drive-link" data-pid="${p.id}">Bestaande map koppelen</button><button class="btn sm primary" data-act="drive-create" data-pid="${p.id}">Map aanmaken uit sjabloon</button>` : `<span class="pill st-offerte">Drive-koppeling nog niet ingesteld</span>`}</div></div>
       ${docs.length ? `<div class="panel-body">${schemaV() >= 11 ? `<p class="muted" style="font-size:12px;margin:0 0 10px">Schakelaar bij een bestand = <b>delen met de klant</b> in het portaal (het bestand wordt dan leesbaar via de link). ${docs.filter(d => d.gedeeld).length} gedeeld.</p>` : ""}<div class="docs">${groups.map(g => `${g ? `<div style="grid-column:1/-1" class="eyebrow">${esc(g)}</div>` : ""}${docs.filter(d => (d.pad || "") === g).map(d => `<div class="doc-wrap ${d.gedeeld ? "shared" : ""}"><a class="doc" href="${esc(d.url)}" target="_blank" rel="noopener" style="text-decoration:none;color:inherit"><div class="ico ${docIcon(d.mime, d.naam)}">${docIcon(d.mime, d.naam) === "map" ? "DOC" : docIcon(d.mime, d.naam).toUpperCase()}</div><div style="min-width:0"><div class="n" style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(d.naam)}</div><div class="s">${d.gewijzigd ? "gewijzigd " + fmtLong(d.gewijzigd.slice(0, 10)) : ""}${d.gedeeld ? ` · <span style="color:var(--ok)">klant</span>` : ""}</div></div></a>${schemaV() >= 11 ? `<input type="checkbox" class="sw" data-dshare="${d.id}" ${d.gedeeld ? "checked" : ""} title="${d.gedeeld ? "Gedeeld met de klant" : "Delen met de klant"}" aria-label="Delen met de klant">` : ""}</div>`).join("")}`).join("")}</div>
-        <p class="muted" style="font-size:12px;margin:12px 0 0">Laatst gesynchroniseerd ${docs[0].gesynct_op ? fmtLong(docs[0].gesynct_op.slice(0, 10)) : "—"}. Nieuwe bestanden in Drive verschijnen hier na "Vernieuwen"; foto's en video's worden niet opgesomd (die open je via de map).</p></div>` : `<div class="empty">${p.drive_url ? "Nog geen bestanden gevonden — klik op Vernieuwen." : "Nog geen map gekoppeld. \"Bestaande map koppelen\" zoekt in PROJECTEN naar een map met de naam uit het veld Drive-map (of de klantnaam)."}</div>`}</div>
+        <p class="muted" style="font-size:12px;margin:12px 0 0">Laatst gesynchroniseerd ${docs[0].gesynct_op ? fmtLong(docs[0].gesynct_op.slice(0, 10)) + " " + docs[0].gesynct_op.slice(11, 16) : "—"}${S.driveAuto && S.driveAuto[p.id] && Date.now() - S.driveAuto[p.id] < 15000 ? " · wordt vernieuwd…" : ""}. Bij het openen van dit tabblad wordt de lijst automatisch vernieuwd als ze ouder is dan een uur; anders via "Vernieuwen"; foto's en video's worden niet opgesomd (die open je via de map).</p></div>` : `<div class="empty">${p.drive_url ? "Nog geen bestanden gevonden — klik op Vernieuwen." : "Nog geen map gekoppeld. \"Bestaande map koppelen\" zoekt in PROJECTEN naar een map met de naam uit het veld Drive-map (of de klantnaam)."}</div>`}</div>
       <div class="panel"><div class="panel-head"><h3>Gegevens</h3></div>
       <div class="panel-body"><div class="meta">
         <div><div class="k">Adres werf</div><div class="v">${esc(p.adres || "—")}${(p.postcode || p.gemeente) ? ", " + esc([p.postcode, p.gemeente].filter(Boolean).join(" ")) : ""}</div></div>
