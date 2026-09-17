@@ -2,7 +2,7 @@
    BROS Planbord — app v1.0
    Statische webapp op Supabase (login, live-synchronisatie, rechten)
    ===================================================================== */
-const APP_VERSION = "1.19.0";
+const APP_VERSION = "1.19.1";
 const PROJ_STATUS = { offerte: "In offerte", lopend: "Lopend", on_hold: "On hold", afgerond: "Afgerond", verloren: "Verloren" };
 const KLANTTYPE = { particulier: "Particulier", zakelijk: "Zakelijk" };
 const KLANTCODE = { particulier: "PAR", zakelijk: "ZAK" };
@@ -573,7 +573,7 @@ function vsCard(v, withProject) {
     ${fotos.length ? `<div class="vs-fotos"><img class="vs-thumb main" src="${esc(fotos[0].url)}" alt="" loading="lazy">${fotos.length > 1 ? `<span class="vs-more">+${fotos.length - 1}</span>` : ""}</div>` : `<div class="vs-fotos vs-nofoto"><span>geen foto</span></div>`}
     <div class="vs-body">
       <div class="vs-head"><b class="num">${vsNr(v)}</b>${v.prioriteit === "hoog" ? `<span class="pill late" title="Hoge prioriteit">!</span>` : v.prioriteit === "laag" ? `<span class="pill kl">laag</span>` : ""}${vsPill(v)}${v.klant_zichtbaar ? `<span class="pill st-afgerond" title="Zichtbaar voor de klant">klant</span>` : ""}${withProject && S.projecten[v.project_id] ? `<span class="muted">· ${esc(projName(S.projecten[v.project_id]))}</span>` : ""}</div>
-      <div class="vs-text">${esc(v.omschrijving || "—")}</div>
+      ${v.titel ? `<div class="vs-title">${esc(v.titel)}</div>` : ""}<div class="vs-text ${v.titel ? "muted" : ""}">${esc(v.omschrijving || (v.titel ? "" : "—"))}</div>
       <div class="vs-meta muted">${[v.ruimte, v.lot ? lotName(v.lot) : ""].filter(Boolean).map(esc).join(" · ")}</div>
       <div class="vs-foot"><span>${vsWieCell(v)}</span><span class="num ${vsLate(v) ? "late-txt" : "muted"}">${v.deadline ? "tegen " + fmt(v.deadline) : ""}</span></div>
     </div></div>`;
@@ -582,7 +582,7 @@ function vWerf(p) {
   if (schemaV() < 16) return SCHEMA_HINT(16);
   const all = vsOf(p.id); const f = S.werfF = S.werfF || { status: "actief", wie: "", q: "", groep: false };
   const q = (f.q || "").toLowerCase();
-  const list = all.filter(v => (f.status === "actief" ? vsActief(v) : f.status === "alle" ? true : v.status === f.status) && (!f.wie || (f.wie.startsWith("c:") ? v.contact_id === f.wie.slice(2) : v.assignee === f.wie)) && (!q || [v.omschrijving, v.ruimte, vsNr(v), vsWie(v), v.lot ? lotName(v.lot) : ""].some(x => (x || "").toLowerCase().includes(q))))
+  const list = all.filter(v => (f.status === "actief" ? vsActief(v) : f.status === "alle" ? true : v.status === f.status) && (!f.wie || (f.wie.startsWith("c:") ? v.contact_id === f.wie.slice(2) : v.assignee === f.wie)) && (!q || [v.titel, v.omschrijving, v.ruimte, vsNr(v), vsWie(v), v.lot ? lotName(v.lot) : ""].some(x => (x || "").toLowerCase().includes(q))))
     .sort((a, b) => (a.status === "open" ? 0 : 1) - (b.status === "open" ? 0 : 1) || (b.nr || 0) - (a.nr || 0));
   const n = { open: all.filter(v => v.status === "open").length, laat: all.filter(vsLate).length, opgelost: all.filter(v => v.status === "opgelost").length, klaar: all.filter(v => v.status === "gecontroleerd").length };
   const wieKeys = [...new Set(all.map(v => v.contact_id ? "c:" + v.contact_id : v.assignee || ""))].filter(Boolean);
@@ -620,7 +620,8 @@ function vsForm(v = {}, pid, bezoekId) {
   openModal(isNew ? "Nieuwe vaststelling — " + p.klant : `${vsNr(v)} — ${p.klant}`, `<div class="form-grid">
     <div class="field span2"><label>Foto's</label><div class="vs-foto-edit" id="vs_fotos"></div>
       <div class="actions" style="margin-top:8px"><label class="btn sm">📷 Foto's toevoegen<input type="file" accept="image/*" multiple hidden id="vs_file"></label><span class="muted" style="font-size:12px;align-self:center">Worden verkleind tot 1600 px vóór het uploaden.</span></div></div>
-    <div class="field span2"><label for="vs_oms">Omschrijving</label><textarea id="vs_oms" name="omschrijving" rows="3" required placeholder="Wat is er vastgesteld en wat moet er gebeuren?">${esc(v.omschrijving || "")}</textarea></div>
+    ${schemaV() >= 19 ? `<div class="field span2"><label for="vs_titel">Titel <span class="muted" style="font-weight:400">— kort, voor het overzicht</span></label><input id="vs_titel" name="titel" value="${esc(v.titel || "")}" placeholder="bv. Scharnier kastdeur keuken"></div>` : ""}
+    <div class="field span2"><label for="vs_oms">Omschrijving</label><textarea id="vs_oms" name="omschrijving" rows="3" ${schemaV() >= 19 ? "" : "required"} placeholder="Wat is er vastgesteld en wat moet er gebeuren?">${esc(v.omschrijving || "")}</textarea></div>
     <div class="field"><label for="vs_ruimte">Ruimte / locatie</label><input id="vs_ruimte" name="ruimte" list="vs_ruimtes" value="${esc(v.ruimte || "")}" placeholder="bv. Keuken, badkamer 1e verd."><datalist id="vs_ruimtes">${ruimtes.map(r => `<option value="${esc(r)}">`).join("")}</datalist></div>
     <div class="field"><label for="vs_lot">Lot</label><select id="vs_lot" name="lot"><option value="">—</option>${opts(lots.map(l => [l, lotName(l)]), v.lot ?? "")}</select></div>
     <div class="field"><label for="vs_wie">Verantwoordelijke</label><select id="vs_wie" name="wie">${vsWieOpts(projectId, v)}</select>${schemaV() >= 18 ? `<small class="muted">Wordt automatisch een taak in de takenlijst van die persoon (klant: in het portaal).</small>` : ""}</div>
@@ -635,7 +636,8 @@ function vsForm(v = {}, pid, bezoekId) {
     wide: true,
     onSave: async (d) => {
       const f = $("#mform"); const btn = f.querySelector("button[type=submit]");
-      const row = { project_id: projectId, omschrijving: d.omschrijving.trim(), ruimte: (d.ruimte || "").trim(), lot: d.lot ? Number(d.lot) : null, ...wieSplit(d.wie), deadline: d.deadline || null, prioriteit: d.prioriteit, status: d.status, bezoek_id: d.bezoek_id || null, opmerking: (d.opmerking || "").trim(), klant_zichtbaar: d.klant_zichtbaar === "on" };
+      if (!(d.titel || "").trim() && !(d.omschrijving || "").trim()) { toast("Geef een titel of omschrijving"); return false; }
+      const row = { project_id: projectId, ...(schemaV() >= 19 ? { titel: (d.titel || "").trim() } : {}), omschrijving: (d.omschrijving || "").trim(), ruimte: (d.ruimte || "").trim(), lot: d.lot ? Number(d.lot) : null, ...wieSplit(d.wie), deadline: d.deadline || null, prioriteit: d.prioriteit, status: d.status, bezoek_id: d.bezoek_id || null, opmerking: (d.opmerking || "").trim(), klant_zichtbaar: d.klant_zichtbaar === "on" };
       if (row.status === "opgelost" && v.status !== "opgelost" && v.status !== "gecontroleerd") { row.opgelost_op = new Date().toISOString(); row.opgelost_door = S.me.id; }
       if (row.status === "open") { row.opgelost_op = null; row.opgelost_door = null; }
       let saved;
@@ -668,7 +670,7 @@ function wbForm(b = {}, pid) {
     <div class="field span2"><label for="wb_aanw">Aanwezig</label><input id="wb_aanw" name="aanwezigen" value="${esc(b.aanwezigen || "")}" placeholder="bv. Phil, Jo Appelmans, schrijnwerker Peeters"></div>
     <div class="field span2"><label for="wb_not">Algemene opmerkingen / stand van de werken</label><textarea id="wb_not" name="notities" rows="6">${esc(b.notities || "")}</textarea></div>
     ${isNew ? "" : `<div class="field span2"><label>Vaststellingen bij dit bezoek <span class="muted" style="font-weight:400">${vs.length}</span> <button type="button" class="btn ghost sm" data-wb-vs>+ Vaststelling</button></label>${vs.length ? (() => { const byLot = {}; vs.forEach(v => (byLot[v.lot || 0] = byLot[v.lot || 0] || []).push(v)); const lots = Object.keys(byLot).map(Number).sort((a, c) => (a ? 0 : 1) - (c ? 0 : 1) || a - c);
-        return `<div class="tw"><table class="t"><tbody>${lots.map(nr => `<tr><td colspan="4" style="background:var(--surface-2);font-weight:600;font-size:12px">${nr ? esc(lotName(nr)) : "Zonder lot"} <span class="muted num" style="font-weight:400">${byLot[nr].filter(v => v.status === "open").length} open · ${byLot[nr].length}</span></td></tr>` + byLot[nr].map(v => `<tr class="click" data-wb-open="${v.id}"><td class="num" style="width:60px">${vsNr(v)}</td><td>${esc(noteExcerpt(v.omschrijving, 80))}<small class="muted" style="display:block">${esc(v.ruimte || "")}</small></td><td>${esc(vsWie(v) || "—")}</td><td>${vsPill(v)}</td></tr>`).join("")).join("")}</tbody></table></div>`; })() : `<div class="muted" style="font-size:12px">Nog geen vaststellingen aan dit bezoek gekoppeld.</div>`}</div>`}
+        return `<div class="tw"><table class="t"><tbody>${lots.map(nr => `<tr><td colspan="4" style="background:var(--surface-2);font-weight:600;font-size:12px">${nr ? esc(lotName(nr)) : "Zonder lot"} <span class="muted num" style="font-weight:400">${byLot[nr].filter(v => v.status === "open").length} open · ${byLot[nr].length}</span></td></tr>` + byLot[nr].map(v => `<tr class="click" data-wb-open="${v.id}"><td class="num" style="width:60px">${vsNr(v)}</td><td>${v.titel ? `<b>${esc(v.titel)}</b><small class="muted" style="display:block">${esc(noteExcerpt(v.omschrijving, 80))}${v.ruimte ? " · " + esc(v.ruimte) : ""}</small>` : `${esc(noteExcerpt(v.omschrijving, 80))}<small class="muted" style="display:block">${esc(v.ruimte || "")}</small>`}</td><td>${esc(vsWie(v) || "—")}</td><td>${vsPill(v)}</td></tr>`).join("")).join("")}</tbody></table></div>`; })() : `<div class="muted" style="font-size:12px">Nog geen vaststellingen aan dit bezoek gekoppeld.</div>`}</div>`}
   </div>`, {
     wide: true,
     onSave: async (d) => {

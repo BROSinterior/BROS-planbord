@@ -3,7 +3,7 @@
    Zelfde database als het Planbord (Supabase). Werkt offline: foto's en punten wachten in een
    lokale wachtrij (IndexedDB) en worden verzonden zodra er weer verbinding is.
    ===================================================================== */
-const WERF_VERSION = "1.19.0";
+const WERF_VERSION = "1.19.1";
 const cfg = window.PLANBORD_CONFIG || {};
 if (!window.supabase) { document.getElementById("app").innerHTML = '<main><div class="empty"><b>De werfmodus is nog niet volledig geladen.</b><br>Open ze één keer met bereik; daarna werkt ze ook offline.<br><br><button class="btn" onclick="location.reload()">Opnieuw proberen</button></div></main>'; throw new Error("supabase-js niet geladen"); }
 const sb = window.supabase.createClient(cfg.supabaseUrl, cfg.supabaseAnonKey);
@@ -177,7 +177,7 @@ function vList() {
   const b = S.bezoek ? allWb().find(x => x.id === S.bezoek) : null;
   const n = (k) => all.filter(v => k === "alle" ? true : v.status === k).length;
   const perLot = S.perLot && list.some(v => v.lot);
-  const card = (v) => `<button class="card ${v.status === "gecontroleerd" || v.status === "vervallen" ? "dim" : ""}" data-act="open" data-id="${v.id}">${(v.fotos || [])[0] ? `<img class="th" src="${esc(v.fotos[0].url)}" alt="">` : `<div class="th">geen foto</div>`}<div class="bd"><div class="hd"><span class="nr">${vsNr(v)}</span>${v.prioriteit === "hoog" ? `<span class="pill late">!</span>` : ""}${pill(v)}${v._pending ? `<span class="pill pend">wacht</span>` : ""}</div><div class="tx">${esc(v.omschrijving || "—")}</div><div class="mt">${[v.ruimte, !perLot && v.lot ? lotName(v.lot) : "", wie(v), v.deadline ? (isLate(v) ? `<span class="late">tegen ${fmt(v.deadline)}</span>` : "tegen " + fmt(v.deadline)) : ""].filter(Boolean).join(" · ")}</div></div></button>`;
+  const card = (v) => `<button class="card ${v.status === "gecontroleerd" || v.status === "vervallen" ? "dim" : ""}" data-act="open" data-id="${v.id}">${(v.fotos || [])[0] ? `<img class="th" src="${esc(v.fotos[0].url)}" alt="">` : `<div class="th">geen foto</div>`}<div class="bd"><div class="hd"><span class="nr">${vsNr(v)}</span>${v.prioriteit === "hoog" ? `<span class="pill late">!</span>` : ""}${pill(v)}${v._pending ? `<span class="pill pend">wacht</span>` : ""}</div><div class="tx">${v.titel ? `<b>${esc(v.titel)}</b>${v.omschrijving ? ` <span style="color:var(--muted)">${esc(v.omschrijving)}</span>` : ""}` : esc(v.omschrijving || "—")}</div><div class="mt">${[v.ruimte, !perLot && v.lot ? lotName(v.lot) : "", wie(v), v.deadline ? (isLate(v) ? `<span class="late">tegen ${fmt(v.deadline)}</span>` : "tegen " + fmt(v.deadline)) : ""].filter(Boolean).join(" · ")}</div></div></button>`;
   let body;
   if (perLot) { const g = {}; list.forEach(v => (g[v.lot || 0] = g[v.lot || 0] || []).push(v)); body = Object.keys(g).map(Number).sort((a, b) => (a ? 0 : 1) - (b ? 0 : 1) || a - b).map(nr => `<h2 style="margin:14px 0 8px;font-size:15px">${nr ? esc(lotName(nr)) : "Zonder lot"} <span class="cnt">${g[nr].length}</span></h2>` + g[nr].map(card).join("")).join(""); }
   else body = list.map(card).join("");
@@ -191,7 +191,7 @@ function vDetail() {
   return `<button class="back" data-act="back">‹ Terug</button>
     ${fotos.length ? `<div class="gallery">${fotos.map(f => `<img src="${esc(f.url)}" alt="" data-lb="${esc(f.url)}">`).join("")}</div>` : ""}
     <div class="hd" style="display:flex;gap:8px;align-items:center;margin-bottom:6px"><span class="nr" style="font-size:18px">${vsNr(v)}</span>${v.prioriteit === "hoog" ? `<span class="pill late">Hoge prioriteit</span>` : ""}${pill(v)}${v._pending ? `<span class="pill pend">nog te verzenden</span>` : ""}</div>
-    <p style="font-size:17px;margin:0 0 10px;white-space:pre-wrap">${esc(v.omschrijving || "—")}</p>
+    ${v.titel ? `<h1 style="margin:0 0 6px">${esc(v.titel)}</h1>` : ""}<p style="font-size:17px;margin:0 0 10px;white-space:pre-wrap">${esc(v.omschrijving || (v.titel ? "" : "—"))}</p>
     <div class="meta">${v.ruimte ? `<div>Ruimte: <b>${esc(v.ruimte)}</b></div>` : ""}${v.lot ? `<div>Lot: <b>${esc(lotName(v.lot))}</b></div>` : ""}<div>Verantwoordelijke: <b>${esc(wie(v) || "nog niet toegewezen")}</b></div>${v.deadline ? `<div>Op te lossen tegen: <b class="${isLate(v) ? "late" : ""}">${fmtLong(v.deadline)}</b></div>` : ""}${v.opgelost_op ? `<div>Opgelost op <b>${fmtLong(v.opgelost_op.slice(0, 10))}</b>${v.opgelost_door ? " door " + esc(profile(v.opgelost_door)?.name || "") : ""}</div>` : ""}${v.opmerking ? `<div>Opmerking: <b>${esc(v.opmerking)}</b></div>` : ""}</div>
     ${bewijs.length ? `<h2>Bewijsfoto's</h2><div class="fotos">${bewijs.map(f => `<img src="${esc(f.url)}" alt="" data-lb="${esc(f.url)}">`).join("")}</div>` : ""}
     <div style="margin-top:18px;display:grid;gap:10px">
@@ -211,7 +211,8 @@ function vForm() {
   return `<button class="back" data-act="back">‹ Annuleren</button><h1>${v.id ? "Vaststelling " + vsNr(v) : "Nieuwe vaststelling"}</h1>
     <div class="big"><label>📷<span></span>Foto nemen<input type="file" accept="image/*" capture="environment" hidden data-file></label><label>🖼️<span></span>Uit galerij<input type="file" accept="image/*" multiple hidden data-file></label></div>
     <div class="fotos" id="f_fotos"></div>
-    <div class="field" style="margin-top:12px"><label>Omschrijving</label><textarea id="f_oms" placeholder="Wat is er vastgesteld, wat moet er gebeuren?">${esc(v.omschrijving || "")}</textarea></div>
+    <div class="field" style="margin-top:12px"><label>Titel</label><input id="f_titel" value="${esc(v.titel || "")}" placeholder="Kort, bv. Scharnier kastdeur"></div>
+    <div class="field"><label>Omschrijving</label><textarea id="f_oms" placeholder="Wat is er vastgesteld, wat moet er gebeuren?">${esc(v.omschrijving || "")}</textarea></div>
     <div class="field"><label>Ruimte / locatie</label><input id="f_ruimte" list="ruimtes" value="${esc(v.ruimte || "")}" placeholder="bv. Keuken"><datalist id="ruimtes">${ruimtes.map(r => `<option value="${esc(r)}">`).join("")}</datalist></div>
     ${lots.length ? `<div class="field"><label>Lot</label><select id="f_lot"><option value="">—</option>${lots.map(l => `<option value="${l}" ${v.lot === l ? "selected" : ""}>${esc(lotName(l))}</option>`).join("")}</select></div>` : ""}
     <div class="field"><label>Verantwoordelijke</label><select id="f_wie"><option value="">— nog niet toegewezen —</option>${pcs.length ? `<optgroup label="Klant, aannemers en contacten">${pcs.map(x => opt("c:" + x.c.id, x.c.naam + (x.c.vakgebied ? " · " + x.c.vakgebied : "") + " · " + (ROL[x.rol] || x.rol))).join("")}</optgroup>` : ""}<optgroup label="Team">${S.base.profiles.map(u => opt(u.id, u.name)).join("")}</optgroup></select></div>
@@ -232,9 +233,9 @@ function bindForm() {
   }));
   $("#f_prio").addEventListener("click", (e) => { const b = e.target.closest("button"); if (!b) return; prio = b.dataset.p; $("#f_prio").querySelectorAll("button").forEach(x => x.setAttribute("aria-pressed", x === b)); });
   $("#f_save").onclick = async () => {
-    const oms = $("#f_oms").value.trim(); if (!oms && !v._nieuw.length && !(v.fotos || []).length) { toast("Geef een omschrijving of neem een foto"); $("#f_oms").focus(); return; }
+    const oms = $("#f_oms").value.trim(); const titel = $("#f_titel").value.trim(); if (!oms && !titel && !v._nieuw.length && !(v.fotos || []).length) { toast("Geef een titel of omschrijving, of neem een foto"); $("#f_titel").focus(); return; }
     const wieV = $("#f_wie").value; const wieP = wieV.startsWith("c:") ? { contact_id: wieV.slice(2), assignee: null } : { contact_id: null, assignee: wieV || null };
-    const patch = { omschrijving: oms, ruimte: $("#f_ruimte").value.trim(), lot: $("#f_lot") && $("#f_lot").value ? Number($("#f_lot").value) : null, ...wieP, prioriteit: prio, deadline: $("#f_deadline").value || null };
+    const patch = { titel, omschrijving: oms, ruimte: $("#f_ruimte").value.trim(), lot: $("#f_lot") && $("#f_lot").value ? Number($("#f_lot").value) : null, ...wieP, prioriteit: prio, deadline: $("#f_deadline").value || null };
     $("#f_save").disabled = true;
     if (v.id) {
       const st = $("#f_status").value; patch.opmerking = $("#f_opm").value.trim();

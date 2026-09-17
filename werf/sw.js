@@ -1,6 +1,6 @@
 /* BROS Werf — service worker: de app-schil offline beschikbaar houden en werffoto's cachen.
    Databaseverkeer (Supabase) gaat altijd rechtstreeks; de wachtrij zit in werf.js (IndexedDB). */
-const VERSION = "1.19.0";
+const VERSION = "1.19.1";
 const SHELL = "bros-werf-" + VERSION;
 const FOTOS = "bros-werf-fotos";
 const SHELL_FILES = ["./", "./index.html", "./werf.js?v=" + VERSION, "./manifest.json", "./icon-192.png", "./icon-512.png", "../config.js?v=" + VERSION, "../logo-mark.svg", "https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.45.4/dist/umd/supabase.min.js"];
