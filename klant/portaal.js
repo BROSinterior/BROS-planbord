@@ -2,7 +2,7 @@
    BROS Klantenportaal — alleen-lezen zicht van de bouwheer op zijn project
    Leest uitsluitend de klant_*-views (databasescript 011): geen kostprijzen, marges of interne notities.
    ===================================================================== */
-const PORTAAL_VERSION = "1.18.0";
+const PORTAAL_VERSION = "1.21.0";
 const cfg = window.PLANBORD_CONFIG || {};
 const sb = window.supabase.createClient(cfg.supabaseUrl, cfg.supabaseAnonKey);
 const $ = (s, r = document) => r.querySelector(s);
@@ -35,7 +35,7 @@ function toast(msg, ms = 3500) { const t = document.createElement("div"); t.clas
 /* ---------- gegevens ---------- */
 async function loadAll() {
   const q = (v, sel = "*") => sb.from(v).select(sel).then(r => { if (r.error) throw new Error(v + ": " + r.error.message); return r.data || []; });
-  const [me, projecten, meetstaat, vorderingen, regels, planning, uren, documenten, team, ik, fasen, loten, inst, goedkeuringen, notities, notitieTaken, mijnTaken, planTaken] = await Promise.all([
+  const [me, projecten, meetstaat, vorderingen, regels, planning, uren, documenten, team, ik, fasen, loten, inst, goedkeuringen, notities, notitieTaken, mijnTaken, planTaken, werfverslagen] = await Promise.all([
     sb.from("profiles").select("id,name,email,role").eq("id", S.session.user.id).maybeSingle().then(r => r.data),
     q("klant_project"), q("klant_meetstaat"), q("klant_vorderingen"), q("klant_vordering_regels"), q("klant_planning"), q("klant_uren"),
     q("klant_documenten"), q("klant_team"), q("klant_ik"), q("fasen"), sb.from("loten_v").select("*").then(r => r.error || !(r.data || []).length ? q("loten") : r.data),
@@ -45,9 +45,10 @@ async function loadAll() {
     sb.from("klant_notitie_taken").select("*").then(r => r.error ? [] : (r.data || [])),
     sb.from("klant_taken").select("*").then(r => r.error ? [] : (r.data || [])),
     sb.from("klant_planning_taken").select("*").then(r => r.error ? [] : (r.data || [])),
+    sb.from("klant_werfverslagen").select("*").then(r => r.error ? [] : (r.data || [])),
   ]);
   S.me = me;
-  S.data = { planTaken, projecten: projecten.sort((a, b) => (b.nummer || "").localeCompare(a.nummer || "")), meetstaat, vorderingen, regels, planning, uren, documenten, team, ik, fasen: fasen.filter(f => f.actief !== false).sort((a, b) => a.nr - b.nr), loten: Object.fromEntries(loten.map(l => [l.nr, l])), inst, goedkeuringen: goedkeuringen.sort((a, b) => (b.voorgelegd_op || "").localeCompare(a.voorgelegd_op || "")), notities: notities.sort((a, b) => (b.datum || "").localeCompare(a.datum || "")), notitieTaken, mijnTaken: mijnTaken.sort((a, b) => (a.status === "done") - (b.status === "done") || (a.eind || "9").localeCompare(b.eind || "9")) };
+  S.data = { werfverslagen, planTaken, projecten: projecten.sort((a, b) => (b.nummer || "").localeCompare(a.nummer || "")), meetstaat, vorderingen, regels, planning, uren, documenten, team, ik, fasen: fasen.filter(f => f.actief !== false).sort((a, b) => a.nr - b.nr), loten: Object.fromEntries(loten.map(l => [l.nr, l])), inst, goedkeuringen: goedkeuringen.sort((a, b) => (b.voorgelegd_op || "").localeCompare(a.voorgelegd_op || "")), notities: notities.sort((a, b) => (b.datum || "").localeCompare(a.datum || "")), notitieTaken, mijnTaken: mijnTaken.sort((a, b) => (a.status === "done") - (b.status === "done") || (a.eind || "9").localeCompare(b.eind || "9")) };
   if (!S.project || !projecten.some(p => p.id === S.project)) S.project = projecten[0]?.id || null;
   S.eersteBezoek = ik.length > 0 && ik.every(x => !x.portaal_login);
   sb.rpc("portaal_bezoek").then(() => { });
@@ -200,7 +201,9 @@ const NOTE_SOORT = { vergadering: "Vergadering", werfverslag: "Werfverslag", bes
 function vVerslagen(p) {
   const ns = D().notities.filter(n => n.project_id === p.id);
   const mt = D().mijnTaken.filter(t => t.project_id === p.id);
+  const wvs = (D().werfverslagen || []).filter(w => w.project_id === p.id).sort((a, b) => (b.nr || 0) - (a.nr || 0));
   return `<h1 style="margin-bottom:6px">Verslagen</h1><p class="muted" style="margin-bottom:16px">Verslagen van vergaderingen en werfbezoeken die BROS met je deelt, met de afgesproken actiepunten.</p>
+    ${wvs.length ? `<div class="panel" style="margin-bottom:16px"><div class="panel-head"><h2>Werfverslagen</h2><span class="muted" style="font-size:13px">pdf met de vaststellingen en de plannen</span></div><table class="t"><tbody>${wvs.map(w => `<tr><td class="num" style="width:60px">${w.nr}</td><td><b>${esc(w.titel || "Werfverslag " + w.nr)}</b><div class="muted" style="font-size:13px">${fmtLang(w.datum)} · ${w.punten} punt${w.punten === 1 ? "" : "en"}</div></td><td class="r"><a class="btn sm" href="${esc(w.pdf_url)}" target="_blank" rel="noopener">Pdf openen</a></td></tr>`).join("")}</tbody></table></div>` : ""}
     ${mt.length ? `<div class="panel" style="margin-bottom:16px;border-color:var(--blue)"><div class="panel-head"><h2>Jouw actiepunten</h2><span class="muted" style="font-size:13px">${mt.filter(t => t.status !== "done").length} open · vink af wat gedaan is</span></div><table class="t"><tbody>${mt.map(t => `<tr style="${t.status === "done" ? "opacity:.55" : ""}"><td style="width:34px"><input type="checkbox" data-mijntaak="${t.id}" ${t.status === "done" ? "checked" : ""} style="width:18px;height:18px"></td><td>${esc(t.titel)}${t.notitie_titel ? `<div class="muted" style="font-size:12px">uit: ${esc(t.notitie_titel)}</div>` : ""}</td><td class="num muted" style="font-size:13px;${t.status !== "done" && t.eind && t.eind < new Date().toISOString().slice(0, 10) ? "color:var(--crit)" : ""}">${t.eind ? fmt(t.eind) : ""}</td></tr>`).join("")}</tbody></table></div>` : ""}
     ${ns.length ? `<div class="stack">${ns.map(n => { const ts = D().notitieTaken.filter(t => t.notitie_id === n.id).sort((a, b) => (a.eind || "9").localeCompare(b.eind || "9")); const open = S.noteOpen === n.id || ns.length <= 3;
       return `<div class="panel"><div class="panel-head" style="cursor:pointer" data-act="note-toggle" data-id="${n.id}"><div><h2 style="font-size:17px">${esc(n.titel || NOTE_SOORT[n.soort])}</h2><div class="muted" style="font-size:13px">${NOTE_SOORT[n.soort] || esc(n.soort)} · ${fmtLang(n.datum)}${n.auteur_naam ? " · " + esc(n.auteur_naam) : ""}${n.deelnemers ? " · aanwezig: " + esc(n.deelnemers) : ""}</div></div><span class="muted">${open ? "▾" : "▸"}</span></div>

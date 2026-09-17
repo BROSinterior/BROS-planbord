@@ -30,6 +30,7 @@ function doPost(e) {
     if (body.action === "share") return json(portaalShare(body));
     if (body.action === "gkmail") return json(goedkeuringMail(body));
     if (body.action === "notitiemail") return json(notitieMail(body));
+    if (body.action === "werfverslagmail") return json(werfverslagMail(body));
     return json({ ok: false, error: "Onbekende actie." });
   } catch (err) {
     return json({ ok: false, error: String(err && err.message || err) });
@@ -366,6 +367,32 @@ function notitieMail(body) {
   const tekst = "Beste,\n\nHierbij het verslag " + (n.titel || "") + " (" + datum + ").\n\n" + (n.inhoud || "") + (taken.length ? "\n\nActiepunten:\n" + taken.map(t => "- " + t.titel + (t.assignee && namen[t.assignee] ? " (" + namen[t.assignee] + ")" : "")).join("\n") : "") + "\n\nOok in je portaal: " + PORTAAL.URL + "\n\n" + wie.name + " — BROS";
   const naar = []; klanten.forEach(c => { portaalMail(c.email, "Verslag: " + (n.titel || SOORT[n.soort]) + " · " + datum, tekst.replace("Beste,", "Beste " + c.naam + ","), html.replace("Beste,", "Beste " + String(c.naam).replace(/</g, "&lt;") + ",")); naar.push(c.email); });
   return { ok: true, naar: naar };
+}
+/** Werfverslag (pdf gemaakt in het Planbord, in de Supabase-bucket 'werf'): mailen naar aannemers/klant als bijlage, optioneel kopie in de Drive-map Werfcontrole. */
+function werfverslagMail(body) {
+  const wie = caller(body.token, false);
+  const w = (pbAdmin("/rest/v1/werfverslagen?id=eq." + encodeURIComponent(String(body.id || "")) + "&select=*", "get") || [])[0];
+  if (!w) return { ok: false, error: "Werfverslag niet gevonden." };
+  const p = (pbAdmin("/rest/v1/projecten?id=eq." + w.project_id + "&select=nummer,klant,naam,adres,gemeente", "get") || [])[0] || {};
+  const r = UrlFetchApp.fetch(w.pdf_url, { muteHttpExceptions: true }); if (r.getResponseCode() >= 300) throw new Error("Pdf niet gevonden (" + r.getResponseCode() + ").");
+  const naam = "Werfverslag " + w.nr + " - " + (p.klant || "") + " - " + String(w.datum || "").split("-").reverse().join("-") + ".pdf";
+  const pdf = r.getBlob().setName(naam).setContentType("application/pdf");
+  const datum = String(w.datum || "").split("-").reverse().join("/"); const proj = (p.klant || "") + (p.naam && p.naam !== p.klant ? " · " + p.naam : "");
+  const aan = (body.aan || []).map(e => String(e).trim()).filter(e => /^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(e));
+  const bericht = String(w.bericht || "").trim();
+  const html = "<div style=\"font-family:Helvetica,Arial,sans-serif;font-size:15px;line-height:1.5;color:#1B1E1C;max-width:720px\"><p>Beste,</p>"
+    + (bericht ? "<p style=\"white-space:pre-line\">" + bericht.replace(/</g, "&lt;") + "</p>" : "<p>In bijlage het werfverslag " + w.nr + " van " + datum + " voor <b>" + proj.replace(/</g, "&lt;") + "</b>" + (p.adres ? " (" + p.adres + (p.gemeente ? ", " + p.gemeente : "") + ")" : "") + ".</p>")
+    + "<p>Het verslag bevat " + w.punten + " vaststelling" + (w.punten === 1 ? "" : "en") + " met foto's, verantwoordelijke en uiterste datum, en de plannen met de locatie van elk punt. Gelieve de open punten die aan jou toegewezen zijn tegen de vermelde datum in orde te brengen en ons te verwittigen zodra dat gebeurd is.</p>"
+    + (w.klant_zichtbaar ? "<p>Als klant vind je dit verslag ook terug in je portaal: <a href=\"" + PORTAAL.URL + "\">" + PORTAAL.URL + "</a></p>" : "")
+    + "<p>" + wie.name + " — BROS</p></div>";
+  const tekst = "Beste,\n\n" + (bericht || "In bijlage het werfverslag " + w.nr + " van " + datum + " voor " + proj + ".") + "\n\nHet verslag bevat " + w.punten + " vaststellingen met foto's, verantwoordelijke en uiterste datum, en de plannen met de locatie van elk punt.\n\n" + wie.name + " — BROS";
+  const naar = [];
+  aan.forEach(e => { const opt = { htmlBody: html, name: PORTAAL.AFZENDER, attachments: [pdf] }; if (PORTAAL.VAN) { const al = GmailApp.getAliases(); if (al.indexOf(PORTAAL.VAN) >= 0) opt.from = PORTAAL.VAN; else opt.replyTo = PORTAAL.VAN; } GmailApp.sendEmail(e, "Werfverslag " + w.nr + " · " + proj + " · " + datum, tekst, opt); naar.push(e); });
+  let driveUrl = "";
+  if (body.drive && body.folderId) { try { const folder = subfolder(DriveApp.getFolderById(String(body.folderId)), "Werfcontrole"); let n = naam, k = 2; while (folder.getFilesByName(n).hasNext()) n = naam.replace(/\.pdf$/, " (" + (k++) + ").pdf"); const f = folder.createFile(pdf.copyBlob().setName(n)); driveUrl = f.getUrl(); } catch (e) { Logger.log("Drive-kopie mislukt: " + e); } }
+  const patch = { aan: naar }; if (naar.length) patch.verzonden_op = new Date().toISOString(); if (driveUrl) patch.drive_url = driveUrl;
+  pbAdmin("/rest/v1/werfverslagen?id=eq." + w.id, "patch", patch);
+  return { ok: true, naar: naar, drive_url: driveUrl };
 }
 /** Bestand delen met de klant: "iedereen met de link mag lezen" aan- of uitzetten. */
 function portaalShare(body) {
