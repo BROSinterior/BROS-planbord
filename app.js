@@ -2,7 +2,7 @@
    BROS Planbord — app v1.0
    Statische webapp op Supabase (login, live-synchronisatie, rechten)
    ===================================================================== */
-const APP_VERSION = "1.17.1";
+const APP_VERSION = "1.18.0";
 const PROJ_STATUS = { offerte: "In offerte", lopend: "Lopend", on_hold: "On hold", afgerond: "Afgerond", verloren: "Verloren" };
 const KLANTTYPE = { particulier: "Particulier", zakelijk: "Zakelijk" };
 const KLANTCODE = { particulier: "PAR", zakelijk: "ZAK" };
@@ -35,7 +35,7 @@ const workdays = (a, b) => { let n = 0; for (let s = a; s <= b; s = addDays(s, 1
 /* ---------- state ---------- */
 const S = {
   session: null, me: null, setPassword: false, passwordForced: false,
-  profiles: {}, tarieven: {}, fasen: {}, standaardtaken: [], projecten: {}, taken: {}, uren: {}, documenten: {}, instellingen: {}, loten: {}, posten: {}, meetstaat_posten: {}, vorderingen: {}, vordering_regels: {}, contacten: {}, project_contacten: {}, goedkeuringen: {}, notities: {}, werfbezoeken: {}, vaststellingen: {},
+  profiles: {}, tarieven: {}, fasen: {}, standaardtaken: [], projecten: {}, taken: {}, uren: {}, documenten: {}, instellingen: {}, loten: {}, posten: {}, meetstaat_posten: {}, vorderingen: {}, vordering_regels: {}, contacten: {}, project_contacten: {}, goedkeuringen: {}, notities: {}, werfbezoeken: {}, vaststellingen: {}, klant_timing: {},
   view: "overzicht", project: null, ptab: "taken",
   filters: { user: "", status: "", project: "", q: "" }, cfilters: { soort: "", q: "" },
   ganttStart: addDays(mondayOf(todayIso), -14), ganttDays: 112, ganttOpen: {},
@@ -80,16 +80,16 @@ const wieNaam = (t) => t.contact_id && S.contacten[t.contact_id] ? S.contacten[t
 const wieOpts = (pid, t) => { const cur = t.contact_id ? "c:" + t.contact_id : (t.assignee ?? S.me.id); const pcs = pid ? contactsOf(pid) : []; return `<option value="">— niemand —</option><optgroup label="Team">${opts(users().map(u => [u.id, u.name]), cur)}</optgroup>${pcs.length ? `<optgroup label="Klant en contacten van dit project">${opts(pcs.map(x => ["c:" + x.c.id, x.c.naam + " · " + (CONTACT_ROL[x.rol] || x.rol)]), cur)}</optgroup>` : ""}`; };
 const wieSplit = (v) => v && v.startsWith("c:") ? { assignee: null, contact_id: v.slice(2) } : { assignee: v || null, contact_id: null };
 const avatar = (id) => { const u = userById(id); return `<span class="avatar" style="background:${u.color}" title="${esc(u.name)}">${esc(u.initials)}</span>`; };
-const klantTag = (t) => t.uren_klant ? ` <span class="pill kl" title="Uren van deze taak zijn zichtbaar voor de klant">uren → klant</span>` : "";
+const klantTag = (t) => (t.uren_klant ? ` <span class="pill kl" title="Uren van deze taak zijn zichtbaar voor de klant">uren → klant</span>` : "") + (t.timing_klant ? ` <span class="pill kl" title="Titel en timing van deze taak staan in de planning van de klant">timing → klant</span>` : "");
 const pill = (t) => isLate(t) ? `<span class="pill late">Te laat</span>` : `<span class="pill ${t.status}">${TASK_STATUS[t.status] || t.status}</span>`;
 const kost = (uid, uren, soort) => (Number(S.tarieven[uid]?.[soort]) || 0) * uren;
 const projKost = (pid, soort) => Object.values(S.uren).filter(h => h.project_id === pid).reduce((s, h) => s + kost(h.user_id, Number(h.uren) || 0, soort), 0);
 let toastT; function toast(msg) { const t = $("#toast"); t.textContent = msg; t.classList.add("show"); clearTimeout(toastT); toastT = setTimeout(() => t.classList.remove("show"), 2800); }
 
 /* ---------- data laden en live houden ---------- */
-const TABLES = { profiles: "profiles", tarieven: "tarieven", fasen: "fasen", standaardtaken: "standaardtaken", projecten: "projecten", taken: "taken", uren: "uren", documenten: "documenten", instellingen: "instellingen", loten: "loten", posten: "posten", meetstaat_posten: "meetstaat_posten", vorderingen: "vorderingen", vordering_regels: "vordering_regels", contacten: "contacten", project_contacten: "project_contacten", goedkeuringen: "goedkeuringen", notities: "notities", werfbezoeken: "werfbezoeken", vaststellingen: "vaststellingen" };
-const OPTIONAL_TABLES = ["tarieven", "documenten", "instellingen", "loten", "posten", "meetstaat_posten", "vorderingen", "vordering_regels", "contacten", "project_contacten", "goedkeuringen", "notities", "werfbezoeken", "vaststellingen"]; // ontbreken zolang het bijbehorende sql-script niet is uitgevoerd
-const rowKey = (t, r) => t === "fasen" || t === "loten" ? r.nr : t === "tarieven" ? r.user_id : t === "instellingen" ? r.key : t === "vordering_regels" ? (r.id || r.vordering_id + "|" + r.lot + "|" + (r.post_id || "")) : r.id;
+const TABLES = { profiles: "profiles", tarieven: "tarieven", fasen: "fasen", standaardtaken: "standaardtaken", projecten: "projecten", taken: "taken", uren: "uren", documenten: "documenten", instellingen: "instellingen", loten: "loten", posten: "posten", meetstaat_posten: "meetstaat_posten", vorderingen: "vorderingen", vordering_regels: "vordering_regels", contacten: "contacten", project_contacten: "project_contacten", goedkeuringen: "goedkeuringen", notities: "notities", werfbezoeken: "werfbezoeken", vaststellingen: "vaststellingen", klant_timing: "klant_timing" };
+const OPTIONAL_TABLES = ["tarieven", "documenten", "instellingen", "loten", "posten", "meetstaat_posten", "vorderingen", "vordering_regels", "contacten", "project_contacten", "goedkeuringen", "notities", "werfbezoeken", "vaststellingen", "klant_timing"]; // ontbreken zolang het bijbehorende sql-script niet is uitgevoerd
+const rowKey = (t, r) => t === "fasen" || t === "loten" ? r.nr : t === "klant_timing" ? r.project_id + "|" + r.fase_nr : t === "tarieven" ? r.user_id : t === "instellingen" ? r.key : t === "vordering_regels" ? (r.id || r.vordering_id + "|" + r.lot + "|" + (r.post_id || "")) : r.id;
 function ingest(table, rows) {
   if (table === "standaardtaken") { S.standaardtaken = rows.sort((a, b) => a.fase_nr - b.fase_nr || a.volgorde - b.volgorde); return; }
   const o = {}; rows.forEach(r => o[rowKey(table, r)] = r); S[table] = o;
@@ -117,7 +117,7 @@ async function loadAll() {
 }
 function subscribe() {
   // Eén kanaal per tabel: als één tabel niet in de realtime-publicatie zit, blijven de andere werken.
-  ["profiles", "tarieven", "fasen", "standaardtaken", "projecten", "taken", "uren", "documenten", "loten", "posten", "meetstaat_posten", "meetstaat_prijzen", "vorderingen", "vordering_regels", "contacten", "project_contacten", "goedkeuringen", "notities", "werfbezoeken", "vaststellingen"].forEach(t => {
+  ["profiles", "tarieven", "fasen", "standaardtaken", "projecten", "taken", "uren", "documenten", "loten", "posten", "meetstaat_posten", "meetstaat_prijzen", "vorderingen", "vordering_regels", "contacten", "project_contacten", "goedkeuringen", "notities", "werfbezoeken", "vaststellingen", "klant_timing"].forEach(t => {
     const ch = sb.channel("pb-" + t);
     ch.on("postgres_changes", { event: "*", schema: "public", table: t }, (payload) => {
       if (t === "standaardtaken") { refetch(t); return; }
@@ -1300,7 +1300,7 @@ function vProjectDetail(p) {
   } else if (S.ptab === "werf") {
     body = vWerf(p);
   } else if (S.ptab === "planning") {
-    body = ganttHtml([p], { expanded: true, title: "Timing " + p.klant });
+    body = ganttHtml([p], { expanded: true, title: "Timing " + p.klant }) + vKlantTiming(p);
   } else if (S.ptab === "uren") {
     const byTask = ts.map(t => ({ t, d: taskDone(t.id) })).filter(x => x.d > 0 || x.t.uren_gepland > 0 || x.t.status === "done");
     const byUser = users().map(u => ({ u, d: hoursOf(h => h.project_id === p.id && h.user_id === u.id) })).filter(x => x.d > 0);
@@ -1693,6 +1693,38 @@ async function stDel(id) {
   if (error) { toast("Mislukt: " + error.message); return; } S.standaardtaken = S.standaardtaken.filter(x => x.id !== t.id); render(); toast("Verwijderd");
 }
 
+/* ---------- Timing voor de klant (script 017): handmatige van–tot per fase + taken met gedeelde timing ---------- */
+const ktOf = (pid, nr) => S.klant_timing[pid + "|" + nr] || null;
+const ktTaskSpan = (pid, nr) => { const ts = tasksOf(pid).filter(t => (t.fase_nr || 0) === nr); return [ts.map(t => t.start).filter(Boolean).sort()[0] || null, ts.map(t => t.eind).filter(Boolean).sort().pop() || null]; };
+async function ktSave(pid, nr, patch) {
+  const cur = ktOf(pid, nr) || { project_id: pid, fase_nr: nr, start: null, eind: null, opmerking: "" };
+  const row = { ...cur, ...patch }; delete row.updated_at;
+  if (row.start && row.eind && row.eind < row.start) row.eind = row.start;
+  const { data, error } = await sb.from("klant_timing").upsert(row, { onConflict: "project_id,fase_nr" }).select().single();
+  if (error) { toast("Bewaren mislukt: " + error.message); return; }
+  S.klant_timing[rowKey("klant_timing", data)] = data; render();
+}
+async function ktClear(pid, nr) {
+  const { error } = await sb.from("klant_timing").delete().eq("project_id", pid).eq("fase_nr", nr);
+  if (error) { toast("Wissen mislukt: " + error.message); return; }
+  delete S.klant_timing[pid + "|" + nr]; render();
+}
+function vKlantTiming(p) {
+  if (schemaV() < 17) return `<div class="panel" style="margin-top:16px"><div class="panel-head"><h3>Timing voor de klant</h3></div>${SCHEMA_HINT(17)}</div>`;
+  const fs = fasenList(); const ts = tasksOf(p.id); const shared = ts.filter(t => t.timing_klant);
+  const rows = fs.map(f => { const kt = ktOf(p.id, f.nr); const [ts0, ts1] = ktTaskSpan(p.id, f.nr); const n = ts.filter(t => (t.fase_nr || 0) === f.nr).length; const eig = kt && (kt.start || kt.eind);
+    return `<tr class="${p.fase_nr === f.nr ? "" : ""}"><td><b>${f.nr}. ${esc(f.naam)}</b>${p.fase_nr === f.nr ? ` <span class="pill busy">nu</span>` : ""}<small class="muted" style="display:block">${n ? `${n} ${n === 1 ? "taak" : "taken"}${ts0 ? ` · intern ${fmt(ts0)} → ${fmt(ts1)}` : ""}` : "geen taken"}</small></td>
+      <td style="width:150px"><input class="inline" type="date" data-kt="${f.nr}" data-pid="${p.id}" data-f="start" value="${esc(kt?.start || "")}"></td>
+      <td style="width:150px"><input class="inline" type="date" data-kt="${f.nr}" data-pid="${p.id}" data-f="eind" value="${esc(kt?.eind || "")}"></td>
+      <td><input class="inline wide" data-kt="${f.nr}" data-pid="${p.id}" data-f="opmerking" value="${esc(kt?.opmerking || "")}" placeholder="toelichting voor de klant (optioneel)"></td>
+      <td class="r" style="white-space:nowrap">${ts0 ? `<button class="btn ghost sm" data-act="kt-fill" data-pid="${p.id}" data-nr="${f.nr}" title="Vroegste start en laatste einde van de taken van deze fase overnemen">↙ uit taken</button>` : ""}${eig ? `<button class="btn ghost sm danger" data-act="kt-clear" data-pid="${p.id}" data-nr="${f.nr}" title="Timing wissen">✕</button>` : ""}</td></tr>`; }).join("");
+  const filled = fs.filter(f => { const kt = ktOf(p.id, f.nr); return kt && (kt.start || kt.eind); }).length;
+  return `<div class="panel" style="margin-top:16px"><div class="panel-head"><div><h3>Timing voor de klant</h3><div class="muted" style="font-size:12px;margin-top:2px">Wat de klant in het portaal ziet onder Planning: per fase een van–tot die jij bepaalt (los van de interne taakplanning) · ${filled} van ${fs.length} fasen ingevuld</div></div>
+      <div class="actions"><button class="btn sm" data-act="kt-fill-all" data-pid="${p.id}" title="Voor elke fase zonder timing: vroegste start en laatste einde van haar taken overnemen">Lege fasen invullen uit de taken</button></div></div>
+    <div class="tw"><table class="t"><thead><tr><th>Fase</th><th>Van</th><th>Tot</th><th>Toelichting</th><th></th></tr></thead><tbody>${rows}</tbody></table></div>
+    <div class="panel-head" style="border-top:1px solid var(--line)"><div><h3 style="font-size:14px">Taken met gedeelde timing</h3><div class="muted" style="font-size:12px;margin-top:2px">Vink per taak aan: titel en van–tot verschijnen onder de fase in de klantplanning (geen uren, geen wie). ${shared.length} gedeeld.</div></div></div>
+    ${ts.length ? `<div class="tw"><table class="t"><tbody>${ts.map(t => `<tr><td style="width:28px"><input type="checkbox" data-ttoggle="${t.id}" ${t.timing_klant ? "checked" : ""} aria-label="Timing delen met de klant"></td><td><span class="row-title">${esc(t.titel)}</span><small class="muted" style="display:block">${esc(faseShort(t.fase_nr) || "zonder fase")}</small></td><td class="num">${fmt(t.start)} → ${fmt(t.eind)}</td><td>${pill(t)}</td></tr>`).join("")}</tbody></table></div>` : `<div class="empty">Nog geen taken op dit project.</div>`}</div>`;
+}
 /* ---------- modals ---------- */
 function openModal(title, bodyHtml, { onSave, onDelete, saveLabel = "Bewaren", wide } = {}) {
   $("#modal").innerHTML = `<div class="mh"><h2>${esc(title)}</h2><button class="btn ghost sm" data-close type="button">✕</button></div><form id="mform"><div class="mb">${bodyHtml}</div>
@@ -1839,10 +1871,12 @@ function taskForm(t = {}, pid) {
     ${schemaV() >= 14 ? `<div class="field"><label for="t_note">Uit verslag</label><select id="t_note" name="notitie_id"><option value="">— geen —</option>${opts(notesOf(projectId).map(n => [n.id, `${fmt(n.datum)} · ${n.titel || NOTE_SOORT[n.soort]}`]), t.notitie_id || "")}</select></div>` : ""}
     <div class="field"><label for="t_not">Notitie</label><input id="t_not" name="notitie" value="${esc(t.notitie || "")}"></div>
     ${schemaV() >= 10 ? `<div class="field span2"><label class="sw-row"><input type="checkbox" class="sw" name="uren_klant" value="1" ${t.uren_klant ? "checked" : ""}><span><b>Gepresteerde uren zichtbaar voor de klant</b><small class="muted" style="display:block">De klant ziet de geregistreerde uren van deze taak, met datum en tijdstip. Staat standaard uit.</small></span></label></div>` : ""}
+    ${schemaV() >= 17 ? `<div class="field span2"><label class="sw-row"><input type="checkbox" class="sw" name="timing_klant" value="1" ${t.timing_klant ? "checked" : ""}><span><b>Timing delen met de klant</b><small class="muted" style="display:block">Titel en van–tot van deze taak verschijnen onder de fase in de planning van het portaal (geen uren, geen wie). Staat standaard uit.</small></span></label></div>` : ""}
   </div>`, {
     onSave: async (d) => {
       const row = { titel: d.titel.trim(), project_id: d.project_id, fase_nr: d.fase_nr ? Number(d.fase_nr) : null, ...(schemaV() >= 15 ? wieSplit(d.assignee) : { assignee: d.assignee || null }), status: d.status, start: d.start || null, eind: d.eind || null, uren_gepland: Number(d.uren_gepland) || 0, notitie: d.notitie , ...(schemaV() >= 14 && "notitie_id" in d ? { notitie_id: d.notitie_id || null } : {}) };
       if (schemaV() >= 10) row.uren_klant = !!d.uren_klant;
+      if (schemaV() >= 17) row.timing_klant = !!d.timing_klant;
       if (row.start && !row.eind) row.eind = row.start; if (row.eind && !row.start) row.start = row.eind; if (row.eind < row.start) row.eind = row.start;
       if (isNew) { row.volgorde = (row.fase_nr || 99) * 100 + 90; await dbInsert("taken", row); toast("Taak aangemaakt"); }
       else { await dbUpdate("taken", t.id, row); toast("Taak bewaard"); }
@@ -1964,6 +1998,9 @@ document.addEventListener("click", (e) => {
   if (d.act === "gk-new") return gkForm(d.pid, d.soort || null);
   if (d.act === "note-new") return noteForm({}, d.pid);
   if (d.act === "vs-new") return vsForm({}, d.pid);
+  if (d.act === "kt-fill") { const [a, b] = ktTaskSpan(d.pid, Number(d.nr)); return ktSave(d.pid, Number(d.nr), { start: a, eind: b }); }
+  if (d.act === "kt-clear") return ktClear(d.pid, Number(d.nr));
+  if (d.act === "kt-fill-all") { (async () => { let n = 0; for (const f of fasenList()) { const kt = ktOf(d.pid, f.nr); if (kt && (kt.start || kt.eind)) continue; const [a, b] = ktTaskSpan(d.pid, f.nr); if (!a) continue; await ktSave(d.pid, f.nr, { start: a, eind: b }); n++; } toast(n ? `${n} ${n === 1 ? "fase" : "fasen"} ingevuld uit de taken` : "Niets in te vullen: alle fasen met taken hebben al een timing"); })(); return; }
   if (d.act === "vs-open") { if (e.target.dataset.foto) return fotoLightbox(e.target.dataset.foto); return vsForm(S.vaststellingen[d.id]); }
   if (d.act === "wb-new") return wbForm({}, d.pid);
   if (d.act === "wb-open") return wbForm(S.werfbezoeken[d.id]);
@@ -1988,6 +2025,7 @@ document.addEventListener("click", (e) => {
 document.addEventListener("focusout", (e) => {
   const d = e.target.dataset || {};
   if (d.stTitle) return stRename(d.stTitle, e.target.value);
+  if (d.kt && e.target.type !== "date") { const cur = ktOf(d.pid, Number(d.kt)); if ((cur?.[d.f] || "") !== e.target.value) ktSave(d.pid, Number(d.kt), { [d.f]: e.target.value }); return; }
   if (d.vr) return vordEditPct(d.vr, Number(d.lot), e.target.value, d.vpost || null);
   if (d.ms && e.target.tagName !== "SELECT") return msEdit(d.ms, d.f, e.target.value);
   if (d.post && e.target.type !== "checkbox" && e.target.tagName !== "SELECT") return postEdit(d.post, d.f, e.target.value);
@@ -2005,6 +2043,8 @@ document.addEventListener("change", (e) => {
   if (el.dataset.hoursUser != null) { S.hoursUser = el.value; return render(); }
   if (el.dataset.rapjaar != null) { S.rapJaar = el.value; return render(); }
   if (el.dataset.toggle) { const t = S.taken[el.dataset.toggle]; if (t) dbUpdate("taken", t.id, { status: el.checked ? "done" : "todo" }).catch(() => { }); }
+  if (el.dataset.kt && el.type === "date") { const cur = ktOf(el.dataset.pid, Number(el.dataset.kt)); if ((cur?.[el.dataset.f] || "") !== el.value) ktSave(el.dataset.pid, Number(el.dataset.kt), { [el.dataset.f]: el.value || null }); return; }
+  if (el.dataset.ttoggle) { const t = S.taken[el.dataset.ttoggle]; if (t) dbUpdate("taken", t.id, { timing_klant: el.checked }).then(() => toast(el.checked ? "Timing van deze taak staat in de klantplanning" : "Timing niet meer gedeeld")).catch(() => { }); return; }
   if (el.dataset.ktoggle) { const t = S.taken[el.dataset.ktoggle]; if (t) dbUpdate("taken", t.id, { uren_klant: el.checked }).then(() => toast(el.checked ? "Uren van deze taak zijn zichtbaar voor de klant" : "Uren verborgen voor de klant")).catch(() => { }); }
   if (el.dataset.ms && el.tagName === "SELECT") return msEdit(el.dataset.ms, el.dataset.f, el.value);
   if (el.dataset.post && (el.type === "checkbox" || el.tagName === "SELECT")) return postEdit(el.dataset.post, el.dataset.f, el.value, el.checked);

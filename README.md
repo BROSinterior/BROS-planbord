@@ -102,6 +102,12 @@ Gebruik per project: projectfiche → Dossier → Contacten → bij de bouwheer 
 - **Toewijzen aan de klant of een aannemer** (script 015): in het taakformulier en bij de actiepunten kies je onder "Klant en contacten van dit project" een contact in plaats van een teamlid (`taken.contact_id`). De klant ziet zijn actiepunten in het portaal (Welkom-banner, "Jouw actiepunten" onder Verslagen, ook zonder gedeeld verslag) en vinkt ze zelf af via `klant_taak_klaar()`; het Planbord toont de taak met naam en label klant/aannemer.
 - Vereist `sql/014_notities.sql`, `sql/015_taken_klant.sql` en het nieuwe `drive/Code.gs`.
 
+## Timing voor de klant (script 017)
+
+- De klant ziet in het portaal onder Planning per fase een van–tot. Die volgt **automatisch** de taken van de fase (vroegste start → laatste einde), tenzij je de fase **vastzet**: projectfiche → tabblad **Planning**, paneel **Timing voor de klant** → Van/Tot invullen (of "Vastzetten" om de huidige taaktiming te bevriezen) en eventueel een toelichting. Een vastgezette fase schuift niet meer mee met de taken; ✕ wist ze en dan volgt ze weer de taken. Tabel `klant_timing` (enkel de vastgezette fasen), view `klant_planning`.
+- **Timing delen met de klant** per taak: schakelaar in het taakformulier, of het vinkje in de lijst "Taken met gedeelde timing" onder het paneel. Zo'n taak verschijnt in de klantplanning als regel onder haar fase met titel, van–tot en status (gepland / bezig / klaar) — geen uren, geen wie. Standaard uit; in de takenlijst staat "timing → klant" bij zo'n taak. Kolom `taken.timing_klant`, view `klant_planning_taken`.
+- Geen extra werk na het script: bestaande projecten tonen meteen dezelfde (automatische) planning als vroeger.
+
 ## Werfopvolging (script 016) — stap 1
 
 Vervangt ArchiSnapper stap voor stap. Stap 1 = vaststellingen met foto's registreren en opvolgen.

@@ -2,7 +2,7 @@
    BROS Klantenportaal — alleen-lezen zicht van de bouwheer op zijn project
    Leest uitsluitend de klant_*-views (databasescript 011): geen kostprijzen, marges of interne notities.
    ===================================================================== */
-const PORTAAL_VERSION = "1.16.0";
+const PORTAAL_VERSION = "1.18.0";
 const cfg = window.PLANBORD_CONFIG || {};
 const sb = window.supabase.createClient(cfg.supabaseUrl, cfg.supabaseAnonKey);
 const $ = (s, r = document) => r.querySelector(s);
@@ -35,7 +35,7 @@ function toast(msg, ms = 3500) { const t = document.createElement("div"); t.clas
 /* ---------- gegevens ---------- */
 async function loadAll() {
   const q = (v, sel = "*") => sb.from(v).select(sel).then(r => { if (r.error) throw new Error(v + ": " + r.error.message); return r.data || []; });
-  const [me, projecten, meetstaat, vorderingen, regels, planning, uren, documenten, team, ik, fasen, loten, inst, goedkeuringen, notities, notitieTaken, mijnTaken] = await Promise.all([
+  const [me, projecten, meetstaat, vorderingen, regels, planning, uren, documenten, team, ik, fasen, loten, inst, goedkeuringen, notities, notitieTaken, mijnTaken, planTaken] = await Promise.all([
     sb.from("profiles").select("id,name,email,role").eq("id", S.session.user.id).maybeSingle().then(r => r.data),
     q("klant_project"), q("klant_meetstaat"), q("klant_vorderingen"), q("klant_vordering_regels"), q("klant_planning"), q("klant_uren"),
     q("klant_documenten"), q("klant_team"), q("klant_ik"), q("fasen"), sb.from("loten_v").select("*").then(r => r.error || !(r.data || []).length ? q("loten") : r.data),
@@ -44,9 +44,10 @@ async function loadAll() {
     sb.from("klant_notities").select("*").then(r => r.error ? [] : (r.data || [])),
     sb.from("klant_notitie_taken").select("*").then(r => r.error ? [] : (r.data || [])),
     sb.from("klant_taken").select("*").then(r => r.error ? [] : (r.data || [])),
+    sb.from("klant_planning_taken").select("*").then(r => r.error ? [] : (r.data || [])),
   ]);
   S.me = me;
-  S.data = { projecten: projecten.sort((a, b) => (b.nummer || "").localeCompare(a.nummer || "")), meetstaat, vorderingen, regels, planning, uren, documenten, team, ik, fasen: fasen.filter(f => f.actief !== false).sort((a, b) => a.nr - b.nr), loten: Object.fromEntries(loten.map(l => [l.nr, l])), inst, goedkeuringen: goedkeuringen.sort((a, b) => (b.voorgelegd_op || "").localeCompare(a.voorgelegd_op || "")), notities: notities.sort((a, b) => (b.datum || "").localeCompare(a.datum || "")), notitieTaken, mijnTaken: mijnTaken.sort((a, b) => (a.status === "done") - (b.status === "done") || (a.eind || "9").localeCompare(b.eind || "9")) };
+  S.data = { planTaken, projecten: projecten.sort((a, b) => (b.nummer || "").localeCompare(a.nummer || "")), meetstaat, vorderingen, regels, planning, uren, documenten, team, ik, fasen: fasen.filter(f => f.actief !== false).sort((a, b) => a.nr - b.nr), loten: Object.fromEntries(loten.map(l => [l.nr, l])), inst, goedkeuringen: goedkeuringen.sort((a, b) => (b.voorgelegd_op || "").localeCompare(a.voorgelegd_op || "")), notities: notities.sort((a, b) => (b.datum || "").localeCompare(a.datum || "")), notitieTaken, mijnTaken: mijnTaken.sort((a, b) => (a.status === "done") - (b.status === "done") || (a.eind || "9").localeCompare(b.eind || "9")) };
   if (!S.project || !projecten.some(p => p.id === S.project)) S.project = projecten[0]?.id || null;
   S.eersteBezoek = ik.length > 0 && ik.every(x => !x.portaal_login);
   sb.rpc("portaal_bezoek").then(() => { });
@@ -180,13 +181,16 @@ function vFacturatie(p) {
 
 function vPlanning(p) {
   const fasen = D().fasen; const plan = Object.fromEntries(D().planning.filter(x => x.project_id === p.id).map(x => [x.fase_nr, x])); const nu = p.fase_nr;
-  const dates = Object.values(plan).flatMap(x => [x.start, x.eind]).filter(Boolean).sort(); const t0 = dates[0] ? new Date(dates[0]) : null, t1 = dates[dates.length - 1] ? new Date(dates[dates.length - 1]) : null; const span = t0 && t1 ? Math.max(1, t1 - t0) : 1;
+  const dates = Object.values(plan).flatMap(x => [x.start, x.eind]).concat((D().planTaken || []).filter(t => t.project_id === p.id).flatMap(t => [t.start, t.eind])).filter(Boolean).sort(); const t0 = dates[0] ? new Date(dates[0]) : null, t1 = dates[dates.length - 1] ? new Date(dates[dates.length - 1]) : null; const span = t0 && t1 ? Math.max(1, t1 - t0) : 1;
   const uren = D().uren.filter(u => u.project_id === p.id).sort((a, b) => (b.datum || "").localeCompare(a.datum || "") || (b.tijd_van || "").localeCompare(a.tijd_van || "")); const totU = uren.reduce((s, u) => s + Number(u.uren), 0);
   return `<h1 style="margin-bottom:6px">Planning</h1><p class="muted" style="margin-bottom:16px">De stappen van je project met hun timing. Data zijn een planning en kunnen nog schuiven.</p>
     <div class="panel" style="margin-bottom:16px"><div class="tw"><table class="t"><thead><tr><th>Stap</th><th>Van</th><th>Tot</th><th style="min-width:180px">Verloop</th><th>Status</th></tr></thead><tbody>
       ${fasen.map(f => { const pl = plan[f.nr]; const st = p.status === "afgerond" || (nu != null && f.nr < nu) ? "done" : f.nr === nu ? "now" : "todo";
         const bar = pl && pl.start && pl.eind && t0 ? `<div class="bar"><i class="${st === "done" ? "done" : ""}" style="left:${Math.round((new Date(pl.start) - t0) / span * 100)}%;width:${Math.max(2, Math.round((new Date(pl.eind) - new Date(pl.start)) / span * 100))}%"></i></div>` : "";
-        return `<tr style="${st === "todo" ? "color:var(--muted)" : ""}"><td><b style="${st === "now" ? "" : "font-weight:600"}">${f.nr}. ${esc(f.naam)}</b>${pl && pl.taken ? `<div class="muted" style="font-size:12px">${pl.klaar} van ${pl.taken} taken klaar</div>` : ""}</td><td class="num">${pl ? fmt(pl.start) : "—"}</td><td class="num">${pl ? fmt(pl.eind) : "—"}</td><td>${bar}</td><td>${st === "done" ? `<span class="pill akkoord">Klaar</span>` : st === "now" ? `<span class="pill meerwerk">Nu bezig</span>` : `<span class="pill grijs">Nog te doen</span>`}</td></tr>`; }).join("")}
+        const taken = (D().planTaken || []).filter(t => t.project_id === p.id && (t.fase_nr || 0) === f.nr).sort((a, b) => (a.volgorde ?? 0) - (b.volgorde ?? 0) || (a.start || "9").localeCompare(b.start || "9"));
+        const tbar = (t) => t.start && t.eind && t0 ? `<div class="bar"><i class="${t.status === "done" ? "done" : ""}" style="left:${Math.round((new Date(t.start) - t0) / span * 100)}%;width:${Math.max(2, Math.round((new Date(t.eind) - new Date(t.start)) / span * 100))}%;opacity:.55"></i></div>` : "";
+        return `<tr style="${st === "todo" ? "color:var(--muted)" : ""}"><td><b style="${st === "now" ? "" : "font-weight:600"}">${f.nr}. ${esc(f.naam)}</b>${pl && pl.opmerking ? `<div class="muted" style="font-size:12px">${esc(pl.opmerking)}</div>` : ""}${pl && pl.taken ? `<div class="muted" style="font-size:12px">${pl.klaar} van ${pl.taken} taken klaar</div>` : ""}</td><td class="num">${pl ? fmt(pl.start) : "—"}</td><td class="num">${pl ? fmt(pl.eind) : "—"}</td><td>${bar}</td><td>${st === "done" ? `<span class="pill akkoord">Klaar</span>` : st === "now" ? `<span class="pill meerwerk">Nu bezig</span>` : `<span class="pill grijs">Nog te doen</span>`}</td></tr>` +
+          taken.map(t => `<tr class="sub" style="${t.status === "done" ? "color:var(--muted)" : ""}"><td style="padding-left:28px">↳ ${esc(t.titel)}</td><td class="num">${fmt(t.start)}</td><td class="num">${fmt(t.eind)}</td><td>${tbar(t)}</td><td>${t.status === "done" ? `<span class="pill akkoord">Klaar</span>` : t.status === "busy" ? `<span class="pill meerwerk">Bezig</span>` : `<span class="pill grijs">Gepland</span>`}</td></tr>`).join(""); }).join("")}
     </tbody></table></div></div>
     <div class="panel"><div class="panel-head"><h2>Gepresteerde uren</h2><span class="num" style="font-weight:700">${nl(totU)} u</span></div>${uren.length ? `<div class="tw"><table class="t"><thead><tr><th>Datum</th><th>Tijd</th><th>Wat</th><th>Wie</th><th class="r">Uren</th></tr></thead><tbody>
       ${uren.map(u => `<tr><td class="num">${fmt(u.datum)}</td><td class="num">${u.tijd_van ? tijd(u.tijd_van) + (u.tijd_tot ? " – " + tijd(u.tijd_tot) : "") : ""}</td><td>${esc(u.taak)}${u.fase_nr ? `<div class="muted" style="font-size:12px">${esc(faseNaam(u.fase_nr))}</div>` : ""}</td><td>${esc(u.medewerker || "")}</td><td class="r num">${nl(u.uren)}</td></tr>`).join("")}</tbody></table></div>` : `<div class="empty"><b>Nog geen uren gedeeld</b>Hier zie je de uren die we voor je project presteren, zodra we ze met je delen.</div>`}</div>`;
