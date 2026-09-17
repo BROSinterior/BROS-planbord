@@ -248,6 +248,18 @@
   .vs-foto-item { position: relative; display: inline-block; }
   .vs-foto-x { position: absolute; top: -6px; right: -6px; width: 22px; height: 22px; border-radius: 50%; border: 1px solid var(--line-2); background: var(--surface); color: var(--ink); font-size: 11px; cursor: pointer; box-shadow: var(--card); }
   .vs-new { position: absolute; left: 4px; bottom: 4px; background: var(--accent); color: #fff; font-size: 10px; font-weight: 600; padding: 1px 6px; border-radius: 6px; }
+  /* werfplannen */
+  .plan-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); gap: 12px; padding: 14px 16px; }
+  .plan-card { border: 1px solid var(--line); border-radius: 12px; overflow: hidden; background: #fff; cursor: pointer; }
+  .plan-card:hover { border-color: var(--muted); }
+  .plan-card img { display: block; width: 100%; aspect-ratio: 4 / 3; object-fit: contain; background: #fff; }
+  .plan-name { display: flex; justify-content: space-between; align-items: center; gap: 6px; padding: 8px 10px; font-size: 13px; font-weight: 600; background: var(--surface); border-top: 1px solid var(--line); }
+  .plan-wrap { position: relative; display: inline-block; max-width: 100%; line-height: 0; border: 1px solid var(--line); border-radius: 10px; overflow: hidden; background: #fff; cursor: crosshair; }
+  .plan-wrap img { display: block; max-width: 100%; max-height: 60vh; }
+  .plan-wrap.big { cursor: default; } .plan-wrap.big img { max-height: 72vh; }
+  .pin { position: absolute; transform: translate(-50%, -50%); min-width: 22px; height: 22px; padding: 0 5px; border-radius: 11px; background: var(--crit); color: #fff; font: 700 11px/22px var(--font-mono); text-align: center; box-shadow: 0 1px 4px rgba(0,0,0,.35); border: 2px solid #fff; cursor: pointer; white-space: nowrap; z-index: 2; }
+  .pin.vs-opgelost { background: var(--warn); } .pin.vs-gecontroleerd { background: var(--ok); } .pin.vs-vervallen { background: var(--muted); }
+  .pin.mine { background: var(--accent); z-index: 3; } .pin.dim { opacity: .55; cursor: default; }
   .lightbox { position: fixed; inset: 0; background: rgba(0,0,0,.88); display: none; place-items: center; z-index: 60; cursor: zoom-out; padding: 24px; }
   .lightbox.show { display: grid; } .lightbox img { max-width: 100%; max-height: calc(100vh - 90px); border-radius: 10px; box-shadow: var(--shadow); }
   .lightbox .btn { position: absolute; bottom: 20px; left: 50%; transform: translateX(-50%); background: var(--surface); }
@@ -315,7 +327,7 @@
   .modal .mh { padding: 14px 18px; border-bottom: 1px solid var(--line); display: flex; justify-content: space-between; align-items: center; }
   .modal .mb { padding: 18px; }
   .modal .mf { padding: 12px 18px; border-top: 1px solid var(--line); display: flex; justify-content: space-between; gap: 8px; }
-  .toast { position: fixed; bottom: 18px; left: 50%; transform: translateX(-50%); background: var(--ink); color: var(--ground); padding: 9px 14px; border-radius: 8px; font-size: 13px; z-index: 60; opacity: 0; transition: opacity .2s; pointer-events: none; }
+  .toast { pointer-events: none; position: fixed; bottom: 18px; left: 50%; transform: translateX(-50%); background: var(--ink); color: var(--ground); padding: 9px 14px; border-radius: 8px; font-size: 13px; z-index: 60; opacity: 0; transition: opacity .2s; pointer-events: none; }
   .toast.show { opacity: 1; }
   @media (prefers-reduced-motion: reduce) { .toast { transition: none; } }
   @media (max-width: 640px) { main { padding: 14px; padding-block: 16px 60px; } .top-in { padding: 8px 14px; gap: 10px; } .brand .name { display: none; } :root { --label-w: 180px; } }
@@ -402,11 +414,11 @@
 <div class="toast" id="toast" role="status"></div>
 <div class="loader" id="loader" aria-live="polite"><div class="logo"><i class="base"></i><i class="fill" id="loaderFill"></i></div><div class="pct" id="loaderPct">0%</div><div class="msg" id="loaderMsg">Even geduld…</div></div>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.45.4/dist/umd/supabase.min.js"></script>
-<script src="config.js?v=1.19.1"></script>
+<script src="config.js?v=1.20.0"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
-<script src="postcodes.js?v=1.19.1"></script>
-<script src="meetstaat-export.js?v=1.19.1"></script>
-<script src="meetstaat-import.js?v=1.19.1"></script>
-<script src="app.js?v=1.19.1"></script>
+<script src="postcodes.js?v=1.20.0"></script>
+<script src="meetstaat-export.js?v=1.20.0"></script>
+<script src="meetstaat-import.js?v=1.20.0"></script>
+<script src="app.js?v=1.20.0"></script>
 </body>
 </html>

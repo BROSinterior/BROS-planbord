@@ -2,7 +2,7 @@
    BROS Planbord — app v1.0
    Statische webapp op Supabase (login, live-synchronisatie, rechten)
    ===================================================================== */
-const APP_VERSION = "1.19.1";
+const APP_VERSION = "1.20.0";
 const PROJ_STATUS = { offerte: "In offerte", lopend: "Lopend", on_hold: "On hold", afgerond: "Afgerond", verloren: "Verloren" };
 const KLANTTYPE = { particulier: "Particulier", zakelijk: "Zakelijk" };
 const KLANTCODE = { particulier: "PAR", zakelijk: "ZAK" };
@@ -35,7 +35,7 @@ const workdays = (a, b) => { let n = 0; for (let s = a; s <= b; s = addDays(s, 1
 /* ---------- state ---------- */
 const S = {
   session: null, me: null, setPassword: false, passwordForced: false,
-  profiles: {}, tarieven: {}, fasen: {}, standaardtaken: [], projecten: {}, taken: {}, uren: {}, documenten: {}, instellingen: {}, loten: {}, posten: {}, meetstaat_posten: {}, vorderingen: {}, vordering_regels: {}, contacten: {}, project_contacten: {}, goedkeuringen: {}, notities: {}, werfbezoeken: {}, vaststellingen: {}, klant_timing: {},
+  profiles: {}, tarieven: {}, fasen: {}, standaardtaken: [], projecten: {}, taken: {}, uren: {}, documenten: {}, instellingen: {}, loten: {}, posten: {}, meetstaat_posten: {}, vorderingen: {}, vordering_regels: {}, contacten: {}, project_contacten: {}, goedkeuringen: {}, notities: {}, werfbezoeken: {}, vaststellingen: {}, klant_timing: {}, werfplannen: {},
   view: "overzicht", project: null, ptab: "taken",
   filters: { user: "", status: "", project: "", q: "" }, cfilters: { soort: "", q: "" },
   ganttStart: addDays(mondayOf(todayIso), -14), ganttDays: 112, ganttOpen: {},
@@ -88,8 +88,8 @@ const projKost = (pid, soort) => Object.values(S.uren).filter(h => h.project_id 
 let toastT; function toast(msg) { const t = $("#toast"); t.textContent = msg; t.classList.add("show"); clearTimeout(toastT); toastT = setTimeout(() => t.classList.remove("show"), 2800); }
 
 /* ---------- data laden en live houden ---------- */
-const TABLES = { profiles: "profiles", tarieven: "tarieven", fasen: "fasen", standaardtaken: "standaardtaken", projecten: "projecten", taken: "taken", uren: "uren", documenten: "documenten", instellingen: "instellingen", loten: "loten", posten: "posten", meetstaat_posten: "meetstaat_posten", vorderingen: "vorderingen", vordering_regels: "vordering_regels", contacten: "contacten", project_contacten: "project_contacten", goedkeuringen: "goedkeuringen", notities: "notities", werfbezoeken: "werfbezoeken", vaststellingen: "vaststellingen", klant_timing: "klant_timing" };
-const OPTIONAL_TABLES = ["tarieven", "documenten", "instellingen", "loten", "posten", "meetstaat_posten", "vorderingen", "vordering_regels", "contacten", "project_contacten", "goedkeuringen", "notities", "werfbezoeken", "vaststellingen", "klant_timing"]; // ontbreken zolang het bijbehorende sql-script niet is uitgevoerd
+const TABLES = { profiles: "profiles", tarieven: "tarieven", fasen: "fasen", standaardtaken: "standaardtaken", projecten: "projecten", taken: "taken", uren: "uren", documenten: "documenten", instellingen: "instellingen", loten: "loten", posten: "posten", meetstaat_posten: "meetstaat_posten", vorderingen: "vorderingen", vordering_regels: "vordering_regels", contacten: "contacten", project_contacten: "project_contacten", goedkeuringen: "goedkeuringen", notities: "notities", werfbezoeken: "werfbezoeken", vaststellingen: "vaststellingen", klant_timing: "klant_timing", werfplannen: "werfplannen" };
+const OPTIONAL_TABLES = ["tarieven", "documenten", "instellingen", "loten", "posten", "meetstaat_posten", "vorderingen", "vordering_regels", "contacten", "project_contacten", "goedkeuringen", "notities", "werfbezoeken", "vaststellingen", "klant_timing", "werfplannen"]; // ontbreken zolang het bijbehorende sql-script niet is uitgevoerd
 const rowKey = (t, r) => t === "fasen" || t === "loten" ? r.nr : t === "klant_timing" ? r.project_id + "|" + r.fase_nr : t === "tarieven" ? r.user_id : t === "instellingen" ? r.key : t === "vordering_regels" ? (r.id || r.vordering_id + "|" + r.lot + "|" + (r.post_id || "")) : r.id;
 function ingest(table, rows) {
   if (table === "standaardtaken") { S.standaardtaken = rows.sort((a, b) => a.fase_nr - b.fase_nr || a.volgorde - b.volgorde); return; }
@@ -118,7 +118,7 @@ async function loadAll() {
 }
 function subscribe() {
   // Eén kanaal per tabel: als één tabel niet in de realtime-publicatie zit, blijven de andere werken.
-  ["profiles", "tarieven", "fasen", "standaardtaken", "projecten", "taken", "uren", "documenten", "loten", "posten", "meetstaat_posten", "meetstaat_prijzen", "vorderingen", "vordering_regels", "contacten", "project_contacten", "goedkeuringen", "notities", "werfbezoeken", "vaststellingen", "klant_timing"].forEach(t => {
+  ["profiles", "tarieven", "fasen", "standaardtaken", "projecten", "taken", "uren", "documenten", "loten", "posten", "meetstaat_posten", "meetstaat_prijzen", "vorderingen", "vordering_regels", "contacten", "project_contacten", "goedkeuringen", "notities", "werfbezoeken", "vaststellingen", "klant_timing", "werfplannen"].forEach(t => {
     const ch = sb.channel("pb-" + t);
     ch.on("postgres_changes", { event: "*", schema: "public", table: t }, (payload) => {
       if (t === "standaardtaken") { refetch(t); return; }
@@ -574,7 +574,7 @@ function vsCard(v, withProject) {
     <div class="vs-body">
       <div class="vs-head"><b class="num">${vsNr(v)}</b>${v.prioriteit === "hoog" ? `<span class="pill late" title="Hoge prioriteit">!</span>` : v.prioriteit === "laag" ? `<span class="pill kl">laag</span>` : ""}${vsPill(v)}${v.klant_zichtbaar ? `<span class="pill st-afgerond" title="Zichtbaar voor de klant">klant</span>` : ""}${withProject && S.projecten[v.project_id] ? `<span class="muted">· ${esc(projName(S.projecten[v.project_id]))}</span>` : ""}</div>
       ${v.titel ? `<div class="vs-title">${esc(v.titel)}</div>` : ""}<div class="vs-text ${v.titel ? "muted" : ""}">${esc(v.omschrijving || (v.titel ? "" : "—"))}</div>
-      <div class="vs-meta muted">${[v.ruimte, v.lot ? lotName(v.lot) : ""].filter(Boolean).map(esc).join(" · ")}</div>
+      <div class="vs-meta muted">${[v.ruimte, v.lot ? lotName(v.lot) : ""].filter(Boolean).map(esc).join(" · ")}${v.plan_id && S.werfplannen[v.plan_id] ? ` <span class="pill kl" title="Aangeduid op ${esc(S.werfplannen[v.plan_id].naam)}">📍 ${esc(S.werfplannen[v.plan_id].naam)}</span>` : ""}</div>
       <div class="vs-foot"><span>${vsWieCell(v)}</span><span class="num ${vsLate(v) ? "late-txt" : "muted"}">${v.deadline ? "tegen " + fmt(v.deadline) : ""}</span></div>
     </div></div>`;
 }
@@ -604,7 +604,7 @@ function vWerf(p) {
     const groups = {}; list.forEach(v => { const k = key(v); (groups[k] = groups[k] || []).push(v); });
     cards = Object.keys(groups).sort((a, b) => (a ? 0 : 1) - (b ? 0 : 1) || (groep === "lot" ? Number(a) - Number(b) : a.localeCompare(b))).map(k => `<div class="vs-group"><h4>${esc(label(k))} <span class="muted num" style="font-weight:400">${groups[k].filter(v => v.status === "open").length} open · ${groups[k].length}</span></h4><div class="vs-grid">${groups[k].map(v => vsCard(v)).join("")}</div></div>`).join("");
   } else cards = `<div class="vs-grid">${list.map(v => vsCard(v)).join("")}</div>`;
-  return kpi + `<div class="panel" style="margin-bottom:16px"><div class="panel-head"><div><h3>Vaststellingen</h3><div class="muted" style="font-size:12px;margin-top:2px">Punten van de werf met foto's, verantwoordelijke aannemer en deadline · ${all.length} in totaal</div></div>
+  return kpi + vPlannen(p) + `<div class="panel" style="margin-bottom:16px"><div class="panel-head"><div><h3>Vaststellingen</h3><div class="muted" style="font-size:12px;margin-top:2px">Punten van de werf met foto's, verantwoordelijke aannemer en deadline · ${all.length} in totaal</div></div>
       <div class="actions"><a class="btn sm" href="${esc(werfUrl(p.id))}" target="_blank" rel="noopener" title="Werfmodus voor op de smartphone: foto's nemen, ook zonder bereik">📱 Werfmodus</a><button class="btn sm" data-act="wb-new" data-pid="${p.id}">+ Werfbezoek</button><button class="btn sm primary" data-act="vs-new" data-pid="${p.id}">+ Vaststelling</button></div></div>
     <div class="filters" style="padding:10px 16px;border-bottom:1px solid var(--line)"><select data-werff="status">${opts([["actief", "Open en opgelost"], ["open", "Alleen open"], ["opgelost", "Opgelost · te controleren"], ["gecontroleerd", "Gecontroleerd"], ["vervallen", "Vervallen"], ["alle", "Alles"]], f.status)}</select><select data-werff="wie"><option value="">Alle verantwoordelijken</option>${opts(wieKeys.map(k => [k, wieLabel(k)]), f.wie)}</select><input data-werff="q" placeholder="Zoeken: omschrijving, ruimte, nummer…" value="${esc(f.q || "")}" style="min-width:220px"><select data-werff="groep">${opts([["", "Niet groeperen"], ["wie", "Per verantwoordelijke"], ["lot", "Per lot"], ["ruimte", "Per ruimte"]], f.groep === true ? "wie" : (f.groep || ""))}</select></div>
     ${list.length ? cards : `<div class="empty"><b>${all.length ? "Niets gevonden met deze filter" : "Nog geen vaststellingen"}</b>${all.length ? "" : "Maak een vaststelling met foto's, of open de werfmodus op je smartphone tijdens het werfbezoek."}</div>`}</div>
@@ -613,13 +613,14 @@ function vWerf(p) {
 }
 function vsForm(v = {}, pid, bezoekId) {
   const isNew = !v.id; const projectId = v.project_id || pid; const p = S.projecten[projectId]; if (!p) return;
-  const fotos = [...(v.fotos || [])]; let nieuw = [];   // nieuw: File-objecten die bij bewaren geüpload worden
+  const fotos = [...(v.fotos || [])]; let nieuw = []; let pin = v.plan_id && v.plan_x != null ? { x: Number(v.plan_x), y: Number(v.plan_y) } : null;   // nieuw: File-objecten die bij bewaren geüpload worden
   const ruimtes = [...new Set(vsOf(projectId).map(x => x.ruimte).filter(Boolean))].sort();
   const lots = [...new Set(msRows(projectId).map(r => r.lot))].sort((a, b) => a - b);
   const bezoeken = wbOf(projectId);
   openModal(isNew ? "Nieuwe vaststelling — " + p.klant : `${vsNr(v)} — ${p.klant}`, `<div class="form-grid">
     <div class="field span2"><label>Foto's</label><div class="vs-foto-edit" id="vs_fotos"></div>
       <div class="actions" style="margin-top:8px"><label class="btn sm">📷 Foto's toevoegen<input type="file" accept="image/*" multiple hidden id="vs_file"></label><span class="muted" style="font-size:12px;align-self:center">Worden verkleind tot 1600 px vóór het uploaden.</span></div></div>
+    ${schemaV() >= 20 ? `<div class="field span2"><label for="vs_plan">Locatie op plan</label>${plansOf(projectId).length ? `<select id="vs_plan" name="plan_id" style="max-width:360px"><option value="">— geen plan —</option>${opts(plansOf(projectId).map(x => [x.id, x.naam]), v.plan_id || "")}</select><div id="vs_planbox" style="margin-top:8px"></div>` : `<div class="muted" style="font-size:12px">Nog geen plannen voor dit project — voeg er een toe in het paneel Plannen op het tabblad Werf.</div>`}</div>` : ""}
     ${schemaV() >= 19 ? `<div class="field span2"><label for="vs_titel">Titel <span class="muted" style="font-weight:400">— kort, voor het overzicht</span></label><input id="vs_titel" name="titel" value="${esc(v.titel || "")}" placeholder="bv. Scharnier kastdeur keuken"></div>` : ""}
     <div class="field span2"><label for="vs_oms">Omschrijving</label><textarea id="vs_oms" name="omschrijving" rows="3" ${schemaV() >= 19 ? "" : "required"} placeholder="Wat is er vastgesteld en wat moet er gebeuren?">${esc(v.omschrijving || "")}</textarea></div>
     <div class="field"><label for="vs_ruimte">Ruimte / locatie</label><input id="vs_ruimte" name="ruimte" list="vs_ruimtes" value="${esc(v.ruimte || "")}" placeholder="bv. Keuken, badkamer 1e verd."><datalist id="vs_ruimtes">${ruimtes.map(r => `<option value="${esc(r)}">`).join("")}</datalist></div>
@@ -637,7 +638,7 @@ function vsForm(v = {}, pid, bezoekId) {
     onSave: async (d) => {
       const f = $("#mform"); const btn = f.querySelector("button[type=submit]");
       if (!(d.titel || "").trim() && !(d.omschrijving || "").trim()) { toast("Geef een titel of omschrijving"); return false; }
-      const row = { project_id: projectId, ...(schemaV() >= 19 ? { titel: (d.titel || "").trim() } : {}), omschrijving: (d.omschrijving || "").trim(), ruimte: (d.ruimte || "").trim(), lot: d.lot ? Number(d.lot) : null, ...wieSplit(d.wie), deadline: d.deadline || null, prioriteit: d.prioriteit, status: d.status, bezoek_id: d.bezoek_id || null, opmerking: (d.opmerking || "").trim(), klant_zichtbaar: d.klant_zichtbaar === "on" };
+      const row = { project_id: projectId, ...(schemaV() >= 19 ? { titel: (d.titel || "").trim() } : {}), ...(schemaV() >= 20 && $("#vs_plan") ? { plan_id: d.plan_id || null, plan_x: d.plan_id && pin ? pin.x : null, plan_y: d.plan_id && pin ? pin.y : null } : {}), omschrijving: (d.omschrijving || "").trim(), ruimte: (d.ruimte || "").trim(), lot: d.lot ? Number(d.lot) : null, ...wieSplit(d.wie), deadline: d.deadline || null, prioriteit: d.prioriteit, status: d.status, bezoek_id: d.bezoek_id || null, opmerking: (d.opmerking || "").trim(), klant_zichtbaar: d.klant_zichtbaar === "on" };
       if (row.status === "opgelost" && v.status !== "opgelost" && v.status !== "gecontroleerd") { row.opgelost_op = new Date().toISOString(); row.opgelost_door = S.me.id; }
       if (row.status === "open") { row.opgelost_op = null; row.opgelost_door = null; }
       let saved;
@@ -660,6 +661,83 @@ function vsForm(v = {}, pid, bezoekId) {
     box.querySelectorAll("[data-rm]").forEach(b => b.onclick = () => { fotos.splice(Number(b.dataset.rm), 1); draw(); }); box.querySelectorAll("[data-rmn]").forEach(b => b.onclick = () => { nieuw.splice(Number(b.dataset.rmn), 1); draw(); }); };
   draw();
   $("#vs_file").addEventListener("change", (e) => { nieuw = nieuw.concat([...e.target.files]); e.target.value = ""; draw(); });
+  const planSel = $("#vs_plan");
+  if (planSel) {
+    const box = $("#vs_planbox");
+    const drawPlan = () => { const pl = S.werfplannen[planSel.value]; if (!pl) { box.innerHTML = ""; return; }
+      const others = vsOf(projectId).filter(x => x.plan_id === pl.id && x.id !== v.id && x.plan_x != null && vsActief(x));
+      box.innerHTML = `<div class="muted" style="font-size:12px;margin-bottom:6px">Klik op het plan om de locatie aan te duiden${pin ? ` · <button type="button" class="btn ghost sm" data-pin-clear>Pin wissen</button>` : ""}</div><div class="plan-wrap" data-pinnable><img src="${esc(pl.url)}" alt="">${others.map(x => planPin(x, true).replace(' data-act="vs-open"', "")).join("")}${pin ? `<span class="pin mine" style="left:${pin.x * 100}%;top:${pin.y * 100}%">${v.nr || "●"}</span>` : ""}</div>`;
+      box.querySelector("[data-pinnable]").onclick = (e) => { if (e.target.closest(".pin") && !e.target.classList.contains("mine")) return; const img = box.querySelector("img"); const r = img.getBoundingClientRect(); pin = { x: Math.min(1, Math.max(0, (e.clientX - r.left) / r.width)), y: Math.min(1, Math.max(0, (e.clientY - r.top) / r.height)) }; drawPlan(); };
+      const cl = box.querySelector("[data-pin-clear]"); if (cl) cl.onclick = () => { pin = null; drawPlan(); }; };
+    planSel.addEventListener("change", () => { pin = null; drawPlan(); }); drawPlan();
+  }
+}
+/* ---------- Werfplannen (stap 2): plannen per project, pin per vaststelling ---------- */
+const plansOf = (pid) => Object.values(S.werfplannen).filter(x => x.project_id === pid).sort((a, b) => (a.volgorde ?? 0) - (b.volgorde ?? 0) || (a.naam || "").localeCompare(b.naam || ""));
+const planPin = (v, dim) => `<span class="pin vs-${v.status} ${dim ? "dim" : ""}" style="left:${Number(v.plan_x) * 100}%;top:${Number(v.plan_y) * 100}%" data-act="vs-open" data-id="${v.id}" title="${esc(vsNr(v) + " · " + (v.titel || v.omschrijving || ""))}">${v.nr || "•"}</span>`;
+async function loadPdfJs() {
+  if (window.pdfjsLib) return window.pdfjsLib;
+  await new Promise((res, rej) => { const el = document.createElement("script"); el.src = "https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"; el.onload = res; el.onerror = () => rej(new Error("pdf.js kon niet geladen worden")); document.head.appendChild(el); });
+  window.pdfjsLib.GlobalWorkerOptions.workerSrc = "https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js";
+  return window.pdfjsLib;
+}
+/* pdf → één jpeg per pagina (max. 10 pagina's, langste zijde 2600 px); afbeelding → verkleind */
+async function planToImages(file, max = 2600) {
+  if (/pdf$/i.test(file.type) || /\.pdf$/i.test(file.name)) {
+    const pdfjs = await loadPdfJs(); const doc = await pdfjs.getDocument({ data: await file.arrayBuffer() }).promise; const out = [];
+    for (let i = 1; i <= Math.min(doc.numPages, 10); i++) {
+      const page = await doc.getPage(i); const v1 = page.getViewport({ scale: 1 }); const scale = max / Math.max(v1.width, v1.height); const vp = page.getViewport({ scale });
+      const c = document.createElement("canvas"); c.width = Math.round(vp.width); c.height = Math.round(vp.height); const ctx = c.getContext("2d"); ctx.fillStyle = "#fff"; ctx.fillRect(0, 0, c.width, c.height);
+      await page.render({ canvasContext: ctx, viewport: vp }).promise;
+      out.push({ blob: await new Promise(r => c.toBlob(r, "image/jpeg", 0.86)), w: c.width, h: c.height, page: i, pages: doc.numPages });
+    }
+    return out;
+  }
+  const r = await fotoVerklein(file, max, 0.86); return [{ ...r, page: 1, pages: 1 }];
+}
+function planForm(pid) {
+  const p = S.projecten[pid]; if (!p) return;
+  openModal("Plan toevoegen — " + p.klant, `<div class="form-grid">
+    <div class="field span2"><label for="pl_file">Bestand (pdf of afbeelding)</label><input id="pl_file" name="file" type="file" accept="application/pdf,image/*" required><small class="muted">Van een pdf worden de pagina's (max. 10) elk als plan opgeslagen. Tip: één plan per verdieping.</small></div>
+    <div class="field span2"><label for="pl_naam">Naam</label><input id="pl_naam" name="naam" placeholder="bv. Gelijkvloers, 1e verdieping"></div>
+  </div>`, {
+    saveLabel: "Toevoegen",
+    onSave: async (d) => {
+      const f = $("#pl_file").files[0]; if (!f) { toast("Kies een bestand"); return false; }
+      const btn = $("#mform button[type=submit]"); btn.textContent = "Plan omzetten…";
+      let pages; try { pages = await planToImages(f); } catch (e) { toast("Plan niet leesbaar: " + e.message, 6000); return false; }
+      const base = (d.naam || "").trim() || f.name.replace(/\.[^.]+$/, ""); const n0 = plansOf(pid).length; const rows = [];
+      for (let i = 0; i < pages.length; i++) {
+        btn.textContent = `Pagina ${i + 1}/${pages.length} uploaden…`;
+        const path = `${pid}/plannen/${Date.now()}-${i + 1}.jpg`;
+        const { error } = await sb.storage.from("werf").upload(path, pages[i].blob, { contentType: "image/jpeg" });
+        if (error) { toast("Upload mislukt: " + error.message, 6000); return false; }
+        rows.push({ project_id: pid, naam: pages.length > 1 ? `${base} · p${pages[i].page}` : base, path, url: sb.storage.from("werf").getPublicUrl(path).data.publicUrl, w: pages[i].w, h: pages[i].h, volgorde: n0 + i + 1, created_by: S.me.id });
+      }
+      const { data, error } = await sb.from("werfplannen").insert(rows).select(); if (error) { toast("Bewaren mislukt: " + error.message, 6000); return false; }
+      (data || []).forEach(r => S.werfplannen[r.id] = r); render(); toast(`${rows.length} plan${rows.length === 1 ? "" : "nen"} toegevoegd`);
+    },
+  });
+}
+function vPlannen(p) {
+  if (schemaV() < 20) return "";
+  const pls = plansOf(p.id); const all = vsOf(p.id);
+  return `<div class="panel" style="margin-bottom:16px"><div class="panel-head"><div><h3>Plannen</h3><div class="muted" style="font-size:12px;margin-top:2px">Duid per vaststelling de locatie aan op een plan; klik op een plan voor het overzicht van de punten.</div></div><div class="actions"><button class="btn sm" data-act="plan-new" data-pid="${p.id}">+ Plan</button></div></div>
+    ${pls.length ? `<div class="plan-grid">${pls.map(pl => { const n = all.filter(v => v.plan_id === pl.id && v.plan_x != null && v.status === "open").length; return `<div class="plan-card" data-act="plan-view" data-id="${pl.id}"><img src="${esc(pl.url)}" alt="" loading="lazy"><div class="plan-name"><span>${esc(pl.naam)}</span>${n ? `<span class="pill vs-open">${n} open</span>` : ""}</div></div>`; }).join("")}</div>` : `<div class="empty" style="padding:16px">Nog geen plannen. Voeg een pdf (grondplan per verdieping) of afbeelding toe.</div>`}</div>`;
+}
+function planView(id) {
+  const pl = S.werfplannen[id]; if (!pl) return; const p = S.projecten[pl.project_id];
+  const f = S.werfF || { status: "actief" };
+  const pts = vsOf(pl.project_id).filter(v => v.plan_id === id && v.plan_x != null).filter(v => f.status === "actief" ? vsActief(v) : f.status === "alle" ? true : v.status === f.status);
+  openModal(`${pl.naam} — ${p ? p.klant : ""}`, `<div class="muted" style="font-size:12px;margin-bottom:8px">${pts.length} punt${pts.length === 1 ? "" : "en"} op dit plan (filter van het tabblad Werf) · klik op een pin om de vaststelling te openen</div>
+    <div class="plan-wrap big"><img src="${esc(pl.url)}" alt="">${pts.map(v => planPin(v)).join("")}</div>
+    ${pts.length ? `<div class="tw" style="margin-top:10px"><table class="t"><tbody>${pts.sort((a, b) => (a.nr || 0) - (b.nr || 0)).map(v => `<tr class="click" data-act="vs-open" data-id="${v.id}"><td class="num" style="width:60px">${vsNr(v)}</td><td>${esc(v.titel || noteExcerpt(v.omschrijving, 80))}<small class="muted" style="display:block">${esc(v.ruimte || "")}</small></td><td>${esc(vsWie(v) || "—")}</td><td>${vsPill(v)}</td></tr>`).join("")}</tbody></table></div>` : ""}
+    <div style="margin-top:12px;display:flex;gap:8px;align-items:center"><input class="inline" data-plan-naam value="${esc(pl.naam)}" style="max-width:260px" title="Naam van het plan"><a class="btn sm" href="${esc(pl.url)}" target="_blank" rel="noopener">Origineel openen</a></div>`, {
+    wide: true, saveLabel: "Sluiten",
+    onSave: async () => { const naam = $("[data-plan-naam]").value.trim(); if (naam && naam !== pl.naam) await dbUpdate("werfplannen", id, { naam }); },
+    onDelete: async () => { const n = vsOf(pl.project_id).filter(v => v.plan_id === id).length; if (n && !confirm(`${n} vaststelling${n === 1 ? " verwijst" : "en verwijzen"} naar dit plan; die pins gaan verloren. Toch verwijderen?`)) throw new Error("geannuleerd"); await dbDelete("werfplannen", id); if (pl.path) sb.storage.from("werf").remove([pl.path]).catch(() => { }); Object.values(S.vaststellingen).forEach(v => { if (v.plan_id === id) { v.plan_id = null; } }); toast("Plan verwijderd"); },
+  });
+  $("#mform").querySelectorAll("[data-act=vs-open]").forEach(el => el.onclick = (e) => { e.preventDefault(); e.stopPropagation(); closeModal(); vsForm(S.vaststellingen[el.dataset.id]); });
 }
 function wbForm(b = {}, pid) {
   const isNew = !b.id; const projectId = b.project_id || pid; const p = S.projecten[projectId]; if (!p) return;
@@ -2014,6 +2092,8 @@ document.addEventListener("click", (e) => {
   if (d.act === "kt-clear") return ktClear(d.pid, Number(d.nr));
   if (d.act === "vs-open") { if (e.target.dataset.foto) return fotoLightbox(e.target.dataset.foto); return vsForm(S.vaststellingen[d.id]); }
   if (d.act === "wb-new") return wbForm({}, d.pid);
+  if (d.act === "plan-new") return planForm(d.pid);
+  if (d.act === "plan-view") return planView(d.id);
   if (d.act === "wb-open") return wbForm(S.werfbezoeken[d.id]);
   if (d.act === "note-open") return noteForm(S.notities[d.id]);
   if (d.act === "gk-view") return gkView(d.id);

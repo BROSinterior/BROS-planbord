@@ -3,7 +3,7 @@
    Zelfde database als het Planbord (Supabase). Werkt offline: foto's en punten wachten in een
    lokale wachtrij (IndexedDB) en worden verzonden zodra er weer verbinding is.
    ===================================================================== */
-const WERF_VERSION = "1.19.1";
+const WERF_VERSION = "1.20.0";
 const cfg = window.PLANBORD_CONFIG || {};
 if (!window.supabase) { document.getElementById("app").innerHTML = '<main><div class="empty"><b>De werfmodus is nog niet volledig geladen.</b><br>Open ze één keer met bereik; daarna werkt ze ook offline.<br><br><button class="btn" onclick="location.reload()">Opnieuw proberen</button></div></main>'; throw new Error("supabase-js niet geladen"); }
 const sb = window.supabase.createClient(cfg.supabaseUrl, cfg.supabaseAnonKey);
@@ -80,21 +80,26 @@ async function loadBase() {
 }
 async function loadProject(pid) {
   if (!pid) return;
-  const [vs, wb, pc, lp] = await Promise.all([
+  const [vs, wb, pc, lp, wp] = await Promise.all([
     sb.from("vaststellingen").select("*").eq("project_id", pid).order("nr", { ascending: false }),
     sb.from("werfbezoeken").select("*").eq("project_id", pid).order("datum", { ascending: false }),
     sb.from("project_contacten").select("id,rol,contact_id").eq("project_id", pid),
     sb.from("meetstaat_posten_v").select("lot").eq("project_id", pid).then(r => r.error ? sb.from("meetstaat_posten").select("lot").eq("project_id", pid) : r),
+    sb.from("werfplannen").select("*").eq("project_id", pid).order("volgorde").then(r => r.error ? { data: [] } : r),
   ]);
   if (vs.error) throw vs.error;
   let contacten = [];
   if ((pc.data || []).length) { const ids = pc.data.map(x => x.contact_id); const { data } = await sb.from("contacten").select("id,naam,soort,vakgebied,email,gsm").in("id", ids); contacten = pc.data.map(x => ({ rol: x.rol, c: (data || []).find(c => c.id === x.contact_id) })).filter(x => x.c); }
   const lots = [...new Set((lp.data || []).map(x => x.lot).filter(Boolean))].sort((a, b) => a - b);
-  S.data = { vaststellingen: vs.data || [], werfbezoeken: wb.data || [], contacten, lots };
+  S.data = { vaststellingen: vs.data || [], werfbezoeken: wb.data || [], contacten, lots, plannen: wp.data || [] };
+  // plannen alvast in de cache van de browser zetten (service worker) zodat ze offline beschikbaar zijn
+  (wp.data || []).forEach(pl => { try { fetch(pl.url).catch(() => { }); } catch (e) { } });
   store.set("cache." + pid, S.data);
   if (S.bezoek && !S.data.werfbezoeken.find(b => b.id === S.bezoek) && !S.queue.find(q => q.kind === "wb-new" && q.row.id === S.bezoek)) { S.bezoek = null; store.del("bezoek"); }
 }
-function useCache(pid) { S.data = store.get("cache." + pid, { vaststellingen: [], werfbezoeken: [], contacten: [], lots: [] }); }
+function useCache(pid) { S.data = store.get("cache." + pid, { vaststellingen: [], werfbezoeken: [], contacten: [], lots: [], plannen: [] }); }
+const plan = (id) => (S.data.plannen || []).find(x => x.id === id);
+const pinHtml = (v, cls = "") => v.plan_x == null ? "" : `<span class="pin ${cls || v.status}" style="left:${Number(v.plan_x) * 100}%;top:${Number(v.plan_y) * 100}%">${v.nr || "•"}</span>`;
 async function refresh() {
   if (!S.online) return;
   try { await loadBase(); await loadProject(S.project); } catch (e) { console.warn(e); toast("Gegevens niet vernieuwd: " + (e.message || e)); }
@@ -193,6 +198,7 @@ function vDetail() {
     <div class="hd" style="display:flex;gap:8px;align-items:center;margin-bottom:6px"><span class="nr" style="font-size:18px">${vsNr(v)}</span>${v.prioriteit === "hoog" ? `<span class="pill late">Hoge prioriteit</span>` : ""}${pill(v)}${v._pending ? `<span class="pill pend">nog te verzenden</span>` : ""}</div>
     ${v.titel ? `<h1 style="margin:0 0 6px">${esc(v.titel)}</h1>` : ""}<p style="font-size:17px;margin:0 0 10px;white-space:pre-wrap">${esc(v.omschrijving || (v.titel ? "" : "—"))}</p>
     <div class="meta">${v.ruimte ? `<div>Ruimte: <b>${esc(v.ruimte)}</b></div>` : ""}${v.lot ? `<div>Lot: <b>${esc(lotName(v.lot))}</b></div>` : ""}<div>Verantwoordelijke: <b>${esc(wie(v) || "nog niet toegewezen")}</b></div>${v.deadline ? `<div>Op te lossen tegen: <b class="${isLate(v) ? "late" : ""}">${fmtLong(v.deadline)}</b></div>` : ""}${v.opgelost_op ? `<div>Opgelost op <b>${fmtLong(v.opgelost_op.slice(0, 10))}</b>${v.opgelost_door ? " door " + esc(profile(v.opgelost_door)?.name || "") : ""}</div>` : ""}${v.opmerking ? `<div>Opmerking: <b>${esc(v.opmerking)}</b></div>` : ""}</div>
+    ${v.plan_id && plan(v.plan_id) && v.plan_x != null ? `<h2>Op het plan · ${esc(plan(v.plan_id).naam)}</h2><div class="plan-wrap"><img src="${esc(plan(v.plan_id).url)}" alt="">${pinHtml(v)}</div>` : ""}
     ${bewijs.length ? `<h2>Bewijsfoto's</h2><div class="fotos">${bewijs.map(f => `<img src="${esc(f.url)}" alt="" data-lb="${esc(f.url)}">`).join("")}</div>` : ""}
     <div style="margin-top:18px;display:grid;gap:10px">
       ${v.status === "open" ? `<label class="btn ok" style="text-align:center">✓ Opgelost — met bewijsfoto<input type="file" accept="image/*" capture="environment" hidden data-oplos="${v.id}"></label><button class="btn" data-act="oplos" data-id="${v.id}">✓ Opgelost zonder foto</button>` : ""}
@@ -214,6 +220,7 @@ function vForm() {
     <div class="field" style="margin-top:12px"><label>Titel</label><input id="f_titel" value="${esc(v.titel || "")}" placeholder="Kort, bv. Scharnier kastdeur"></div>
     <div class="field"><label>Omschrijving</label><textarea id="f_oms" placeholder="Wat is er vastgesteld, wat moet er gebeuren?">${esc(v.omschrijving || "")}</textarea></div>
     <div class="field"><label>Ruimte / locatie</label><input id="f_ruimte" list="ruimtes" value="${esc(v.ruimte || "")}" placeholder="bv. Keuken"><datalist id="ruimtes">${ruimtes.map(r => `<option value="${esc(r)}">`).join("")}</datalist></div>
+    ${(S.data.plannen || []).length ? `<div class="field"><label>Locatie op plan</label><select id="f_plan"><option value="">— geen plan —</option>${S.data.plannen.map(pl => `<option value="${pl.id}" ${v.plan_id === pl.id ? "selected" : ""}>${esc(pl.naam)}</option>`).join("")}</select><div id="f_planbox" style="margin-top:8px"></div></div>` : ""}
     ${lots.length ? `<div class="field"><label>Lot</label><select id="f_lot"><option value="">—</option>${lots.map(l => `<option value="${l}" ${v.lot === l ? "selected" : ""}>${esc(lotName(l))}</option>`).join("")}</select></div>` : ""}
     <div class="field"><label>Verantwoordelijke</label><select id="f_wie"><option value="">— nog niet toegewezen —</option>${pcs.length ? `<optgroup label="Klant, aannemers en contacten">${pcs.map(x => opt("c:" + x.c.id, x.c.naam + (x.c.vakgebied ? " · " + x.c.vakgebied : "") + " · " + (ROL[x.rol] || x.rol))).join("")}</optgroup>` : ""}<optgroup label="Team">${S.base.profiles.map(u => opt(u.id, u.name)).join("")}</optgroup></select></div>
     <div class="field"><label>Prioriteit</label><div class="seg" id="f_prio">${Object.entries(VS_PRIO).map(([k, l]) => `<button type="button" data-p="${k}" aria-pressed="${(v.prioriteit || "normaal") === k}">${l}</button>`).join("")}</div></div>
@@ -223,7 +230,15 @@ function vForm() {
     <p class="meta" style="text-align:center;margin-top:10px">${S.online ? "Wordt meteen verzonden." : "Geen bereik: wordt bewaard op dit toestel en later verzonden."}</p>`;
 }
 function bindForm() {
-  const v = S.form; v._nieuw = v._nieuw || []; let prio = v.prioriteit || "normaal";
+  const v = S.form; v._nieuw = v._nieuw || []; let prio = v.prioriteit || "normaal"; let pin = v.plan_id && v.plan_x != null ? { x: Number(v.plan_x), y: Number(v.plan_y) } : null;
+  const planSel = $("#f_plan");
+  if (planSel) { const pb = $("#f_planbox");
+    const drawPlan = () => { const pl = plan(planSel.value); if (!pl) { pb.innerHTML = ""; return; }
+      const others = allVs().filter(x => x.plan_id === pl.id && x.id !== v.id && x.plan_x != null && (x.status === "open" || x.status === "opgelost"));
+      pb.innerHTML = `<p class="meta" style="margin:0 0 6px">Tik op het plan om de plek aan te duiden.${pin ? ` <button type="button" class="btn ghost" style="width:auto;padding:2px 8px" data-pin-clear>Pin wissen</button>` : ""}</p><div class="plan-wrap" data-pinnable><img src="${esc(pl.url)}" alt="">${others.map(x => pinHtml(x, x.status + " dim")).join("")}${pin ? `<span class="pin mine" style="left:${pin.x * 100}%;top:${pin.y * 100}%">${v.nr || "●"}</span>` : ""}</div>`;
+      pb.querySelector("[data-pinnable]").addEventListener("click", (e) => { const img = pb.querySelector("img"); const r = img.getBoundingClientRect(); pin = { x: Math.min(1, Math.max(0, (e.clientX - r.left) / r.width)), y: Math.min(1, Math.max(0, (e.clientY - r.top) / r.height)) }; drawPlan(); });
+      const cl = pb.querySelector("[data-pin-clear]"); if (cl) cl.onclick = () => { pin = null; drawPlan(); }; };
+    planSel.addEventListener("change", () => { pin = null; drawPlan(); }); drawPlan(); }
   const box = $("#f_fotos");
   const draw = () => { box.innerHTML = (v.id ? (v.fotos || []).map(f => `<div class="fi"><img src="${esc(f.url)}" alt=""></div>`).join("") : "") + v._nieuw.map((f, i) => `<div class="fi"><img src="${f.url}" alt=""><button type="button" class="x" data-x="${i}">✕</button></div>`).join(""); box.querySelectorAll("[data-x]").forEach(b => b.onclick = () => { v._nieuw.splice(Number(b.dataset.x), 1); draw(); }); };
   draw();
@@ -235,7 +250,7 @@ function bindForm() {
   $("#f_save").onclick = async () => {
     const oms = $("#f_oms").value.trim(); const titel = $("#f_titel").value.trim(); if (!oms && !titel && !v._nieuw.length && !(v.fotos || []).length) { toast("Geef een titel of omschrijving, of neem een foto"); $("#f_titel").focus(); return; }
     const wieV = $("#f_wie").value; const wieP = wieV.startsWith("c:") ? { contact_id: wieV.slice(2), assignee: null } : { contact_id: null, assignee: wieV || null };
-    const patch = { titel, omschrijving: oms, ruimte: $("#f_ruimte").value.trim(), lot: $("#f_lot") && $("#f_lot").value ? Number($("#f_lot").value) : null, ...wieP, prioriteit: prio, deadline: $("#f_deadline").value || null };
+    const patch = { titel, omschrijving: oms, ...(planSel ? { plan_id: planSel.value || null, plan_x: planSel.value && pin ? pin.x : null, plan_y: planSel.value && pin ? pin.y : null } : {}), ruimte: $("#f_ruimte").value.trim(), lot: $("#f_lot") && $("#f_lot").value ? Number($("#f_lot").value) : null, ...wieP, prioriteit: prio, deadline: $("#f_deadline").value || null };
     $("#f_save").disabled = true;
     if (v.id) {
       const st = $("#f_status").value; patch.opmerking = $("#f_opm").value.trim();

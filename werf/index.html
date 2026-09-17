@@ -78,11 +78,15 @@
   .meta { color: var(--muted); font-size: 14px; } .meta b { color: var(--ink); }
   .panel { background: var(--surface); border: 1px solid var(--line); border-radius: 14px; padding: 14px; margin-bottom: 12px; box-shadow: var(--card); }
   .back { background: none; border: 0; color: var(--accent); font-size: 16px; padding: 4px 0 10px; }
-  .toast { position: fixed; left: 50%; bottom: calc(86px + env(safe-area-inset-bottom)); transform: translateX(-50%) translateY(20px); background: var(--ink); color: var(--ground); padding: 10px 16px; border-radius: 12px; font-size: 14px; opacity: 0; transition: .2s; z-index: 9; max-width: 92vw; text-align: center; }
+  .toast { pointer-events: none; position: fixed; left: 50%; bottom: calc(86px + env(safe-area-inset-bottom)); transform: translateX(-50%) translateY(20px); background: var(--ink); color: var(--ground); padding: 10px 16px; border-radius: 12px; font-size: 14px; opacity: 0; transition: .2s; z-index: 9; max-width: 92vw; text-align: center; }
   .toast.show { opacity: 1; transform: translateX(-50%); }
   .login { max-width: 380px; margin: 14vh auto 0; }
   .login .mark { width: 120px; height: 36px; margin: 0 auto 22px; }
   .err { color: var(--crit); font-size: 14px; margin: 8px 0; }
+  .plan-wrap { position: relative; display: block; line-height: 0; border: 1px solid var(--line); border-radius: 12px; overflow: hidden; background: #fff; touch-action: manipulation; }
+  .plan-wrap img { display: block; width: 100%; }
+  .pin { position: absolute; transform: translate(-50%, -50%); min-width: 24px; height: 24px; padding: 0 6px; border-radius: 12px; background: var(--crit); color: #fff; font: 700 12px/24px var(--font); text-align: center; box-shadow: 0 1px 4px rgba(0,0,0,.35); border: 2px solid #fff; white-space: nowrap; }
+  .pin.opgelost { background: var(--warn); } .pin.gecontroleerd { background: var(--ok); } .pin.vervallen { background: var(--muted); } .pin.mine { background: var(--accent); } .pin.dim { opacity: .5; }
   .lb { position: fixed; inset: 0; background: rgba(0,0,0,.92); display: none; place-items: center; z-index: 20; }
   .lb.show { display: grid; } .lb img { max-width: 100vw; max-height: 100vh; }
   .empty { text-align: center; color: var(--muted); padding: 40px 10px; }
@@ -95,7 +99,7 @@
 <div class="toast" id="toast"></div>
 <div class="lb" id="lb"></div>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.45.4/dist/umd/supabase.min.js"></script>
-<script src="../config.js?v=1.19.1"></script>
-<script src="werf.js?v=1.19.1"></script>
+<script src="../config.js?v=1.20.0"></script>
+<script src="werf.js?v=1.20.0"></script>
 </body>
 </html>
