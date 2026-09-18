@@ -2,7 +2,7 @@
    BROS Planbord — app v1.0
    Statische webapp op Supabase (login, live-synchronisatie, rechten)
    ===================================================================== */
-const APP_VERSION = "1.21.1";
+const APP_VERSION = "1.21.2";
 const PROJ_STATUS = { offerte: "In offerte", lopend: "Lopend", on_hold: "On hold", afgerond: "Afgerond", verloren: "Verloren" };
 const KLANTTYPE = { particulier: "Particulier", zakelijk: "Zakelijk" };
 const KLANTCODE = { particulier: "PAR", zakelijk: "ZAK" };
@@ -1265,7 +1265,8 @@ async function msImportFile(pid, file) {
   const p = S.projecten[pid]; if (!p) return;
   loader.start("ms.import", "Excel lezen…", 3000);
   const bytes = new Uint8Array(await file.arrayBuffer());
-  const ph = await msImportPlaceholders();
+  // sjabloonregels ophalen via het Drive-script; duurt dat te lang (of hapert het script), dan zonder verder
+  const ph = await Promise.race([msImportPlaceholders(), new Promise(r => setTimeout(() => r(msImportPlaceholders.cache || []), 8000))]);
   loader.step("Posten herkennen…");
   const parsed = await window.MeetstaatImport.parse(bytes, window.JSZip, ph);
   loader.done("ms.import");
@@ -1291,9 +1292,11 @@ async function msImportFile(pid, file) {
       if (missing.length) { toast(`Lot ${missing.join(", ")} bestaat niet in het Planbord — voeg dat lot eerst toe onder Instellingen › Loten.`); return false; }
       loader.start("ms.import2", "Posten bewaren…", 4000);
       try {
-        if (existing && d.mode === "replace") { const { error } = await sb.from("meetstaat_posten").delete().eq("project_id", pid); if (error) throw error; }
+        // eerst de nieuwe posten bewaren, pas daarna de oude weghalen: mislukt het bewaren, dan blijft de bestaande meetstaat staan
+        const oude = existing && d.mode === "replace" ? msRows(pid).map(r => r.id) : [];
         // sinds script 012 staan kostprijs en marge in meetstaat_prijzen: msInsert splitst dat (klantprijs = prijs met marge 0 %)
         for (let i = 0; i < rows.length; i += 200) await msInsert(rows.slice(i, i + 200));
+        for (let i = 0; i < oude.length; i += 200) { const { error } = await sb.from("meetstaat_posten").delete().in("id", oude.slice(i, i + 200)); if (error) throw error; }
         await refetch("meetstaat_posten"); loader.done("ms.import2");
         toast(`${rows.length} posten geïmporteerd uit ${file.name}`);
       } catch (e) { loader.fail(); toast("Import mislukt: " + e.message); await refetch("meetstaat_posten"); return false; }
