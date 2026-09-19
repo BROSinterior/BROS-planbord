@@ -2,7 +2,7 @@
    BROS Planbord — app v1.0
    Statische webapp op Supabase (login, live-synchronisatie, rechten)
    ===================================================================== */
-const APP_VERSION = "1.21.2";
+const APP_VERSION = "1.22.1";
 const PROJ_STATUS = { offerte: "In offerte", lopend: "Lopend", on_hold: "On hold", afgerond: "Afgerond", verloren: "Verloren" };
 const KLANTTYPE = { particulier: "Particulier", zakelijk: "Zakelijk" };
 const KLANTCODE = { particulier: "PAR", zakelijk: "ZAK" };
@@ -18,8 +18,7 @@ const esc = (s) => String(s ?? "").replace(/[&<>"']/g, c => ({ "&": "&amp;", "<"
 const DAY = 86400000;
 const iso = (d) => d.toISOString().slice(0, 10);
 const pd = (s) => { const [y, m, d] = s.split("-").map(Number); return new Date(Date.UTC(y, m - 1, d)); };
-const _n = new Date();
-const todayIso = `${_n.getFullYear()}-${String(_n.getMonth() + 1).padStart(2, "0")}-${String(_n.getDate()).padStart(2, "0")}`;
+let todayIso = ""; function refreshToday() { const n = new Date(); todayIso = `${n.getFullYear()}-${String(n.getMonth() + 1).padStart(2, "0")}-${String(n.getDate()).padStart(2, "0")}`; } refreshToday();   // bij elke render herberekend: een tabblad dat 's nachts openblijft rekent zo met de juiste dag
 const addDays = (s, n) => iso(new Date(pd(s).getTime() + n * DAY));
 const diffDays = (a, b) => Math.round((pd(b) - pd(a)) / DAY);
 const mondayOf = (s) => { const d = pd(s); const w = (d.getUTCDay() + 6) % 7; return addDays(s, -w); };
@@ -59,10 +58,20 @@ const sb = configured ? window.supabase.createClient(cfg.supabaseUrl, cfg.supaba
 const isBeheer = () => S.me?.role === "beheer";
 const users = () => Object.values(S.profiles).filter(u => u.active !== false && u.role !== "klant").sort((a, b) => a.name.localeCompare(b.name));
 const projects = () => Object.values(S.projecten).sort((a, b) => (b.nummer || "").localeCompare(a.nummer || "") || (a.klant || "").localeCompare(b.klant || ""));
-const tasksOf = (pid) => Object.values(S.taken).filter(t => t.project_id === pid).sort((a, b) => (a.volgorde ?? 0) - (b.volgorde ?? 0) || (a.start || "9").localeCompare(b.start || "9"));
+/* index per render: uren per taak/project en taken per project (vermijdt een volledige scan per rij in grote lijsten) */
+let IDX = null;
+function buildIndex() {
+  const byTask = {}, byProj = {}, tasksByProj = {};
+  for (const h of Object.values(S.uren)) { const u = Number(h.uren) || 0; byTask[h.taak_id] = (byTask[h.taak_id] || 0) + u; byProj[h.project_id] = (byProj[h.project_id] || 0) + u; }
+  for (const t of Object.values(S.taken)) (tasksByProj[t.project_id] = tasksByProj[t.project_id] || []).push(t);
+  for (const k in tasksByProj) tasksByProj[k].sort((a, b) => (a.volgorde ?? 0) - (b.volgorde ?? 0) || (a.start || "9").localeCompare(b.start || "9"));
+  IDX = { byTask, byProj, tasksByProj };
+}
+const idx = () => { if (!IDX) buildIndex(); return IDX; };
+const tasksOf = (pid) => (idx().tasksByProj[pid] || []).slice();
 const hoursOf = (pred) => Object.values(S.uren).filter(pred).reduce((s, h) => s + (Number(h.uren) || 0), 0);
-const taskDone = (tid) => hoursOf(h => h.taak_id === tid);
-const projDone = (pid) => hoursOf(h => h.project_id === pid);
+const taskDone = (tid) => idx().byTask[tid] || 0;
+const projDone = (pid) => idx().byProj[pid] || 0;
 const projPlanned = (pid) => tasksOf(pid).reduce((s, t) => s + (Number(t.uren_gepland) || 0), 0);
 const isLate = (t) => t.status !== "done" && t.eind && t.eind < todayIso;
 const userById = (id) => S.profiles[id] || { name: "—", initials: "?", color: "#999" };
@@ -79,13 +88,14 @@ const wieNaam = (t) => t.contact_id && S.contacten[t.contact_id] ? S.contacten[t
 /* keuzelijst "toegewezen aan": team + contacten van het project (waarde "c:<id>" voor een contact) */
 const wieOpts = (pid, t) => { const cur = t.contact_id ? "c:" + t.contact_id : (t.assignee ?? S.me.id); const pcs = pid ? contactsOf(pid) : []; return `<option value="">— niemand —</option><optgroup label="Team">${opts(users().map(u => [u.id, u.name]), cur)}</optgroup>${pcs.length ? `<optgroup label="Klant en contacten van dit project">${opts(pcs.map(x => ["c:" + x.c.id, x.c.naam + " · " + (CONTACT_ROL[x.rol] || x.rol)]), cur)}</optgroup>` : ""}`; };
 const wieSplit = (v) => v && v.startsWith("c:") ? { assignee: null, contact_id: v.slice(2) } : { assignee: v || null, contact_id: null };
-const avatar = (id) => { const u = userById(id); return `<span class="avatar" style="background:${u.color}" title="${esc(u.name)}">${esc(u.initials)}</span>`; };
+const safeColor = (c) => /^#[0-9a-fA-F]{3,8}$/.test(String(c || "")) ? c : "#6B6B7B";
+const avatar = (id) => { const u = userById(id); return `<span class="avatar" style="background:${safeColor(u.color)}" title="${esc(u.name)}">${esc(u.initials)}</span>`; };
 const vsTag = (t) => t.vaststelling_id && S.vaststellingen[t.vaststelling_id] ? ` <span class="pill kl" data-vs="${t.vaststelling_id}" title="Uit een vaststelling op de werf — klik om ze te openen" style="cursor:pointer">📍 ${vsNr(S.vaststellingen[t.vaststelling_id])}</span>` : "";
 const klantTag = (t) => vsTag(t) + (t.uren_klant ? ` <span class="pill kl" title="Uren van deze taak zijn zichtbaar voor de klant">uren → klant</span>` : "") + (t.timing_klant ? ` <span class="pill kl" title="Titel en timing van deze taak staan in de planning van de klant">timing → klant</span>` : "");
-const pill = (t) => isLate(t) ? `<span class="pill late">Te laat</span>` : `<span class="pill ${t.status}">${TASK_STATUS[t.status] || t.status}</span>`;
+const pill = (t) => isLate(t) ? `<span class="pill late">Te laat</span>` : `<span class="pill ${esc(t.status)}">${esc(TASK_STATUS[t.status] || t.status)}</span>`;
 const kost = (uid, uren, soort) => (Number(S.tarieven[uid]?.[soort]) || 0) * uren;
 const projKost = (pid, soort) => Object.values(S.uren).filter(h => h.project_id === pid).reduce((s, h) => s + kost(h.user_id, Number(h.uren) || 0, soort), 0);
-let toastT; function toast(msg) { const t = $("#toast"); t.textContent = msg; t.classList.add("show"); clearTimeout(toastT); toastT = setTimeout(() => t.classList.remove("show"), 2800); }
+let toastT; function toast(msg, ms = 2800) { const t = $("#toast"); t.textContent = msg; t.classList.add("show"); clearTimeout(toastT); toastT = setTimeout(() => t.classList.remove("show"), Math.max(2800, ms)); }
 
 /* ---------- data laden en live houden ---------- */
 const TABLES = { profiles: "profiles", tarieven: "tarieven", fasen: "fasen", standaardtaken: "standaardtaken", projecten: "projecten", taken: "taken", uren: "uren", documenten: "documenten", instellingen: "instellingen", loten: "loten", posten: "posten", meetstaat_posten: "meetstaat_posten", vorderingen: "vorderingen", vordering_regels: "vordering_regels", contacten: "contacten", project_contacten: "project_contacten", goedkeuringen: "goedkeuringen", notities: "notities", werfbezoeken: "werfbezoeken", vaststellingen: "vaststellingen", klant_timing: "klant_timing", werfplannen: "werfplannen", werfverslagen: "werfverslagen" };
@@ -93,7 +103,7 @@ const OPTIONAL_TABLES = ["tarieven", "documenten", "instellingen", "loten", "pos
 const rowKey = (t, r) => t === "fasen" || t === "loten" ? r.nr : t === "klant_timing" ? r.project_id + "|" + r.fase_nr : t === "tarieven" ? r.user_id : t === "instellingen" ? r.key : t === "vordering_regels" ? (r.id || r.vordering_id + "|" + r.lot + "|" + (r.post_id || "")) : r.id;
 function ingest(table, rows) {
   if (table === "standaardtaken") { S.standaardtaken = rows.sort((a, b) => a.fase_nr - b.fase_nr || a.volgorde - b.volgorde); return; }
-  const o = {}; rows.forEach(r => o[rowKey(table, r)] = r); S[table] = o;
+  const o = {}; rows.forEach(r => o[rowKey(table, r)] = r); S[table] = o; IDX = null;
 }
 // Sinds script 012 leest het team de meetstaat, loten en postenbibliotheek via views: kostprijs, marge en richtprijs
 // zijn daarin leeg voor medewerkers en de verkoopprijs (verkoop_ep) komt berekend mee. Bestaat de view nog niet → de tabel.
@@ -121,11 +131,13 @@ function subscribe() {
   ["profiles", "tarieven", "fasen", "standaardtaken", "projecten", "taken", "uren", "documenten", "loten", "posten", "meetstaat_posten", "meetstaat_prijzen", "vorderingen", "vordering_regels", "contacten", "project_contacten", "goedkeuringen", "notities", "werfbezoeken", "vaststellingen", "klant_timing", "werfplannen", "werfverslagen"].forEach(t => {
     const ch = sb.channel("pb-" + t);
     ch.on("postgres_changes", { event: "*", schema: "public", table: t }, (payload) => {
+      if (S.bulk) return;   // tijdens een bulkactie (import, lot wissen) niet per rij herbouwen; op het einde volgt één refetch
       if (t === "standaardtaken") { refetch(t); return; }
       if (t === "meetstaat_prijzen") { const pid = (payload.new || payload.old || {}).post_id; if (pid && S.meetstaat_posten[pid]) msRefetch([pid]); return; }
       if (VIEW_OF[t] && S.viewsOk !== false) { if (payload.eventType === "DELETE") { delete S[t][rowKey(t, payload.old)]; render(); } else rowRefetch(t, rowKey(t, payload.new)); return; }
       if (payload.eventType === "DELETE") { delete S[t][rowKey(t, payload.old)]; }
       else { S[t][rowKey(t, payload.new)] = payload.new; }
+      IDX = null;
       if (t === "profiles") S.me = S.profiles[S.session.user.id] || S.me;
       render();
     });
@@ -152,14 +164,14 @@ async function refetchAll() { try { await loadAll(); render(); } catch (e) { } }
 /* ---------- schrijven (optimistisch: eerst lokaal, dan database) ---------- */
 async function dbInsert(table, row) {
   const { data, error } = await sb.from(table).insert(row).select().single();
-  if (error) { toast("Bewaren mislukt: " + error.message); throw error; }
+  if (error) { toast("Bewaren mislukt: " + error.message, 5000); error.__toasted = true; throw error; }
   const key = table === "tarieven" ? "user_id" : table === "loten" ? "nr" : "id"; S[table][data[key]] = data; render(); return data;
 }
 async function dbUpdate(table, id, patch) {
   const key = table === "tarieven" ? "user_id" : table === "loten" ? "nr" : "id";
   const prev = S[table][id]; S[table][id] = { ...prev, ...patch }; render();
   const { data, error } = await sb.from(table).update(patch).eq(key, id).select().single();
-  if (error) { S[table][id] = prev; render(); toast("Bewaren mislukt: " + error.message); throw error; }
+  if (error) { if (prev === undefined) delete S[table][id]; else S[table][id] = prev; render(); toast("Bewaren mislukt: " + error.message, 5000); error.__toasted = true; throw error; }
   S[table][id] = VIEW_OF[table] ? { ...prev, ...data } : data; render();
   if (VIEW_OF[table] && S.viewsOk !== false) rowRefetch(table, id);
   return data;
@@ -167,13 +179,13 @@ async function dbUpdate(table, id, patch) {
 async function dbUpsert(table, row) {
   const key = table === "tarieven" ? "user_id" : "id";
   const { data, error } = await sb.from(table).upsert(row).select().single();
-  if (error) { toast("Bewaren mislukt: " + error.message); throw error; }
+  if (error) { toast("Bewaren mislukt: " + error.message, 5000); error.__toasted = true; throw error; }
   S[table][data[key]] = data; render(); return data;
 }
 async function dbDelete(table, id) {
   const prev = S[table][id]; delete S[table][id]; render();
   const { error } = await sb.from(table).delete().eq("id", id);
-  if (error) { S[table][id] = prev; render(); toast("Verwijderen mislukt: " + error.message); throw error; }
+  if (error) { if (prev === undefined) delete S[table][id]; else S[table][id] = prev; render(); toast("Verwijderen mislukt: " + error.message, 5000); error.__toasted = true; throw error; }
 }
 
 
@@ -184,7 +196,7 @@ const SCHEMA_HINT = (n) => `<div class="empty" style="padding:10px 12px;margin-b
 const driveReady = () => !!(driveCfg().url && driveCfg().secret);
 async function driveCall(action, payload) {
   const c = driveCfg(); if (!c.url) throw new Error("Drive-koppeling niet ingesteld (Instellingen → Drive).");
-  const r = await fetch(c.url, { method: "POST", body: JSON.stringify({ ...payload, action, secret: c.secret }), redirect: "follow" });
+  const r = await fetch(c.url, { method: "POST", body: JSON.stringify({ token: S.session?.access_token || "", ...payload, action, secret: c.secret }), redirect: "follow" });
   const j = await r.json().catch(() => ({ ok: false, error: "Onleesbaar antwoord van het Drive-script." }));
   if (!j.ok) throw new Error(j.error || "Drive-script gaf een fout.");
   return j;
@@ -411,7 +423,8 @@ function msTotals(pid) {
 }
 function vMeetstaat(p) {
   if (!msReady()) return `<div class="panel"><div class="empty"><b>Meetstaat nog niet beschikbaar</b>Voer eerst databasescript <code>sql/007_meetstaat.sql</code> uit in Supabase (SQL Editor). Daarna verschijnen hier de loten en de postenbibliotheek.</div></div>`;
-  const rows = msRows(p.id); const beheer = isBeheer(); const t = msTotals(p.id);
+  // klantweergave: kostprijs, marge en btw-kolom verbergen (bv. tijdens een bespreking met de klant) — onthouden per browser
+  const rows = msRows(p.id); const beheer = isBeheer() && !S.msKlant; const t = msTotals(p.id);
   const byLot = {}; rows.forEach(r => (byLot[r.lot] = byLot[r.lot] || []).push(r));
   const lots = Object.keys(byLot).map(Number).sort((a, b) => a - b);
   const kpi = `<div class="rend">
@@ -440,7 +453,7 @@ function vMeetstaat(p) {
         <td style="width:104px">${sel(r, "status", opts(Object.entries(MS_STATUS), r.status))}${r.akkoord_op ? `<small class="muted" style="display:block;color:var(--ok)" title="Goedgekeurd door de klant in het portaal">✓ klant ${fmt(r.akkoord_op.slice(0, 10))}</small>` : ""}</td>
         <td class="r" style="width:36px"><button class="btn ghost sm danger" data-act="ms-del" data-id="${r.id}" aria-label="Verwijderen">✕</button></td></tr>`; }).join(""); }).join("");
   return kpi + vGoedkeuringen(p) + `<div class="panel"><div class="panel-head"><div><h3>Meetstaat</h3><div class="muted" style="font-size:12px;margin-top:2px">${rows.length ? `${rows.length} posten in ${lots.length} loten` : "Nog leeg"} · klik in een veld om het te wijzigen, bewaard bij verlaten van het veld</div></div>
-      <div class="actions">${schemaV() >= 13 && rows.some(r => gkKandidaat(r)) ? `<button class="btn sm" data-act="gk-new" data-pid="${p.id}" title="Offerte of meerwerk bevroren ter goedkeuring in het klantenportaal zetten">Ter goedkeuring voorleggen</button>` : ""}<button class="btn sm" data-act="ms-import" data-pid="${p.id}" title="Een bestaande meetstaat (Excel, elk BROS-sjabloon) inlezen als posten">Importeren uit Excel</button>${rows.length ? `<button class="btn sm" data-act="ms-export" data-pid="${p.id}" title="Excel in het BROS-sjabloon aanmaken in Documenten/Meetstaat van de projectmap">Exporteren naar Drive (Excel)</button>` : ""}<button class="btn sm" data-act="ms-add-post" data-pid="${p.id}">+ Post</button><button class="btn sm primary" data-act="ms-add-lot" data-pid="${p.id}">+ Lot toevoegen</button></div></div>
+      <div class="actions">${isBeheer() ? `<button class="btn sm ${S.msKlant ? "primary" : ""}" data-act="ms-klant" title="Kostprijs, marge en btw-kolom verbergen, bv. als je de meetstaat met de klant overloopt (sneltoets: K)">${S.msKlant ? "👁 Klantweergave aan" : "Klantweergave"}</button>` : ""}${schemaV() >= 13 && rows.some(r => gkKandidaat(r)) ? `<button class="btn sm" data-act="gk-new" data-pid="${p.id}" title="Offerte of meerwerk bevroren ter goedkeuring in het klantenportaal zetten">Ter goedkeuring voorleggen</button>` : ""}<button class="btn sm" data-act="ms-import" data-pid="${p.id}" title="Een bestaande meetstaat (Excel, elk BROS-sjabloon) inlezen als posten">Importeren uit Excel</button>${rows.length ? `<button class="btn sm" data-act="ms-export" data-pid="${p.id}" title="Excel in het BROS-sjabloon aanmaken in Documenten/Meetstaat van de projectmap">Exporteren naar Drive (Excel)</button>` : ""}<button class="btn sm" data-act="ms-add-post" data-pid="${p.id}">+ Post</button><button class="btn sm primary" data-act="ms-add-lot" data-pid="${p.id}">+ Lot toevoegen</button></div></div>
     ${rows.length ? `<div class="tw"><table class="t ms"><thead><tr><th>Nr</th><th>Omschrijving</th><th>Locatie</th><th>Hoev.</th><th>Eenh.</th>${beheer ? `<th title="Kostprijs / aannemersprijs excl. btw">Kost EP</th><th>Marge</th>` : ""}<th class="r">Klant EP</th><th class="r">Totaal excl.</th>${beheer ? `<th>Btw</th>` : ""}<th>Status</th><th></th></tr></thead><tbody>${body}</tbody></table></div>` : `<div class="empty"><b>Nog geen posten</b>Voeg een lot toe (met de standaardposten) of kies losse posten uit de bibliotheek.</div>`}</div>`;
 }
 /* ---------- Notities / verslagen per project: vergaderingen, werfverslagen, feedback — met verantwoordelijken en actiepunten (taken) ---------- */
@@ -975,7 +988,7 @@ async function msInsert(rows) {
   (data || []).forEach(r => S.meetstaat_posten[r.id] = r);
   if (v12 && data) {
     // vrije posten en geïmporteerde regels: prijs expliciet bewaren (bibliotheekposten krijgen hun richtprijs via de trigger)
-    const prijzen = data.map((r, i) => ({ post_id: r.id, eenheidsprijs: Number(rows[i].eenheidsprijs) || 0, marge: rows[i].marge == null || rows[i].marge === "" ? null : Number(rows[i].marge) })).filter((p, i) => !rows[i].post_id || Number(rows[i].eenheidsprijs) > 0 && isBeheer());
+    const prijzen = !isBeheer() ? [] : data.map((r, i) => ({ post_id: r.id, eenheidsprijs: Number(rows[i].eenheidsprijs) || 0, marge: rows[i].marge == null || rows[i].marge === "" ? null : Number(rows[i].marge) })).filter((p, i) => !rows[i].post_id || Number(rows[i].eenheidsprijs) > 0 && isBeheer());
     for (let i = 0; i < prijzen.length; i += 200) { const chunk = prijzen.slice(i, i + 200); const { error: e2 } = await (isBeheer() ? sb.from("meetstaat_prijzen").upsert(chunk) : sb.from("meetstaat_prijzen").insert(chunk)); if (e2) toast("Prijzen niet bewaard: " + e2.message); }
     await msRefetch(data.map(r => r.id));
   }
@@ -1293,13 +1306,13 @@ async function msImportFile(pid, file) {
       loader.start("ms.import2", "Posten bewaren…", 4000);
       try {
         // eerst de nieuwe posten bewaren, pas daarna de oude weghalen: mislukt het bewaren, dan blijft de bestaande meetstaat staan
-        const oude = existing && d.mode === "replace" ? msRows(pid).map(r => r.id) : [];
+        const oude = existing && d.mode === "replace" ? msRows(pid).map(r => r.id) : []; S.bulk = true;
         // sinds script 012 staan kostprijs en marge in meetstaat_prijzen: msInsert splitst dat (klantprijs = prijs met marge 0 %)
         for (let i = 0; i < rows.length; i += 200) await msInsert(rows.slice(i, i + 200));
         for (let i = 0; i < oude.length; i += 200) { const { error } = await sb.from("meetstaat_posten").delete().in("id", oude.slice(i, i + 200)); if (error) throw error; }
-        await refetch("meetstaat_posten"); loader.done("ms.import2");
+        S.bulk = false; await refetch("meetstaat_posten"); loader.done("ms.import2");
         toast(`${rows.length} posten geïmporteerd uit ${file.name}`);
-      } catch (e) { loader.fail(); toast("Import mislukt: " + e.message); await refetch("meetstaat_posten"); return false; }
+      } catch (e) { S.bulk = false; loader.fail(); toast("Import mislukt: " + e.message, 6000); await refetch("meetstaat_posten"); return false; }
     },
   });
 }
@@ -1363,7 +1376,12 @@ const docIcon = (m, n) => /spreadsheet|excel/.test(m) ? "xls" : /word|document/.
 
 /* ---------- render root ---------- */
 const TABS = [["overzicht", "Overzicht"], ["projecten", "Projecten"], ["taken", "Taken"], ["planning", "Planning"], ["uren", "Uren"], ["contacten", "Contacten"], ["notities", "Notities"], ["team", "Team"], ["rapporten", "Rapporten"], ["instellingen", "Instellingen", "beheer"]];
+let renderPending = false;
 function render() {
+  // niet herbouwen terwijl iemand in een inline-veld typt (realtime-update van een collega zou de invoer wissen); zoekvelden regelen hun eigen focus
+  const a = document.activeElement;
+  if (a && a.classList && a.classList.contains("inline") && !a.hasAttribute("data-noteq") && !a.hasAttribute("data-werff") && !a.hasAttribute("data-filter") && !a.hasAttribute("data-cfilter") && !a.hasAttribute("data-projq") && $("#app").contains(a)) { renderPending = true; return; }
+  renderPending = false; refreshToday(); buildIndex();
   const app = $("#app");
   if (!configured) { app.innerHTML = `<div class="login"><div class="card"><h1>BROS Planbord</h1><p>De app is nog niet gekoppeld aan de database. Vul <code>config.js</code> in (Project URL en anon public-sleutel uit Supabase) en herlaad.</p></div></div>`; return; }
   if (!S.session) { renderLogin(); return; }
@@ -1970,7 +1988,7 @@ function openModal(title, bodyHtml, { onSave, onDelete, saveLabel = "Bewaren", w
   $("#modal").style.width = wide ? "min(820px, 100%)" : "";
   $("#modalBg").classList.add("show");
   const form = $("#mform");
-  form.onsubmit = async (e) => { e.preventDefault(); const btn = form.querySelector('button[type=submit]'); btn.disabled = true; try { const d = Object.fromEntries(new FormData(form).entries()); d._fasen = [...form.querySelectorAll('input[name="fase"]:checked')].map(i => Number(i.value)); const ok = await onSave(d); if (ok !== false) closeModal(); } catch (err) { } btn.disabled = false; };
+  form.onsubmit = async (e) => { e.preventDefault(); const btn = form.querySelector('button[type=submit]'); btn.disabled = true; try { const d = Object.fromEntries(new FormData(form).entries()); d._fasen = [...form.querySelectorAll('input[name="fase"]:checked')].map(i => Number(i.value)); const ok = await onSave(d); if (ok !== false) closeModal(); } catch (err) { console.error(err); if (!(err && err.__toasted)) toast("Bewaren mislukt: " + ((err && err.message) || err), 6000); } btn.disabled = false; };
   if (onDelete) $("[data-mdelete]").onclick = async () => { if (confirm("Zeker verwijderen?")) { try { await onDelete(); closeModal(); } catch (e) { } } };
   setTimeout(() => form.querySelector("input:not([type=checkbox]),select,textarea")?.focus(), 30);
 }
@@ -2203,15 +2221,15 @@ document.addEventListener("click", (e) => {
   if (d.gtoggle) { S.ganttOpen[d.gtoggle] = S.ganttOpen[d.gtoggle] === false; return render(); }
   if (d.gnav) { S.ganttStart = d.gnav === "today" ? addDays(mondayOf(todayIso), -14) : addDays(S.ganttStart, Number(d.gnav)); return render(); }
   if (d.wnav) { S.weekStart = addDays(S.weekStart, Number(d.wnav)); return render(); }
-  if (d.editTask) { e.stopPropagation(); return taskForm(S.taken[d.editTask]); }
+  if (d.editTask) { e.stopPropagation(); const t = S.taken[d.editTask]; if (!t) return toast("Deze taak bestaat niet meer."); return taskForm(t); }
   if (d.editHours) { const h = S.uren[d.editHours]; if (h && (isBeheer() || h.user_id === S.me.id)) return hoursForm(h); return toast("Alleen je eigen uren kun je bewerken."); }
   if (d.act === "new-project") return projectForm();
-  if (d.act === "edit-project") return projectForm(S.projecten[d.pid]);
+  if (d.act === "edit-project") { const pj = S.projecten[d.pid]; if (!pj) return toast("Dit project bestaat niet meer."); return projectForm(pj); }
   if (d.act === "add-fase") return addFaseForm(d.pid);
   if (d.act === "new-task") return taskForm({}, d.pid);
   if (d.act === "log-hours") return hoursForm(d.tid ? { taak_id: d.tid, project_id: d.pid } : {}, d.pid);
   if (d.act === "uren-klant-print") return printKlantUren(S.projecten[d.pid]);
-  if (d.act === "edit-user") return userForm(S.profiles[d.uid]);
+  if (d.act === "edit-user") { const u = S.profiles[d.uid]; if (!u) return toast("Dit profiel bestaat niet meer."); return userForm(u); }
   if (d.act === "export-hours") return exportHours();
   if (d.act === "export-projects") return exportProjects();
   if (d.act === "drive-create" || d.act === "drive-link" || d.act === "drive-list") { const p = S.projecten[d.pid]; const a = d.act.replace("drive-", ""); driveSync(p, a).catch(err => toast("Drive: " + err.message)); return; }
@@ -2227,6 +2245,7 @@ document.addEventListener("click", (e) => {
   if (d.act === "st-del") return stDel(d.id);
   if (d.sellot) { S.selLot = Number(d.sellot); return render(); }
   if (d.vtoggle) { S.vordOpen = S.vordOpen || {}; S.vordOpen[d.vtoggle] = !S.vordOpen[d.vtoggle]; return render(); }
+  if (d.act === "ms-klant") { S.msKlant = !S.msKlant; try { localStorage.setItem("bros.msKlant", S.msKlant ? "1" : ""); } catch (x) { } toast(S.msKlant ? "Klantweergave: kostprijs en marge verborgen" : "Volledige weergave"); return render(); }
   if (d.act === "ms-add-lot") return msAddLotForm(d.pid);
   if (d.act === "ms-open") { S.ptab = "meetstaat"; render(); if (!msRows(d.pid).length) msAddLotForm(d.pid); return; }
   if (d.act === "ms-add-post") return msAddPostForm(d.pid, d.lot ? Number(d.lot) : null);
@@ -2239,15 +2258,15 @@ document.addEventListener("click", (e) => {
   if (d.vs) { e.stopPropagation(); closeModal(); return vsForm(S.vaststellingen[d.vs]); }
   if (d.act === "kt-fill") { const [a, b] = ktTaskSpan(d.pid, Number(d.nr)); return ktSave(d.pid, Number(d.nr), { start: a, eind: b }); }
   if (d.act === "kt-clear") return ktClear(d.pid, Number(d.nr));
-  if (d.act === "vs-open") { if (e.target.dataset.foto) return fotoLightbox(e.target.dataset.foto); return vsForm(S.vaststellingen[d.id]); }
+  if (d.act === "vs-open") { if (e.target.dataset.foto) return fotoLightbox(e.target.dataset.foto); const v = S.vaststellingen[d.id]; if (!v) return toast("Deze vaststelling bestaat niet meer."); return vsForm(v); }
   if (d.act === "wb-new") return wbForm({}, d.pid);
   if (d.act === "plan-new") return planForm(d.pid);
   if (d.act === "wv-new") return wvForm(d.pid);
   if (d.act === "wv-share") { const w = S.werfverslagen[d.id]; if (w) dbUpdate("werfverslagen", w.id, { klant_zichtbaar: !w.klant_zichtbaar }).then(() => toast(!w.klant_zichtbaar ? "Werfverslag zichtbaar in het portaal" : "Werfverslag verborgen voor de klant")).catch(() => { }); return; }
   if (d.act === "wv-del") { const w = S.werfverslagen[d.id]; if (w && confirm(`Werfverslag ${w.nr} verwijderen? De pdf wordt ook gewist.`)) dbDelete("werfverslagen", d.id).then(() => { if (w.pdf_path) sb.storage.from("werf").remove([w.pdf_path]).catch(() => { }); }).catch(() => { }); return; }
   if (d.act === "plan-view") return planView(d.id);
-  if (d.act === "wb-open") return wbForm(S.werfbezoeken[d.id]);
-  if (d.act === "note-open") return noteForm(S.notities[d.id]);
+  if (d.act === "wb-open") { const b = S.werfbezoeken[d.id]; if (!b) return toast("Dit werfbezoek bestaat niet meer."); return wbForm(b); }
+  if (d.act === "note-open") { const n = S.notities[d.id]; if (!n) return toast("Deze notitie bestaat niet meer."); return noteForm(n); }
   if (d.act === "gk-view") return gkView(d.id);
   if (d.act === "gk-withdraw") return gkWithdraw(d.id);
   if (d.act === "ms-export") return exportMeetstaat(S.projecten[d.pid]).catch(err => { loader.fail(); toast("Export: " + err.message); });
@@ -2256,7 +2275,7 @@ document.addEventListener("click", (e) => {
   if (d.act === "contact-new") return contactForm({});
   if (d.act === "contact-link") return linkContactForm(d.pid, d.rol);
   if (d.act === "contact-unlink") { const x = S.project_contacten[d.id]; if (x && confirm(`${S.contacten[x.contact_id]?.naam || "Contact"} ontkoppelen van dit project?`)) dbDelete("project_contacten", d.id).catch(() => { }); return; }
-  if (d.contact) { e.stopPropagation(); return contactForm(S.contacten[d.contact]); }
+  if (d.contact) { e.stopPropagation(); const c = S.contacten[d.contact]; if (!c) return toast("Dit contact bestaat niet meer."); return contactForm(c); }
   if (d.act === "vord-del") return vordDel(d.id);
   if (d.act === "vord-fit") return vordFit(d.id);
   if (d.act === "post-del") return postDel(d.id);
@@ -2265,7 +2284,9 @@ document.addEventListener("click", (e) => {
   if (d.act === "reload") return hardReload();
   if (d.act === "update-later") { updateAvailable = false; $("#updateBar")?.classList.remove("show"); }
 });
+document.addEventListener("keydown", (e) => { if ((e.key === "k" || e.key === "K") && !e.metaKey && !e.ctrlKey && !e.altKey && S.view === "projecten" && S.project && S.ptab === "meetstaat" && isBeheer() && !/^(INPUT|TEXTAREA|SELECT)$/.test(document.activeElement?.tagName || "") && !$("#modalBg").classList.contains("show")) { S.msKlant = !S.msKlant; try { localStorage.setItem("bros.msKlant", S.msKlant ? "1" : ""); } catch (x) { } render(); } });
 document.addEventListener("focusout", (e) => {
+  if (renderPending) setTimeout(() => { if (renderPending) render(); }, 0);
   const d = e.target.dataset || {};
   if (d.stTitle) return stRename(d.stTitle, e.target.value);
   if (d.kt && e.target.type !== "date") { const cur = ktOf(d.pid, Number(d.kt)); if ((cur?.[d.f] || "") !== e.target.value) ktSave(d.pid, Number(d.kt), { [d.f]: e.target.value }); return; }
@@ -2306,7 +2327,8 @@ let updateAvailable = false;
 const APP_FILES = ["index.html", "app.js", "config.js", "postcodes.js", "meetstaat-export.js", "meetstaat-import.js", "version.json", "klant/index.html", "klant/portaal.js", "logo-mark.svg", "werf/index.html", "werf/werf.js", "werf/sw.js"];
 /* de browser-cache omzeilen: alle bestanden van de app vers ophalen (cache: "reload" ververst de HTTP-cache) en dan herladen */
 async function hardReload() {
-  try { await Promise.all(APP_FILES.map(f => fetch(f, { cache: "reload" }).catch(() => { }))); } catch (e) { }
+  try { sessionStorage.setItem("pb-state", JSON.stringify({ view: S.view, project: S.project, ptab: S.ptab })); } catch (e) { }
+  try { await Promise.all(APP_FILES.map(f => fetch(f + (f.endsWith(".json") ? "" : "?v=" + APP_VERSION), { cache: "reload" }).catch(() => { }))); } catch (e) { }
   location.reload();
 }
 async function checkVersion() {
@@ -2323,7 +2345,8 @@ async function checkVersion() {
 
 /* ---------- start ---------- */
 async function boot() {
-  try { const sv = JSON.parse(localStorage.getItem("bros.sort") || "null"); if (sv && sv.key) S.sort = sv; } catch (e) { }
+  try { const sv = JSON.parse(localStorage.getItem("bros.sort") || "null"); if (sv && sv.key) S.sort = sv; S.msKlant = localStorage.getItem("bros.msKlant") === "1"; } catch (e) { }
+  try { const st = JSON.parse(sessionStorage.getItem("pb-state") || "null"); sessionStorage.removeItem("pb-state"); if (st && st.view) { S.view = st.view; S.project = st.project || null; S.ptab = st.ptab || "taken"; } } catch (e) { }
   render();
   if (!configured) return;
   const { data: { session } } = await sb.auth.getSession();

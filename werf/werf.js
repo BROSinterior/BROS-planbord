@@ -3,7 +3,7 @@
    Zelfde database als het Planbord (Supabase). Werkt offline: foto's en punten wachten in een
    lokale wachtrij (IndexedDB) en worden verzonden zodra er weer verbinding is.
    ===================================================================== */
-const WERF_VERSION = "1.20.0";
+const WERF_VERSION = "1.22.0";
 const cfg = window.PLANBORD_CONFIG || {};
 if (!window.supabase) { document.getElementById("app").innerHTML = '<main><div class="empty"><b>De werfmodus is nog niet volledig geladen.</b><br>Open ze één keer met bereik; daarna werkt ze ook offline.<br><br><button class="btn" onclick="location.reload()">Opnieuw proberen</button></div></main>'; throw new Error("supabase-js niet geladen"); }
 const sb = window.supabase.createClient(cfg.supabaseUrl, cfg.supabaseAnonKey);
@@ -40,22 +40,33 @@ const pill = (v) => isLate(v) ? `<span class="pill late">Te laat</span>` : `<spa
 /* ---------- wachtrij (IndexedDB): items met foto's als blobs ---------- */
 const idb = {
   db: null,
-  open() { return new Promise((res, rej) => { if (this.db) return res(this.db); const r = indexedDB.open("bros-werf", 1); r.onupgradeneeded = () => { r.result.createObjectStore("queue", { keyPath: "id", autoIncrement: true }); }; r.onsuccess = () => { this.db = r.result; res(this.db); }; r.onerror = () => rej(r.error); }); },
+  open() { return new Promise((res, rej) => { if (this.db) return res(this.db); const r = indexedDB.open("bros-werf", 1); r.onupgradeneeded = () => { r.result.createObjectStore("queue", { keyPath: "id", autoIncrement: true }); }; r.onsuccess = () => { this.db = r.result; this.db.onclose = this.db.onversionchange = () => { this.db = null; }; res(this.db); }; r.onerror = () => rej(r.error); }); },
   async all() { const db = await this.open(); return new Promise((res, rej) => { const q = db.transaction("queue").objectStore("queue").getAll(); q.onsuccess = () => res(q.result || []); q.onerror = () => rej(q.error); }); },
   async put(item) { const db = await this.open(); return new Promise((res, rej) => { const q = db.transaction("queue", "readwrite").objectStore("queue").put(item); q.onsuccess = () => res(q.result); q.onerror = () => rej(q.error); }); },
   async del(id) { const db = await this.open(); return new Promise((res, rej) => { const q = db.transaction("queue", "readwrite").objectStore("queue").delete(id); q.onsuccess = () => res(); q.onerror = () => rej(q.error); }); },
 };
 async function loadQueue() { try { S.queue = await idb.all(); } catch (e) { S.queue = []; } }
-async function enqueue(item) { item.t = Date.now(); item.id = await idb.put(item); S.queue.push(item); render(); if (S.online) sync(); }
+async function enqueue(item) {
+  item.t = Date.now(); item.pid = item.pid || S.project;
+  try { item.id = await idb.put(item); } catch (e) { toast("Niet bewaard op dit toestel: " + (e.message || e) + ". Probeer opnieuw met bereik.", 6000); throw e; }
+  S.queue.push(item); paint(); if (S.online) sync();
+}
+/* objectURL per wachtrijfoto één keer aanmaken (geen geheugenlek bij elke render) */
+const fotoUrl = (f) => { if (!f._url) f._url = blobUrl(f.blob); return f._url; };
+const revokeItem = (q) => { (q.fotos || []).forEach(f => { if (f._url) { try { URL.revokeObjectURL(f._url); } catch (e) { } f._url = null; } }); };
+/* alleen de statusbadge verversen zolang een formulier openstaat (anders verliest de gebruiker zijn invoer) */
+function paint() { if (S.view === "new" || S.view === "edit" || S.view === "bezoek") { const b = $(".sync"); if (b) b.outerHTML = syncBadge(); } else render(); }
 
 /* ---------- foto's ---------- */
 async function verklein(file, max = 1600, q = 0.82) {
   let img = null;
   if (window.createImageBitmap) img = await createImageBitmap(file, { imageOrientation: "from-image" }).catch(() => null);
-  if (!img) img = await new Promise((res, rej) => { const i = new Image(); i.onload = () => res(i); i.onerror = () => rej(new Error("Foto niet leesbaar")); i.src = URL.createObjectURL(file); });
+  let tmp = null;
+  if (!img) img = await new Promise((res, rej) => { const i = new Image(); i.onload = () => res(i); i.onerror = () => rej(new Error("Foto niet leesbaar")); tmp = URL.createObjectURL(file); i.src = tmp; });
   const s = Math.min(1, max / Math.max(img.width, img.height));
   const c = document.createElement("canvas"); c.width = Math.max(1, Math.round(img.width * s)); c.height = Math.max(1, Math.round(img.height * s));
   c.getContext("2d").drawImage(img, 0, 0, c.width, c.height);
+  if (tmp) URL.revokeObjectURL(tmp); if (img.close) img.close();
   return new Promise(r => c.toBlob(b => r({ blob: b, w: c.width, h: c.height }), "image/jpeg", q));
 }
 async function upload(pid, vid, f) {
@@ -103,52 +114,70 @@ const pinHtml = (v, cls = "") => v.plan_x == null ? "" : `<span class="pin ${cls
 async function refresh() {
   if (!S.online) return;
   try { await loadBase(); await loadProject(S.project); } catch (e) { console.warn(e); toast("Gegevens niet vernieuwd: " + (e.message || e)); }
-  render();
+  paint();
 }
 /* lijst = gegevens van de server + wat nog in de wachtrij staat (lokaal al zichtbaar) */
 function allVs() {
   const rows = S.data.vaststellingen.map(v => ({ ...v }));
   S.queue.forEach(q => {
-    if (q.kind === "vs-new" && q.row.project_id === S.project && !rows.find(r => r.id === q.row.id)) rows.unshift({ ...q.row, _pending: true, fotos: q.fotos.map(f => ({ url: blobUrl(f.blob), _local: true })) });
-    if (q.kind === "vs-update") { const r = rows.find(r => r.id === q.vid); if (r) { Object.assign(r, q.patch, { _pending: true }); if (q.fotos?.length) r[q.veld] = [...(r[q.veld] || []), ...q.fotos.map(f => ({ url: blobUrl(f.blob), _local: true }))]; } }
+    if (q.kind === "vs-new" && q.row.project_id === S.project && !rows.find(r => r.id === q.row.id)) rows.unshift({ ...q.row, _pending: true, _err: q.err, fotos: [...(q.done || []), ...q.fotos.map(f => ({ url: fotoUrl(f), _local: true }))] });
+    if (q.kind === "vs-update") { const r = rows.find(r => r.id === q.vid); if (r) { Object.assign(r, q.patch, { _pending: true, _err: q.err }); const extra = [...(q.done || []), ...(q.fotos || []).map(f => ({ url: fotoUrl(f), _local: true }))]; if (extra.length) r[q.veld] = [...(r[q.veld] || []), ...extra]; } }
   });
   return rows;
 }
 function allWb() { const rows = [...S.data.werfbezoeken]; S.queue.forEach(q => { if (q.kind === "wb-new" && q.row.project_id === S.project && !rows.find(r => r.id === q.row.id)) rows.unshift({ ...q.row, _pending: true }); }); return rows; }
 
 /* ---------- synchroniseren ---------- */
+const isNetErr = (e) => !e || e.name === "TypeError" || /fetch|network|failed to|load failed|timeout/i.test(String(e.message || e));
+async function fotosToevoegen(vid, veld, fotos) {
+  // server voegt toe zonder de bestaande lijst te overschrijven (script 022); oudere database: lezen + samenvoegen
+  const r = await sb.rpc("vaststelling_fotos_toevoegen", { p_id: vid, p_veld: veld, p_fotos: fotos });
+  if (!r.error) return;
+  if (!/function|schema cache|not find/i.test(r.error.message || "")) throw r.error;
+  const { data } = await sb.from("vaststellingen").select(veld).eq("id", vid).single();
+  const cur = (data && data[veld]) || []; const merged = [...cur, ...fotos.filter(f => !cur.some(c => c.path === f.path))];
+  const { error } = await sb.from("vaststellingen").update({ [veld]: merged }).eq("id", vid); if (error) throw error;
+}
 async function sync() {
   if (S.syncing || !S.online || !S.queue.length) return;
-  const { data: { session } } = await sb.auth.getSession(); if (!session) { render(); return; }
-  S.syncing = true; render();
-  let fout = null;
-  for (const q of [...S.queue].sort((a, b) => a.id - b.id)) {
-    try {
-      if (q.kind === "wb-new") { const { error } = await sb.from("werfbezoeken").upsert(q.row, { onConflict: "id" }); if (error) throw error; }
-      else if (q.kind === "vs-new") {
-        const { error } = await sb.from("vaststellingen").upsert({ ...q.row, fotos: q.done || [] }, { onConflict: "id" }); if (error) throw error;
-        while (q.fotos.length) { const f = await upload(q.row.project_id, q.row.id, q.fotos[0]); q.done = [...(q.done || []), f]; q.fotos.shift(); await idb.put(q); }
-        if ((q.done || []).length) { const { error: e2 } = await sb.from("vaststellingen").update({ fotos: q.done }).eq("id", q.row.id); if (e2) throw e2; }
-      } else if (q.kind === "vs-update") {
-        while (q.fotos.length) { const f = await upload(S.project, q.vid, q.fotos[0]); q.done = [...(q.done || []), f]; q.fotos.shift(); await idb.put(q); }
-        const patch = { ...q.patch };
-        if ((q.done || []).length) { const { data } = await sb.from("vaststellingen").select(q.veld).eq("id", q.vid).single(); patch[q.veld] = [...((data && data[q.veld]) || []), ...q.done]; }
-        const { error } = await sb.from("vaststellingen").update(patch).eq("id", q.vid); if (error) throw error;
+  S.syncing = true; paint();
+  let netfout = null, fouten = 0;
+  try {
+    const { data: { session } } = await sb.auth.getSession();
+    if (!session) { S.session = null; toast("Je bent afgemeld — meld je opnieuw aan om de wachtrij te verzenden.", 5000); return; }
+    for (const q of [...S.queue].sort((a, b) => a.id - b.id)) {
+      if ((q.tries || 0) >= 5) { fouten++; continue; }   // blijft staan, maar blokkeert de rest niet
+      try {
+        if (q.kind === "wb-new") { const { error } = await sb.from("werfbezoeken").upsert(q.row, { onConflict: "id" }); if (error) throw error; }
+        else if (q.kind === "vs-new") {
+          const { error } = await sb.from("vaststellingen").upsert({ ...q.row, fotos: q.done || [] }, { onConflict: "id" }); if (error) throw error;
+          while (q.fotos.length) { const f = await upload(q.row.project_id, q.row.id, q.fotos[0]); q.done = [...(q.done || []), f]; q.fotos.shift(); await idb.put(q); }
+          if ((q.done || []).length) await fotosToevoegen(q.row.id, "fotos", q.done);
+        } else if (q.kind === "vs-update") {
+          while (q.fotos.length) { const f = await upload(q.pid || S.project, q.vid, q.fotos[0]); q.done = [...(q.done || []), f]; q.fotos.shift(); await idb.put(q); }
+          if (Object.keys(q.patch || {}).length) { const { error } = await sb.from("vaststellingen").update(q.patch).eq("id", q.vid); if (error) throw error; }
+          if ((q.done || []).length) await fotosToevoegen(q.vid, q.veld, q.done);
+        }
+        await idb.del(q.id); revokeItem(q); S.queue = S.queue.filter(x => x.id !== q.id);
+      } catch (e) {
+        console.warn("sync", e);
+        if (isNetErr(e)) { netfout = e; break; }          // geen verbinding: stoppen, later opnieuw
+        q.tries = (q.tries || 0) + 1; q.err = String(e.message || e); await idb.put(q).catch(() => { }); fouten++;   // inhoudelijke fout: overslaan, de rest gaat door
       }
-      await idb.del(q.id); S.queue = S.queue.filter(x => x.id !== q.id);
-    } catch (e) { fout = e; console.warn("sync", e); break; }
-  }
-  S.syncing = false;
-  if (fout) toast("Verzenden mislukt (" + (fout.message || fout) + ") — probeert later opnieuw", 4000);
+    }
+  } finally { S.syncing = false; }
+  if (netfout) toast("Verzenden onderbroken (" + (netfout.message || netfout) + ") — probeert later opnieuw", 4000);
+  else if (fouten) toast(fouten + " item" + (fouten === 1 ? "" : "s") + " kon niet verzonden worden — tik op de status rechtsboven voor details", 5000);
   else if (S.online) { try { await loadProject(S.project); } catch (e) { } }
-  render();
+  paint();
+  if (!netfout && S.online && S.queue.some(q => (q.tries || 0) < 5)) setTimeout(sync, 500);   // intussen bijgekomen items
 }
-window.addEventListener("online", () => { S.online = true; render(); sync(); refresh(); });
-window.addEventListener("offline", () => { S.online = false; render(); });
+window.addEventListener("online", () => { S.online = true; paint(); sync(); refresh(); });
+window.addEventListener("offline", () => { S.online = false; paint(); });
 document.addEventListener("visibilitychange", () => { if (document.visibilityState === "visible" && S.online) { sync(); refresh(); } });
 
 /* ---------- weergave ---------- */
-const syncBadge = () => { const n = S.queue.length; const cls = S.syncing ? "busy" : !S.online ? "off" : n ? "wait" : ""; const txt = S.syncing ? "verzenden…" : !S.online ? (n ? `offline · ${n} wacht` : "offline") : n ? `${n} te verzenden` : "gesynchroniseerd"; return `<button class="sync ${cls}" data-act="sync" title="Verbinding en wachtrij"><i></i>${txt}</button>`; };
+const syncBadge = () => { const n = S.queue.length; const nf = S.queue.filter(q => (q.tries || 0) >= 5).length; const cls = S.syncing ? "busy" : !S.online ? "off" : nf ? "off" : n ? "wait" : ""; const txt = S.syncing ? "verzenden…" : !S.online ? (n ? `offline · ${n} wacht` : "offline") : nf ? `⚠ ${nf} mislukt` : n ? `${n} te verzenden` : "gesynchroniseerd"; return `<button class="sync ${cls}" data-act="sync" title="Verbinding en wachtrij"><i></i>${txt}</button>`; };
 function render() {
   const app = $("#app");
   if (!S.session && !(S.me && !S.online)) { app.innerHTML = vLogin(); return; }
@@ -243,25 +272,29 @@ function bindForm() {
   const draw = () => { box.innerHTML = (v.id ? (v.fotos || []).map(f => `<div class="fi"><img src="${esc(f.url)}" alt=""></div>`).join("") : "") + v._nieuw.map((f, i) => `<div class="fi"><img src="${f.url}" alt=""><button type="button" class="x" data-x="${i}">✕</button></div>`).join(""); box.querySelectorAll("[data-x]").forEach(b => b.onclick = () => { v._nieuw.splice(Number(b.dataset.x), 1); draw(); }); };
   draw();
   document.querySelectorAll("[data-file]").forEach(inp => inp.addEventListener("change", async (e) => {
+    const sv = $("#f_save"); if (sv) { sv.disabled = true; sv.textContent = "Foto's verwerken…"; }
     for (const file of [...e.target.files]) { try { const r = await verklein(file); v._nieuw.push({ ...r, url: blobUrl(r.blob) }); } catch (err) { toast("Foto niet bruikbaar"); } }
-    e.target.value = ""; draw();
+    e.target.value = ""; draw(); if (sv) { sv.disabled = false; sv.textContent = v.id ? "Bewaren" : "Vaststelling bewaren"; }
   }));
-  $("#f_prio").addEventListener("click", (e) => { const b = e.target.closest("button"); if (!b) return; prio = b.dataset.p; $("#f_prio").querySelectorAll("button").forEach(x => x.setAttribute("aria-pressed", x === b)); });
+  ["f_titel", "f_oms", "f_ruimte", "f_deadline", "f_opm"].forEach(id => { const el = $("#" + id); if (el) el.addEventListener("input", () => { v[{ f_titel: "titel", f_oms: "omschrijving", f_ruimte: "ruimte", f_deadline: "deadline", f_opm: "opmerking" }[id]] = el.value; }); });
+  $("#f_prio").addEventListener("click", (e) => { const b = e.target.closest("button"); if (!b) return; prio = b.dataset.p; v.prioriteit = prio; $("#f_prio").querySelectorAll("button").forEach(x => x.setAttribute("aria-pressed", x === b)); });
   $("#f_save").onclick = async () => {
     const oms = $("#f_oms").value.trim(); const titel = $("#f_titel").value.trim(); if (!oms && !titel && !v._nieuw.length && !(v.fotos || []).length) { toast("Geef een titel of omschrijving, of neem een foto"); $("#f_titel").focus(); return; }
     const wieV = $("#f_wie").value; const wieP = wieV.startsWith("c:") ? { contact_id: wieV.slice(2), assignee: null } : { contact_id: null, assignee: wieV || null };
     const patch = { titel, omschrijving: oms, ...(planSel ? { plan_id: planSel.value || null, plan_x: planSel.value && pin ? pin.x : null, plan_y: planSel.value && pin ? pin.y : null } : {}), ruimte: $("#f_ruimte").value.trim(), lot: $("#f_lot") && $("#f_lot").value ? Number($("#f_lot").value) : null, ...wieP, prioriteit: prio, deadline: $("#f_deadline").value || null };
     $("#f_save").disabled = true;
+    try {
     if (v.id) {
       const st = $("#f_status").value; patch.opmerking = $("#f_opm").value.trim();
       if (st !== v.status) { patch.status = st; if (st === "opgelost") { patch.opgelost_op = new Date().toISOString(); patch.opgelost_door = S.me?.id || null; } if (st === "open") { patch.opgelost_op = null; patch.opgelost_door = null; } }
-      await enqueue({ kind: "vs-update", vid: v.id, patch, veld: "fotos", fotos: v._nieuw.map(f => ({ blob: f.blob, w: f.w, h: f.h })) });
+      await enqueue({ kind: "vs-update", vid: v.id, pid: v.project_id || S.project, patch, veld: "fotos", fotos: v._nieuw.map(f => ({ blob: f.blob, w: f.w, h: f.h })) });
       S.view = "detail"; S.detail = v.id; toast("Bewaard");
     } else {
       const row = { id: uuid(), project_id: S.project, bezoek_id: S.bezoek || null, status: "open", klant_zichtbaar: false, fotos: [], created_by: S.me?.id || null, ...patch };
       await enqueue({ kind: "vs-new", row, fotos: v._nieuw.map(f => ({ blob: f.blob, w: f.w, h: f.h })) });
       S.view = "list"; S.filter = "open"; toast(S.online ? "Vaststelling verzonden" : "Bewaard op dit toestel — wordt verzonden zodra er bereik is", 3500);
     }
+    } catch (e) { $("#f_save").disabled = false; return; }
     S.form = null; render();
   };
 }
@@ -281,7 +314,7 @@ async function setStatus(id, s, extra = {}, fotos = []) {
   const patch = { status: s, ...extra };
   if (s === "opgelost") { patch.opgelost_op = new Date().toISOString(); patch.opgelost_door = S.me?.id || null; }
   if (s === "open") { patch.opgelost_op = null; patch.opgelost_door = null; }
-  await enqueue({ kind: "vs-update", vid: id, patch, veld: "opgelost_fotos", fotos });
+  try { await enqueue({ kind: "vs-update", vid: id, pid: v.project_id || S.project, patch, veld: "opgelost_fotos", fotos }); } catch (e) { return; }
   toast(s === "opgelost" ? "Gemarkeerd als opgelost" : s === "gecontroleerd" ? "Gecontroleerd ✓" : s === "open" ? "Heropend" : "Vervallen");
 }
 document.addEventListener("click", async (e) => {
@@ -301,8 +334,11 @@ document.addEventListener("click", async (e) => {
   if (d.act === "bezoek") { S.view = "bezoek"; return render(); }
   if (d.act === "bezoek-save") { const row = { id: uuid(), project_id: S.project, datum: $("#b_datum").value || todayIso, weer: $("#b_weer").value, aanwezigen: $("#b_aanw").value.trim(), notities: $("#b_not").value, auteur: S.me?.id || null }; await enqueue({ kind: "wb-new", row }); S.bezoek = row.id; store.set("bezoek", row.id); S.view = "list"; toast("Werfbezoek gestart"); return render(); }
   if (d.act === "bezoek-stop") { S.bezoek = null; store.del("bezoek"); toast("Werfbezoek afgesloten"); return render(); }
-  if (d.act === "sync") { if (!S.online) return toast("Geen verbinding — de wachtrij wordt verzonden zodra er bereik is"); if (!S.queue.length) { refresh(); return toast("Alles is verzonden"); } return sync(); }
-  if (d.act === "logout") { await sb.auth.signOut(); S.session = null; S.me = null; store.del("me"); return render(); }
+  if (d.act === "sync") {
+    const mislukt = S.queue.filter(q => (q.tries || 0) >= 5);
+    if (mislukt.length) { const txt = mislukt.map(q => "• " + (q.kind === "vs-new" ? (q.row.titel || q.row.omschrijving || "vaststelling") : q.kind) + ": " + (q.err || "?")).join("\n"); if (confirm(mislukt.length + " item(s) konden niet verzonden worden:\n" + txt + "\n\nOK = nog eens proberen · Annuleren = niets doen")) { mislukt.forEach(q => { q.tries = 0; idb.put(q).catch(() => { }); }); return sync(); } return; }
+    if (!S.online) return toast("Geen verbinding — de wachtrij wordt verzonden zodra er bereik is"); if (!S.queue.length) { refresh(); return toast("Alles is verzonden"); } return sync(); }
+  if (d.act === "logout") { if (S.queue.length && !confirm(S.queue.length + " item(s) zijn nog niet verzonden. Toch afmelden? Ze worden pas verzonden na een volgende aanmelding.")) return; await sb.auth.signOut(); S.session = null; S.me = null; store.del("me"); return render(); }
 });
 document.addEventListener("change", async (e) => {
   const t = e.target;
@@ -311,7 +347,7 @@ document.addEventListener("change", async (e) => {
     for (const file of [...t.files]) { try { const r = await verklein(file); fotos.push({ blob: r.blob, w: r.w, h: r.h }); } catch (err) { toast("Foto niet bruikbaar"); } }
     t.value = "";
     if (t.dataset.oplos) await setStatus(id, "opgelost", {}, fotos);
-    else if (fotos.length) { await enqueue({ kind: "vs-update", vid: id, patch: {}, veld: "fotos", fotos }); toast("Foto toegevoegd"); }
+    else if (fotos.length) { try { await enqueue({ kind: "vs-update", vid: id, pid: S.project, patch: {}, veld: "fotos", fotos }); toast("Foto toegevoegd"); } catch (e) { } }
     render();
   }
 });
@@ -338,7 +374,7 @@ async function start() {
 }
 (async () => {
   const { data: { session } } = await sb.auth.getSession(); S.session = session;
-  sb.auth.onAuthStateChange((ev, s) => { if (ev === "TOKEN_REFRESHED" || ev === "SIGNED_IN") S.session = s; if (ev === "SIGNED_OUT") { S.session = null; } });
+  sb.auth.onAuthStateChange((ev, s) => { if (ev === "TOKEN_REFRESHED" || ev === "SIGNED_IN") S.session = s; if (ev === "SIGNED_OUT") { S.session = null; if (S.online) render(); } });
   if ("serviceWorker" in navigator) navigator.serviceWorker.register("sw.js").catch(() => { });
   await start();
 })();

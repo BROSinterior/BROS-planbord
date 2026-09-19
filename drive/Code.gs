@@ -19,16 +19,17 @@ function doPost(e) {
   try {
     const body = JSON.parse((e.postData && e.postData.contents) || "{}");
     if (body.action === "reset") return json(portaalReset(body));   // klantenportaal: "wachtwoord vergeten" — bewust zonder secret, stuurt enkel een mail naar een bestaande klantlogin
+    if (body.action === "gkmail") return json(goedkeuringMail(body)); // portaal (klant beslist) én Planbord: identiteit en rol via het meegestuurde login-token
     if (!body.secret || body.secret !== CONFIG.SECRET) return json({ ok: false, error: "Geen toegang (secret klopt niet)." });
     if (body.action === "ping") return json({ ok: true, info: "Verbinding en secret in orde.", projecten: DriveApp.getFolderById(CONFIG.PROJECTEN_FOLDER_ID).getName(), sjabloon: DriveApp.getFolderById(CONFIG.SJABLOON_FOLDER_ID).getName() });
-    if (body.action === "create") return json(createOrLink(String(body.klant || "").trim(), true));
-    if (body.action === "link") return json(createOrLink(String(body.klant || "").trim(), false));
-    if (body.action === "list") return json(listById(String(body.folderId || "")));
-    if (body.action === "template") return json(getTemplate(String(body.match || "MEETSTAAT")));
-    if (body.action === "put") return json(putFile(body));
+    // Drive-acties: naast het secret ook een geldig teamlogin vereist (het secret alleen volstaat niet meer), en enkel mappen onder PROJECTEN
+    if (body.action === "create") { caller(body.token, false); return json(createOrLink(String(body.klant || "").trim(), true)); }
+    if (body.action === "link") { caller(body.token, false); return json(createOrLink(String(body.klant || "").trim(), false)); }
+    if (body.action === "list") { caller(body.token, false); onderProjecten(String(body.folderId || "")); return json(listById(String(body.folderId || ""))); }
+    if (body.action === "template") { caller(body.token, false); return json(getTemplate(String(body.match || "MEETSTAAT"))); }
+    if (body.action === "put") { caller(body.token, false); onderProjecten(String(body.folderId || "")); return json(putFile(body)); }
     if (body.action === "invite") return json(portaalInvite(body));
     if (body.action === "share") return json(portaalShare(body));
-    if (body.action === "gkmail") return json(goedkeuringMail(body));
     if (body.action === "notitiemail") return json(notitieMail(body));
     if (body.action === "werfverslagmail") return json(werfverslagMail(body));
     return json({ ok: false, error: "Onbekende actie." });
@@ -38,6 +39,18 @@ function doPost(e) {
 }
 function doGet() { return json({ ok: true, info: "BROS Planbord Drive-script actief." }); }
 function json(o) { return ContentService.createTextOutput(JSON.stringify(o)).setMimeType(ContentService.MimeType.JSON); }
+/** Beveiliging: een map-id moet onder BROS/PROJECTEN liggen (max. 8 niveaus diep), anders geen toegang. */
+function onderProjecten(folderId) {
+  if (!folderId) throw new Error("Geen map-id.");
+  let id = folderId;
+  for (let i = 0; i < 8; i++) {
+    if (id === CONFIG.PROJECTEN_FOLDER_ID) return true;
+    const r = UrlFetchApp.fetch("https://www.googleapis.com/drive/v3/files/" + encodeURIComponent(id) + "?supportsAllDrives=true&fields=id,parents", { headers: { Authorization: "Bearer " + ScriptApp.getOAuthToken() }, muteHttpExceptions: true });
+    const f = JSON.parse(r.getContentText() || "{}"); if (f.error || !f.parents || !f.parents.length) break;
+    id = f.parents[0];
+  }
+  throw new Error("Deze map ligt niet onder PROJECTEN.");
+}
 
 /** Maakt de projectmap aan uit het sjabloon (create=true) of koppelt een bestaande map met die naam. */
 function createOrLink(klant, create) {
@@ -254,8 +267,8 @@ function pbAdmin(path, method, body) {
 function caller(token, beheerOnly) {
   if (!token) throw new Error("Geen login meegestuurd — log opnieuw in op het Planbord.");
   const u = pbReq("/auth/v1/user", "get", null, token);
-  const prof = pbReq("/rest/v1/profiles?id=eq." + u.id + "&select=role,name", "get", null, token);
-  const role = prof && prof[0] ? prof[0].role : "";
+  const prof = pbReq("/rest/v1/profiles?id=eq." + u.id + "&select=role,name,active", "get", null, token);
+  const role = prof && prof[0] && prof[0].active !== false ? prof[0].role : "";
   if (beheerOnly ? role !== "beheer" : (role !== "beheer" && role !== "medewerker")) throw new Error(beheerOnly ? "Alleen beheerders kunnen portaaltoegang geven." : "Geen toegang.");
   return { id: u.id, name: prof[0].name, role: role };
 }
@@ -389,7 +402,7 @@ function werfverslagMail(body) {
   const naar = [];
   aan.forEach(e => { const opt = { htmlBody: html, name: PORTAAL.AFZENDER, attachments: [pdf] }; if (PORTAAL.VAN) { const al = GmailApp.getAliases(); if (al.indexOf(PORTAAL.VAN) >= 0) opt.from = PORTAAL.VAN; else opt.replyTo = PORTAAL.VAN; } GmailApp.sendEmail(e, "Werfverslag " + w.nr + " · " + proj + " · " + datum, tekst, opt); naar.push(e); });
   let driveUrl = "";
-  if (body.drive && body.folderId) { try { const folder = subfolder(DriveApp.getFolderById(String(body.folderId)), "Werfcontrole"); let n = naam, k = 2; while (folder.getFilesByName(n).hasNext()) n = naam.replace(/\.pdf$/, " (" + (k++) + ").pdf"); const f = folder.createFile(pdf.copyBlob().setName(n)); driveUrl = f.getUrl(); } catch (e) { Logger.log("Drive-kopie mislukt: " + e); } }
+  if (body.drive && body.folderId) { try { onderProjecten(String(body.folderId)); const folder = subfolder(DriveApp.getFolderById(String(body.folderId)), "Werfcontrole"); let n = naam, k = 2; while (folder.getFilesByName(n).hasNext()) n = naam.replace(/\.pdf$/, " (" + (k++) + ").pdf"); const f = folder.createFile(pdf.copyBlob().setName(n)); driveUrl = f.getUrl(); } catch (e) { Logger.log("Drive-kopie mislukt: " + e); } }
   const patch = { aan: naar }; if (naar.length) patch.verzonden_op = new Date().toISOString(); if (driveUrl) patch.drive_url = driveUrl;
   pbAdmin("/rest/v1/werfverslagen?id=eq." + w.id, "patch", patch);
   return { ok: true, naar: naar, drive_url: driveUrl };
@@ -398,6 +411,7 @@ function werfverslagMail(body) {
 function portaalShare(body) {
   caller(body.token, false);
   const id = String(body.fileId || ""); if (!id) return { ok: false, error: "Geen bestand." };
+  onderProjecten(id);
   const token = ScriptApp.getOAuthToken(); const base = "https://www.googleapis.com/drive/v3/files/" + id;
   if (body.on) {
     const r = UrlFetchApp.fetch(base + "/permissions?supportsAllDrives=true", { method: "post", contentType: "application/json", payload: JSON.stringify({ role: "reader", type: "anyone" }), headers: { Authorization: "Bearer " + token }, muteHttpExceptions: true });

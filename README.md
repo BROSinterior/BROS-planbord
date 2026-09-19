@@ -11,7 +11,7 @@ Statische webapp (geen build-stap) op een Supabase-database.
 | `app.js` | alle logica |
 | `config.js` | koppeling met de database — **hier de Project URL en anon-sleutel invullen** |
 | `version.json` | versienummer; de app meldt een nieuwe versie aan wie ze open heeft |
-| `sql/001_init.sql` | databasescript 1: tabellen, rechten, live-sync, fasen en standaardtaken |
+| `sql/001_init.sql` … `sql/022_*.sql` | databasescripts, in volgorde uit te voeren (`versie_schema` in instellingen bewaakt de volgorde vanaf 022) |
 | `drive/Code.gs` | Google Apps Script dat projectmappen aanmaakt/koppelt op Drive en de meetstaat-export wegschrijft (installatie: zie bovenaan dat bestand) |
 | `meetstaat-export.js` | schrijft de meetstaat van een project in het Excel-sjabloon (zip/XML, opmaak en formules blijven intact) |
 | `klant/` | het klantenportaal (index.html + portaal.js): alleen-lezen zicht van de bouwheer op zijn project |
@@ -107,6 +107,19 @@ Gebruik per project: projectfiche → Dossier → Contacten → bij de bouwheer 
 - De klant ziet in het portaal onder Planning per fase een van–tot. Die volgt **automatisch** de taken van de fase (vroegste start → laatste einde), tenzij je de fase **vastzet**: projectfiche → tabblad **Planning**, paneel **Timing voor de klant** → Van/Tot invullen (of "Vastzetten" om de huidige taaktiming te bevriezen) en eventueel een toelichting. Een vastgezette fase schuift niet meer mee met de taken; ✕ wist ze en dan volgt ze weer de taken. Tabel `klant_timing` (enkel de vastgezette fasen), view `klant_planning`.
 - **Timing delen met de klant** per taak: schakelaar in het taakformulier, of het vinkje in de lijst "Taken met gedeelde timing" onder het paneel. Zo'n taak verschijnt in de klantplanning als regel onder haar fase met titel, van–tot en status (gepland / bezig / klaar) — geen uren, geen wie. Standaard uit; in de takenlijst staat "timing → klant" bij zo'n taak. Kolom `taken.timing_klant`, view `klant_planning_taken`.
 - Geen extra werk na het script: bestaande projecten tonen meteen dezelfde (automatische) planning als vroeger.
+
+## Beveiliging en robuustheid (script 022, v1.22)
+
+- **Klantweergave** (v1.22.1): op het tabblad Meetstaat verbergt de knop "Klantweergave" (of sneltoets K) kostprijs, marge en de btw-kolom — handig als je de meetstaat samen met de klant overloopt; de keuze wordt per browser onthouden. Enkel zichtbaar voor beheer (medewerkers zien die kolommen sowieso niet).
+
+Na een volledige codereview (Planbord, portaal, werfmodus, database, Drive-script):
+
+- **Database (script 022)**: niemand kan zijn eigen rol/actief/e-mail wijzigen (enkel beheer); nieuwe accounts die niet als klant uitgenodigd zijn, starten **inactief** — beheer zet ze aan onder Team (zet ook "Allow new users to sign up" uit in Supabase → Authentication); kostprijzen enkel door beheer (elke meetstaatregel krijgt automatisch een prijsregel); de bestandenlijst van de buckets `werf`/`portaal` is enkel voor het team; `is_beheer()` en het klantportaal houden rekening met "actief"; nummering per project met vergrendeling en unieke index (geen dubbele V-nummers, ook niet uit de offline-wachtrij); één taak per vaststelling; projecten verwijderen enkel door beheer; extra indexen; `goedkeuring_beslis` met rijvergrendeling; RPC `vaststelling_fotos_toevoegen` (foto's toevoegen zonder elkaars foto's te overschrijven).
+- **Drive-script**: voor Drive-acties is naast het secret ook een geldig teamlogin nodig, en enkel mappen/bestanden onder PROJECTEN (`onderProjecten`); inactieve profielen worden geweigerd; de beslis-mail uit het portaal (klant keurt goed) werkt nu (die werd voordien door de secret-check tegengehouden).
+- **Planbord**: geen herbouw van het scherm terwijl je in een veld typt (realtime-update van een collega wist je invoer niet meer); datum "vandaag" wordt per render herberekend; index voor uren/taken per project (snellere lijsten); bulkacties (import) zonder render per rij; nette foutmeldingen bij bewaren; wissel van dag/versie behoudt je plaats (project/tabblad) bij een automatische herlaad; kleuren en statussen uit de database worden ge-escaped.
+- **Werfmodus**: formulier blijft staan bij een sync of terugkeer uit de camera; sync-vergrendeling vóór het wachten (geen dubbele uploads); één mislukt item blokkeert de rest niet meer (⚠ in de badge, tik voor details/opnieuw); foto's worden op de server toegevoegd i.p.v. overschreven; wachtrij-fouten worden gemeld; objectURL's worden opgeruimd; service worker: kritieke bestanden moeten lukken bij installatie, foto's/plannen worden effectief gecachet (cors), netwerk-timeout 4 s, fotocache begrensd.
+- **Portaal**: links uit de database worden gevalideerd (`safeUrl`), lokale datum i.p.v. UTC bij "geldig tot".
+- Nog open (bewust niet gedaan): lazy laden per project (nu wordt alles bij start geladen — prima tot enkele duizenden rijen), app.js opsplitsen per module, secret/service key in Script Properties, signed URLs voor werfverslagen.
 
 ## Werfopvolging (script 016) — stap 1
 
