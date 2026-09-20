@@ -94,6 +94,14 @@
   .kpi .v { font-family: var(--font-display); font-weight: 700; font-size: 24px; margin-top: 4px; letter-spacing: -.02em; }
   .empty { padding: 28px 18px; text-align: center; color: var(--muted); }
   .empty b { display: block; color: var(--ink); margin-bottom: 4px; }
+  .chat { display: flex; flex-direction: column; gap: 10px; padding: 16px 18px; max-height: 60vh; overflow-y: auto; }
+  .msg { display: flex; flex-direction: column; max-width: 78%; }
+  .msg.klant { align-self: flex-end; align-items: flex-end; } .msg.assistent { align-self: flex-start; }
+  .bubble { padding: 10px 14px; border-radius: 16px; font-size: 15px; line-height: 1.45; white-space: pre-wrap; background: var(--surface-2); }
+  .msg.klant .bubble { background: var(--ink); color: var(--ground); border-bottom-right-radius: 4px; } .msg.assistent .bubble { border-bottom-left-radius: 4px; }
+  .msg .when { font-size: 11px; color: var(--muted); margin-top: 3px; padding: 0 4px; }
+  .chat-form { display: flex; gap: 8px; padding: 12px 18px; border-top: 1px solid var(--line); }
+  .chat-form input { flex: 1; padding: 11px 14px; border: 1px solid var(--line-2); border-radius: 12px; font: inherit; background: var(--surface); color: var(--ink); }
   .stack { display: grid; gap: 16px; }
   .two { display: grid; grid-template-columns: 1.4fr 1fr; gap: 16px; }
   @media (max-width: 760px) { .two { grid-template-columns: 1fr; } }
@@ -160,7 +168,7 @@
 <div id="app"></div>
 <div id="fx"><canvas></canvas><div class="wel"><div id="fxTxt">Welkom</div></div></div>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.45.4/dist/umd/supabase.min.js"></script>
-<script src="../config.js?v=1.22.0"></script>
-<script src="portaal.js?v=1.22.0"></script>
+<script src="../config.js?v=1.23.1"></script>
+<script src="portaal.js?v=1.23.1"></script>
 </body>
 </html>

@@ -16,6 +16,7 @@ Statische webapp (geen build-stap) op een Supabase-database.
 | `meetstaat-export.js` | schrijft de meetstaat van een project in het Excel-sjabloon (zip/XML, opmaak en formules blijven intact) |
 | `klant/` | het klantenportaal (index.html + portaal.js): alleen-lezen zicht van de bouwheer op zijn project |
 | `werf/` | de werfmodus voor op de smartphone (vaststellingen met foto's, werkt ook zonder bereik; installeerbaar als app) |
+| `supabase/functions/assistent/` | Edge Function van de AI-assistent (in Supabase te deployen, sleutel als secret) |
 | `next/` | (later) testversie van een volgende update |
 
 ## In gebruik nemen (eenmalig)
@@ -107,6 +108,16 @@ Gebruik per project: projectfiche → Dossier → Contacten → bij de bouwheer 
 - De klant ziet in het portaal onder Planning per fase een van–tot. Die volgt **automatisch** de taken van de fase (vroegste start → laatste einde), tenzij je de fase **vastzet**: projectfiche → tabblad **Planning**, paneel **Timing voor de klant** → Van/Tot invullen (of "Vastzetten" om de huidige taaktiming te bevriezen) en eventueel een toelichting. Een vastgezette fase schuift niet meer mee met de taken; ✕ wist ze en dan volgt ze weer de taken. Tabel `klant_timing` (enkel de vastgezette fasen), view `klant_planning`.
 - **Timing delen met de klant** per taak: schakelaar in het taakformulier, of het vinkje in de lijst "Taken met gedeelde timing" onder het paneel. Zo'n taak verschijnt in de klantplanning als regel onder haar fase met titel, van–tot en status (gepland / bezig / klaar) — geen uren, geen wie. Standaard uit; in de takenlijst staat "timing → klant" bij zo'n taak. Kolom `taken.timing_klant`, view `klant_planning_taken`.
 - Geen extra werk na het script: bestaande projecten tonen meteen dezelfde (automatische) planning als vroeger.
+
+## AI-assistent in het klantenportaal (script 023 + Edge Function, v1.23)
+
+De klant stelt in het portaal (tabblad **Vragen**) een vraag over zijn dossier; de assistent antwoordt uit de klant-views (verkoopprijzen, klantplanning, facturatie, gedeelde documenten en verslagen — nooit kostprijs, marge of interne notities) en maakt, als BROS iets moet doen, een **taakvoorstel**. Dat komt in het Planbord onder **Voorstellen** (teller in de kopbalk, ook per project onder Vragen) en wordt gemaild naar de verantwoordelijke; pas na Bevestigen (of Aanpassen en bevestigen) wordt het een taak. Weigeren sluit het af met een reden.
+
+- **Waar het draait**: Supabase Edge Function `assistent` (`supabase/functions/assistent/index.ts`). De API-sleutel staat enkel daar als secret. De functie controleert het login-token van de klant, leest het dossier onder zijn rechten, roept het model aan en schrijft gesprek en voorstel met de service-sleutel. Tabellen: `assistent_gesprekken`, `assistent_berichten` (met tokens en geschatte kost), `taak_voorstellen`; RPC's `voorstel_bevestig` en `voorstel_weiger`; view `klant_assistent_berichten`; `projecten.assistent` (per project aan/uit, in het projectformulier).
+- **Instellingen → AI-assistent**: aan/uit, model (OpenAI gpt-4o-mini standaard; ook Claude Haiku als `ANTHROPIC_API_KEY` als secret staat), plafond per project en globaal per maand (erboven geeft de assistent de vraag door zonder modeloproep en maakt meteen een voorstel), data uit de planning noemen of enkel de fase, begroeting, routering per onderwerp (planning, facturatie, ontwerp, documenten, klacht, overig; leeg = beheerder; klacht is altijd dringend). Verbruik van de maand met waarschuwing vanaf 80 %.
+- **Mail**: Drive-script actie `assistentmail` (aangeroepen door de Edge Function) naar de voorgestelde verantwoordelijke, beheer in kopie, met link naar `…/BROS-planbord/#voorstellen`.
+- **Installatie**: (1) `sql/023_assistent.sql` uitvoeren; (2) API-account op archief@bros.be bij OpenAI (platform.openai.com) met betaallimiet, sleutel aanmaken; (3) Supabase → Edge Functions → *Deploy a new function* → *Via editor*: naam `assistent`, inhoud van `supabase/functions/assistent/index.ts` plakken, deployen; daarna bij de functie **Verify JWT with legacy secret uitzetten** (de functie controleert het token zelf) en onder *Secrets* `OPENAI_API_KEY` toevoegen; (4) `drive/Code.ingevuld.gs` opnieuw plakken en deployen; (5) pushen. Test eerst met Phil als klant op een testproject.
+- **Privacy**: er gaan dossiergegevens van de klant naar de modelleverancier (API-gebruik wordt niet voor training gebruikt); vermeld dit in de privacyverklaring van het portaal. Per project uit te zetten.
 
 ## Beveiliging en robuustheid (script 022, v1.22)
 

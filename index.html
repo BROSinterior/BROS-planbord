@@ -248,6 +248,14 @@
   .vs-foto-item { position: relative; display: inline-block; }
   .vs-foto-x { position: absolute; top: -6px; right: -6px; width: 22px; height: 22px; border-radius: 50%; border: 1px solid var(--line-2); background: var(--surface); color: var(--ink); font-size: 11px; cursor: pointer; box-shadow: var(--card); }
   .vs-new { position: absolute; left: 4px; bottom: 4px; background: var(--accent); color: #fff; font-size: 10px; font-weight: 600; padding: 1px 6px; border-radius: 6px; }
+  /* assistent */
+  .chat { display: flex; flex-direction: column; gap: 10px; padding: 16px; max-height: 60vh; overflow-y: auto; }
+  .msg { display: flex; flex-direction: column; max-width: 78%; }
+  .msg.klant { align-self: flex-end; align-items: flex-end; } .msg.assistent { align-self: flex-start; }
+  .bubble { padding: 9px 13px; border-radius: 14px; font-size: 13.5px; line-height: 1.45; white-space: pre-wrap; background: var(--surface-2); }
+  .msg.klant .bubble { background: var(--ink); color: var(--ground); border-bottom-right-radius: 4px; } .msg.assistent .bubble { border-bottom-left-radius: 4px; }
+  .msg .when { font-size: 11px; color: var(--muted); margin-top: 3px; padding: 0 4px; }
+  .voorstel.urgent { border-color: var(--crit); }
   /* werfplannen */
   .plan-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); gap: 12px; padding: 14px 16px; }
   .plan-card { border: 1px solid var(--line); border-radius: 12px; overflow: hidden; background: #fff; cursor: pointer; }
@@ -414,11 +422,11 @@
 <div class="toast" id="toast" role="status"></div>
 <div class="loader" id="loader" aria-live="polite"><div class="logo"><i class="base"></i><i class="fill" id="loaderFill"></i></div><div class="pct" id="loaderPct">0%</div><div class="msg" id="loaderMsg">Even geduld…</div></div>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.45.4/dist/umd/supabase.min.js"></script>
-<script src="config.js?v=1.22.1"></script>
+<script src="config.js?v=1.23.1"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
-<script src="postcodes.js?v=1.22.1"></script>
-<script src="meetstaat-export.js?v=1.22.1"></script>
-<script src="meetstaat-import.js?v=1.22.1"></script>
-<script src="app.js?v=1.22.1"></script>
+<script src="postcodes.js?v=1.23.1"></script>
+<script src="meetstaat-export.js?v=1.23.1"></script>
+<script src="meetstaat-import.js?v=1.23.1"></script>
+<script src="app.js?v=1.23.1"></script>
 </body>
 </html>

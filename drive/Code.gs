@@ -31,6 +31,7 @@ function doPost(e) {
     if (body.action === "invite") return json(portaalInvite(body));
     if (body.action === "share") return json(portaalShare(body));
     if (body.action === "notitiemail") return json(notitieMail(body));
+    if (body.action === "assistentmail") return json(assistentMail(body));   // vanuit de Edge Function (secret), melding aan de verantwoordelijke
     if (body.action === "werfverslagmail") return json(werfverslagMail(body));
     return json({ ok: false, error: "Onbekende actie." });
   } catch (err) {
@@ -406,6 +407,30 @@ function werfverslagMail(body) {
   const patch = { aan: naar }; if (naar.length) patch.verzonden_op = new Date().toISOString(); if (driveUrl) patch.drive_url = driveUrl;
   pbAdmin("/rest/v1/werfverslagen?id=eq." + w.id, "patch", patch);
   return { ok: true, naar: naar, drive_url: driveUrl };
+}
+/** Taakvoorstel van de AI-assistent: mail naar de voorgestelde verantwoordelijke, beheer in kopie. */
+function assistentMail(body) {
+  const v = (pbAdmin("/rest/v1/taak_voorstellen?id=eq." + encodeURIComponent(String(body.id || "")) + "&select=*", "get") || [])[0];
+  if (!v) return { ok: false, error: "Voorstel niet gevonden." };
+  const p = (pbAdmin("/rest/v1/projecten?id=eq." + v.project_id + "&select=nummer,klant,naam", "get") || [])[0] || {};
+  const profs = pbAdmin("/rest/v1/profiles?select=id,name,email,role,active&active=eq.true", "get") || [];
+  const naar = profs.find(x => x.id === v.voorgestelde_user); const beheer = profs.filter(x => x.role === "beheer" && x.email);
+  const to = naar && naar.email ? naar.email : (beheer[0] ? beheer[0].email : "");
+  if (!to) return { ok: false, error: "Geen e-mailadres voor de verantwoordelijke." };
+  const cc = beheer.map(x => x.email).filter(e => e && e !== to).join(",");
+  const proj = (p.klant || "") + (p.naam && p.naam !== p.klant ? " · " + p.naam : "");
+  const link = PORTAAL.URL.replace(/klant\/?$/, "") + "#voorstellen";
+  const esc = (t) => String(t || "").replace(/</g, "&lt;");
+  const html = "<div style=\"font-family:Helvetica,Arial,sans-serif;font-size:15px;line-height:1.5;color:#1B1E1C;max-width:720px\"><p>Dag " + esc(naar ? naar.name : "team") + ",</p>"
+    + "<p>De assistent in het klantenportaal stelt een taak voor bij <b>" + esc(proj) + "</b>" + (v.urgentie === "hoog" ? " <span style=\"color:#B93A34;font-weight:700\">(hoge urgentie)</span>" : "") + ":</p>"
+    + "<div style=\"padding:12px 16px;border:1px solid #DAD8D0;border-radius:10px;background:#F5F4F0\"><b>" + esc(v.titel) + "</b><br><span style=\"color:#767D78\">" + esc(v.onderwerp) + (v.eind ? " · tegen " + String(v.eind).split("-").reverse().join("/") : "") + "</span>" + (v.omschrijving ? "<p style=\"margin:8px 0 0\">" + esc(v.omschrijving) + "</p>" : "") + "</div>"
+    + "<p style=\"margin-top:14px\"><b>Vraag van de klant:</b><br>" + esc(v.vraag) + "</p><p><b>Antwoord van de assistent:</b><br>" + esc(v.antwoord) + "</p>"
+    + "<p><a href=\"" + link + "\" style=\"display:inline-block;padding:10px 16px;background:#1D1D1F;color:#fff;border-radius:8px;text-decoration:none\">Voorstel bekijken in het Planbord</a></p><p style=\"color:#767D78;font-size:13px\">Bevestig, pas aan of weiger het voorstel in het Planbord; pas dan wordt het een taak.</p></div>";
+  const tekst = "De assistent stelt een taak voor bij " + proj + ": " + v.titel + "\n\nVraag van de klant: " + v.vraag + "\nAntwoord: " + v.antwoord + "\n\nBekijken: " + link;
+  const opt = { htmlBody: html, name: PORTAAL.AFZENDER }; if (cc) opt.cc = cc;
+  if (PORTAAL.VAN) { const al = GmailApp.getAliases(); if (al.indexOf(PORTAAL.VAN) >= 0) opt.from = PORTAAL.VAN; else opt.replyTo = PORTAAL.VAN; }
+  GmailApp.sendEmail(to, (v.urgentie === "hoog" ? "[Dringend] " : "") + "Taakvoorstel · " + proj + " · " + v.titel, tekst, opt);
+  return { ok: true, naar: [to].concat(cc ? cc.split(",") : []) };
 }
 /** Bestand delen met de klant: "iedereen met de link mag lezen" aan- of uitzetten. */
 function portaalShare(body) {

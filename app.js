@@ -2,7 +2,7 @@
    BROS Planbord — app v1.0
    Statische webapp op Supabase (login, live-synchronisatie, rechten)
    ===================================================================== */
-const APP_VERSION = "1.22.1";
+const APP_VERSION = "1.23.1";
 const PROJ_STATUS = { offerte: "In offerte", lopend: "Lopend", on_hold: "On hold", afgerond: "Afgerond", verloren: "Verloren" };
 const KLANTTYPE = { particulier: "Particulier", zakelijk: "Zakelijk" };
 const KLANTCODE = { particulier: "PAR", zakelijk: "ZAK" };
@@ -34,7 +34,7 @@ const workdays = (a, b) => { let n = 0; for (let s = a; s <= b; s = addDays(s, 1
 /* ---------- state ---------- */
 const S = {
   session: null, me: null, setPassword: false, passwordForced: false,
-  profiles: {}, tarieven: {}, fasen: {}, standaardtaken: [], projecten: {}, taken: {}, uren: {}, documenten: {}, instellingen: {}, loten: {}, posten: {}, meetstaat_posten: {}, vorderingen: {}, vordering_regels: {}, contacten: {}, project_contacten: {}, goedkeuringen: {}, notities: {}, werfbezoeken: {}, vaststellingen: {}, klant_timing: {}, werfplannen: {}, werfverslagen: {},
+  profiles: {}, tarieven: {}, fasen: {}, standaardtaken: [], projecten: {}, taken: {}, uren: {}, documenten: {}, instellingen: {}, loten: {}, posten: {}, meetstaat_posten: {}, vorderingen: {}, vordering_regels: {}, contacten: {}, project_contacten: {}, goedkeuringen: {}, notities: {}, werfbezoeken: {}, vaststellingen: {}, klant_timing: {}, werfplannen: {}, werfverslagen: {}, taak_voorstellen: {}, assistent_berichten: {},
   view: "overzicht", project: null, ptab: "taken",
   filters: { user: "", status: "", project: "", q: "" }, cfilters: { soort: "", q: "" },
   ganttStart: addDays(mondayOf(todayIso), -14), ganttDays: 112, ganttOpen: {},
@@ -98,8 +98,8 @@ const projKost = (pid, soort) => Object.values(S.uren).filter(h => h.project_id 
 let toastT; function toast(msg, ms = 2800) { const t = $("#toast"); t.textContent = msg; t.classList.add("show"); clearTimeout(toastT); toastT = setTimeout(() => t.classList.remove("show"), Math.max(2800, ms)); }
 
 /* ---------- data laden en live houden ---------- */
-const TABLES = { profiles: "profiles", tarieven: "tarieven", fasen: "fasen", standaardtaken: "standaardtaken", projecten: "projecten", taken: "taken", uren: "uren", documenten: "documenten", instellingen: "instellingen", loten: "loten", posten: "posten", meetstaat_posten: "meetstaat_posten", vorderingen: "vorderingen", vordering_regels: "vordering_regels", contacten: "contacten", project_contacten: "project_contacten", goedkeuringen: "goedkeuringen", notities: "notities", werfbezoeken: "werfbezoeken", vaststellingen: "vaststellingen", klant_timing: "klant_timing", werfplannen: "werfplannen", werfverslagen: "werfverslagen" };
-const OPTIONAL_TABLES = ["tarieven", "documenten", "instellingen", "loten", "posten", "meetstaat_posten", "vorderingen", "vordering_regels", "contacten", "project_contacten", "goedkeuringen", "notities", "werfbezoeken", "vaststellingen", "klant_timing", "werfplannen", "werfverslagen"]; // ontbreken zolang het bijbehorende sql-script niet is uitgevoerd
+const TABLES = { profiles: "profiles", tarieven: "tarieven", fasen: "fasen", standaardtaken: "standaardtaken", projecten: "projecten", taken: "taken", uren: "uren", documenten: "documenten", instellingen: "instellingen", loten: "loten", posten: "posten", meetstaat_posten: "meetstaat_posten", vorderingen: "vorderingen", vordering_regels: "vordering_regels", contacten: "contacten", project_contacten: "project_contacten", goedkeuringen: "goedkeuringen", notities: "notities", werfbezoeken: "werfbezoeken", vaststellingen: "vaststellingen", klant_timing: "klant_timing", werfplannen: "werfplannen", werfverslagen: "werfverslagen", taak_voorstellen: "taak_voorstellen", assistent_berichten: "assistent_berichten" };
+const OPTIONAL_TABLES = ["tarieven", "documenten", "instellingen", "loten", "posten", "meetstaat_posten", "vorderingen", "vordering_regels", "contacten", "project_contacten", "goedkeuringen", "notities", "werfbezoeken", "vaststellingen", "klant_timing", "werfplannen", "werfverslagen", "taak_voorstellen", "assistent_berichten"]; // ontbreken zolang het bijbehorende sql-script niet is uitgevoerd
 const rowKey = (t, r) => t === "fasen" || t === "loten" ? r.nr : t === "klant_timing" ? r.project_id + "|" + r.fase_nr : t === "tarieven" ? r.user_id : t === "instellingen" ? r.key : t === "vordering_regels" ? (r.id || r.vordering_id + "|" + r.lot + "|" + (r.post_id || "")) : r.id;
 function ingest(table, rows) {
   if (table === "standaardtaken") { S.standaardtaken = rows.sort((a, b) => a.fase_nr - b.fase_nr || a.volgorde - b.volgorde); return; }
@@ -128,7 +128,7 @@ async function loadAll() {
 }
 function subscribe() {
   // Eén kanaal per tabel: als één tabel niet in de realtime-publicatie zit, blijven de andere werken.
-  ["profiles", "tarieven", "fasen", "standaardtaken", "projecten", "taken", "uren", "documenten", "loten", "posten", "meetstaat_posten", "meetstaat_prijzen", "vorderingen", "vordering_regels", "contacten", "project_contacten", "goedkeuringen", "notities", "werfbezoeken", "vaststellingen", "klant_timing", "werfplannen", "werfverslagen"].forEach(t => {
+  ["profiles", "tarieven", "fasen", "standaardtaken", "projecten", "taken", "uren", "documenten", "loten", "posten", "meetstaat_posten", "meetstaat_prijzen", "vorderingen", "vordering_regels", "contacten", "project_contacten", "goedkeuringen", "notities", "werfbezoeken", "vaststellingen", "klant_timing", "werfplannen", "werfverslagen", "taak_voorstellen", "assistent_berichten"].forEach(t => {
     const ch = sb.channel("pb-" + t);
     ch.on("postgres_changes", { event: "*", schema: "public", table: t }, (payload) => {
       if (S.bulk) return;   // tijdens een bulkactie (import, lot wissen) niet per rij herbouwen; op het einde volgt één refetch
@@ -920,6 +920,90 @@ function vWerfverslagen(p) {
   return `<div class="panel" style="margin-bottom:16px"><div class="panel-head"><div><h3>Werfverslagen</h3><div class="muted" style="font-size:12px;margin-top:2px">Pdf met de vaststellingen (foto's, verantwoordelijke, deadline) en de plannen met pins; gemaild naar aannemers en klant.</div></div><div class="actions"><button class="btn sm primary" data-act="wv-new" data-pid="${p.id}">Werfverslag maken</button></div></div>
     ${ws.length ? `<div class="tw"><table class="t"><thead><tr><th>Nr</th><th>Datum</th><th>Bezoek</th><th class="r">Punten</th><th>Verstuurd naar</th><th></th></tr></thead><tbody>${ws.map(w => `<tr><td class="num">${w.nr}</td><td class="num">${fmtLong(w.datum)}</td><td>${w.bezoek_id && S.werfbezoeken[w.bezoek_id] ? `Bezoek ${S.werfbezoeken[w.bezoek_id].nr}` : "—"}</td><td class="r num">${w.punten}</td><td>${(w.aan || []).length ? esc((w.aan || []).join(", ")) : `<span class="muted">niet gemaild</span>`}${w.klant_zichtbaar ? ` <span class="pill st-afgerond">portaal</span>` : ""}${w.drive_url ? ` <a class="muted" href="${esc(w.drive_url)}" target="_blank" rel="noopener">Drive</a>` : ""}</td><td class="r" style="white-space:nowrap"><a class="btn ghost sm" href="${esc(w.pdf_url)}" target="_blank" rel="noopener">Pdf</a><button class="btn ghost sm" data-act="wv-share" data-id="${w.id}" title="${w.klant_zichtbaar ? "Niet meer tonen in het portaal" : "Tonen in het klantenportaal"}">${w.klant_zichtbaar ? "Verbergen" : "Delen"}</button><button class="btn ghost sm danger" data-act="wv-del" data-id="${w.id}">✕</button></td></tr>`).join("")}</tbody></table></div>` : `<div class="empty" style="padding:16px">Nog geen werfverslagen.</div>`}</div>`;
 }
+/* ---------- AI-assistent (script 023): gesprekken uit het klantenportaal en taakvoorstellen die BROS beoordeelt ---------- */
+const ONDERWERP = { planning: "Planning", facturatie: "Facturatie", ontwerp: "Ontwerp", documenten: "Documenten", klacht: "Klacht", overig: "Overig" };
+const AI_MODELLEN = [["gpt-4o-mini", "OpenAI gpt-4o-mini (goedkoop, aanbevolen)"], ["gpt-4.1-mini", "OpenAI gpt-4.1-mini"], ["gpt-4.1-nano", "OpenAI gpt-4.1-nano (goedkoopst)"], ["claude-haiku-4-5", "Anthropic Claude Haiku 4.5"], ["claude-3-5-haiku-latest", "Anthropic Claude 3.5 Haiku"]];
+const aiCfg = () => (S.instellingen.assistent && S.instellingen.assistent.value) || {};
+const voorstellenOpen = () => schemaV() >= 23 ? Object.values(S.taak_voorstellen).filter(v => v.status === "open") : [];
+const vsMijn = () => voorstellenOpen().filter(v => v.voorgestelde_user === S.me.id);
+const berichtenOf = (pid) => Object.values(S.assistent_berichten).filter(b => b.project_id === pid).sort((a, b) => (a.created_at || "").localeCompare(b.created_at || ""));
+const maandStart = () => { const d = new Date(); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-01`; };
+function voorstelCard(v, withProject) {
+  const p = S.projecten[v.project_id]; const wie = v.voorgestelde_user ? userById(v.voorgestelde_user).name : "—";
+  return `<div class="panel voorstel ${v.urgentie === "hoog" ? "urgent" : ""}" style="margin-bottom:12px">
+    <div class="panel-head"><div><div class="eyebrow">${v.urgentie === "hoog" ? `<span class="pill late">Dringend</span> ` : ""}${ONDERWERP[v.onderwerp] || esc(v.onderwerp)} · ${fmtLong((v.created_at || "").slice(0, 10))}${withProject && p ? ` · <a href="#" data-open="${p.id}">${esc(projName(p))}</a>` : ""}</div><h3 style="margin-top:4px">${esc(v.titel)}</h3>${v.omschrijving ? `<div class="muted" style="font-size:13px;margin-top:4px">${esc(v.omschrijving)}</div>` : ""}</div>
+      <div class="actions" style="align-self:flex-start">${v.status === "open" ? `<button class="btn sm primary" data-act="vt-ok" data-id="${v.id}">Bevestigen</button><button class="btn sm" data-act="vt-edit" data-id="${v.id}">Aanpassen…</button><button class="btn sm ghost danger" data-act="vt-nee" data-id="${v.id}">Weigeren</button>` : `<span class="pill ${v.status === "bevestigd" ? "done" : "kl"}">${v.status === "bevestigd" ? "Bevestigd" : "Geweigerd"}${v.beoordeeld_door ? " · " + esc(userById(v.beoordeeld_door).name) : ""}</span>`}</div></div>
+    <div class="panel-body" style="display:grid;grid-template-columns:1fr 1fr;gap:12px;font-size:13px">
+      <div><div class="eyebrow">Vraag van de klant</div><div style="white-space:pre-wrap;margin-top:4px">${esc(v.vraag)}</div></div>
+      <div><div class="eyebrow">Antwoord van de assistent</div><div style="white-space:pre-wrap;margin-top:4px;color:var(--ink-2)">${esc(v.antwoord)}</div></div>
+      <div class="muted" style="grid-column:1/-1">Voorgesteld: <b>${esc(wie)}</b>${v.eind ? ` · tegen ${fmtLong(v.eind)}` : ""}${v.taak_id && S.taken[v.taak_id] ? ` · <a href="#" data-edit-task="${v.taak_id}">taak openen</a>` : ""}${v.reden ? ` · reden: ${esc(v.reden)}` : ""}</div>
+    </div></div>`;
+}
+function vVoorstellen() {
+  if (schemaV() < 23) return `<div class="page-head"><div><h1>Voorstellen</h1></div></div>` + SCHEMA_HINT(23);
+  const open = voorstellenOpen().sort((a, b) => (a.urgentie === "hoog" ? 0 : 1) - (b.urgentie === "hoog" ? 0 : 1) || (a.created_at || "").localeCompare(b.created_at || ""));
+  const rest = Object.values(S.taak_voorstellen).filter(v => v.status !== "open").sort((a, b) => (b.beoordeeld_op || "").localeCompare(a.beoordeeld_op || "")).slice(0, 30);
+  return `<div class="page-head"><div><div class="eyebrow">${open.length} open</div><h1>Voorstellen van de assistent</h1><div class="sub">Vragen van klanten in het portaal waar BROS iets voor moet doen. Bevestigen maakt er een taak van; aanpassen laat je titel, wie en datum kiezen; weigeren sluit het af.</div></div></div>
+    ${open.length ? open.map(v => voorstelCard(v, true)).join("") : `<div class="panel"><div class="empty"><b>Geen open voorstellen</b>Alles is beoordeeld.</div></div>`}
+    ${rest.length ? `<details style="margin-top:16px"><summary class="muted" style="cursor:pointer">Beoordeeld (${rest.length})</summary><div style="margin-top:10px">${rest.map(v => voorstelCard(v, true)).join("")}</div></details>` : ""}`;
+}
+function vVragenProject(p) {
+  if (schemaV() < 23) return SCHEMA_HINT(23);
+  const msgs = berichtenOf(p.id); const vs = Object.values(S.taak_voorstellen).filter(v => v.project_id === p.id).sort((a, b) => (b.created_at || "").localeCompare(a.created_at || ""));
+  const cfg = aiCfg(); const nMaand = msgs.filter(m => m.rol === "klant" && (m.created_at || "") >= maandStart()).length; const kost = msgs.reduce((s, m) => s + (Number(m.kost) || 0), 0);
+  return `<div class="panel" style="margin-bottom:16px"><div class="panel-head"><div><h3>Vragen van de klant aan de assistent</h3><div class="muted" style="font-size:12px;margin-top:2px">${msgs.length ? `${msgs.filter(m => m.rol === "klant").length} vragen · ${nMaand} deze maand${cfg.plafond_project ? ` van ${cfg.plafond_project}` : ""} · ca. € ${kost.toFixed(2)} modelkost` : "Nog geen vragen gesteld"}${p.assistent === false ? ` · <span class="pill late">assistent uit voor dit project</span>` : ""}</div></div></div>
+    ${msgs.length ? `<div class="chat">${msgs.map(m => `<div class="msg ${m.rol}"><div class="bubble">${esc(m.tekst)}</div><div class="when">${m.rol === "assistent" ? "Assistent · " : "Klant · "}${fmtLong((m.created_at || "").slice(0, 10))} ${(m.created_at || "").slice(11, 16)}</div></div>`).join("")}</div>` : `<div class="empty">De klant heeft nog niets gevraagd in het portaal.</div>`}</div>
+    ${vs.length ? `<h3 style="margin:0 0 10px">Taakvoorstellen (${vs.filter(v => v.status === "open").length} open)</h3>` + vs.map(v => voorstelCard(v)).join("") : ""}`;
+}
+async function voorstelBevestig(id, extra = {}) {
+  const { data, error } = await sb.rpc("voorstel_bevestig", { p_id: id, p_titel: extra.titel || null, p_assignee: extra.assignee || null, p_eind: extra.eind || null, p_fase: extra.fase || null });
+  if (error) { toast("Bevestigen mislukt: " + error.message, 5000); throw error; }
+  if (data) S.taak_voorstellen[data.id] = data; if (data && data.taak_id) rowRefetch("taken", data.taak_id).catch(() => refetch("taken")); render(); toast("Bevestigd — de taak staat op het project");
+}
+function voorstelForm(v) {
+  const p = S.projecten[v.project_id];
+  openModal("Voorstel aanpassen en bevestigen", `<div class="form-grid">
+    <div class="field span2"><label for="vt_titel">Taak</label><input id="vt_titel" name="titel" value="${esc(v.titel)}" required></div>
+    <div class="field"><label for="vt_wie">Wie</label><select id="vt_wie" name="assignee">${userOpts(v.voorgestelde_user || S.me.id)}</select></div>
+    <div class="field"><label for="vt_eind">Tegen</label><input id="vt_eind" name="eind" type="date" value="${esc(v.eind || "")}"></div>
+    <div class="field"><label for="vt_fase">Fase</label><select id="vt_fase" name="fase"><option value="">— huidige fase van het project —</option>${opts(fasenList().map(f => [f.nr, f.nr + " · " + f.naam]), p?.fase_nr || "")}</select></div>
+    <div class="field span2"><div class="muted" style="font-size:13px"><b>Vraag:</b> ${esc(v.vraag)}<br><b>Antwoord:</b> ${esc(v.antwoord)}</div></div>
+  </div>`, { saveLabel: "Bevestigen", onSave: async (d) => { await voorstelBevestig(v.id, { titel: d.titel.trim(), assignee: d.assignee || null, eind: d.eind || null, fase: d.fase ? Number(d.fase) : null }); } });
+}
+async function voorstelWeiger(id) {
+  const reden = prompt("Reden (optioneel, komt in het logboek):", ""); if (reden === null) return;
+  const { data, error } = await sb.rpc("voorstel_weiger", { p_id: id, p_reden: reden || "" });
+  if (error) { toast("Weigeren mislukt: " + error.message, 5000); return; }
+  if (data) S.taak_voorstellen[data.id] = data; render(); toast("Voorstel geweigerd");
+}
+function vAssistentBeheer() {
+  if (schemaV() < 23) return `<div class="panel" style="margin-bottom:16px"><div class="panel-head"><h3>AI-assistent (klantenportaal)</h3><span class="pill st-offerte">nog niet geactiveerd</span></div><div class="panel-body">${SCHEMA_HINT(23)}</div></div>`;
+  const c = aiCfg(); const r = c.routering || {}; const ms = maandStart();
+  const maand = Object.values(S.assistent_berichten).filter(m => (m.created_at || "") >= ms); const vragen = maand.filter(m => m.rol === "klant").length; const kost = maand.reduce((s, m) => s + (Number(m.kost) || 0), 0);
+  const perProj = {}; maand.filter(m => m.rol === "klant").forEach(m => perProj[m.project_id] = (perProj[m.project_id] || 0) + 1);
+  const pct = c.plafond_globaal ? Math.round(vragen / c.plafond_globaal * 100) : 0;
+  const sel = (k) => `<select data-ai-route="${k}">${userOpts(r[k] || "", true)}</select>`;
+  return `<div class="panel" style="margin-bottom:16px"><div class="panel-head"><div><h3>AI-assistent (klantenportaal)</h3><div class="muted" style="font-size:12px;margin-top:2px">Klanten stellen vragen over hun dossier; de assistent antwoordt uit de klant-views en maakt taakvoorstellen die jullie beoordelen.</div></div><span class="pill ${c.actief !== false ? "st-afgerond" : "st-offerte"}">${c.actief !== false ? "aan" : "uit"}</span></div>
+    <div class="panel-body"><div class="form-grid">
+      <div class="field"><label class="sw-row"><input type="checkbox" class="sw" id="ai_actief" ${c.actief !== false ? "checked" : ""}><span><b>Assistent aan</b><small class="muted" style="display:block">Per project uit te zetten in het projectformulier.</small></span></label></div>
+      <div class="field"><label for="ai_model">Model</label><select id="ai_model">${opts(AI_MODELLEN, c.model || "gpt-4o-mini")}</select></div>
+      <div class="field"><label for="ai_functie">Naam (slug) van de Edge Function in Supabase</label><input id="ai_functie" value="${esc(c.functie || "assistent")}" placeholder="assistent"><small class="muted">Het deel na <code>/functions/v1/</code> in het adres van de functie, bv. <code>dynamic-handler</code>.</small></div>
+      <div class="field"><label for="ai_pp">Plafond per project per maand (vragen)</label><input id="ai_pp" type="number" min="0" value="${Number(c.plafond_project) || 0}"><small class="muted">0 = geen plafond. Erboven geeft de assistent de vraag door zonder modeloproep.</small></div>
+      <div class="field"><label for="ai_pg">Globaal plafond per maand (vragen)</label><input id="ai_pg" type="number" min="0" value="${Number(c.plafond_globaal) || 0}"><small class="muted">Harde stop voor alle projecten samen.</small></div>
+      <div class="field span2"><label class="sw-row"><input type="checkbox" class="sw" id="ai_datums" ${c.datums !== false ? "checked" : ""}><span><b>Data uit de planning noemen</b><small class="muted" style="display:block">Aan: de assistent noemt de data uit de klantplanning, met de nuance dat ze kunnen schuiven. Uit: enkel de fase.</small></span></label></div>
+      <div class="field span2"><label for="ai_begroeting">Zin bovenaan het tabblad Vragen</label><input id="ai_begroeting" value="${esc(c.begroeting || "")}"></div>
+      <div class="field span2"><label>Routering van taakvoorstellen</label><div class="tw"><table class="t"><tbody>${Object.entries(ONDERWERP).map(([k, l]) => `<tr><td style="width:160px">${l}${k === "klacht" ? ' <span class="muted">(altijd dringend)</span>' : ""}</td><td>${sel(k)}</td></tr>`).join("")}</tbody></table></div><small class="muted">Leeg = naar de beheerder.</small></div>
+      <div class="field span2"><div class="actions"><button class="btn primary" data-act="ai-save">Bewaren</button><span class="muted" style="font-size:12px">De API-sleutel staat niet hier maar als secret bij de Edge Function in Supabase (zie README).</span></div></div>
+    </div>
+    <div class="rend" style="margin-top:14px"><div class="panel"><div class="k">Vragen deze maand</div><div class="v ${pct >= 80 ? "neg" : ""}">${vragen}${c.plafond_globaal ? ` <small class="muted" style="font-size:12px;font-weight:400">/ ${c.plafond_globaal}${pct >= 80 ? " · " + pct + " %" : ""}</small>` : ""}</div></div><div class="panel"><div class="k">Geschatte modelkost</div><div class="v">€ ${kost.toFixed(2)}</div></div><div class="panel"><div class="k">Open voorstellen</div><div class="v">${voorstellenOpen().length}</div></div><div class="panel"><div class="k">Projecten met vragen</div><div class="v">${Object.keys(perProj).length}</div></div></div>
+    ${Object.keys(perProj).length ? `<div class="tw" style="margin-top:10px"><table class="t"><tbody>${Object.entries(perProj).sort((a, b) => b[1] - a[1]).map(([pid, n]) => `<tr><td>${esc(projName(S.projecten[pid]))}</td><td class="r num">${n}${c.plafond_project ? ` / ${c.plafond_project}` : ""}${c.plafond_project && n >= c.plafond_project * 0.8 ? ` <span class="pill late">bijna vol</span>` : ""}</td></tr>`).join("")}</tbody></table></div>` : ""}</div></div>`;
+}
+async function aiSaveSettings() {
+  const r = {}; document.querySelectorAll("[data-ai-route]").forEach(s => r[s.dataset.aiRoute] = s.value || null);
+  const value = { ...aiCfg(), actief: $("#ai_actief").checked, model: $("#ai_model").value, functie: ($("#ai_functie").value.trim().replace(/^.*\/functions\/v1\//, "").replace(/\/.*$/, "") || "assistent"), plafond_project: Number($("#ai_pp").value) || 0, plafond_globaal: Number($("#ai_pg").value) || 0, datums: $("#ai_datums").checked, begroeting: $("#ai_begroeting").value.trim(), routering: r };
+  const { data, error } = await sb.from("instellingen").upsert({ key: "assistent", value, updated_at: new Date().toISOString() }).select().single();
+  if (error) { toast("Bewaren mislukt: " + error.message, 5000); return; } S.instellingen.assistent = data; render(); toast("Assistent-instellingen bewaard");
+}
 /* ---------- Goedkeuringen: BROS legt de offerte of een meerwerkvoorstel voor, de klant beslist in het portaal ---------- */
 const GK_STATUS = { open: "Wacht op klant", akkoord: "Goedgekeurd", geweigerd: "Niet akkoord", ingetrokken: "Ingetrokken" };
 const gkOf = (pid) => Object.values(S.goedkeuringen).filter(g => g.project_id === pid).sort((a, b) => (b.voorgelegd_op || "").localeCompare(a.voorgelegd_op || ""));
@@ -1375,7 +1459,7 @@ async function postDel(id) {
 const docIcon = (m, n) => /spreadsheet|excel/.test(m) ? "xls" : /word|document/.test(m) ? "doc" : /pdf/.test(m) ? "pdf" : /skp|sketchup|vwx|dwg|dxf/i.test(n) ? "dwg" : "map";
 
 /* ---------- render root ---------- */
-const TABS = [["overzicht", "Overzicht"], ["projecten", "Projecten"], ["taken", "Taken"], ["planning", "Planning"], ["uren", "Uren"], ["contacten", "Contacten"], ["notities", "Notities"], ["team", "Team"], ["rapporten", "Rapporten"], ["instellingen", "Instellingen", "beheer"]];
+const TABS = [["overzicht", "Overzicht"], ["projecten", "Projecten"], ["taken", "Taken"], ["planning", "Planning"], ["uren", "Uren"], ["contacten", "Contacten"], ["notities", "Notities"], ["voorstellen", "Voorstellen"], ["team", "Team"], ["rapporten", "Rapporten"], ["instellingen", "Instellingen", "beheer"]];
 let renderPending = false;
 function render() {
   // niet herbouwen terwijl iemand in een inline-veld typt (realtime-update van een collega zou de invoer wissen); zoekvelden regelen hun eigen focus
@@ -1389,12 +1473,12 @@ function render() {
   if (S.loadError) { app.innerHTML = `<div class="login"><div class="card"><h1>Kon de gegevens niet laden</h1><p class="err">${esc(S.loadError)}</p><button class="btn" data-act="logout">Uitloggen</button> <button class="btn primary" data-act="reload">Opnieuw proberen</button></div></div>`; return; }
   if (!S.ready) { app.innerHTML = `<div class="login"><div class="card"><h1>BROS Planbord</h1><p>Gegevens laden…</p></div></div>`; return; }
   if (!S.me) { app.innerHTML = `<div class="login"><div class="card"><h1>Nog geen profiel</h1><p>Je login werkt, maar er is nog geen medewerkersprofiel gekoppeld. Vraag de beheerder om je uit te nodigen, of herlaad de pagina.</p><button class="btn" data-act="logout">Uitloggen</button> <button class="btn primary" data-act="reload">Herladen</button></div></div>`; return; }
-  const views = { overzicht: vOverzicht, projecten: vProjecten, taken: vTaken, planning: vPlanning, uren: vUren, contacten: vContacten, notities: vNotitiesAlle, team: vTeam, rapporten: vRapporten, instellingen: vInstellingen };
+  const views = { overzicht: vOverzicht, projecten: vProjecten, taken: vTaken, planning: vPlanning, uren: vUren, contacten: vContacten, notities: vNotitiesAlle, voorstellen: vVoorstellen, team: vTeam, rapporten: vRapporten, instellingen: vInstellingen };
   app.innerHTML = `
   <header class="top">
     <div class="top-in">
       <div class="brand"><span class="mark">BROS</span><span class="name">Planbord</span></div>
-      <nav class="tabs" aria-label="Hoofdnavigatie">${TABS.filter(([, , r]) => !r || isBeheer()).map(([k, l]) => `<button data-nav="${k}" ${S.view === k ? 'aria-current="page"' : ""}>${l}</button>`).join("")}</nav>
+      <nav class="tabs" aria-label="Hoofdnavigatie">${TABS.filter(([, , r]) => !r || isBeheer()).filter(([k]) => k !== "voorstellen" || schemaV() >= 23).map(([k, l]) => `<button data-nav="${k}" ${S.view === k ? 'aria-current="page"' : ""}>${l}${k === "voorstellen" && voorstellenOpen().length ? ` <span class="cnt" style="background:var(--crit);color:#fff">${voorstellenOpen().length}</span>` : ""}</button>`).join("")}</nav>
       <div class="who"><span class="who-cell">${avatar(S.me.id)}<span style="font-weight:600">${esc(S.me.name)}</span></span><button class="btn ghost sm" data-act="change-password" title="Wachtwoord wijzigen">Wachtwoord</button><button class="btn ghost sm" data-act="logout" title="Uitloggen">Uitloggen</button></div>
     </div>
     <div class="update" id="updateBar"><span>Er is een nieuwe versie van het Planbord.</span><button class="btn sm primary" data-act="reload">Nu herladen</button><button class="btn sm ghost" data-act="update-later">Later</button></div>
@@ -1536,7 +1620,7 @@ function vProjecten() {
 function vProjectDetail(p) {
   const ts = tasksOf(p.id), pl = projPlanned(p.id), dn = projDone(p.id);
   const [st, en] = projSpan(p);
-  const tabs = [["taken", "Taken"], ["notities", "Notities" + (schemaV() >= 14 && notesOf(p.id).length ? ` <span class="cnt">${notesOf(p.id).length}</span>` : "")], ["meetstaat", "Meetstaat"], ["facturatie", "Facturatie"], ["werf", "Werf" + (schemaV() >= 16 && vsOf(p.id).some(v => v.status === "open") ? ` <span class="cnt">${vsOf(p.id).filter(v => v.status === "open").length}</span>` : "")], ["planning", "Planning"], ["uren", "Uren"], ["dossier", "Dossier"]];
+  const tabs = [["taken", "Taken"], ["notities", "Notities" + (schemaV() >= 14 && notesOf(p.id).length ? ` <span class="cnt">${notesOf(p.id).length}</span>` : "")], ["meetstaat", "Meetstaat"], ["facturatie", "Facturatie"], ["werf", "Werf" + (schemaV() >= 16 && vsOf(p.id).some(v => v.status === "open") ? ` <span class="cnt">${vsOf(p.id).filter(v => v.status === "open").length}</span>` : "")], ["planning", "Planning"], ["uren", "Uren"], ["dossier", "Dossier"]].concat(schemaV() >= 23 ? [["vragen", "Vragen" + (voorstellenOpen().some(v => v.project_id === p.id) ? ` <span class="cnt" style="background:var(--crit);color:#fff">${voorstellenOpen().filter(v => v.project_id === p.id).length}</span>` : "")]] : []);
   let body = "";
   if (S.ptab === "taken") {
     const byFase = {}; ts.forEach(t => { (byFase[t.fase_nr || 0] = byFase[t.fase_nr || 0] || []).push(t); });
@@ -1554,6 +1638,8 @@ function vProjectDetail(p) {
     body = vFacturatie(p);
   } else if (S.ptab === "werf") {
     body = vWerf(p);
+  } else if (S.ptab === "vragen") {
+    body = vVragenProject(p);
   } else if (S.ptab === "planning") {
     body = ganttHtml([p], { expanded: true, title: "Timing " + p.klant }) + vKlantTiming(p);
   } else if (S.ptab === "uren") {
@@ -1842,6 +1928,7 @@ function vInstellingen() {
       <div class="field span2"><div class="actions"><button class="btn primary" data-act="drive-save">Bewaren</button><button class="btn" data-act="drive-test">Verbinding testen</button><span class="muted" style="font-size:12px">Het script staat in de map <code>drive/Code.gs</code>; de installatie staat bovenaan in dat bestand. Nieuwe projecten krijgen daarna automatisch hun map met de sjabloonbestanden.</span></div></div>
     </div></div></div>
   ${vPortaalBeheer()}
+  ${vAssistentBeheer()}
   ${vPostenBeheer()}
   <div class="grid two" style="grid-template-columns: 1fr 1.4fr">
     <div class="panel"><div class="panel-head"><h3>Fasen</h3><button class="btn sm" data-act="fase-new">+ Fase</button></div>
@@ -2028,6 +2115,7 @@ function projectForm(p = {}) {
     <div class="field"><label for="f_map">Drive-map</label><input id="f_map" name="drive_map" value="${esc(p.drive_map || "")}" placeholder="PROJECTEN/klantnaam (automatisch)"></div>
     <div class="field verloren"><label for="f_vr">Reden verloren</label><input id="f_vr" name="verloren_reden" value="${esc(p.verloren_reden || "")}" placeholder="bv. prijs, timing, ander bureau"></div>
     <div class="field span2"><label for="f_not">Notities</label><textarea id="f_not" name="notities">${esc(p.notities || "")}</textarea></div>
+    ${schemaV() >= 23 ? `<div class="field span2"><label class="sw-row"><input type="checkbox" class="sw" name="assistent" ${p.assistent !== false ? "checked" : ""}><span><b>AI-assistent in het klantenportaal</b><small class="muted" style="display:block">Uit bij een moeilijk dossier of geschil: het tabblad Vragen verdwijnt dan voor deze klant.</small></span></label></div>` : ""}
     <div class="field span2"><div class="eyebrow" style="margin-top:4px">Extra gegevens <span class="muted" style="font-weight:400;letter-spacing:0;text-transform:none">— niet verplicht, handig voor rapportage en nacalculatie</span></div></div>
     <div class="field"><label for="f_ptype">Type project</label><select id="f_ptype" name="projecttype"><option value="">—</option>${opts(PROJECTTYPES.map(x => [x, x]), p.projecttype || "")}</select></div>
     <div class="field"><label for="f_bron">Hoe kwam de klant bij BROS?</label><select id="f_bron" name="bron"><option value="">—</option>${opts(BRONNEN.map(x => [x, x]), p.bron || "")}</select></div>
@@ -2045,6 +2133,7 @@ function projectForm(p = {}) {
       const row = { klant: d.klant.trim(), naam: d.naam.trim(), klanttype: d.klanttype || "particulier", bedrijf: (d.bedrijf || "").trim(), btw_nummer: (d.btw_nummer || "").trim(), projecttype: d.projecttype || "", bron: d.bron || "", oppervlakte_m2: d.oppervlakte_m2 === "" ? null : Number(d.oppervlakte_m2), btw_tarief: d.btw_tarief === "" ? null : Number(d.btw_tarief), offerte_datum: d.offerte_datum || null, contract_datum: d.contract_datum || null, opgeleverd_op: d.opgeleverd_op || null, verloren_reden: d.status === "verloren" ? d.verloren_reden.trim() : "", tags: d.tags.trim(), contact: d.contact.trim(), adres: d.adres.trim(), postcode: d.postcode.trim(), gemeente: d.gemeente.trim(), gsm1: d.gsm1.trim(), gsm2: d.gsm2.trim(), email1: d.email1.trim(), email2: d.email2.trim(), factuur_email1: d.factuur_email1 === "on", factuur_email2: d.factuur_email2 === "on", lead: d.lead || null, status: d.status, fase_nr: d.fase_nr ? Number(d.fase_nr) : null, start: d.start || null, eind: d.eind || null, forfait: d.forfait === "" ? null : Number(d.forfait), drive_map: d.drive_map.trim() || ("PROJECTEN/" + d.klant.trim()), notities: d.notities };
       // Klantnaam gewijzigd terwijl er nog geen Drive-map gekoppeld is en de mapnaam niet zelf aangepast werd → mapnaam volgt de klantnaam
       if (!isNew && !p.drive_folder_id && row.klant !== (p.klant || "") && row.drive_map === (p.drive_map || "")) row.drive_map = "PROJECTEN/" + row.klant;
+      if (schemaV() >= 23) row.assistent = d.assistent === "on";
       if (d.nummer && d.nummer.trim()) row.nummer = d.nummer.trim(); else if (!isNew) row.nummer = p.nummer || null;
       if (isNew) {
         row.created_by = S.me.id;
@@ -2235,6 +2324,10 @@ document.addEventListener("click", (e) => {
   if (d.act === "drive-create" || d.act === "drive-link" || d.act === "drive-list") { const p = S.projecten[d.pid]; const a = d.act.replace("drive-", ""); driveSync(p, a).catch(err => toast("Drive: " + err.message)); return; }
   if (d.act === "drive-save") return driveSaveSettings();
   if (d.act === "portaal-save") return portaalSaveSettings();
+  if (d.act === "ai-save") return aiSaveSettings();
+  if (d.act === "vt-ok") { voorstelBevestig(d.id).catch(() => { }); return; }
+  if (d.act === "vt-edit") { const v = S.taak_voorstellen[d.id]; if (v) voorstelForm(v); return; }
+  if (d.act === "vt-nee") return voorstelWeiger(d.id);
   if (d.act === "portaal-invite") return portaalInviteForm(d.cid, d.pid);
   if (d.act === "drive-test") return driveCall("ping", {}).then(j => toast(`OK — mappen: ${j.projecten} / ${j.sjabloon}`)).catch(err => toast("Drive: " + err.message));
   if (d.selfase) { S.selFase = Number(d.selfase); return render(); }
@@ -2346,6 +2439,7 @@ async function checkVersion() {
 /* ---------- start ---------- */
 async function boot() {
   try { const sv = JSON.parse(localStorage.getItem("bros.sort") || "null"); if (sv && sv.key) S.sort = sv; S.msKlant = localStorage.getItem("bros.msKlant") === "1"; } catch (e) { }
+  if (location.hash === "#voorstellen") { S.view = "voorstellen"; history.replaceState(null, "", location.pathname); }
   try { const st = JSON.parse(sessionStorage.getItem("pb-state") || "null"); sessionStorage.removeItem("pb-state"); if (st && st.view) { S.view = st.view; S.project = st.project || null; S.ptab = st.ptab || "taken"; } } catch (e) { }
   render();
   if (!configured) return;

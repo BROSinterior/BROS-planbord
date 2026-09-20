@@ -2,7 +2,7 @@
    BROS Klantenportaal — alleen-lezen zicht van de bouwheer op zijn project
    Leest uitsluitend de klant_*-views (databasescript 011): geen kostprijzen, marges of interne notities.
    ===================================================================== */
-const PORTAAL_VERSION = "1.22.0";
+const PORTAAL_VERSION = "1.23.1";
 const todayLocal = () => { const n = new Date(); return `${n.getFullYear()}-${String(n.getMonth() + 1).padStart(2, "0")}-${String(n.getDate()).padStart(2, "0")}`; };
 const safeUrl = (u) => /^https?:\/\//i.test(String(u || "")) ? u : "#";
 const cfg = window.PLANBORD_CONFIG || {};
@@ -37,7 +37,7 @@ function toast(msg, ms = 3500) { const t = document.createElement("div"); t.clas
 /* ---------- gegevens ---------- */
 async function loadAll() {
   const q = (v, sel = "*") => sb.from(v).select(sel).then(r => { if (r.error) throw new Error(v + ": " + r.error.message); return r.data || []; });
-  const [me, projecten, meetstaat, vorderingen, regels, planning, uren, documenten, team, ik, fasen, loten, inst, goedkeuringen, notities, notitieTaken, mijnTaken, planTaken, werfverslagen] = await Promise.all([
+  const [me, projecten, meetstaat, vorderingen, regels, planning, uren, documenten, team, ik, fasen, loten, inst, goedkeuringen, notities, notitieTaken, mijnTaken, planTaken, werfverslagen, assistent, chat] = await Promise.all([
     sb.from("profiles").select("id,name,email,role").eq("id", S.session.user.id).maybeSingle().then(r => r.data),
     q("klant_project"), q("klant_meetstaat"), q("klant_vorderingen"), q("klant_vordering_regels"), q("klant_planning"), q("klant_uren"),
     q("klant_documenten"), q("klant_team"), q("klant_ik"), q("fasen"), sb.from("loten_v").select("*").then(r => r.error || !(r.data || []).length ? q("loten") : r.data),
@@ -48,9 +48,11 @@ async function loadAll() {
     sb.from("klant_taken").select("*").then(r => r.error ? [] : (r.data || [])),
     sb.from("klant_planning_taken").select("*").then(r => r.error ? [] : (r.data || [])),
     sb.from("klant_werfverslagen").select("*").then(r => r.error ? [] : (r.data || [])),
+    sb.from("instellingen").select("value").eq("key", "assistent").maybeSingle().then(r => r.data?.value || null),
+    sb.from("klant_assistent_berichten").select("*").order("created_at").then(r => r.error ? [] : (r.data || [])),
   ]);
   S.me = me;
-  S.data = { werfverslagen, planTaken, projecten: projecten.sort((a, b) => (b.nummer || "").localeCompare(a.nummer || "")), meetstaat, vorderingen, regels, planning, uren, documenten, team, ik, fasen: fasen.filter(f => f.actief !== false).sort((a, b) => a.nr - b.nr), loten: Object.fromEntries(loten.map(l => [l.nr, l])), inst, goedkeuringen: goedkeuringen.sort((a, b) => (b.voorgelegd_op || "").localeCompare(a.voorgelegd_op || "")), notities: notities.sort((a, b) => (b.datum || "").localeCompare(a.datum || "")), notitieTaken, mijnTaken: mijnTaken.sort((a, b) => (a.status === "done") - (b.status === "done") || (a.eind || "9").localeCompare(b.eind || "9")) };
+  S.data = { assistent, chat, werfverslagen, planTaken, projecten: projecten.sort((a, b) => (b.nummer || "").localeCompare(a.nummer || "")), meetstaat, vorderingen, regels, planning, uren, documenten, team, ik, fasen: fasen.filter(f => f.actief !== false).sort((a, b) => a.nr - b.nr), loten: Object.fromEntries(loten.map(l => [l.nr, l])), inst, goedkeuringen: goedkeuringen.sort((a, b) => (b.voorgelegd_op || "").localeCompare(a.voorgelegd_op || "")), notities: notities.sort((a, b) => (b.datum || "").localeCompare(a.datum || "")), notitieTaken, mijnTaken: mijnTaken.sort((a, b) => (a.status === "done") - (b.status === "done") || (a.eind || "9").localeCompare(b.eind || "9")) };
   if (!S.project || !projecten.some(p => p.id === S.project)) S.project = projecten[0]?.id || null;
   S.eersteBezoek = ik.length > 0 && ik.every(x => !x.portaal_login);
   sb.rpc("portaal_bezoek").then(() => { });
@@ -84,11 +86,11 @@ function render() {
   if (!D().projecten.length) { $("#app").innerHTML = `<div class="login"><div class="card"><div class="brand" style="margin-bottom:14px"><span class="mark">BROS</span><span class="name">Klantenportaal</span></div><h1>Nog geen project gekoppeld</h1><p>Je login werkt, maar er is nog geen project aan je gekoppeld. Laat het ons even weten via ${esc(D().inst.contact_email || "info@bros.be")}.</p><p><button class="btn ghost" data-act="logout">Uitloggen</button></p></div></div>`; return; }
   const p = P();
   const openGk = D().goedkeuringen.filter(g => g.project_id === p.id && g.status === "open" && !(g.geldig_tot && g.geldig_tot < todayLocal())).length;
-  const tabs = [["welkom", "Welkom"], ["akkoord", "Akkoord" + (openGk ? ` <span class="badge">${openGk}</span>` : "")], ["meetstaat", "Meetstaat"], ["facturatie", "Facturatie"], ["planning", "Planning"], ["verslagen", "Verslagen" + (D().mijnTaken.filter(t => t.project_id === p.id && t.status !== "done").length ? ` <span class="badge">${D().mijnTaken.filter(t => t.project_id === p.id && t.status !== "done").length}</span>` : "")], ["documenten", "Documenten"], ["team", "Wie is wie"]];
+  const tabs = [["welkom", "Welkom"], ["akkoord", "Akkoord" + (openGk ? ` <span class="badge">${openGk}</span>` : "")], ["meetstaat", "Meetstaat"], ["facturatie", "Facturatie"], ["planning", "Planning"], ["verslagen", "Verslagen" + (D().mijnTaken.filter(t => t.project_id === p.id && t.status !== "done").length ? ` <span class="badge">${D().mijnTaken.filter(t => t.project_id === p.id && t.status !== "done").length}</span>` : "")], ["documenten", "Documenten"], ["team", "Wie is wie"]].concat(assistentAan(p) ? [["vragen", "Vragen"]] : []);
   $("#app").innerHTML = `<header class="top"><div class="top-in"><div class="brand"><span class="mark">BROS</span><span class="name">Klantenportaal</span></div>
       <div class="who">${D().projecten.length > 1 ? `<select id="projSel" class="btn sm">${D().projecten.map(x => `<option value="${x.id}" ${x.id === p.id ? "selected" : ""}>${esc(x.nummer ? x.nummer + " · " : "")}${esc(x.naam || x.klant)}</option>`).join("")}</select>` : ""}<span>${esc(S.me?.name || "")}</span><button class="btn ghost sm" data-act="logout">Uitloggen</button></div></div>
     <nav class="tabs">${tabs.map(([k, l]) => `<button class="${S.tab === k ? "on" : ""}" data-tab="${k}">${l}</button>`).join("")}</nav></header>
-    <main>${({ welkom: vWelkom, akkoord: vAkkoord, meetstaat: vMeetstaat, facturatie: vFacturatie, planning: vPlanning, verslagen: vVerslagen, documenten: vDocumenten, team: vTeam })[S.tab](p)}</main>`;
+    <main>${(({ welkom: vWelkom, akkoord: vAkkoord, meetstaat: vMeetstaat, facturatie: vFacturatie, planning: vPlanning, verslagen: vVerslagen, documenten: vDocumenten, team: vTeam, vragen: vVragen })[S.tab] || vWelkom)(p)}</main>`;
   window.scrollTo({ top: 0 });
 }
 
@@ -212,6 +214,26 @@ function vVerslagen(p) {
       return `<div class="panel"><div class="panel-head" style="cursor:pointer" data-act="note-toggle" data-id="${n.id}"><div><h2 style="font-size:17px">${esc(n.titel || NOTE_SOORT[n.soort])}</h2><div class="muted" style="font-size:13px">${NOTE_SOORT[n.soort] || esc(n.soort)} · ${fmtLang(n.datum)}${n.auteur_naam ? " · " + esc(n.auteur_naam) : ""}${n.deelnemers ? " · aanwezig: " + esc(n.deelnemers) : ""}</div></div><span class="muted">${open ? "▾" : "▸"}</span></div>
         ${open ? `<div class="panel-body" style="white-space:pre-line;font-size:14px">${esc(n.inhoud)}</div>${ts.length ? `<div class="panel-body" style="border-top:1px solid var(--line)"><h3 style="margin-bottom:8px">Actiepunten</h3><table class="t"><tbody>${ts.map(t => `<tr><td style="width:28px">${t.voor_mij ? `<input type="checkbox" data-mijntaak="${t.id}" ${t.status === "done" ? "checked" : ""} style="width:18px;height:18px">` : t.status === "done" ? "✅" : "◻︎"}</td><td>${esc(t.titel)}${t.voor_mij ? ` <span class="pill verzonden">voor jou</span>` : ""}</td><td class="muted" style="font-size:13px">${esc(t.wie || "")}</td><td class="num muted" style="font-size:13px">${t.eind ? fmt(t.eind) : ""}</td></tr>`).join("")}</tbody></table></div>` : ""}` : ""}</div>`; }).join("")}</div>` : `<div class="panel"><div class="empty"><b>Nog geen verslagen gedeeld</b>Zodra we een verslag met je delen, staat het hier.</div></div>`}`;
 }
+/* ---------- AI-assistent: vragen over het eigen dossier ---------- */
+const assistentAan = (p) => !!(D().assistent && D().assistent.actief !== false && p && p.assistent !== false);
+function vVragen(p) {
+  const msgs = (D().chat || []).filter(m => m.project_id === p.id); const cfg = D().assistent || {};
+  return `<h1 style="margin-bottom:6px">Vragen</h1><p class="muted" style="margin-bottom:16px">${esc(cfg.begroeting || "Vraag gerust iets over je project. Een medewerker van BROS kijkt mee.")}</p>
+    <div class="panel"><div class="chat" id="chat">${msgs.length ? msgs.map(m => `<div class="msg ${m.rol}"><div class="bubble">${esc(m.tekst)}</div><div class="when">${m.rol === "assistent" ? "Assistent · " : ""}${fmtLang(m.created_at.slice(0, 10))} ${m.created_at.slice(11, 16)}</div></div>`).join("") : `<div class="muted" style="padding:20px;text-align:center">Nog geen vragen gesteld. Bijvoorbeeld: <i>wanneer start de uitvoering?</i>, <i>hoeveel is er al gefactureerd?</i>, <i>welke documenten staan er klaar?</i></div>`}${S.chatBezig ? `<div class="msg assistent"><div class="bubble muted">…</div></div>` : ""}</div>
+      <form class="chat-form" id="chatForm"><input name="vraag" placeholder="Stel je vraag over dit project…" autocomplete="off" maxlength="1500" ${S.chatBezig ? "disabled" : ""} required><button class="btn primary" type="submit" ${S.chatBezig ? "disabled" : ""}>Vragen</button></form>
+      <p class="muted" style="font-size:12px;padding:0 18px 14px;margin:0">Antwoorden worden automatisch opgesteld op basis van je dossier en kunnen een vergissing bevatten; bij twijfel geldt wat BROS je bevestigt. Vragen die actie vragen, komen bij het team terecht.</p></div>`;
+}
+async function vraagStellen(p, vraag) {
+  S.chatBezig = true; D().chat.push({ id: "tmp" + Date.now(), project_id: p.id, rol: "klant", tekst: vraag, created_at: new Date().toISOString() }); render();
+  try {
+    const r = await fetch(cfg.supabaseUrl + "/functions/v1/" + ((D().assistent && D().assistent.functie) || "assistent"), { method: "POST", headers: { "Content-Type": "application/json", apikey: cfg.supabaseAnonKey, Authorization: "Bearer " + (S.session?.access_token || "") }, body: JSON.stringify({ project_id: p.id, vraag }) });
+    const j = await r.json().catch(() => ({}));
+    if (!r.ok || j.error) throw new Error(j.error || ("fout " + r.status));
+    D().chat.push({ id: "tmp" + Date.now(), project_id: p.id, rol: "assistent", tekst: j.antwoord || "", created_at: new Date().toISOString() });
+    if (j.voorstel) toast("Je vraag is doorgegeven aan het team van BROS.", 4000);
+  } catch (e) { D().chat.push({ id: "tmp" + Date.now(), project_id: p.id, rol: "assistent", tekst: "Sorry, dat lukte niet (" + (e.message || e) + "). Probeer het straks opnieuw of mail BROS.", created_at: new Date().toISOString() }); }
+  S.chatBezig = false; render(); const c = $("#chat"); if (c) c.scrollTop = c.scrollHeight; const inp = $("#chatForm input"); if (inp) inp.focus();
+}
 function vDocumenten(p) {
   const docs = D().documenten.filter(d => d.project_id === p.id).sort((a, b) => (a.pad || "").localeCompare(b.pad || "") || (b.gewijzigd || "").localeCompare(a.gewijzigd || ""));
   const ext = (n) => (n.match(/\.([a-z0-9]{2,5})$/i) || [, "doc"])[1].toUpperCase();
@@ -297,6 +319,7 @@ document.addEventListener("click", (e) => {
   if (el.dataset.act === "note-toggle") { S.noteOpen = S.noteOpen === el.dataset.id ? null : el.dataset.id; render(); }
 });
 document.addEventListener("submit", (e) => {
+  if (e.target.id === "chatForm") { e.preventDefault(); const v = e.target.vraag.value.trim(); if (!v || S.chatBezig) return; vraagStellen(P(), v); return; }
   const form = e.target.closest("form.gk-form"); if (!form) return; e.preventDefault();
   const id = form.dataset.gk; const beslissing = e.submitter?.dataset.beslissing || "akkoord"; const naam = form.querySelector('[name="naam"]').value.trim();
   const m = form.querySelector(".msg");
