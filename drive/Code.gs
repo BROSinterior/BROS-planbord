@@ -129,7 +129,8 @@ function listById(folderId) {
 }
 
 /* ---- Snel oplijsten via de Drive REST API (DriveApp is te traag per map) ---- */
-const MAX_FILES = 800;
+const MAX_FILES = 1200;
+const MAX_IMG_PER_MAP = 60;   // afbeeldingen per map (renders, plannen als png); fotomappen van de werf blijven zo hanteerbaar
 function driveQuery(q, fields) {
   let out = [], pageToken = null;
   do {
@@ -155,17 +156,19 @@ function listFiles(rootId, path) {
     level = next;
     if (allIds.length > 300) break;
   }
-  // bestanden van alle mappen (foto's en video's overslaan; die blijven in Drive)
-  let out = [];
+  // bestanden van alle mappen (video's overslaan; afbeeldingen wel, maar max. MAX_IMG_PER_MAP per map — de recentste)
+  let out = []; const imgs = {};
   chunks(allIds, 20).forEach(ids => {
     if (out.length >= MAX_FILES) return;
-    const q = "mimeType!='application/vnd.google-apps.folder' and trashed=false and not mimeType contains 'image/' and not mimeType contains 'video/' and (" + ids.map(i => "'" + i + "' in parents").join(" or ") + ")";
+    const q = "mimeType!='application/vnd.google-apps.folder' and trashed=false and not mimeType contains 'video/' and (" + ids.map(i => "'" + i + "' in parents").join(" or ") + ")";
     driveQuery(q, "id,name,mimeType,size,modifiedTime,webViewLink,parents").forEach(f => {
       if (f.name.indexOf("~$") === 0 || f.name.indexOf("._") === 0 || f.name.indexOf("Icon") === 0 || f.name === ".DS_Store") return;
       const parent = (f.parents || []).find(p => paths[p] !== undefined);
-      out.push({ id: f.id, name: f.name, path: parent !== undefined ? paths[parent] : "", url: f.webViewLink, mime: f.mimeType, size: Number(f.size) || 0, updated: f.modifiedTime });
+      const row = { id: f.id, name: f.name, path: parent !== undefined ? paths[parent] : "", url: f.webViewLink, mime: f.mimeType, size: Number(f.size) || 0, updated: f.modifiedTime };
+      if ((f.mimeType || "").indexOf("image/") === 0) { (imgs[row.path] = imgs[row.path] || []).push(row); } else out.push(row);
     });
   });
+  Object.keys(imgs).forEach(p => { const l = imgs[p].sort((a, b) => String(b.updated).localeCompare(String(a.updated))); out = out.concat(l.slice(0, MAX_IMG_PER_MAP)); });
   return out.slice(0, MAX_FILES);
 }
 
