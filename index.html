@@ -274,6 +274,7 @@
   .doc-wrap { display: flex; align-items: center; gap: 8px; min-width: 0; }
   .doc-wrap .doc { flex: 1; min-width: 0; }
   .doc-wrap.shared .doc { border-color: var(--ok); }
+  .doc-wrap .sw-lbl { display: flex; flex-direction: column; align-items: center; gap: 1px; font-size: 10px; color: var(--muted); cursor: pointer; }
   .doc-wrap input.sw { flex: none; }
   .doc { display: flex; gap: 10px; align-items: center; padding: 10px 12px; border: 1px solid var(--line); border-radius: 8px; background: var(--surface); }
   .doc .ico { width: 30px; height: 36px; border-radius: 4px; flex: none; display: grid; place-items: center; font-family: var(--font-mono); font-size: 10px; font-weight: 600; color: #fff; }
@@ -422,11 +423,11 @@
 <div class="toast" id="toast" role="status"></div>
 <div class="loader" id="loader" aria-live="polite"><div class="logo"><i class="base"></i><i class="fill" id="loaderFill"></i></div><div class="pct" id="loaderPct">0%</div><div class="msg" id="loaderMsg">Even geduld…</div></div>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.45.4/dist/umd/supabase.min.js"></script>
-<script src="config.js?v=1.23.1"></script>
+<script src="config.js?v=1.24.0"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
-<script src="postcodes.js?v=1.23.1"></script>
-<script src="meetstaat-export.js?v=1.23.1"></script>
-<script src="meetstaat-import.js?v=1.23.1"></script>
-<script src="app.js?v=1.23.1"></script>
+<script src="postcodes.js?v=1.24.0"></script>
+<script src="meetstaat-export.js?v=1.24.0"></script>
+<script src="meetstaat-import.js?v=1.24.0"></script>
+<script src="app.js?v=1.24.0"></script>
 </body>
 </html>

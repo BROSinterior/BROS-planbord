@@ -11,11 +11,12 @@ Statische webapp (geen build-stap) op een Supabase-database.
 | `app.js` | alle logica |
 | `config.js` | koppeling met de database — **hier de Project URL en anon-sleutel invullen** |
 | `version.json` | versienummer; de app meldt een nieuwe versie aan wie ze open heeft |
-| `sql/001_init.sql` … `sql/022_*.sql` | databasescripts, in volgorde uit te voeren (`versie_schema` in instellingen bewaakt de volgorde vanaf 022) |
+| `sql/001_init.sql` … `sql/025_*.sql` | databasescripts, in volgorde uit te voeren (`versie_schema` in instellingen bewaakt de volgorde vanaf 022) |
 | `drive/Code.gs` | Google Apps Script dat projectmappen aanmaakt/koppelt op Drive en de meetstaat-export wegschrijft (installatie: zie bovenaan dat bestand) |
 | `meetstaat-export.js` | schrijft de meetstaat van een project in het Excel-sjabloon (zip/XML, opmaak en formules blijven intact) |
 | `klant/` | het klantenportaal (index.html + portaal.js): alleen-lezen zicht van de bouwheer op zijn project |
-| `werf/` | de werfmodus voor op de smartphone (vaststellingen met foto's, werkt ook zonder bereik; installeerbaar als app) |
+| `werf/` | de werfmodus voor op de smartphone (vaststellingen met foto's, werkt ook zonder bereik; installeerbaar als app) — ook voor aannemers, beperkt tot hun eigen punten |
+| `aannemer/` | het aannemersportaal (index.html + aannemer.js): werfpunten afwerken, plannen, verslagen, documenten, planning, prijsaanvragen, vragen aan BROS |
 | `supabase/functions/assistent/` | Edge Function van de AI-assistent (in Supabase te deployen, sleutel als secret) |
 | `next/` | (later) testversie van een volgende update |
 
@@ -48,6 +49,7 @@ Statische webapp (geen build-stap) op een Supabase-database.
 ## Rollen
 
 - **Beheer**: projecten aanmaken/bewerken, forfaits en uurtarieven zien, medewerkers beheren, uren van iedereen bewerken.
+- **Klant** en **aannemer**: externe logins voor het klantenportaal (`klant/`) en het aannemersportaal (`aannemer/`), gekoppeld aan een contact; ze lezen uitsluitend hun eigen views (`klant_*`, `aan_*`) en schrijven enkel via functies. Zie de secties hieronder.
 - **Medewerker**: projecten, taken, planning en meetstaat (met klantprijzen) zien; taken, meetstaatposten (omschrijving, hoeveelheid, status, locatie) en eigen uren bewerken; eigen profiel aanpassen. Geen kostprijzen, marges, richtprijzen, uurtarieven of interne kosten — sinds script 012 ook afgeschermd in de database (tabel `meetstaat_prijzen` en views `meetstaat_posten_v`, `loten_v`, `posten_v`). Een post uit de bibliotheek krijgt zijn richtprijs automatisch als kostprijs, ook als een medewerker ze toevoegt; beheer vult of corrigeert de prijzen daarna.
 
 ## Drive-koppeling (script 006 + drive/Code.gs)
@@ -119,6 +121,25 @@ De klant stelt in het portaal (tabblad **Vragen**) een vraag over zijn dossier; 
 - **Installatie**: (1) `sql/023_assistent.sql` en `sql/024_assistent_portaal.sql` uitvoeren (024 maakt de instelling 'assistent' leesbaar voor de klant; zonder dat blijft het tabblad Vragen verborgen); (2) API-account op archief@bros.be bij OpenAI (platform.openai.com) met betaallimiet, sleutel aanmaken; (3) Supabase → Edge Functions → *Deploy a new function* → *Via editor*: naam `assistent` (een andere naam mag; zet dan de slug uit de URL bij Instellingen → AI-assistent → Functienaam), inhoud van `supabase/functions/assistent/index.ts` plakken, deployen; daarna bij de functie **Verify JWT with legacy secret uitzetten** (de functie controleert het token zelf) en onder *Secrets* `OPENAI_API_KEY` toevoegen; (4) `drive/Code.ingevuld.gs` opnieuw plakken en deployen; (5) pushen. Test eerst met Phil als klant op een testproject.
 - **Privacy**: er gaan dossiergegevens van de klant naar de modelleverancier (API-gebruik wordt niet voor training gebruikt); vermeld dit in de privacyverklaring van het portaal. Per project uit te zetten.
 
+## Aannemersportaal (script 025 + drive/Code.gs, v1.24)
+
+Een aannemer, leverancier of studiebureau logt in op `…/BROS-planbord/aannemer/` met e-mail + wachtwoord (één login per contactpersoon) en ziet **alleen de projecten waaraan hij als contact gekoppeld is** (Dossier › Contacten, elke rol behalve bouwheer/contactpersoon) en de loten die daar bij hem staan. Nooit kostprijzen, marges, klantprijzen, uren of prijzen van andere aannemers.
+
+Wat hij kan:
+- **Werfpunten**: de vaststellingen die aan hem toegewezen zijn (foto's, ruimte, lot, deadline, pin op het plan). Hij meldt ze **opgelost met bewijsfoto** en/of opmerking (`aannemer_vaststelling_melden`); BROS zet ze daarna op gecontroleerd. De gekoppelde taak en de status in het Planbord lopen mee. Op de werf gebruikt hij dezelfde login in de **werfmodus** (`werf/`): enkel zijn punten, enkel opgelost melden en foto's toevoegen, ook zonder bereik.
+- **Plannen** (alle werfplannen van het project, met zijn pins), **Documenten** (bestanden met de schakelaar *aannemers* in Dossier › Documenten — naast *klant*) en **Werfverslagen** (verslagen die naar zijn e-mailadres gemaild zijn, plus verslagen met de knop *Aannemers* in de lijst Werfverslagen).
+- **Planning**: de fasen met de gedeelde timing en de taken met "timing delen" (zelfde als in het klantenportaal).
+- **Prijsaanvragen**: BROS stuurt vanuit projectfiche › Meetstaat › *Prijsaanvragen* → *+ Prijsaanvraag* een aannemer de posten van één of meer loten (hoeveelheden en eenheden; de aannemer krijgt een mail, en als hij nog geen login heeft zit de uitnodiging erbij). Hij vult per post een eenheidsprijs en opmerking in (bewaard bij verlaten van het veld) en dient in; BROS krijgt een mail. *Vergelijken* zet de aanvragen naast elkaar en naast de huidige kostprijs (laagste prijs groen); *Overnemen* zet de ingevulde prijzen van die aannemer als kostprijs in `meetstaat_prijzen` (enkel beheer; de klantprijs volgt via de marge) en mailt de aannemer dat zijn prijzen weerhouden zijn. *Herinneren*, *Afsluiten* en verwijderen zitten in dezelfde lijst.
+- **Vragen**: een vraag of melding voor BROS wordt een **taakvoorstel** met bron *aannemer* in de wachtrij Voorstellen (routering per onderwerp uit Instellingen → AI-assistent, klacht = dringend), met een mail naar de verantwoordelijke (antwoorden kan rechtstreeks per mail). Bevestigen maakt er een taak van; weigeren met een reden = het antwoord dat de aannemer in zijn portaal leest. Daaronder zijn actiepunten uit verslagen (afvinken).
+
+Activeren (eenmalig):
+1. Supabase → SQL Editor → `sql/025_aannemersportaal.sql` → Run (moet `11` teruggeven).
+2. Supabase → Authentication → URL Configuration → Redirect URLs: `https://brosinterior.github.io/BROS-planbord/aannemer/` toevoegen.
+3. Drive-script: nieuwste `drive/Code.gs` als `Code.ingevuld.gs` plakken (nieuwe acties `prijsaanvraagmail` en `voorstelmail`, `invite` met rol, `PORTAAL.URL_AANNEMER`) → Deploy → Manage deployments → Version: New.
+4. Edge Function `assistent` opnieuw plakken (weigert nu aannemerslogins) en pushen.
+
+Gebruik: Dossier › Contacten → bij een aannemer de knop **Aannemersportaal** (beheer) → hij krijgt een mail met een persoonlijke link. Instellingen → Klantenportaal toont wie toegang heeft (klant/aannemer). Een aannemer die op het Planbord of het klantenportaal inlogt, wordt doorgestuurd.
+
 ## Beveiliging en robuustheid (script 022, v1.22)
 
 - **Klantweergave** (v1.22.1): op het tabblad Meetstaat verbergt de knop "Klantweergave" (of sneltoets K) kostprijs, marge en de btw-kolom — handig als je de meetstaat samen met de klant overloopt; de keuze wordt per browser onthouden. Enkel zichtbaar voor beheer (medewerkers zien die kolommen sowieso niet).
@@ -146,7 +167,7 @@ Vervangt ArchiSnapper stap voor stap. Stap 1 = vaststellingen met foto's registr
 - **Werfverslag als pdf** (script 021, stap 2b): paneel **Werfverslagen** op het tabblad Werf → "Werfverslag maken" (ook vanuit een werfbezoek). Kies het bezoek, welke punten (alle open en opgeloste punten van het project / alleen open / alleen dit bezoek; optioneel enkel punten "zichtbaar voor de klant"), groepering (per lot of per verantwoordelijke), een bericht, en de ontvangers (contacten van het project met e-mail; aannemers met punten staan al aangevinkt, plus losse adressen). De pdf wordt in de browser gemaakt (jsPDF): kop met logo, datum/aanwezigen/weer, stand van de werken, per punt nummer in statuskleur, titel, verantwoordelijke, ruimte, deadline, omschrijving, tot 3 foto's, en achteraan elk gebruikt plan met de genummerde pins. De pdf staat in de bucket `werf` (`werfverslagen`), gaat als bijlage naar de ontvangers via het Drive-script (actie `werfverslagmail`, afzender archief@bros.be) en komt optioneel in de Drive-map **Werfcontrole** van het project. "Delen met de klant" toont de pdf in het portaal onder Verslagen › Werfverslagen (view `klant_werfverslagen`); in de lijst kan je delen/verbergen en verwijderen.
 - Groeperen: op het tabblad Werf per verantwoordelijke, per lot of per ruimte; in een werfbezoek staan de vaststellingen per lot; in de werfmodus de chip "Per lot" (het lot is daar ook in te vullen).
 - Vereist `sql/016_werf.sql` (tabellen `werfbezoeken`, `vaststellingen`, bucket `werf`, realtime), `sql/018_werf_taken.sql`, `sql/019_vaststelling_titel.sql`, `sql/020_werf_plannen.sql` en `sql/021_werfverslagen.sql`; het mailen vereist het nieuwe `drive/Code.gs` (opnieuw deployen). Alleen het team (beheer + medewerker) kan lezen en schrijven; de klant ziet in stap 1 enkel de vaststellingen die hem als taak toegewezen zijn.
-- Volgende stappen: (Drive-map Werfcontrole, mail), (3) aannemersportaal (eigen login, punten afwerken met foto), (4) checklists en oplevering.
+- Stap 3 = het aannemersportaal (script 025, zie hieronder). Volgende: (4) checklists en oplevering.
 
 ## Yuki-koppeling (in drive/Code.gs)
 

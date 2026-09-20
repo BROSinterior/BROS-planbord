@@ -3,7 +3,7 @@
    Zelfde database als het Planbord (Supabase). Werkt offline: foto's en punten wachten in een
    lokale wachtrij (IndexedDB) en worden verzonden zodra er weer verbinding is.
    ===================================================================== */
-const WERF_VERSION = "1.22.0";
+const WERF_VERSION = "1.24.0";
 const cfg = window.PLANBORD_CONFIG || {};
 if (!window.supabase) { document.getElementById("app").innerHTML = '<main><div class="empty"><b>De werfmodus is nog niet volledig geladen.</b><br>Open ze één keer met bereik; daarna werkt ze ook offline.<br><br><button class="btn" onclick="location.reload()">Opnieuw proberen</button></div></main>'; throw new Error("supabase-js niet geladen"); }
 const sb = window.supabase.createClient(cfg.supabaseUrl, cfg.supabaseAnonKey);
@@ -32,7 +32,8 @@ const projName = (p) => p ? (p.klant + (p.naam && p.naam !== p.klant ? " · " + 
 const contact = (id) => S.data.contacten.find(c => c.c && c.c.id === id)?.c;
 const profile = (id) => S.base.profiles.find(u => u.id === id);
 const lotName = (nr) => { const l = S.base.loten.find(x => x.nr === nr); return l ? `${nr}. ${l.naam}` : (nr ? String(nr) : ""); };
-const wie = (v) => v.contact_id ? (contact(v.contact_id)?.naam || "aannemer") : v.assignee ? (profile(v.assignee)?.name || "team") : "";
+const isAan = () => !!(S.me && S.me.role === "aannemer");   // aannemer (script 025): enkel eigen punten, enkel opgelost melden
+const wie = (v) => v.contact_id ? (contact(v.contact_id)?.naam || (isAan() ? "jij" : "aannemer")) : v.assignee ? (profile(v.assignee)?.name || "team") : "";
 const isLate = (v) => v.status === "open" && v.deadline && v.deadline < todayIso;
 const vsNr = (v) => v.nr ? "V-" + String(v.nr).padStart(3, "0") : "nieuw";
 const pill = (v) => isLate(v) ? `<span class="pill late">Te laat</span>` : `<span class="pill ${v.status}">${VS_STATUS[v.status] || v.status}</span>`;
@@ -84,13 +85,23 @@ async function loadBase() {
     sb.from("profiles").select("id,name,role,active,initials,color"),
     sb.from("loten_v").select("nr,naam").then(r => r.error ? sb.from("loten").select("nr,naam") : r),
   ]);
-  if (p.error) throw p.error;
-  S.base = { projecten: p.data || [], profiles: (u.data || []).filter(x => x.active !== false && x.role !== "klant"), loten: l.data || [] };
-  store.set("base", S.base);
   const me = (u.data || []).find(x => x.id === S.session?.user?.id); if (me) { S.me = me; store.set("me", me); }
+  let projecten = p.data || [];
+  if (me && me.role === "aannemer") { const a = await sb.from("aan_project").select("id,nummer,klant,naam,status,adres,gemeente"); if (a.error) throw a.error; projecten = a.data || []; }
+  else if (p.error) throw p.error;
+  S.base = { projecten, profiles: (u.data || []).filter(x => x.active !== false && x.role !== "klant" && x.role !== "aannemer"), loten: l.data || [] };
+  store.set("base", S.base);
 }
 async function loadProject(pid) {
   if (!pid) return;
+  if (isAan()) {
+    const [vs, wp] = await Promise.all([sb.from("aan_vaststellingen").select("*").eq("project_id", pid).order("nr", { ascending: false }), sb.from("aan_werfplannen").select("*").eq("project_id", pid).order("volgorde")]);
+    if (vs.error) throw vs.error;
+    const lots = [...new Set((vs.data || []).map(v => v.lot).filter(Boolean))].sort((a, b) => a - b);
+    S.data = { vaststellingen: vs.data || [], werfbezoeken: [], contacten: [], lots, plannen: wp.data || [] };
+    (wp.data || []).forEach(pl => { try { fetch(pl.url).catch(() => { }); } catch (e) { } });
+    store.set("cache." + pid, S.data); return;
+  }
   const [vs, wb, pc, lp, wp] = await Promise.all([
     sb.from("vaststellingen").select("*").eq("project_id", pid).order("nr", { ascending: false }),
     sb.from("werfbezoeken").select("*").eq("project_id", pid).order("datum", { ascending: false }),
@@ -155,8 +166,12 @@ async function sync() {
           if ((q.done || []).length) await fotosToevoegen(q.row.id, "fotos", q.done);
         } else if (q.kind === "vs-update") {
           while (q.fotos.length) { const f = await upload(q.pid || S.project, q.vid, q.fotos[0]); q.done = [...(q.done || []), f]; q.fotos.shift(); await idb.put(q); }
-          if (Object.keys(q.patch || {}).length) { const { error } = await sb.from("vaststellingen").update(q.patch).eq("id", q.vid); if (error) throw error; }
-          if ((q.done || []).length) await fotosToevoegen(q.vid, q.veld, q.done);
+          if (isAan()) {   // aannemer: alles via één functie (opgelost melden, opmerking, bewijsfoto's)
+            const { error } = await sb.rpc("aannemer_vaststelling_melden", { p_id: q.vid, p_status: (q.patch || {}).status === "opgelost" ? "opgelost" : null, p_opmerking: (q.patch || {}).opmerking || null, p_fotos: q.done || [] }); if (error) throw error;
+          } else {
+            if (Object.keys(q.patch || {}).length) { const { error } = await sb.from("vaststellingen").update(q.patch).eq("id", q.vid); if (error) throw error; }
+            if ((q.done || []).length) await fotosToevoegen(q.vid, q.veld, q.done);
+          }
         }
         await idb.del(q.id); revokeItem(q); S.queue = S.queue.filter(x => x.id !== q.id);
       } catch (e) {
@@ -188,12 +203,12 @@ function render() {
   else if (S.view === "detail") body = vDetail();
   else if (S.view === "bezoek") body = vBezoek();
   else body = vList();
-  app.innerHTML = topBar(projName(p), p ? `${p.nummer || ""}${p.gemeente ? " · " + p.gemeente : ""}` : "") + `<main>${body}</main>` + (S.view === "list" ? `<button class="fab" data-act="new">📷 Vaststelling</button>` : "");
+  app.innerHTML = topBar(projName(p), p ? `${p.nummer || ""}${p.gemeente ? " · " + p.gemeente : ""}` : "") + `<main>${body}</main>` + (S.view === "list" && !isAan() ? `<button class="fab" data-act="new">📷 Vaststelling</button>` : "");
   if (S.view === "new" || S.view === "edit") bindForm();
 }
-const topBar = (title, sub) => `<div class="top"><span class="mark"></span><button class="proj" data-act="projects"><b>${esc(title)}</b>${sub ? `<small>${esc(sub)} · wijzigen</small>` : `<small>Werfmodus v${WERF_VERSION}</small>`}</button>${syncBadge()}</div>`;
+const topBar = (title, sub) => `<div class="top"><span class="mark"></span><button class="proj" data-act="projects"><b>${esc(title)}</b>${sub ? `<small>${esc(sub)} · wijzigen</small>` : `<small>Werfmodus v${WERF_VERSION}${isAan() ? " · aannemer" : ""}</small>`}</button>${syncBadge()}</div>`;
 function vLogin() {
-  return `<main><div class="login"><span class="mark"></span><h1 style="text-align:center">Werfmodus</h1><p class="meta" style="text-align:center">Meld je aan met je Planbord-account.</p>
+  return `<main><div class="login"><span class="mark"></span><h1 style="text-align:center">Werfmodus</h1><p class="meta" style="text-align:center">Meld je aan met je Planbord-account of je login voor het aannemersportaal.</p>
     <form id="login"><div class="field"><label>E-mail</label><input name="email" type="email" autocomplete="username" required inputmode="email"></div>
     <div class="field"><label>Wachtwoord</label><input name="password" type="password" autocomplete="current-password" required></div>
     ${S.loginErr ? `<div class="err">${esc(S.loginErr)}</div>` : ""}<button class="btn primary" type="submit">Aanmelden</button></form>
@@ -215,9 +230,9 @@ function vList() {
   let body;
   if (perLot) { const g = {}; list.forEach(v => (g[v.lot || 0] = g[v.lot || 0] || []).push(v)); body = Object.keys(g).map(Number).sort((a, b) => (a ? 0 : 1) - (b ? 0 : 1) || a - b).map(nr => `<h2 style="margin:14px 0 8px;font-size:15px">${nr ? esc(lotName(nr)) : "Zonder lot"} <span class="cnt">${g[nr].length}</span></h2>` + g[nr].map(card).join("")).join(""); }
   else body = list.map(card).join("");
-  return `${b ? `<div class="bezoek"><div><b>Werfbezoek ${b.nr || "(nieuw)"} · ${b.datum === todayIso ? "vandaag" : fmtLong(b.datum)}</b><small>${esc(b.aanwezigen || "nieuwe vaststellingen hangen aan dit bezoek")}</small></div><button class="btn" style="width:auto;padding:8px 12px;font-size:13px" data-act="bezoek-stop">Afsluiten</button></div>` : `<div class="bezoek"><div><b>Geen werfbezoek gestart</b><small>Start er een om vaststellingen te groeperen per bezoek</small></div><button class="btn" style="width:auto;padding:8px 12px;font-size:13px" data-act="bezoek">Bezoek starten</button></div>`}
+  return `${isAan() ? "" : b ? `<div class="bezoek"><div><b>Werfbezoek ${b.nr || "(nieuw)"} · ${b.datum === todayIso ? "vandaag" : fmtLong(b.datum)}</b><small>${esc(b.aanwezigen || "nieuwe vaststellingen hangen aan dit bezoek")}</small></div><button class="btn" style="width:auto;padding:8px 12px;font-size:13px" data-act="bezoek-stop">Afsluiten</button></div>` : `<div class="bezoek"><div><b>Geen werfbezoek gestart</b><small>Start er een om vaststellingen te groeperen per bezoek</small></div><button class="btn" style="width:auto;padding:8px 12px;font-size:13px" data-act="bezoek">Bezoek starten</button></div>`}
     <div class="chips">${[["open", `Open ${n("open")}`], ["opgelost", `Opgelost ${n("opgelost")}`], ["alle", `Alles ${n("alle")}`]].map(([k, l]) => `<button class="chip" data-act="filter" data-f="${k}" aria-current="${f === k}">${l}</button>`).join("")}${all.some(v => v.lot) ? `<button class="chip" data-act="perlot" aria-current="${!!S.perLot}">Per lot</button>` : ""}</div>
-    ${body || `<div class="empty">${all.length ? "Niets in deze lijst." : "Nog geen vaststellingen. Tik op 📷 Vaststelling."}</div>`}`;
+    ${body || `<div class="empty">${all.length ? "Niets in deze lijst." : isAan() ? "Nog geen punten aan jou toegewezen." : "Nog geen vaststellingen. Tik op 📷 Vaststelling."}</div>`}`;
 }
 function vDetail() {
   const v = allVs().find(x => x.id === S.detail); if (!v) { S.view = "list"; return vList(); }
@@ -231,11 +246,11 @@ function vDetail() {
     ${bewijs.length ? `<h2>Bewijsfoto's</h2><div class="fotos">${bewijs.map(f => `<img src="${esc(f.url)}" alt="" data-lb="${esc(f.url)}">`).join("")}</div>` : ""}
     <div style="margin-top:18px;display:grid;gap:10px">
       ${v.status === "open" ? `<label class="btn ok" style="text-align:center">✓ Opgelost — met bewijsfoto<input type="file" accept="image/*" capture="environment" hidden data-oplos="${v.id}"></label><button class="btn" data-act="oplos" data-id="${v.id}">✓ Opgelost zonder foto</button>` : ""}
-      ${v.status === "opgelost" ? `<button class="btn ok" data-act="status" data-id="${v.id}" data-s="gecontroleerd">✓ Gecontroleerd en in orde</button><button class="btn" data-act="status" data-id="${v.id}" data-s="open">Heropenen — nog niet in orde</button>` : ""}
-      ${v.status === "gecontroleerd" || v.status === "vervallen" ? `<button class="btn" data-act="status" data-id="${v.id}" data-s="open">Heropenen</button>` : ""}
-      <label class="btn" style="text-align:center">📷 Foto toevoegen<input type="file" accept="image/*" capture="environment" hidden data-addfoto="${v.id}"></label>
-      <button class="btn" data-act="edit" data-id="${v.id}">Bewerken</button>
-      ${v.status !== "vervallen" ? `<button class="btn ghost danger" data-act="status" data-id="${v.id}" data-s="vervallen">Vervallen (niet meer van toepassing)</button>` : ""}
+      ${isAan() ? (v.status === "opgelost" ? `<p class="meta" style="text-align:center">Gemeld als opgelost — BROS controleert dit bij het volgende werfbezoek.</p>` : "") : `${v.status === "opgelost" ? `<button class="btn ok" data-act="status" data-id="${v.id}" data-s="gecontroleerd">✓ Gecontroleerd en in orde</button><button class="btn" data-act="status" data-id="${v.id}" data-s="open">Heropenen — nog niet in orde</button>` : ""}
+      ${v.status === "gecontroleerd" || v.status === "vervallen" ? `<button class="btn" data-act="status" data-id="${v.id}" data-s="open">Heropenen</button>` : ""}`}
+      <label class="btn" style="text-align:center">📷 ${isAan() ? "Bewijsfoto toevoegen" : "Foto toevoegen"}<input type="file" accept="image/*" capture="environment" hidden data-addfoto="${v.id}"></label>
+      ${isAan() ? `<button class="btn" data-act="opm" data-id="${v.id}">Opmerking toevoegen</button>` : `<button class="btn" data-act="edit" data-id="${v.id}">Bewerken</button>
+      ${v.status !== "vervallen" ? `<button class="btn ghost danger" data-act="status" data-id="${v.id}" data-s="vervallen">Vervallen (niet meer van toepassing)</button>` : ""}`}
     </div>`;
 }
 function vForm() {
@@ -331,6 +346,7 @@ document.addEventListener("click", async (e) => {
   if (d.act === "edit") { const v = allVs().find(x => x.id === d.id); if (!v) return; S.form = { ...v }; S.view = "edit"; return render(); }
   if (d.act === "status") { await setStatus(d.id, d.s); return render(); }
   if (d.act === "oplos") { await setStatus(d.id, "opgelost"); return render(); }
+  if (d.act === "opm") { const t = prompt("Opmerking voor BROS bij dit punt:", ""); if (t === null || !t.trim()) return; try { await enqueue({ kind: "vs-update", vid: d.id, pid: S.project, patch: { opmerking: t.trim() }, veld: "opgelost_fotos", fotos: [] }); toast("Opmerking bewaard"); } catch (e) { } return render(); }
   if (d.act === "bezoek") { S.view = "bezoek"; return render(); }
   if (d.act === "bezoek-save") { const row = { id: uuid(), project_id: S.project, datum: $("#b_datum").value || todayIso, weer: $("#b_weer").value, aanwezigen: $("#b_aanw").value.trim(), notities: $("#b_not").value, auteur: S.me?.id || null }; await enqueue({ kind: "wb-new", row }); S.bezoek = row.id; store.set("bezoek", row.id); S.view = "list"; toast("Werfbezoek gestart"); return render(); }
   if (d.act === "bezoek-stop") { S.bezoek = null; store.del("bezoek"); toast("Werfbezoek afgesloten"); return render(); }
@@ -347,7 +363,7 @@ document.addEventListener("change", async (e) => {
     for (const file of [...t.files]) { try { const r = await verklein(file); fotos.push({ blob: r.blob, w: r.w, h: r.h }); } catch (err) { toast("Foto niet bruikbaar"); } }
     t.value = "";
     if (t.dataset.oplos) await setStatus(id, "opgelost", {}, fotos);
-    else if (fotos.length) { try { await enqueue({ kind: "vs-update", vid: id, pid: S.project, patch: {}, veld: "fotos", fotos }); toast("Foto toegevoegd"); } catch (e) { } }
+    else if (fotos.length) { try { await enqueue({ kind: "vs-update", vid: id, pid: S.project, patch: {}, veld: isAan() ? "opgelost_fotos" : "fotos", fotos }); toast("Foto toegevoegd"); } catch (e) { } }
     render();
   }
 });
@@ -365,7 +381,7 @@ async function start() {
   await loadQueue();
   if (S.session && S.online) {
     try { await loadBase(); } catch (e) { console.warn(e); }
-    if (S.me && S.me.role === "klant") { await sb.auth.signOut(); S.session = null; S.me = null; store.del("me"); S.loginErr = "De werfmodus is voor het BROS-team; klanten gebruiken het portaal."; return render(); }
+    if (S.me && S.me.role === "klant") { await sb.auth.signOut(); S.session = null; S.me = null; store.del("me"); S.loginErr = "De werfmodus is voor het BROS-team en de aannemers; als klant gebruik je het klantenportaal."; return render(); }
     const qp = new URLSearchParams(location.search).get("p"); if (qp && S.base.projecten.find(p => p.id === qp)) { S.project = qp; store.set("p", qp); history.replaceState(null, "", location.pathname); }
     if (S.project) { useCache(S.project); try { await loadProject(S.project); } catch (e) { console.warn(e); } }
   } else if (S.project) useCache(S.project);

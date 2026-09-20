@@ -32,6 +32,7 @@ Deno.serve(async (req) => {
     const admin = createClient(url, service, { auth: { persistSession: false } });
     const { data: prof } = await admin.from("profiles").select("role,active,name").eq("id", u.id).maybeSingle();
     if (!prof || prof.active === false) return json({ error: "Geen actief profiel." }, 403);
+    if (!["beheer", "medewerker", "klant"].includes(prof.role)) return json({ error: "De assistent is er enkel voor klanten en het team." }, 403);   // aannemers (script 025) niet
     const isKlant = prof.role === "klant";
     // intern mag testen op elk project; klant enkel op zijn projecten (view klant_project is leeg voor anderen)
     const { data: pRows } = await (isKlant ? user.from("klant_project").select("*").eq("id", projectId) : admin.from("projecten").select("id,nummer,klant,naam,adres,postcode,gemeente,status,fase_nr,start,eind,projecttype,btw_tarief,offerte_datum,contract_datum,opgeleverd_op,lead,assistent").eq("id", projectId));

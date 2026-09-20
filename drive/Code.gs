@@ -20,6 +20,8 @@ function doPost(e) {
     const body = JSON.parse((e.postData && e.postData.contents) || "{}");
     if (body.action === "reset") return json(portaalReset(body));   // klantenportaal: "wachtwoord vergeten" — bewust zonder secret, stuurt enkel een mail naar een bestaande klantlogin
     if (body.action === "gkmail") return json(goedkeuringMail(body)); // portaal (klant beslist) én Planbord: identiteit en rol via het meegestuurde login-token
+    if (body.action === "voorstelmail") return json(voorstelMailAannemer(body)); // aannemersportaal: melding van een vraag/opmerking (token-gecontroleerd, aannemer)
+    if (body.action === "prijsaanvraagmail") return json(prijsaanvraagMail(body)); // prijsaanvragen: team (token) → aannemer, of aannemer (token) → BROS
     if (!body.secret || body.secret !== CONFIG.SECRET) return json({ ok: false, error: "Geen toegang (secret klopt niet)." });
     if (body.action === "ping") return json({ ok: true, info: "Verbinding en secret in orde.", projecten: DriveApp.getFolderById(CONFIG.PROJECTEN_FOLDER_ID).getName(), sjabloon: DriveApp.getFolderById(CONFIG.SJABLOON_FOLDER_ID).getName() });
     // Drive-acties: naast het secret ook een geldig teamlogin vereist (het secret alleen volstaat niet meer), en enkel mappen onder PROJECTEN
@@ -244,6 +246,7 @@ const YUKI = {
 const PORTAAL = {
   SERVICE_KEY: "VUL-IN",
   URL: "https://brosinterior.github.io/BROS-planbord/klant/",   // ook toevoegen bij Supabase → Authentication → URL Configuration → Redirect URLs
+  URL_AANNEMER: "https://brosinterior.github.io/BROS-planbord/aannemer/",   // aannemersportaal — idem bij Redirect URLs
   AFZENDER: "BROS",
   VAN: "archief@bros.be",   // afzender van de mails naar klanten — moet in Gmail van brosburo@gmail.com ingesteld staan als "E-mail verzenden als"-alias; anders vertrekt de mail van brosburo met dit adres als antwoordadres
   ONDERWERP: "Welkom in je BROS-klantenportaal",
@@ -273,26 +276,42 @@ function caller(token, beheerOnly) {
   if (beheerOnly ? role !== "beheer" : (role !== "beheer" && role !== "medewerker")) throw new Error(beheerOnly ? "Alleen beheerders kunnen portaaltoegang geven." : "Geen toegang.");
   return { id: u.id, name: prof[0].name, role: role };
 }
-function portaalInvite(body) {
-  const wie = caller(body.token, true);
-  const email = String(body.email || "").trim().toLowerCase();
-  if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email)) return { ok: false, error: "Geen geldig e-mailadres: " + email };
-  const naam = String(body.naam || "").trim(); const contactId = String(body.contact_id || "");
+/** Uitnodigings- of herstellink voor een portaallogin (klant of aannemer); koppelt de login aan het contact. */
+function portaalLink(email, naam, contactId, rol) {
+  const url = rol === "aannemer" ? PORTAAL.URL_AANNEMER : PORTAAL.URL;
   let j, bestaand = false;
-  try { j = pbAdmin("/auth/v1/admin/generate_link", "post", { type: "invite", email: email, data: { name: naam, rol: "klant", contact_id: contactId }, redirect_to: PORTAAL.URL }); }
+  try { j = pbAdmin("/auth/v1/admin/generate_link", "post", { type: "invite", email: email, data: { name: naam, rol: rol, contact_id: contactId }, redirect_to: url }); }
   catch (e) {
     if (!/already|exists|registered|duplicate/i.test(String(e))) throw e;
     bestaand = true;
-    j = pbAdmin("/auth/v1/admin/generate_link", "post", { type: "recovery", email: email, redirect_to: PORTAAL.URL });
+    j = pbAdmin("/auth/v1/admin/generate_link", "post", { type: "recovery", email: email, redirect_to: url });
   }
   const link = j.action_link || (j.properties && j.properties.action_link); const userId = j.id || (j.user && j.user.id);
   if (!link) throw new Error("Geen uitnodigingslink gekregen van Supabase.");
   if (bestaand && userId) {
     const prof = pbAdmin("/rest/v1/profiles?id=eq." + userId + "&select=role", "get");
-    if (prof && prof[0] && prof[0].role !== "klant") return { ok: false, error: "Dit e-mailadres hoort bij een teamlid van het Planbord; een klant heeft een ander adres nodig." };
+    if (prof && prof[0] && prof[0].role !== rol) throw new Error("Dit e-mailadres hoort al bij een " + (prof[0].role === "beheer" || prof[0].role === "medewerker" ? "teamlid van het Planbord" : "login als " + prof[0].role) + "; gebruik een ander adres.");
   }
   if (contactId && userId) pbAdmin("/rest/v1/contacten?id=eq." + contactId, "patch", { user_id: userId, portaal_sinds: new Date().toISOString() });
+  return { link: link, userId: userId || null, bestaand: bestaand, url: url };
+}
+function portaalInvite(body) {
+  const wie = caller(body.token, true);
+  const email = String(body.email || "").trim().toLowerCase();
+  if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email)) return { ok: false, error: "Geen geldig e-mailadres: " + email };
+  const naam = String(body.naam || "").trim(); const contactId = String(body.contact_id || ""); const rol = body.rol === "aannemer" ? "aannemer" : "klant";
+  let r; try { r = portaalLink(email, naam, contactId, rol); } catch (e) { return { ok: false, error: String(e.message || e) }; }
+  const link = r.link, userId = r.userId, bestaand = r.bestaand;
   const aanhef = naam ? "Beste " + naam : "Beste";
+  if (rol === "aannemer") {
+    const tekstA = aanhef + ",\n\nBROS geeft je toegang tot het aannemersportaal. Daar vind je per project de werfpunten die aan jou toegewezen zijn (met foto's en plannen), de werfverslagen, de documenten die we delen en de prijsaanvragen die we je sturen. Werfpunten meld je er als opgelost, met een bewijsfoto.\n\nKies je wachtwoord via deze link:\n" + link + "\n\nDaarna log je altijd in op " + PORTAAL.URL_AANNEMER + " met je e-mailadres en wachtwoord. Op de werf gebruik je dezelfde login in de werfmodus (" + PORTAAL.URL_AANNEMER.replace(/aannemer\/?$/, "werf/") + "), die ook zonder bereik werkt.\nDe link hierboven is beperkt geldig; is hij vervallen, klik dan op het portaal op \"Wachtwoord vergeten\".\n\nMet vriendelijke groeten,\n" + wie.name + " — BROS";
+    const htmlA = "<div style=\"font-family:Helvetica,Arial,sans-serif;font-size:15px;line-height:1.5;color:#1B1E1C\"><p>" + aanhef + ",</p><p>BROS geeft je toegang tot het <b>aannemersportaal</b>. Daar vind je per project de werfpunten die aan jou toegewezen zijn (met foto's en plannen), de werfverslagen, de documenten die we delen en de prijsaanvragen die we je sturen. Werfpunten meld je er als opgelost, met een bewijsfoto.</p>"
+      + "<p style=\"margin:24px 0\"><a href=\"" + link + "\" style=\"background:#1B1E1C;color:#fff;text-decoration:none;padding:12px 20px;border-radius:8px;font-weight:600;display:inline-block\">Kies je wachtwoord</a></p>"
+      + "<p>Daarna log je altijd in op <a href=\"" + PORTAAL.URL_AANNEMER + "\">" + PORTAAL.URL_AANNEMER + "</a> met je e-mailadres en wachtwoord. Op de werf gebruik je dezelfde login in de <a href=\"" + PORTAAL.URL_AANNEMER.replace(/aannemer\/?$/, "werf/") + "\">werfmodus</a> op je smartphone, die ook zonder bereik werkt.<br><span style=\"color:#767D78;font-size:13px\">De knop hierboven is beperkt geldig; is hij vervallen, klik dan op het portaal op \"Wachtwoord vergeten\".</span></p>"
+      + "<p>Met vriendelijke groeten,<br>" + wie.name + " — BROS</p></div>";
+    portaalMail(email, "Toegang tot het BROS-aannemersportaal", tekstA, htmlA);
+    return { ok: true, bestaand: bestaand, user_id: userId };
+  }
   const tekst = aanhef + ",\n\nWelkom in je persoonlijke BROS-klantenportaal. Daar volg je je project op de voet: de meetstaat, de facturatie, de planning en de documenten die we met je delen.\n\nKies je wachtwoord via deze link:\n" + link + "\n\nDaarna log je altijd in op " + PORTAAL.URL + " met je e-mailadres en wachtwoord.\nDe link hierboven is beperkt geldig; is hij vervallen, klik dan op het portaal op \"Wachtwoord vergeten\" en je krijgt een nieuwe.\n\nTot snel,\n" + wie.name + " — BROS";
   const html = "<div style=\"font-family:Helvetica,Arial,sans-serif;font-size:15px;line-height:1.5;color:#1B1E1C\"><p>" + aanhef + ",</p><p>Welkom in je persoonlijke <b>BROS-klantenportaal</b>. Daar volg je je project op de voet: de meetstaat, de facturatie, de planning en de documenten die we met je delen.</p>"
     + "<p style=\"margin:24px 0\"><a href=\"" + link + "\" style=\"background:#1B1E1C;color:#fff;text-decoration:none;padding:12px 20px;border-radius:8px;font-weight:600;display:inline-block\">Kies je wachtwoord</a></p>"
@@ -309,13 +328,15 @@ function portaalReset(body) {
   if (cache.get(key)) return { ok: true };            // max. één mail per 10 minuten per adres
   cache.put(key, "1", 600);
   try {
-    const prof = pbAdmin("/rest/v1/profiles?email=eq." + encodeURIComponent(email) + "&role=eq.klant&select=id,name", "get");
+    const prof = pbAdmin("/rest/v1/profiles?email=eq." + encodeURIComponent(email) + "&role=in.(klant,aannemer)&select=id,name,role", "get");
     if (!prof || !prof.length) return { ok: true };
-    const j = pbAdmin("/auth/v1/admin/generate_link", "post", { type: "recovery", email: email, redirect_to: PORTAAL.URL });
+    const url = prof[0].role === "aannemer" ? PORTAAL.URL_AANNEMER : PORTAAL.URL;
+    const j = pbAdmin("/auth/v1/admin/generate_link", "post", { type: "recovery", email: email, redirect_to: url });
     const link = j.action_link || (j.properties && j.properties.action_link); if (!link) return { ok: true };
     const naam = prof[0].name || "";
-    portaalMail(email, "Nieuw wachtwoord voor je BROS-klantenportaal", "Beste " + naam + ",\n\nVia deze link kies je een nieuw wachtwoord voor het BROS-klantenportaal:\n" + link + "\n\nVroeg je dit niet aan, dan mag je deze mail negeren.\n\nBROS",
-      "<div style=\"font-family:Helvetica,Arial,sans-serif;font-size:15px;line-height:1.5;color:#1B1E1C\"><p>Beste " + naam + ",</p><p>Via de knop hieronder kies je een nieuw wachtwoord voor het BROS-klantenportaal.</p><p style=\"margin:24px 0\"><a href=\"" + link + "\" style=\"background:#1B1E1C;color:#fff;text-decoration:none;padding:12px 20px;border-radius:8px;font-weight:600;display:inline-block\">Nieuw wachtwoord kiezen</a></p><p style=\"color:#767D78;font-size:13px\">Vroeg je dit niet aan, dan mag je deze mail negeren.</p><p>BROS</p></div>");
+    const pnaam = prof[0].role === "aannemer" ? "BROS-aannemersportaal" : "BROS-klantenportaal";
+    portaalMail(email, "Nieuw wachtwoord voor je " + pnaam, "Beste " + naam + ",\n\nVia deze link kies je een nieuw wachtwoord voor het " + pnaam + ":\n" + link + "\n\nVroeg je dit niet aan, dan mag je deze mail negeren.\n\nBROS",
+      "<div style=\"font-family:Helvetica,Arial,sans-serif;font-size:15px;line-height:1.5;color:#1B1E1C\"><p>Beste " + naam + ",</p><p>Via de knop hieronder kies je een nieuw wachtwoord voor het " + pnaam + ".</p><p style=\"margin:24px 0\"><a href=\"" + link + "\" style=\"background:#1B1E1C;color:#fff;text-decoration:none;padding:12px 20px;border-radius:8px;font-weight:600;display:inline-block\">Nieuw wachtwoord kiezen</a></p><p style=\"color:#767D78;font-size:13px\">Vroeg je dit niet aan, dan mag je deze mail negeren.</p><p>BROS</p></div>");
   } catch (e) { Logger.log("reset: " + e); }
   return { ok: true };
 }
@@ -412,6 +433,19 @@ function werfverslagMail(body) {
 function assistentMail(body) {
   const v = (pbAdmin("/rest/v1/taak_voorstellen?id=eq." + encodeURIComponent(String(body.id || "")) + "&select=*", "get") || [])[0];
   if (!v) return { ok: false, error: "Voorstel niet gevonden." };
+  return voorstelMail(v, null);
+}
+/** Vraag of melding van een aannemer uit zijn portaal (script 025): de aannemer stuurt zijn token mee; het voorstel moet van hem zijn. */
+function voorstelMailAannemer(body) {
+  const wie = callerAny(body.token); if (wie.role !== "aannemer") return { ok: false, error: "Geen toegang." };
+  const v = (pbAdmin("/rest/v1/taak_voorstellen?id=eq." + encodeURIComponent(String(body.id || "")) + "&bron=eq.aannemer&select=*", "get") || [])[0];
+  if (!v) return { ok: false, error: "Voorstel niet gevonden." };
+  const c = (pbAdmin("/rest/v1/contacten?id=eq." + v.contact_id + "&select=id,naam,bedrijf,email,user_id", "get") || [])[0];
+  if (!c || c.user_id !== wie.id) return { ok: false, error: "Geen toegang." };
+  const cache = CacheService.getScriptCache(); if (cache.get("vm:" + v.id)) return { ok: true }; cache.put("vm:" + v.id, "1", 3600);
+  return voorstelMail(v, c);
+}
+function voorstelMail(v, aannemer) {
   const p = (pbAdmin("/rest/v1/projecten?id=eq." + v.project_id + "&select=nummer,klant,naam", "get") || [])[0] || {};
   const profs = pbAdmin("/rest/v1/profiles?select=id,name,email,role,active&active=eq.true", "get") || [];
   const naar = profs.find(x => x.id === v.voorgestelde_user); const beheer = profs.filter(x => x.role === "beheer" && x.email);
@@ -421,16 +455,73 @@ function assistentMail(body) {
   const proj = (p.klant || "") + (p.naam && p.naam !== p.klant ? " · " + p.naam : "");
   const link = PORTAAL.URL.replace(/klant\/?$/, "") + "#voorstellen";
   const esc = (t) => String(t || "").replace(/</g, "&lt;");
+  const wieTxt = aannemer ? "De aannemer <b>" + esc(aannemer.naam) + "</b>" + (aannemer.bedrijf && aannemer.bedrijf !== aannemer.naam ? " (" + esc(aannemer.bedrijf) + ")" : "") + " stelt via het aannemersportaal een vraag of melding" : "De assistent in het klantenportaal stelt een taak voor";
   const html = "<div style=\"font-family:Helvetica,Arial,sans-serif;font-size:15px;line-height:1.5;color:#1B1E1C;max-width:720px\"><p>Dag " + esc(naar ? naar.name : "team") + ",</p>"
-    + "<p>De assistent in het klantenportaal stelt een taak voor bij <b>" + esc(proj) + "</b>" + (v.urgentie === "hoog" ? " <span style=\"color:#B93A34;font-weight:700\">(hoge urgentie)</span>" : "") + ":</p>"
-    + "<div style=\"padding:12px 16px;border:1px solid #DAD8D0;border-radius:10px;background:#F5F4F0\"><b>" + esc(v.titel) + "</b><br><span style=\"color:#767D78\">" + esc(v.onderwerp) + (v.eind ? " · tegen " + String(v.eind).split("-").reverse().join("/") : "") + "</span>" + (v.omschrijving ? "<p style=\"margin:8px 0 0\">" + esc(v.omschrijving) + "</p>" : "") + "</div>"
-    + "<p style=\"margin-top:14px\"><b>Vraag van de klant:</b><br>" + esc(v.vraag) + "</p><p><b>Antwoord van de assistent:</b><br>" + esc(v.antwoord) + "</p>"
+    + "<p>" + wieTxt + " bij <b>" + esc(proj) + "</b>" + (v.urgentie === "hoog" ? " <span style=\"color:#B93A34;font-weight:700\">(hoge urgentie)</span>" : "") + ":</p>"
+    + "<div style=\"padding:12px 16px;border:1px solid #DAD8D0;border-radius:10px;background:#F5F4F0\"><b>" + esc(v.titel) + "</b><br><span style=\"color:#767D78\">" + esc(v.onderwerp) + (v.eind ? " · tegen " + String(v.eind).split("-").reverse().join("/") : "") + "</span>" + (v.omschrijving && !aannemer ? "<p style=\"margin:8px 0 0\">" + esc(v.omschrijving) + "</p>" : "") + "</div>"
+    + (aannemer ? "<p style=\"margin-top:14px;white-space:pre-line\">" + esc(v.vraag) + "</p>" + (aannemer.email ? "<p style=\"color:#767D78;font-size:13px\">Rechtstreeks antwoorden kan op " + esc(aannemer.email) + "; het antwoord dat je in het Planbord bij 'weigeren' invult, leest hij in zijn portaal.</p>" : "")
+        : "<p style=\"margin-top:14px\"><b>Vraag van de klant:</b><br>" + esc(v.vraag) + "</p><p><b>Antwoord van de assistent:</b><br>" + esc(v.antwoord) + "</p>")
     + "<p><a href=\"" + link + "\" style=\"display:inline-block;padding:10px 16px;background:#1D1D1F;color:#fff;border-radius:8px;text-decoration:none\">Voorstel bekijken in het Planbord</a></p><p style=\"color:#767D78;font-size:13px\">Bevestig, pas aan of weiger het voorstel in het Planbord; pas dan wordt het een taak.</p></div>";
-  const tekst = "De assistent stelt een taak voor bij " + proj + ": " + v.titel + "\n\nVraag van de klant: " + v.vraag + "\nAntwoord: " + v.antwoord + "\n\nBekijken: " + link;
-  const opt = { htmlBody: html, name: PORTAAL.AFZENDER }; if (cc) opt.cc = cc;
-  if (PORTAAL.VAN) { const al = GmailApp.getAliases(); if (al.indexOf(PORTAAL.VAN) >= 0) opt.from = PORTAAL.VAN; else opt.replyTo = PORTAAL.VAN; }
-  GmailApp.sendEmail(to, (v.urgentie === "hoog" ? "[Dringend] " : "") + "Taakvoorstel · " + proj + " · " + v.titel, tekst, opt);
+  const tekst = (aannemer ? "Aannemer " + aannemer.naam + " stelt een vraag bij " : "De assistent stelt een taak voor bij ") + proj + ": " + v.titel + "\n\n" + v.vraag + (aannemer ? "" : "\nAntwoord: " + v.antwoord) + "\n\nBekijken: " + link;
+  const opt = { htmlBody: html, name: PORTAAL.AFZENDER }; if (cc) opt.cc = cc; if (aannemer && aannemer.email) opt.replyTo = aannemer.email;
+  if (PORTAAL.VAN && !(aannemer && aannemer.email)) { const al = GmailApp.getAliases(); if (al.indexOf(PORTAAL.VAN) >= 0) opt.from = PORTAAL.VAN; else opt.replyTo = PORTAAL.VAN; }
+  else if (PORTAAL.VAN) { const al = GmailApp.getAliases(); if (al.indexOf(PORTAAL.VAN) >= 0) opt.from = PORTAAL.VAN; }
+  GmailApp.sendEmail(to, (v.urgentie === "hoog" ? "[Dringend] " : "") + (aannemer ? "Vraag van aannemer · " : "Taakvoorstel · ") + proj + " · " + v.titel, tekst, opt);
   return { ok: true, naar: [to].concat(cc ? cc.split(",") : []) };
+}
+/** Prijsaanvragen (script 025): 'nieuw'/'herinnering' (team → aannemer, met uitnodiging als hij nog geen login heeft), 'ingediend' (aannemer → BROS), 'gekozen' (team → aannemer). */
+function prijsaanvraagMail(body) {
+  const soort = String(body.soort || "nieuw");
+  const a = (pbAdmin("/rest/v1/prijsaanvragen?id=eq." + encodeURIComponent(String(body.id || "")) + "&select=*", "get") || [])[0];
+  if (!a) return { ok: false, error: "Prijsaanvraag niet gevonden." };
+  const c = (pbAdmin("/rest/v1/contacten?id=eq." + a.contact_id + "&select=id,naam,bedrijf,contactpersoon,email,user_id", "get") || [])[0];
+  if (!c) return { ok: false, error: "Contact niet gevonden." };
+  const p = (pbAdmin("/rest/v1/projecten?id=eq." + a.project_id + "&select=nummer,klant,naam,adres,gemeente,lead", "get") || [])[0] || {};
+  const proj = (p.klant || "") + (p.naam && p.naam !== p.klant ? " · " + p.naam : "");
+  const loten = pbAdmin("/rest/v1/loten?nr=in.(" + (a.loten || []).join(",") + ")&select=nr,naam", "get") || [];
+  const lotTxt = (a.loten || []).map(n => { const l = loten.find(x => x.nr === n); return l ? n + ". " + l.naam : String(n); }).join(", ");
+  const esc = (t) => String(t || "").replace(/</g, "&lt;");
+  const wrap = (inner) => "<div style=\"font-family:Helvetica,Arial,sans-serif;font-size:15px;line-height:1.5;color:#1B1E1C;max-width:720px\">" + inner + "</div>";
+  const knop = (url, txt) => "<p style=\"margin:24px 0\"><a href=\"" + url + "\" style=\"background:#1B1E1C;color:#fff;text-decoration:none;padding:12px 20px;border-radius:8px;font-weight:600;display:inline-block\">" + txt + "</a></p>";
+  const dl = a.deadline ? String(a.deadline).split("-").reverse().join("/") : "";
+  if (soort === "ingediend") {
+    const wie = callerAny(body.token); if (wie.role !== "aannemer" || c.user_id !== wie.id) return { ok: false, error: "Geen toegang." };
+    const profs = pbAdmin("/rest/v1/profiles?select=id,name,email,role,active&active=eq.true", "get") || [];
+    const maker = profs.find(x => x.id === a.created_by) || profs.find(x => x.id === p.lead); const beheer = profs.filter(x => x.role === "beheer" && x.email);
+    const to = maker && maker.email ? maker.email : (beheer[0] ? beheer[0].email : ""); if (!to) return { ok: false, error: "Geen ontvanger." };
+    const cc = beheer.map(x => x.email).filter(e => e !== to).join(",");
+    const regels = pbAdmin("/rest/v1/prijsaanvraag_regels?aanvraag_id=eq." + a.id + "&eenheidsprijs=not.is.null&select=post_id", "get") || [];
+    const link = PORTAAL.URL.replace(/klant\/?$/, "");
+    const html = wrap("<p>Dag " + esc(maker ? maker.name : "team") + ",</p><p><b>" + esc(c.naam) + "</b>" + (c.bedrijf && c.bedrijf !== c.naam ? " (" + esc(c.bedrijf) + ")" : "") + " heeft zijn prijsopgave ingediend voor <b>" + esc(proj) + "</b> — " + esc(a.titel || "prijsaanvraag") + " (" + esc(lotTxt) + "): " + regels.length + " posten met prijs.</p>" + (a.opmerking ? "<p style=\"padding:10px 14px;border-left:3px solid #DAD8D0;white-space:pre-line\">" + esc(a.opmerking) + "</p>" : "") + knop(link, "Vergelijken in het Planbord") + "<p style=\"color:#767D78;font-size:13px\">Projectfiche › Meetstaat › Prijsaanvragen › Vergelijken, en daarna 'Overnemen' om de prijzen als kostprijs te zetten.</p>");
+    const opt = { htmlBody: html, name: PORTAAL.AFZENDER }; if (cc) opt.cc = cc; if (c.email) opt.replyTo = c.email;
+    GmailApp.sendEmail(to, "Prijsopgave ingediend · " + proj + " · " + c.naam, c.naam + " diende zijn prijzen in voor " + proj + " (" + lotTxt + "). Bekijken: " + link, opt);
+    return { ok: true, naar: to };
+  }
+  const wie = caller(body.token, false);
+  if (!c.email) return { ok: false, error: "Dit contact heeft geen e-mailadres." };
+  const naam = c.contactpersoon || c.naam; const aanhef = "Beste " + naam;
+  let uitgenodigd = false, linkHtml = "", linkTxt = "";
+  if (!c.user_id && soort !== "gekozen") {
+    const r = portaalLink(String(c.email).trim().toLowerCase(), naam, c.id, "aannemer"); uitgenodigd = !r.bestaand;
+    linkHtml = "<p>Je hebt nog geen login voor het aannemersportaal van BROS. Kies eerst je wachtwoord:</p>" + knop(r.link, "Kies je wachtwoord") + "<p style=\"color:#767D78;font-size:13px\">Daarna log je in op <a href=\"" + PORTAAL.URL_AANNEMER + "\">" + PORTAAL.URL_AANNEMER + "</a> met je e-mailadres en wachtwoord. Die link is beperkt geldig; vervallen? Klik op het portaal op \"Wachtwoord vergeten\".</p>";
+    linkTxt = "\n\nJe hebt nog geen login: kies eerst je wachtwoord via " + r.link + " en log daarna in op " + PORTAAL.URL_AANNEMER;
+  } else { linkHtml = knop(PORTAAL.URL_AANNEMER, "Prijzen invullen in het portaal"); linkTxt = "\n\nInvullen: " + PORTAAL.URL_AANNEMER; }
+  let onderwerp, html, tekst;
+  if (soort === "gekozen") {
+    onderwerp = "Je prijzen zijn weerhouden · " + proj;
+    html = wrap("<p>" + aanhef + ",</p><p>Goed nieuws: BROS heeft je prijsopgave voor <b>" + esc(proj) + "</b> (" + esc(lotTxt) + ") weerhouden. " + esc(wie.name) + " neemt contact met je op over de verdere afspraken en de planning.</p>" + knop(PORTAAL.URL_AANNEMER, "Naar het aannemersportaal") + "<p>Met vriendelijke groeten,<br>" + esc(wie.name) + " — BROS</p>");
+    tekst = aanhef + ",\n\nBROS heeft je prijsopgave voor " + proj + " (" + lotTxt + ") weerhouden. " + wie.name + " neemt contact met je op.\n\n" + wie.name + " — BROS";
+  } else {
+    const her = soort === "herinnering";
+    onderwerp = (her ? "Herinnering: prijsaanvraag" : "Prijsaanvraag") + " · " + proj + (dl ? " · vóór " + dl : "");
+    html = wrap("<p>" + aanhef + ",</p>" + (her ? "<p>Een korte herinnering: we wachten nog op je prijsopgave voor <b>" + esc(proj) + "</b>" + (dl ? " (graag vóór <b>" + dl + "</b>)" : "") + ".</p>" : "<p>BROS vraagt je een prijsopgave voor <b>" + esc(proj) + "</b>" + (p.adres ? " (" + esc(p.adres) + (p.gemeente ? ", " + esc(p.gemeente) : "") + ")" : "") + ": <b>" + esc(lotTxt) + "</b>." + (dl ? " Graag je prijzen vóór <b>" + dl + "</b>." : "") + "</p>")
+      + (a.bericht ? "<p style=\"padding:10px 14px;border-left:3px solid #DAD8D0;white-space:pre-line\">" + esc(a.bericht) + "</p>" : "")
+      + "<p>In het aannemersportaal zie je de posten met hoeveelheden en eenheden; je vult per post je eenheidsprijs (excl. btw) in, met eventueel een opmerking, en dient in als alles klopt.</p>" + linkHtml
+      + "<p>Met vriendelijke groeten,<br>" + esc(wie.name) + " — BROS</p>");
+    tekst = aanhef + ",\n\n" + (her ? "Herinnering: we wachten nog op je prijsopgave voor " + proj : "BROS vraagt je een prijsopgave voor " + proj + ": " + lotTxt) + (dl ? " (vóór " + dl + ")" : "") + ".\n" + (a.bericht ? "\n" + a.bericht + "\n" : "") + linkTxt + "\n\n" + wie.name + " — BROS";
+  }
+  portaalMail(String(c.email).trim(), onderwerp, tekst, html);
+  return { ok: true, naar: c.email, uitgenodigd: uitgenodigd };
 }
 /** Bestand delen met de klant: "iedereen met de link mag lezen" aan- of uitzetten. */
 function portaalShare(body) {

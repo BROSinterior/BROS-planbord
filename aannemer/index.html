@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>BROS — Klantenportaal</title>
+<title>BROS — Aannemersportaal</title>
 <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%231B1E1C'/%3E%3Ctext x='16' y='21' font-family='Arial' font-weight='bold' font-size='13' text-anchor='middle' fill='white'%3EB%3C/text%3E%3C/svg%3E">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap">
@@ -162,13 +162,50 @@
   .field textarea { font: inherit; padding: 10px 12px; border: 1px solid var(--line-2); border-radius: 8px; background: var(--surface); color: var(--ink); resize: vertical; }
   .toast { pointer-events: none; position: fixed; left: 50%; bottom: 24px; transform: translateX(-50%); background: var(--ink); color: var(--ground); padding: 10px 16px; border-radius: 10px; font-size: 14px; z-index: 60; box-shadow: var(--shadow); }
   .loading { display: grid; place-items: center; min-height: 60vh; color: var(--muted); }
+  /* ---- werfpunten ---- */
+  .chips { display: flex; gap: 8px; margin: 0 0 14px; overflow-x: auto; }
+  .chip { border: 1px solid var(--line-2); background: var(--surface); border-radius: 999px; padding: 6px 14px; font: inherit; font-size: 13px; font-weight: 500; white-space: nowrap; cursor: pointer; color: var(--ink); }
+  .chip[aria-current="true"] { background: var(--ink); color: var(--ground); border-color: var(--ink); }
+  .vs { display: flex; gap: 12px; background: var(--surface); border: 1px solid var(--line); border-radius: 14px; padding: 10px; box-shadow: var(--card); width: 100%; text-align: left; font: inherit; color: inherit; cursor: pointer; }
+  .vs.dim { opacity: .6; }
+  .vs .th { width: 76px; height: 76px; border-radius: 10px; object-fit: cover; background: var(--surface-2); flex: none; display: grid; place-items: center; color: var(--muted); font-size: 11px; }
+  .vs .bd { flex: 1; min-width: 0; }
+  .vs .hd { display: flex; align-items: center; gap: 6px; font-size: 12px; margin-bottom: 2px; flex-wrap: wrap; }
+  .vs .tx { font-size: 14px; line-height: 1.35; }
+  .vs .mt { font-size: 12px; color: var(--muted); margin-top: 3px; }
+  .nr { font-family: var(--font-mono); font-weight: 700; }
+  .pill.open { background: var(--blue-soft); color: var(--blue); } .pill.opgelost { background: var(--warn-soft); color: var(--warn); } .pill.gecontroleerd { background: var(--ok-soft); color: var(--ok); } .pill.vervallen { background: var(--surface-2); color: var(--muted); }
+  .pill.late { background: var(--crit-soft); color: var(--crit); } .pill.ingediend { background: var(--blue-soft); color: var(--blue); } .pill.gekozen, .pill.bevestigd { background: var(--ok-soft); color: var(--ok); } .pill.geweigerd, .pill.afgesloten { background: var(--surface-2); color: var(--muted); }
+  .late { color: var(--crit); font-weight: 600; }
+  .gallery { display: flex; gap: 8px; overflow-x: auto; margin: 0 0 12px; }
+  .gallery img { height: 200px; max-width: 80vw; border-radius: 12px; object-fit: cover; flex: none; cursor: zoom-in; }
+  .fotos { display: flex; gap: 8px; overflow-x: auto; padding-bottom: 4px; }
+  .fotos img { width: 88px; height: 88px; object-fit: cover; border-radius: 10px; border: 1px solid var(--line); flex: none; cursor: zoom-in; }
+  .fotos .fi { position: relative; flex: none; } .fotos .x { position: absolute; top: -6px; right: -6px; width: 24px; height: 24px; border-radius: 50%; border: 1px solid var(--line-2); background: var(--surface); font-size: 12px; cursor: pointer; }
+  .big { display: flex; gap: 10px; margin-bottom: 10px; }
+  .big label { flex: 1; display: grid; place-items: center; gap: 4px; padding: 16px 8px; border: 1px dashed var(--line-2); border-radius: 14px; background: var(--surface); font-size: 14px; font-weight: 500; text-align: center; cursor: pointer; }
+  .big label span { font-size: 24px; }
+  .plan-wrap { position: relative; display: block; line-height: 0; border: 1px solid var(--line); border-radius: 12px; overflow: hidden; background: #fff; }
+  .plan-wrap img { display: block; width: 100%; }
+  .pin { position: absolute; transform: translate(-50%, -50%); min-width: 24px; height: 24px; padding: 0 6px; border-radius: 12px; background: var(--crit); color: #fff; font: 700 12px/24px var(--font-mono); text-align: center; box-shadow: 0 1px 4px rgba(0,0,0,.35); border: 2px solid #fff; white-space: nowrap; cursor: pointer; }
+  .pin.opgelost { background: var(--warn); } .pin.gecontroleerd { background: var(--ok); } .pin.vervallen { background: var(--muted); } .pin.dim { opacity: .45; }
+  .lb { position: fixed; inset: 0; background: rgba(0,0,0,.92); display: none; place-items: center; z-index: 70; cursor: zoom-out; }
+  .lb.show { display: grid; } .lb img { max-width: 100vw; max-height: 100vh; }
+  .back { background: none; border: 0; color: var(--blue); font: inherit; font-size: 15px; padding: 0 0 12px; cursor: pointer; }
+  .meta { color: var(--muted); font-size: 14px; } .meta b { color: var(--ink); }
+  .field select { font: inherit; padding: 11px 13px; border: 1px solid var(--line-2); border-radius: 10px; background: var(--surface); color: var(--ink); }
+  .grid2 { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 12px; }
+  table.t input.prijs { width: 110px; font: inherit; font-family: var(--font-mono); text-align: right; padding: 6px 8px; border: 1px solid var(--line-2); border-radius: 8px; background: var(--surface); color: var(--ink); }
+  table.t input.opm { width: 100%; min-width: 140px; font: inherit; font-size: 13px; padding: 6px 8px; border: 1px solid var(--line-2); border-radius: 8px; background: var(--surface); color: var(--ink); }
+  table.t input:focus { outline: none; border-color: var(--blue); }
+  .plans { display: grid; grid-template-columns: repeat(auto-fill, minmax(320px, 1fr)); gap: 16px; }
 </style>
 </head>
 <body>
 <div id="app"></div>
-<div id="fx"><canvas></canvas><div class="wel"><div id="fxTxt">Welkom</div></div></div>
+<div class="lb" id="lb"></div>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.45.4/dist/umd/supabase.min.js"></script>
 <script src="../config.js?v=1.24.0"></script>
-<script src="portaal.js?v=1.24.0"></script>
+<script src="aannemer.js?v=1.24.0"></script>
 </body>
 </html>

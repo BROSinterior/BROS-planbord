@@ -2,7 +2,7 @@
    BROS Klantenportaal — alleen-lezen zicht van de bouwheer op zijn project
    Leest uitsluitend de klant_*-views (databasescript 011): geen kostprijzen, marges of interne notities.
    ===================================================================== */
-const PORTAAL_VERSION = "1.23.1";
+const PORTAAL_VERSION = "1.24.0";
 const todayLocal = () => { const n = new Date(); return `${n.getFullYear()}-${String(n.getMonth() + 1).padStart(2, "0")}-${String(n.getDate()).padStart(2, "0")}`; };
 const safeUrl = (u) => /^https?:\/\//i.test(String(u || "")) ? u : "#";
 const cfg = window.PLANBORD_CONFIG || {};
@@ -82,7 +82,7 @@ function render() {
   if (!S.session) return renderLogin();
   if (S.setPassword) return renderSetPassword();
   if (!S.ready) { $("#app").innerHTML = S.loadError ? `<div class="login"><div class="card"><h1>Even geen verbinding</h1><p>${esc(S.loadError)}</p><button class="btn primary" onclick="location.reload()">Opnieuw proberen</button></div></div>` : `<div class="loading">Je portaal wordt geladen…</div>`; return; }
-  if (S.me && S.me.role !== "klant") { $("#app").innerHTML = `<div class="login"><div class="card"><div class="brand" style="margin-bottom:14px"><span class="mark">BROS</span><span class="name">Klantenportaal</span></div><h1>Dit is het klantenportaal</h1><p>Je bent ingelogd als teamlid (${esc(S.me.email || "")}). Het Planbord vind je hier:</p><p><a class="btn primary" href="../">Naar het Planbord</a> <button class="btn ghost" data-act="logout">Uitloggen</button></p></div></div>`; return; }
+  if (S.me && S.me.role !== "klant") { $("#app").innerHTML = `<div class="login"><div class="card"><div class="brand" style="margin-bottom:14px"><span class="mark">BROS</span><span class="name">Klantenportaal</span></div><h1>Dit is het klantenportaal</h1><p>Je bent ingelogd als ${S.me.role === "aannemer" ? "aannemer" : "teamlid"} (${esc(S.me.email || "")}).</p><p><a class="btn primary" href="${S.me.role === "aannemer" ? "../aannemer/" : "../"}">${S.me.role === "aannemer" ? "Naar het aannemersportaal" : "Naar het Planbord"}</a> <button class="btn ghost" data-act="logout">Uitloggen</button></p></div></div>`; return; }
   if (!D().projecten.length) { $("#app").innerHTML = `<div class="login"><div class="card"><div class="brand" style="margin-bottom:14px"><span class="mark">BROS</span><span class="name">Klantenportaal</span></div><h1>Nog geen project gekoppeld</h1><p>Je login werkt, maar er is nog geen project aan je gekoppeld. Laat het ons even weten via ${esc(D().inst.contact_email || "info@bros.be")}.</p><p><button class="btn ghost" data-act="logout">Uitloggen</button></p></div></div>`; return; }
   const p = P();
   const openGk = D().goedkeuringen.filter(g => g.project_id === p.id && g.status === "open" && !(g.geldig_tot && g.geldig_tot < todayLocal())).length;
@@ -231,7 +231,11 @@ async function vraagStellen(p, vraag) {
     if (!r.ok || j.error) throw new Error(j.error || ("fout " + r.status));
     D().chat.push({ id: "tmp" + Date.now(), project_id: p.id, rol: "assistent", tekst: j.antwoord || "", created_at: new Date().toISOString() });
     if (j.voorstel) toast("Je vraag is doorgegeven aan het team van BROS.", 4000);
-  } catch (e) { D().chat.push({ id: "tmp" + Date.now(), project_id: p.id, rol: "assistent", tekst: "Sorry, dat lukte niet (" + (e.message || e) + "). Probeer het straks opnieuw of mail BROS.", created_at: new Date().toISOString() }); }
+  } catch (e) {
+    const fn = (D().assistent && D().assistent.functie) || "assistent";
+    const msg = /failed to fetch|load failed|networkerror/i.test(String(e.message || e)) ? "de assistent is niet bereikbaar — functie '" + fn + "' niet gevonden of geen internet" : (e.message || e);
+    D().chat.push({ id: "tmp" + Date.now(), project_id: p.id, rol: "assistent", tekst: "Sorry, dat lukte niet (" + msg + "). Probeer het straks opnieuw of mail BROS.", created_at: new Date().toISOString() });
+  }
   S.chatBezig = false; render(); const c = $("#chat"); if (c) c.scrollTop = c.scrollHeight; const inp = $("#chatForm input"); if (inp) inp.focus();
 }
 function vDocumenten(p) {
