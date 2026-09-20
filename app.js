@@ -2,7 +2,7 @@
    BROS Planbord — app v1.0
    Statische webapp op Supabase (login, live-synchronisatie, rechten)
    ===================================================================== */
-const APP_VERSION = "1.24.0";
+const APP_VERSION = "1.24.1";
 const PROJ_STATUS = { offerte: "In offerte", lopend: "Lopend", on_hold: "On hold", afgerond: "Afgerond", verloren: "Verloren" };
 const KLANTTYPE = { particulier: "Particulier", zakelijk: "Zakelijk" };
 const KLANTCODE = { particulier: "PAR", zakelijk: "ZAK" };
@@ -95,6 +95,18 @@ const klantTag = (t) => vsTag(t) + (t.uren_klant ? ` <span class="pill kl" title
 const pill = (t) => isLate(t) ? `<span class="pill late">Te laat</span>` : `<span class="pill ${esc(t.status)}">${esc(TASK_STATUS[t.status] || t.status)}</span>`;
 const kost = (uid, uren, soort) => (Number(S.tarieven[uid]?.[soort]) || 0) * uren;
 const projKost = (pid, soort) => Object.values(S.uren).filter(h => h.project_id === pid).reduce((s, h) => s + kost(h.user_id, Number(h.uren) || 0, soort), 0);
+/* Telefoonnummers uniform: +32/471.93.06.33 (mobiel), +32/3.123.45.67 of +32/16.12.34.56 (vast); ander land: +CC/nummer */
+function telFmt(s) {
+  let t = String(s || "").trim(); if (!t) return "";
+  let d = t.replace(/[^\d+]/g, ""); if (!d) return t;
+  if (d.startsWith("00")) d = "+" + d.slice(2);
+  if (!d.startsWith("+")) { if (d.startsWith("0")) d = "+32" + d.slice(1); else if (d.length === 9 || d.length === 8) d = "+32" + d; else return t; }
+  const groep = (n, sizes) => { const out = []; let i = 0; for (const z of sizes) { out.push(n.slice(i, i + z)); i += z; } if (i < n.length) out.push(n.slice(i)); return out.filter(Boolean).join("."); };
+  if (d.startsWith("+32")) { const n = d.slice(3).replace(/^0/, ""); if (n.length === 9) return "+32/" + groep(n, [3, 2, 2, 2]); if (n.length === 8) return "+32/" + ("2349".includes(n[0]) ? groep(n, [1, 3, 2, 2]) : groep(n, [2, 2, 2, 2])); return "+32/" + n; }
+  const m = d.match(/^\+(\d{1,3})(\d{4,})$/); if (!m) return t;
+  const cc = m[1].length > 2 && !/^(1|7)/.test(m[1]) ? m[1].slice(0, 2) : m[1]; const n = d.slice(1 + cc.length).replace(/^0/, "");
+  return "+" + cc + "/" + (n.length === 9 ? groep(n, [3, 2, 2, 2]) : n.length === 10 ? groep(n, [3, 3, 2, 2]) : n);
+}
 let toastT; function toast(msg, ms = 2800) { const t = $("#toast"); t.textContent = msg; t.classList.add("show"); clearTimeout(toastT); toastT = setTimeout(() => t.classList.remove("show"), Math.max(2800, ms)); }
 
 /* ---------- data laden en live houden ---------- */
@@ -323,7 +335,7 @@ function contactForm(c = {}, after) {
   </div>`, {
     wide: true,
     onSave: async (d) => {
-      const row = { soort: d.soort, naam: d.naam.trim(), bedrijf: (d.bedrijf || "").trim(), contactpersoon: (d.contactpersoon || "").trim(), klanttype: d.klanttype || "particulier", btw_nummer: (d.btw_nummer || "").trim(), email: (d.email || "").trim(), email2: (d.email2 || "").trim(), gsm: (d.gsm || "").trim(), tel: (d.tel || "").trim(), adres: (d.adres || "").trim(), postcode: (d.postcode || "").trim(), gemeente: (d.gemeente || "").trim(), vakgebied: (d.vakgebied || "").trim(), loten: [...$("#mform").querySelectorAll('input[name="lot"]:checked')].map(i => Number(i.value)), notities: d.notities || "", updated_at: new Date().toISOString() };
+      const row = { soort: d.soort, naam: d.naam.trim(), bedrijf: (d.bedrijf || "").trim(), contactpersoon: (d.contactpersoon || "").trim(), klanttype: d.klanttype || "particulier", btw_nummer: (d.btw_nummer || "").trim(), email: (d.email || "").trim(), email2: (d.email2 || "").trim(), gsm: telFmt(d.gsm), tel: telFmt(d.tel), adres: (d.adres || "").trim(), postcode: (d.postcode || "").trim(), gemeente: (d.gemeente || "").trim(), vakgebied: (d.vakgebied || "").trim(), loten: [...$("#mform").querySelectorAll('input[name="lot"]:checked')].map(i => Number(i.value)), notities: d.notities || "", updated_at: new Date().toISOString() };
       if (!isNew) row.actief = d.actief === "1";
       const saved = isNew ? await dbInsert("contacten", row) : await dbUpdate("contacten", c.id, row);
       toast(isNew ? "Contact aangemaakt" : "Contact bewaard"); if (after) after(saved);
@@ -2208,7 +2220,7 @@ function projectForm(p = {}) {
   </div>`, {
     wide: true,
     onSave: async (d) => {
-      const row = { klant: d.klant.trim(), naam: d.naam.trim(), klanttype: d.klanttype || "particulier", bedrijf: (d.bedrijf || "").trim(), btw_nummer: (d.btw_nummer || "").trim(), projecttype: d.projecttype || "", bron: d.bron || "", oppervlakte_m2: d.oppervlakte_m2 === "" ? null : Number(d.oppervlakte_m2), btw_tarief: d.btw_tarief === "" ? null : Number(d.btw_tarief), offerte_datum: d.offerte_datum || null, contract_datum: d.contract_datum || null, opgeleverd_op: d.opgeleverd_op || null, verloren_reden: d.status === "verloren" ? d.verloren_reden.trim() : "", tags: d.tags.trim(), contact: d.contact.trim(), adres: d.adres.trim(), postcode: d.postcode.trim(), gemeente: d.gemeente.trim(), gsm1: d.gsm1.trim(), gsm2: d.gsm2.trim(), email1: d.email1.trim(), email2: d.email2.trim(), factuur_email1: d.factuur_email1 === "on", factuur_email2: d.factuur_email2 === "on", lead: d.lead || null, status: d.status, fase_nr: d.fase_nr ? Number(d.fase_nr) : null, start: d.start || null, eind: d.eind || null, forfait: d.forfait === "" ? null : Number(d.forfait), drive_map: d.drive_map.trim() || ("PROJECTEN/" + d.klant.trim()), notities: d.notities };
+      const row = { klant: d.klant.trim(), naam: d.naam.trim(), klanttype: d.klanttype || "particulier", bedrijf: (d.bedrijf || "").trim(), btw_nummer: (d.btw_nummer || "").trim(), projecttype: d.projecttype || "", bron: d.bron || "", oppervlakte_m2: d.oppervlakte_m2 === "" ? null : Number(d.oppervlakte_m2), btw_tarief: d.btw_tarief === "" ? null : Number(d.btw_tarief), offerte_datum: d.offerte_datum || null, contract_datum: d.contract_datum || null, opgeleverd_op: d.opgeleverd_op || null, verloren_reden: d.status === "verloren" ? d.verloren_reden.trim() : "", tags: d.tags.trim(), contact: d.contact.trim(), adres: d.adres.trim(), postcode: d.postcode.trim(), gemeente: d.gemeente.trim(), gsm1: telFmt(d.gsm1), gsm2: telFmt(d.gsm2), email1: d.email1.trim(), email2: d.email2.trim(), factuur_email1: d.factuur_email1 === "on", factuur_email2: d.factuur_email2 === "on", lead: d.lead || null, status: d.status, fase_nr: d.fase_nr ? Number(d.fase_nr) : null, start: d.start || null, eind: d.eind || null, forfait: d.forfait === "" ? null : Number(d.forfait), drive_map: d.drive_map.trim() || ("PROJECTEN/" + d.klant.trim()), notities: d.notities };
       // Klantnaam gewijzigd terwijl er nog geen Drive-map gekoppeld is en de mapnaam niet zelf aangepast werd → mapnaam volgt de klantnaam
       if (!isNew && !p.drive_folder_id && row.klant !== (p.klant || "") && row.drive_map === (p.drive_map || "")) row.drive_map = "PROJECTEN/" + row.klant;
       if (schemaV() >= 23) row.assistent = d.assistent === "on";
@@ -2462,6 +2474,7 @@ document.addEventListener("click", (e) => {
   if (d.act === "reload") return hardReload();
   if (d.act === "update-later") { updateAvailable = false; $("#updateBar")?.classList.remove("show"); }
 });
+document.addEventListener("focusout", (e) => { const t = e.target; if (t && t.matches && t.matches('input[type="tel"]') && t.value.trim()) { const v = telFmt(t.value); if (v !== t.value) t.value = v; } });
 document.addEventListener("keydown", (e) => { if ((e.key === "k" || e.key === "K") && !e.metaKey && !e.ctrlKey && !e.altKey && S.view === "projecten" && S.project && S.ptab === "meetstaat" && isBeheer() && !/^(INPUT|TEXTAREA|SELECT)$/.test(document.activeElement?.tagName || "") && !$("#modalBg").classList.contains("show")) { S.msKlant = !S.msKlant; try { localStorage.setItem("bros.msKlant", S.msKlant ? "1" : ""); } catch (x) { } render(); } });
 document.addEventListener("focusout", (e) => {
   if (renderPending) setTimeout(() => { if (renderPending) render(); }, 0);

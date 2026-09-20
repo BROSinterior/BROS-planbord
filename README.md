@@ -11,7 +11,7 @@ Statische webapp (geen build-stap) op een Supabase-database.
 | `app.js` | alle logica |
 | `config.js` | koppeling met de database — **hier de Project URL en anon-sleutel invullen** |
 | `version.json` | versienummer; de app meldt een nieuwe versie aan wie ze open heeft |
-| `sql/001_init.sql` … `sql/025_*.sql` | databasescripts, in volgorde uit te voeren (`versie_schema` in instellingen bewaakt de volgorde vanaf 022) |
+| `sql/001_init.sql` … `sql/026_*.sql` | databasescripts, in volgorde uit te voeren (`versie_schema` in instellingen bewaakt de volgorde vanaf 022) |
 | `drive/Code.gs` | Google Apps Script dat projectmappen aanmaakt/koppelt op Drive en de meetstaat-export wegschrijft (installatie: zie bovenaan dat bestand) |
 | `meetstaat-export.js` | schrijft de meetstaat van een project in het Excel-sjabloon (zip/XML, opmaak en formules blijven intact) |
 | `klant/` | het klantenportaal (index.html + portaal.js): alleen-lezen zicht van de bouwheer op zijn project |
@@ -139,6 +139,10 @@ Activeren (eenmalig):
 4. Edge Function `assistent` opnieuw plakken (weigert nu aannemerslogins) en pushen.
 
 Gebruik: Dossier › Contacten → bij een aannemer de knop **Aannemersportaal** (beheer) → hij krijgt een mail met een persoonlijke link. Instellingen → Klantenportaal toont wie toegang heeft (klant/aannemer). Een aannemer die op het Planbord of het klantenportaal inlogt, wordt doorgestuurd.
+
+## Telefoonnummers (script 026, v1.24.1)
+
+GSM- en telefoonnummers worden overal in één formaat bewaard: `+32/471.93.06.33` (mobiel), `+32/3.123.45.67` of `+32/16.12.34.56` (vast), `+31/612.34.56.78` (buitenland). De databasefunctie `tel_format()` doet dat via een trigger op `contacten` (gsm, tel) en `projecten` (gsm1, gsm2), dus ook bij import; het Planbord zet het veld al om zodra je het verlaat. Script 026 zet de bestaande nummers eenmalig om.
 
 ## Beveiliging en robuustheid (script 022, v1.22)
 
