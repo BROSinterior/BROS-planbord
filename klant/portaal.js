@@ -2,7 +2,7 @@
    BROS Klantenportaal — alleen-lezen zicht van de bouwheer op zijn project
    Leest uitsluitend de klant_*-views (databasescript 011): geen kostprijzen, marges of interne notities.
    ===================================================================== */
-const PORTAAL_VERSION = "1.24.2";
+const PORTAAL_VERSION = "1.24.3";
 const todayLocal = () => { const n = new Date(); return `${n.getFullYear()}-${String(n.getMonth() + 1).padStart(2, "0")}-${String(n.getDate()).padStart(2, "0")}`; };
 const safeUrl = (u) => /^https?:\/\//i.test(String(u || "")) ? u : "#";
 const cfg = window.PLANBORD_CONFIG || {};
@@ -180,9 +180,32 @@ function vFacturatie(p) {
   const gefact = calcs.reduce((s, x) => s + x.c.excl, 0), betaald = calcs.filter(x => x.v.status === "betaald").reduce((s, x) => s + x.c.incl, 0), open = calcs.filter(x => x.v.status !== "betaald").reduce((s, x) => s + x.c.incl, 0);
   return `<h1 style="margin-bottom:6px">Facturatie</h1><p class="muted" style="margin-bottom:16px">Je facturen en wat er nog volgt. We factureren een voorschot bij ondertekening en daarna per afgewerkt onderdeel; meerwerk factureren we apart.</p>
     <div class="kpis"><div class="kpi"><div class="k">Contract + meerwerk</div><div class="v num">${eur(contract + mw, 0)}</div><div class="muted" style="font-size:12px">excl. btw</div></div><div class="kpi"><div class="k">Gefactureerd</div><div class="v num">${eur(gefact, 0)}</div><div class="muted" style="font-size:12px">${contract + mw ? pct(gefact / (contract + mw)) : "—"} excl. btw</div></div><div class="kpi"><div class="k">Nog te factureren</div><div class="v num">${eur(contract + mw - gefact, 0)}</div><div class="muted" style="font-size:12px">excl. btw</div></div><div class="kpi"><div class="k">Open te betalen</div><div class="v num" style="${open > 0.5 ? "color:var(--warn)" : ""}">${open > 0.5 ? eur(open, 0) : "—"}</div><div class="muted" style="font-size:12px">betaald ${eur(betaald, 0)} incl. btw</div></div></div>
-    <div class="panel"><div class="panel-head"><h2>Facturen</h2></div>${vs.length ? `<div class="tw"><table class="t"><thead><tr><th>Nr</th><th>Datum</th><th>Omschrijving</th><th>Onderdelen</th><th class="r">Excl. btw</th><th class="r">Btw</th><th class="r">Incl. btw</th><th>Status</th></tr></thead><tbody>
+    <div class="panel" style="margin-bottom:16px"><div class="panel-head"><h2>Facturen</h2></div>${vs.length ? `<div class="tw"><table class="t"><thead><tr><th>Nr</th><th>Datum</th><th>Omschrijving</th><th>Onderdelen</th><th class="r">Excl. btw</th><th class="r">Btw</th><th class="r">Incl. btw</th><th>Status</th></tr></thead><tbody>
       ${calcs.map(({ v, c }) => `<tr><td class="num">${v.nr === 0 ? "V" : v.nr}</td><td class="num">${fmt(v.datum)}</td><td><b>${esc(v.omschrijving || VORD_SOORT[v.soort])}</b>${v.factuurnummer ? `<div class="muted" style="font-size:12px">factuur ${esc(v.factuurnummer)}</div>` : ""}</td><td class="muted" style="font-size:12px;max-width:260px">${v.soort === "voorschot" ? "alle onderdelen" : esc(c.loten.map(lotNaam).join(", "))}</td><td class="r num">${eur(c.excl)}</td><td class="r num">${eur(c.btw)}</td><td class="r num"><b>${eur(c.incl)}</b></td><td><span class="pill ${v.status}">${VORD_STATUS[v.status] || esc(v.status)}</span></td></tr>`).join("")}
-      <tr class="tot"><td colspan="4">Totaal gefactureerd</td><td class="r num">${eur(gefact)}</td><td class="r num">${eur(calcs.reduce((s, x) => s + x.c.btw, 0))}</td><td class="r num">${eur(calcs.reduce((s, x) => s + x.c.incl, 0))}</td><td></td></tr></tbody></table></div>` : `<div class="empty"><b>Nog geen facturen</b>Zodra we een factuur versturen, vind je ze hier terug.</div>`}</div>`;
+      <tr class="tot"><td colspan="4">Totaal gefactureerd</td><td class="r num">${eur(gefact)}</td><td class="r num">${eur(calcs.reduce((s, x) => s + x.c.btw, 0))}</td><td class="r num">${eur(calcs.reduce((s, x) => s + x.c.incl, 0))}</td><td></td></tr></tbody></table></div>` : `<div class="empty"><b>Nog geen facturen</b>Zodra we een factuur versturen, vind je ze hier terug.</div>`}</div>
+    ${vs.length ? vordMatrix(p, vs) : ""}`;
+}
+/* vorderingsstaat per onderdeel: welk deel van elk lot (en elke post) in welke factuur zat, wat cumulatief gefactureerd is en wat nog rest */
+function vordMatrix(p, vs) {
+  const rows = msRows(); if (!rows.length) return "";
+  const pct1 = (x) => nl(Math.round(x * 1000) / 10, 1) + " %";
+  // per vordering: % per post (post-% overschrijft lot-%)
+  const rg = {}; vs.forEach(v => { const lot = {}, post = {}; D().regels.filter(r => r.vordering_id === v.id).forEach(r => { if (r.post_id) post[r.post_id] = Number(r.pct); else lot[r.lot] = Number(r.pct); }); rg[v.id] = { lot, post }; });
+  const pctVan = (v, r) => { if ((v.soort === "meerwerk") !== isMw(r)) return null; const x = rg[v.id].post[r.id] ?? rg[v.id].lot[r.lot]; return x == null ? null : x; };
+  S.vlOpen = S.vlOpen || {};
+  const blok = (soort) => { const rs = rows.filter(r => isMw(r) === (soort === "meerwerk") && Number(r.totaal)); if (!rs.length) return ""; const lots = [...new Set(rs.map(r => r.lot))];
+    return lots.map(l => { const lr = rs.filter(r => r.lot === l); const base = lr.reduce((s, r) => s + signed(r), 0); const key = soort + l; const open = !!S.vlOpen[key];
+      const cel = (v, items) => { let amt = 0, any = false; items.forEach(r => { const x = pctVan(v, r); if (x != null) { any = true; amt += x * signed(r); } }); const b = items.reduce((s, r) => s + signed(r), 0); return `<td class="c num">${any && b ? `${pct1(amt / b)}<div class="muted" style="font-size:11px">${eur(amt, 0)}</div>` : `<span class="muted">·</span>`}</td>`; };
+      const inv = lr.reduce((s, r) => s + vs.reduce((t, v) => t + (pctVan(v, r) || 0) * signed(r), 0), 0);
+      return `<tr style="cursor:pointer" data-act="vl-toggle" data-key="${key}"><td><span class="muted" style="display:inline-block;width:14px">${open ? "▾" : "▸"}</span><b>${esc(lotNaam(l))}</b>${soort === "meerwerk" ? ` <span class="pill meerwerk">meerwerk</span>` : ""}<div class="muted" style="font-size:12px;margin-left:14px">${lr.length} post${lr.length === 1 ? "" : "en"}</div></td><td class="r num">${eur(base, 0)}</td>${vs.map(v => cel(v, lr)).join("")}<td class="c num"><b>${pct1(base ? inv / base : 0)}</b></td><td class="r num ${Math.abs(base - inv) < 0.5 ? "muted" : ""}">${eur(base - inv, 0)}</td></tr>` +
+        (open ? lr.map(r => { const amt = signed(r); const invP = vs.reduce((t, v) => t + (pctVan(v, r) || 0) * amt, 0); return `<tr class="sub"><td style="padding-left:28px"><span class="muted num" style="font-size:11px">${esc(r.code)}</span> ${esc(r.omschrijving)}${r.locatie ? ` <span class="muted">· ${esc(r.locatie)}</span>` : ""}</td><td class="r num">${eur(amt, 0)}</td>${vs.map(v => cel(v, [r])).join("")}<td class="c num">${pct1(amt ? invP / amt : 0)}</td><td class="r num ${Math.abs(amt - invP) < 0.5 ? "muted" : ""}">${eur(amt - invP, 0)}</td></tr>`; }).join("") : ""); }).join(""); };
+  const tot = (soort) => rows.filter(r => isMw(r) === (soort === "meerwerk")).reduce((s, r) => s + signed(r), 0);
+  const totRow = (label, soort) => { const base = tot(soort); const perV = vs.map(v => rows.filter(r => isMw(r) === (soort === "meerwerk")).reduce((s, r) => s + (pctVan(v, r) || 0) * signed(r), 0)); const inv = perV.reduce((a, b) => a + b, 0); return `<tr class="tot"><td>${label}</td><td class="r num">${eur(base, 0)}</td>${perV.map(x => `<td class="c num">${x ? eur(x, 0) : ""}</td>`).join("")}<td class="c num">${pct1(base ? inv / base : 0)}</td><td class="r num">${eur(base - inv, 0)}</td></tr>`; };
+  const heeftMw = rows.some(r => isMw(r) && Number(r.totaal));
+  return `<div class="panel"><div class="panel-head"><div><h2>Wat is per onderdeel gefactureerd?</h2><div class="muted" style="font-size:13px">Per lot het aandeel dat in elke factuur zat; klik op een lot voor de posten. Bedragen excl. btw.</div></div></div>
+    <div class="tw"><table class="t"><thead><tr><th>Lot / post</th><th class="r">Basis</th>${vs.map(v => `<th class="c" style="min-width:110px"><span class="pill ${v.status}">${v.nr === 0 ? "Voorschot" : "#" + v.nr}</span><div style="font-weight:600;margin-top:4px">${esc(v.omschrijving || VORD_SOORT[v.soort])}</div><div class="muted" style="font-weight:400">${fmt(v.datum)}${v.factuurnummer ? " · " + esc(v.factuurnummer) : ""}</div></th>`).join("")}<th class="c">Cumul.</th><th class="r">Rest</th></tr></thead><tbody>
+      ${blok("vordering")}${totRow("Contract", "vordering")}${heeftMw ? blok("meerwerk") + totRow("Meer-/minwerk", "meerwerk") : ""}
+    </tbody></table></div></div>`;
 }
 
 function vPlanning(p) {
@@ -321,6 +344,7 @@ document.addEventListener("click", (e) => {
   if (el.dataset.act === "gk-nee") { const box = $("#gk_nee_" + el.dataset.id); box.hidden = !box.hidden; if (!box.hidden) box.querySelector("textarea").focus(); }
   if (el.dataset.act === "gk-toon") { S.gkOpen = S.gkOpen === el.dataset.id ? null : el.dataset.id; render(); }
   if (el.dataset.act === "note-toggle") { S.noteOpen = S.noteOpen === el.dataset.id ? null : el.dataset.id; render(); }
+  if (el.dataset.act === "vl-toggle") { S.vlOpen = S.vlOpen || {}; S.vlOpen[el.dataset.key] = !S.vlOpen[el.dataset.key]; const y = window.scrollY; render(); window.scrollTo({ top: y }); }
 });
 document.addEventListener("submit", (e) => {
   if (e.target.id === "chatForm") { e.preventDefault(); const v = e.target.vraag.value.trim(); if (!v || S.chatBezig) return; vraagStellen(P(), v); return; }
