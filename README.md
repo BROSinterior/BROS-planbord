@@ -11,7 +11,7 @@ Statische webapp (geen build-stap) op een Supabase-database.
 | `app.js` | alle logica |
 | `config.js` | koppeling met de database — **hier de Project URL en anon-sleutel invullen** |
 | `version.json` | versienummer; de app meldt een nieuwe versie aan wie ze open heeft |
-| `sql/001_init.sql` … `sql/026_*.sql` | databasescripts, in volgorde uit te voeren (`versie_schema` in instellingen bewaakt de volgorde vanaf 022) |
+| `sql/001_init.sql` … `sql/027_*.sql` | databasescripts, in volgorde uit te voeren (`versie_schema` in instellingen bewaakt de volgorde vanaf 022) |
 | `drive/Code.gs` | Google Apps Script dat projectmappen aanmaakt/koppelt op Drive en de meetstaat-export wegschrijft (installatie: zie bovenaan dat bestand) |
 | `meetstaat-export.js` | schrijft de meetstaat van een project in het Excel-sjabloon (zip/XML, opmaak en formules blijven intact) |
 | `klant/` | het klantenportaal (index.html + portaal.js): alleen-lezen zicht van de bouwheer op zijn project |
@@ -140,6 +140,10 @@ Activeren (eenmalig):
 4. Edge Function `assistent` opnieuw plakken (weigert nu aannemerslogins) en pushen.
 
 Gebruik: Dossier › Contacten → bij een aannemer de knop **Aannemersportaal** (beheer) → hij krijgt een mail met een persoonlijke link. Instellingen → Klantenportaal toont wie toegang heeft (klant/aannemer). Een aannemer die op het Planbord of het klantenportaal inlogt, wordt doorgestuurd.
+
+## Melding bij gedeelde documenten (script 027, v1.24.4)
+
+Zet je bij een bestand de schakelaar *klant* of *aannemers* aan, dan krijgt de betrokkene een **gebundelde mail**: het Drive-script (`documentenDigest`, uurlijkse trigger) kijkt welke bestanden nog niet gemeld zijn en stuurt per project en per doelgroep één overzicht — pas als er 45 minuten niets meer gedeeld werd (zodat een reeks bestanden in één mail zit) en niet tussen 21 u en 7 u. Enkel contacten met een portaallogin krijgen de mail (de knop leidt naar het portaal). Script 027 zet `gedeeld_op`/`gemeld_*` op `documenten` via een trigger; bestanden die vóór het script al gedeeld waren, worden niet alsnog gemeld. Activeren: script 027 uitvoeren, nieuwe `Code.ingevuld.gs` deployen en in de scripteditor eenmalig `digestInstall()` uitvoeren (functie kiezen → Uitvoeren; de eerste keer toestemming geven).
 
 ## Telefoonnummers (script 026, v1.24.1)
 

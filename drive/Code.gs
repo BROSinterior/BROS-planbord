@@ -526,6 +526,57 @@ function prijsaanvraagMail(body) {
   portaalMail(String(c.email).trim(), onderwerp, tekst, html);
   return { ok: true, naar: c.email, uitgenodigd: uitgenodigd };
 }
+/* =====================================================================
+   Gedeelde documenten — verzamelmail (script 027)
+   documentenDigest() draait elk uur (digestInstall() eenmalig uitvoeren): per project één mail aan de klant(en) en één aan
+   de aannemers met de bestanden die sinds de vorige mail gedeeld zijn — pas als er DIGEST.WACHT_MIN minuten niets meer bijkwam,
+   zodat een reeks bestanden in één mail belandt. Verstuurt enkel aan contacten met een portaallogin (de link gaat naar het portaal).
+   ===================================================================== */
+const DIGEST = { WACHT_MIN: 45, VAN_UUR: 7, TOT_UUR: 21 };   // niet 's nachts mailen; wat 's avonds gedeeld wordt, gaat 's ochtends
+function digestInstall() {
+  ScriptApp.getProjectTriggers().filter(t => t.getHandlerFunction() === "documentenDigest").forEach(t => ScriptApp.deleteTrigger(t));
+  ScriptApp.newTrigger("documentenDigest").timeBased().everyHours(1).create();
+  Logger.log("OK — uurlijkse trigger voor documentenDigest aangemaakt. Test nu met documentenDigest().");
+}
+function documentenDigest() {
+  const uur = new Date().getHours(); if (uur < DIGEST.VAN_UUR || uur >= DIGEST.TOT_UUR) return;
+  const docs = pbAdmin("/rest/v1/documenten?or=(gemeld_klant.eq.false,gemeld_aannemers.eq.false)&select=id,project_id,naam,pad,url,gedeeld,gedeeld_aannemers,gedeeld_op,gedeeld_aannemers_op,gemeld_klant,gemeld_aannemers&limit=500", "get") || [];
+  if (!docs.length) { Logger.log("Niets te melden."); return; }
+  const grens = Date.now() - DIGEST.WACHT_MIN * 60000; let mails = 0;
+  const projIds = [...new Set(docs.map(d => d.project_id))];
+  const projecten = pbAdmin("/rest/v1/projecten?id=in.(" + projIds.join(",") + ")&select=id,nummer,klant,naam,lead", "get") || [];
+  const pcs = pbAdmin("/rest/v1/project_contacten?project_id=in.(" + projIds.join(",") + ")&select=project_id,contact_id,rol", "get") || [];
+  const cIds = [...new Set(pcs.map(x => x.contact_id))];
+  const contacten = cIds.length ? (pbAdmin("/rest/v1/contacten?id=in.(" + cIds.join(",") + ")&user_id=not.is.null&actief=eq.true&select=id,naam,contactpersoon,email,user_id", "get") || []) : [];
+  const profs = pbAdmin("/rest/v1/profiles?select=id,name,email&active=eq.true", "get") || [];
+  const esc = (t) => String(t || "").replace(/</g, "&lt;");
+  projecten.forEach(p => {
+    const proj = (p.klant || "") + (p.naam && p.naam !== p.klant ? " · " + p.naam : ""); const lead = profs.find(x => x.id === p.lead);
+    [["klant", "gemeld_klant", "gedeeld", "gedeeld_op", PORTAAL.URL, (x) => x.rol === "bouwheer" || x.rol === "contactpersoon", "je BROS-klantenportaal"],
+     ["aannemers", "gemeld_aannemers", "gedeeld_aannemers", "gedeeld_aannemers_op", PORTAAL.URL_AANNEMER, (x) => x.rol !== "bouwheer" && x.rol !== "contactpersoon", "het BROS-aannemersportaal"]].forEach(([wie, gemeld, gedeeld, op, url, rolOk, portaalNaam]) => {
+      const lijst = docs.filter(d => d.project_id === p.id && !d[gemeld] && d[gedeeld]);
+      if (!lijst.length) return;
+      if (lijst.some(d => d[op] && new Date(d[op]).getTime() > grens)) return;   // nog bezig met delen: volgend uur
+      const ids = lijst.map(d => d.id);
+      const naar = pcs.filter(x => x.project_id === p.id && rolOk(x)).map(x => contacten.find(c => c.id === x.contact_id)).filter(c => c && c.email);
+      const uniek = [...new Map(naar.map(c => [String(c.email).toLowerCase(), c])).values()];
+      if (uniek.length) {
+        const groepen = {}; lijst.forEach(d => (groepen[d.pad || ""] = groepen[d.pad || ""] || []).push(d));
+        const rows = Object.keys(groepen).sort().map(g => (g ? "<div style=\"color:#767D78;font-size:12px;margin-top:10px\">" + esc(g.replace(/\//g, " › ")) + "</div>" : "") + groepen[g].map(d => "<div style=\"padding:6px 0;border-bottom:1px solid #EEE\">" + esc(d.naam) + "</div>").join("")).join("");
+        uniek.forEach(c => {
+          const naam = c.contactpersoon || c.naam;
+          const html = "<div style=\"font-family:Helvetica,Arial,sans-serif;font-size:15px;line-height:1.5;color:#1B1E1C;max-width:640px\"><p>Beste " + esc(naam) + ",</p><p>BROS heeft " + (lijst.length === 1 ? "een nieuw document" : lijst.length + " nieuwe documenten") + " voor je klaargezet bij <b>" + esc(proj) + "</b>:</p>" + rows
+            + "<p style=\"margin:24px 0\"><a href=\"" + url + "\" style=\"background:#1B1E1C;color:#fff;text-decoration:none;padding:12px 20px;border-radius:8px;font-weight:600;display:inline-block\">Bekijken in " + portaalNaam + "</a></p><p style=\"color:#767D78;font-size:13px\">Je vindt ze onder Documenten; het portaal toont altijd de laatste versie.</p><p>" + esc(lead ? lead.name : "Het team") + " — BROS</p></div>";
+          const tekst = "Beste " + naam + ",\n\nBROS heeft " + lijst.length + " nieuwe document(en) voor je klaargezet bij " + proj + ":\n" + lijst.map(d => "- " + (d.pad ? d.pad + "/" : "") + d.naam).join("\n") + "\n\nBekijken: " + url + "\n\nBROS";
+          portaalMail(String(c.email).trim(), (lijst.length === 1 ? "Nieuw document" : lijst.length + " nieuwe documenten") + " · " + proj, tekst, html); mails++;
+        });
+      }
+      const patch = {}; patch[gemeld] = true;
+      pbAdmin("/rest/v1/documenten?id=in.(" + ids.join(",") + ")", "patch", patch);
+    });
+  });
+  Logger.log(mails + " mail(s) verstuurd.");
+}
 /** Bestand delen met de klant: "iedereen met de link mag lezen" aan- of uitzetten. */
 function portaalShare(body) {
   caller(body.token, false);
