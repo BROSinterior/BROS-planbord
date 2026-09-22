@@ -2,7 +2,7 @@
 <html lang="nl">
 <head>
 <meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <title>BROS Planbord</title>
 <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%232A4DD0'/%3E%3Ctext x='16' y='21' font-family='Arial' font-weight='bold' font-size='13' text-anchor='middle' fill='white'%3EB%3C/text%3E%3C/svg%3E">
 <link rel="preconnect" href="https://fonts.googleapis.com">
@@ -339,7 +339,49 @@
   .toast { pointer-events: none; position: fixed; bottom: 18px; left: 50%; transform: translateX(-50%); background: var(--ink); color: var(--ground); padding: 9px 14px; border-radius: 8px; font-size: 13px; z-index: 60; opacity: 0; transition: opacity .2s; pointer-events: none; }
   .toast.show { opacity: 1; }
   @media (prefers-reduced-motion: reduce) { .toast { transition: none; } }
-  @media (max-width: 640px) { main { padding: 14px; padding-block: 16px 60px; } .top-in { padding: 8px 14px; gap: 10px; } .brand .name { display: none; } :root { --label-w: 180px; } }
+  /* ---- smartphone (iPhone e.d.): navigatie op een eigen rij, panelen die zijwaarts scrollen i.p.v. de pagina, kortere kop, volledig-scherm-formulieren ---- */
+  @media (max-width: 640px) {
+    html, body { overflow-x: hidden; }
+    main { padding: 12px; padding-block: 14px 70px; }
+    .top-in { padding: 8px 12px; gap: 8px; }
+    .brand .name { display: none; }
+    .brand .mark { width: 56px; height: 17px; }
+    nav.tabs { order: 3; flex: 0 0 100%; width: 100%; margin: 0 -12px; padding: 2px 12px 0; box-sizing: content-box; -webkit-overflow-scrolling: touch; }
+    nav.tabs button { padding: 7px 11px; font-size: 14px; }
+    .who { margin-left: auto; gap: 4px; }
+    .who .who-cell span:last-child { display: none; }
+    .who .btn { padding: 4px 8px; font-size: 12px; }
+    .update { flex-wrap: wrap; }
+    h1 { font-size: 24px; }
+    .page-head { gap: 10px; margin-bottom: 12px; }
+    .page-head .actions, .actions { flex-wrap: wrap; gap: 6px; }
+    .panel > .tw, .panel-body > .tw { margin: 0; }
+    .panel { overflow-x: auto; -webkit-overflow-scrolling: touch; }
+    .panel table.t { min-width: 560px; }
+    .panel table.t.vord, .panel table.t.ms { min-width: 900px; }
+    .panel-head { padding: 12px 14px; }
+    .panel-body { padding: 14px; }
+    .meta { grid-template-columns: 1fr 1fr; gap: 10px 14px; }
+    .grid.kpi { grid-template-columns: 1fr 1fr; gap: 10px; }
+    .kpi-tile .v { font-size: 24px; }
+    .rend { grid-template-columns: 1fr 1fr; gap: 8px; }
+    .subtabs { margin: 0 -12px 14px; padding: 0 12px; scrollbar-width: none; }
+    .subtabs::-webkit-scrollbar { display: none; }
+    .filters { gap: 6px; }
+    .filters select, .filters input { max-width: 100%; font-size: 16px; }
+    input, select, textarea { font-size: 16px; }   /* geen automatisch inzoomen op iOS */
+    .modal-bg { padding: 0; align-items: flex-end; }
+    .modal { width: 100%; max-height: 100dvh; height: auto; border-radius: 18px 18px 0 0; }
+    .modal .mh { position: sticky; top: 0; background: var(--surface); z-index: 1; }
+    .modal .mf { position: sticky; bottom: 0; background: var(--surface); flex-wrap: wrap; padding-bottom: calc(12px + env(safe-area-inset-bottom)); }
+    .form-grid { grid-template-columns: 1fr; }
+    .form-grid .span2 { grid-column: auto; }
+    .crumb { font-size: 13px; }
+    :root { --label-w: 160px; }
+    .toast { left: 12px; right: 12px; transform: none; max-width: none; text-align: center; }
+    .toast.show { transform: none; }
+    footer { padding-bottom: env(safe-area-inset-bottom); }
+  }
 </style>
 
 <style>
@@ -423,11 +465,11 @@
 <div class="toast" id="toast" role="status"></div>
 <div class="loader" id="loader" aria-live="polite"><div class="logo"><i class="base"></i><i class="fill" id="loaderFill"></i></div><div class="pct" id="loaderPct">0%</div><div class="msg" id="loaderMsg">Even geduld…</div></div>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.45.4/dist/umd/supabase.min.js"></script>
-<script src="config.js?v=1.24.4"></script>
+<script src="config.js?v=1.24.5"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
-<script src="postcodes.js?v=1.24.4"></script>
-<script src="meetstaat-export.js?v=1.24.4"></script>
-<script src="meetstaat-import.js?v=1.24.4"></script>
-<script src="app.js?v=1.24.4"></script>
+<script src="postcodes.js?v=1.24.5"></script>
+<script src="meetstaat-export.js?v=1.24.5"></script>
+<script src="meetstaat-import.js?v=1.24.5"></script>
+<script src="app.js?v=1.24.5"></script>
 </body>
 </html>
