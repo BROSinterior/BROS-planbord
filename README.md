@@ -11,8 +11,11 @@ Statische webapp (geen build-stap) op een Supabase-database.
 | `app.js` | alle logica |
 | `config.js` | koppeling met de database — **hier de Project URL en anon-sleutel invullen** |
 | `version.json` | versienummer; de app meldt een nieuwe versie aan wie ze open heeft |
-| `sql/001_init.sql` … `sql/027_*.sql` | databasescripts, in volgorde uit te voeren (`versie_schema` in instellingen bewaakt de volgorde vanaf 022) |
+| `sql/001_init.sql` … `sql/028_*.sql` | databasescripts, in volgorde uit te voeren (`versie_schema` in instellingen bewaakt de volgorde vanaf 022) |
 | `drive/Code.gs` | Google Apps Script dat projectmappen aanmaakt/koppelt op Drive en de meetstaat-export wegschrijft (installatie: zie bovenaan dat bestand) |
+| `tekenen.js` | tekenmodule: tabblad Plannen, onderlegger op schaal (pdf/dxf/beeld), zoom, lagen, meten, kalibreren |
+| `symbolen.js` | symbolenbibliotheek van de tekenmodule (legende elektriciteit + sanitair/HVAC) |
+| `vendor/dxf-parser.js` | dxf-lezer (MIT), lokaal meegeleverd |
 | `meetstaat-export.js` | schrijft de meetstaat van een project in het Excel-sjabloon (zip/XML, opmaak en formules blijven intact) |
 | `klant/` | het klantenportaal (index.html + portaal.js): alleen-lezen zicht van de bouwheer op zijn project |
 | `werf/` | de werfmodus voor op de smartphone (vaststellingen met foto's, werkt ook zonder bereik; installeerbaar als app) — ook voor aannemers, beperkt tot hun eigen punten |
@@ -121,6 +124,15 @@ De klant stelt in het portaal (tabblad **Vragen**) een vraag over zijn dossier; 
 - **Mail**: Drive-script actie `assistentmail` (aangeroepen door de Edge Function) naar de voorgestelde verantwoordelijke, beheer in kopie, met link naar `…/BROS-planbord/#voorstellen`.
 - **Installatie**: (1) `sql/023_assistent.sql` en `sql/024_assistent_portaal.sql` uitvoeren (024 maakt de instelling 'assistent' leesbaar voor de klant; zonder dat blijft het tabblad Vragen verborgen); (2) API-account op archief@bros.be bij OpenAI (platform.openai.com) met betaallimiet, sleutel aanmaken; (3) Supabase → Edge Functions → *Deploy a new function* → *Via editor*: naam `assistent` (een andere naam mag; zet dan de slug uit de URL bij Instellingen → AI-assistent → Functienaam), inhoud van `supabase/functions/assistent/index.ts` plakken, deployen; daarna bij de functie **Verify JWT with legacy secret uitzetten** (de functie controleert het token zelf) en onder *Secrets* `OPENAI_API_KEY` toevoegen; (4) `drive/Code.ingevuld.gs` opnieuw plakken en deployen; (5) pushen. Test eerst met Phil als klant op een testproject.
 - **Privacy**: er gaan dossiergegevens van de klant naar de modelleverancier (API-gebruik wordt niet voor training gebruikt); vermeld dit in de privacyverklaring van het portaal. Per project uit te zetten.
+
+## Tekenmodule — tabblad Plannen (script 028, v1.25)
+
+Vervangt stap voor stap Vectorworks 2D voor de UV-plannen (bouwplan: Claude Doc "Bouwplan BROS Tekenmodule").
+- **Fase 1 (nu):** plan toevoegen met een onderlegger — pdf (elke gekozen pagina wordt een plan; de basisafbeelding is 4800 px, bij inzoomen tekent pdf.js de zichtbare zone scherp uit het origineel), dxf (lijnen, polylijnen met bogen, cirkels, bogen, blokken, teksten, maten) of een afbeelding. Bestanden gaan in de bucket `werf` onder `<project>/tekenen/`.
+- **Schaal:** pdf → `s = breedte_pdf_mm / breedte_px × schaal`; dxf → eenheden uit `$INSUNITS` (of gekozen); afbeelding/scan → kalibreren met twee punten (K). Wereldcoördinaten in mm, y naar boven.
+- **Bediening:** H hand, M meten (Shift = recht), K kalibreren, F passend, +/−, spatie + slepen; trackpad twee vingers = verschuiven, knijpen = zoomen; muiswiel = zoomen.
+- **Tabellen:** `tekenplannen` (onderlegger, kalibratie, lagen), `plan_objecten` (vanaf fase 2), `plan_versies`, `plan_symbolen` (38 symbolen met standaardhoogte; tekening in `symbolen.js`).
+- **Volgende stap (fase 2):** symbolen plaatsen met hoogte/kring, tekst met leader, legende, bladen als laagcombinatie (alles/ELEK/HVAC), pdf-export met titelblok.
 
 ## Aannemersportaal (script 025 + drive/Code.gs, v1.24)
 
