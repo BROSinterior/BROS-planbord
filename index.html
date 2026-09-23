@@ -274,6 +274,15 @@
   .doc-wrap { display: flex; align-items: center; gap: 8px; min-width: 0; }
   .doc-wrap .doc { flex: 1; min-width: 0; }
   .doc-wrap.shared .doc { border-color: var(--ok); }
+  table.ms td.drag { padding: 6px 2px; text-align: center; white-space: nowrap; }
+  table.ms .grip { cursor: grab; color: var(--muted); font-size: 14px; letter-spacing: -2px; user-select: none; padding: 4px 2px; }
+  table.ms .grip:active { cursor: grabbing; }
+  table.ms .updown { display: none; }
+  table.ms .updown .btn { padding: 0 4px; font-size: 10px; line-height: 16px; }
+  @media (hover: none) { table.ms .grip { display: none; } table.ms .updown { display: inline-flex; flex-direction: column; } }
+  table.ms tr.dragging { opacity: .4; }
+  table.ms tr.drop-before td { box-shadow: inset 0 3px 0 var(--accent); }
+  table.ms tr.drop-after td { box-shadow: inset 0 -3px 0 var(--accent); }
   .doc-wrap .sw-lbl { display: flex; flex-direction: column; align-items: center; gap: 1px; font-size: 10px; color: var(--muted); cursor: pointer; }
   .doc-wrap input.sw { flex: none; }
   .doc { display: flex; gap: 10px; align-items: center; padding: 10px 12px; border: 1px solid var(--line); border-radius: 8px; background: var(--surface); }
@@ -499,14 +508,14 @@
 <div class="toast" id="toast" role="status"></div>
 <div class="loader" id="loader" aria-live="polite"><div class="logo"><i class="base"></i><i class="fill" id="loaderFill"></i></div><div class="pct" id="loaderPct">0%</div><div class="msg" id="loaderMsg">Even geduld…</div></div>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.45.4/dist/umd/supabase.min.js"></script>
-<script src="config.js?v=1.25.0"></script>
+<script src="config.js?v=1.25.1"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
-<script src="postcodes.js?v=1.25.0"></script>
-<script src="meetstaat-export.js?v=1.25.0"></script>
-<script src="meetstaat-import.js?v=1.25.0"></script>
-<script src="vendor/dxf-parser.js?v=1.25.0"></script>
-<script src="symbolen.js?v=1.25.0"></script>
-<script src="tekenen.js?v=1.25.0"></script>
-<script src="app.js?v=1.25.0"></script>
+<script src="postcodes.js?v=1.25.1"></script>
+<script src="meetstaat-export.js?v=1.25.1"></script>
+<script src="meetstaat-import.js?v=1.25.1"></script>
+<script src="vendor/dxf-parser.js?v=1.25.1"></script>
+<script src="symbolen.js?v=1.25.1"></script>
+<script src="tekenen.js?v=1.25.1"></script>
+<script src="app.js?v=1.25.1"></script>
 </body>
 </html>

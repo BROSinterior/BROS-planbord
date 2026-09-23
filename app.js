@@ -2,7 +2,7 @@
    BROS Planbord — app v1.0
    Statische webapp op Supabase (login, live-synchronisatie, rechten)
    ===================================================================== */
-const APP_VERSION = "1.25.0";
+const APP_VERSION = "1.25.1";
 const PROJ_STATUS = { offerte: "In offerte", lopend: "Lopend", on_hold: "On hold", afgerond: "Afgerond", verloren: "Verloren" };
 const KLANTTYPE = { particulier: "Particulier", zakelijk: "Zakelijk" };
 const KLANTCODE = { particulier: "PAR", zakelijk: "ZAK" };
@@ -455,11 +455,11 @@ function vMeetstaat(p) {
   const inp = (r, f, cls = "", attrs = "") => `<input class="inline ${cls}" data-ms="${r.id}" data-f="${f}" value="${esc(r[f] ?? "")}" ${attrs}>`;
   const num = (r, f, cls = "") => `<input class="inline num ${cls}" data-ms="${r.id}" data-f="${f}" type="number" step="any" inputmode="decimal" value="${r[f] == null || r[f] === "" ? "" : Number(r[f])}">`;
   const sel = (r, f, options) => `<select class="inline" data-ms="${r.id}" data-f="${f}">${options}</select>`;
-  const cols = 8 + (beheer ? 3 : 0);
+  const cols = 9 + (beheer ? 3 : 0);
   const body = lots.map(nr => { const g = byLot[nr]; const sub = g.filter(msTelt).reduce((s, r) => s + msVerkoop(r), 0); const subk = g.filter(msTelt).reduce((s, r) => s + msKost(r), 0); let lastGroep = null;
     return `<tr class="ms-lot"><td colspan="${cols}"><div style="display:flex;justify-content:space-between;align-items:center;gap:8px;flex-wrap:wrap"><span>${esc(lotName(nr))} <span class="muted num" style="font-weight:400">${g.length} posten${beheer ? ` · kost ${eur(subk)}` : ""} · <b>${eur(sub)}</b> excl. btw</span></span><span class="actions"><button class="btn ghost sm" data-act="ms-add-post" data-pid="${p.id}" data-lot="${nr}">+ Post</button><button class="btn ghost sm danger" data-act="ms-del-lot" data-pid="${p.id}" data-lot="${nr}" title="Alle posten van dit lot verwijderen">✕</button></span></div></td></tr>` +
-      g.map(r => { const gh = r.groep && r.groep !== lastGroep ? `<tr class="ms-groep"><td></td><td colspan="${cols - 1}">${esc(r.groep)}</td></tr>` : ""; lastGroep = r.groep || lastGroep; const dead = r.status === "vervallen";
-        return gh + `<tr class="${dead ? "ms-dead" : ""}"><td class="num muted" style="width:52px">${esc(r.code)}</td>
+      g.map((r, i) => { const gh = r.groep && r.groep !== lastGroep ? `<tr class="ms-groep"><td></td><td colspan="${cols - 1}">${esc(r.groep)}</td></tr>` : ""; lastGroep = r.groep || lastGroep; const dead = r.status === "vervallen";
+        return gh + `<tr class="${dead ? "ms-dead" : ""}" data-msrow="${r.id}" data-lot="${nr}"><td class="drag" style="width:26px"><span class="grip" draggable="true" data-drag="${r.id}" title="Sleep om de volgorde te wijzigen">⋮⋮</span><span class="updown"><button class="btn ghost sm" data-act="ms-move" data-id="${r.id}" data-dir="-1" ${i === 0 ? "disabled" : ""} aria-label="Omhoog">▲</button><button class="btn ghost sm" data-act="ms-move" data-id="${r.id}" data-dir="1" ${i === g.length - 1 ? "disabled" : ""} aria-label="Omlaag">▼</button></span></td><td class="num muted" style="width:52px">${esc(r.code)}</td>
         <td style="min-width:260px">${inp(r, "omschrijving", "wide")}</td>
         <td style="width:110px">${inp(r, "locatie", "", 'placeholder="locatie"')}</td>
         <td style="width:84px">${num(r, "hoeveelheid")}</td>
@@ -472,8 +472,31 @@ function vMeetstaat(p) {
         <td class="r" style="width:36px"><button class="btn ghost sm danger" data-act="ms-del" data-id="${r.id}" aria-label="Verwijderen">✕</button></td></tr>`; }).join(""); }).join("");
   return kpi + vGoedkeuringen(p) + vPrijsaanvragen(p) + `<div class="panel"><div class="panel-head"><div><h3>Meetstaat</h3><div class="muted" style="font-size:12px;margin-top:2px">${rows.length ? `${rows.length} posten in ${lots.length} loten` : "Nog leeg"} · klik in een veld om het te wijzigen, bewaard bij verlaten van het veld</div></div>
       <div class="actions">${isBeheer() ? `<button class="btn sm ${S.msKlant ? "primary" : ""}" data-act="ms-klant" title="Kostprijs, marge en btw-kolom verbergen, bv. als je de meetstaat met de klant overloopt (sneltoets: K)">${S.msKlant ? "👁 Klantweergave aan" : "Klantweergave"}</button>` : ""}${schemaV() >= 13 && rows.some(r => gkKandidaat(r)) ? `<button class="btn sm" data-act="gk-new" data-pid="${p.id}" title="Offerte of meerwerk bevroren ter goedkeuring in het klantenportaal zetten">Ter goedkeuring voorleggen</button>` : ""}<button class="btn sm" data-act="ms-import" data-pid="${p.id}" title="Een bestaande meetstaat (Excel, elk BROS-sjabloon) inlezen als posten">Importeren uit Excel</button>${rows.length ? `<button class="btn sm" data-act="ms-export" data-pid="${p.id}" title="Excel in het BROS-sjabloon aanmaken in Documenten/Meetstaat van de projectmap">Exporteren naar Drive (Excel)</button>` : ""}<button class="btn sm" data-act="ms-add-post" data-pid="${p.id}">+ Post</button><button class="btn sm primary" data-act="ms-add-lot" data-pid="${p.id}">+ Lot toevoegen</button></div></div>
-    ${rows.length ? `<div class="tw"><table class="t ms"><thead><tr><th>Nr</th><th>Omschrijving</th><th>Locatie</th><th>Hoev.</th><th>Eenh.</th>${beheer ? `<th title="Kostprijs / aannemersprijs excl. btw">Kost EP</th><th>Marge</th>` : ""}<th class="r">Klant EP</th><th class="r">Totaal excl.</th>${beheer ? `<th>Btw</th>` : ""}<th>Status</th><th></th></tr></thead><tbody>${body}</tbody></table></div>` : `<div class="empty"><b>Nog geen posten</b>Voeg een lot toe (met de standaardposten) of kies losse posten uit de bibliotheek.</div>`}</div>`;
+    ${rows.length ? `<div class="tw"><table class="t ms"><thead><tr><th></th><th>Nr</th><th>Omschrijving</th><th>Locatie</th><th>Hoev.</th><th>Eenh.</th>${beheer ? `<th title="Kostprijs / aannemersprijs excl. btw">Kost EP</th><th>Marge</th>` : ""}<th class="r">Klant EP</th><th class="r">Totaal excl.</th>${beheer ? `<th>Btw</th>` : ""}<th>Status</th><th></th></tr></thead><tbody>${body}</tbody></table></div>` : `<div class="empty"><b>Nog geen posten</b>Voeg een lot toe (met de standaardposten) of kies losse posten uit de bibliotheek.</div>`}</div>`;
 }
+/* ---------- Meetstaat: posten verslepen binnen een lot; nummers (lot.n) en volgorde volgen automatisch ---------- */
+async function msReorder(pid, lot, movedId, targetId, before) {
+  const rows = msRows(pid).filter(r => r.lot === lot); const from = rows.findIndex(r => r.id === movedId); if (from < 0) return;
+  const [moved] = rows.splice(from, 1);
+  let to = targetId ? rows.findIndex(r => r.id === targetId) : (before ? 0 : rows.length); if (to < 0) to = rows.length; if (!before && targetId) to += 1;
+  rows.splice(to, 0, moved);
+  // groep van de nieuwe buur overnemen, zodat de post niet als losse groepskop verschijnt
+  const buur = rows[to - 1] || rows[to + 1]; const groep = buur ? (buur.groep || "") : (moved.groep || "");
+  const patches = [];
+  rows.forEach((r, i) => { const code = `${lot}.${i + 1}`; const volg = (i + 1) * 10; const g = r.id === moved.id ? groep : (r.groep || "");
+    if (r.code !== code || (r.volgorde ?? 0) !== volg || (r.groep || "") !== g) patches.push({ id: r.id, code, volgorde: volg, groep: g }); });
+  if (!patches.length) return;
+  S.bulk = true;
+  patches.forEach(x => Object.assign(S.meetstaat_posten[x.id], x)); render();
+  try { await Promise.all(patches.map(x => sb.from("meetstaat_posten").update({ code: x.code, volgorde: x.volgorde, groep: x.groep, updated_at: new Date().toISOString() }).eq("id", x.id).then(r => { if (r.error) throw r.error; }))); toast("Volgorde en nummers aangepast"); }
+  catch (e) { toast("Volgorde niet bewaard: " + e.message, 6000); }
+  finally { S.bulk = false; await msRefetch(rows.map(r => r.id)); }
+}
+let msDrag = null;
+document.addEventListener("dragstart", (e) => { const h = e.target.closest && e.target.closest("[data-drag]"); if (!h) return; const tr = h.closest("tr"); msDrag = { id: h.dataset.drag, lot: Number(tr.dataset.lot), pid: S.project }; tr.classList.add("dragging"); e.dataTransfer.effectAllowed = "move"; try { e.dataTransfer.setData("text/plain", h.dataset.drag); } catch (x) { } });
+document.addEventListener("dragover", (e) => { if (!msDrag) return; const tr = e.target.closest && e.target.closest("tr[data-msrow]"); document.querySelectorAll("tr.drop-before, tr.drop-after").forEach(x => x.classList.remove("drop-before", "drop-after")); if (!tr || Number(tr.dataset.lot) !== msDrag.lot || tr.dataset.msrow === msDrag.id) return; e.preventDefault(); e.dataTransfer.dropEffect = "move"; const r = tr.getBoundingClientRect(); tr.classList.add(e.clientY < r.top + r.height / 2 ? "drop-before" : "drop-after"); });
+document.addEventListener("drop", (e) => { if (!msDrag) return; const tr = e.target.closest && e.target.closest("tr[data-msrow]"); const d = msDrag; msDrag = null; document.querySelectorAll("tr.dragging, tr.drop-before, tr.drop-after").forEach(x => x.classList.remove("dragging", "drop-before", "drop-after")); if (!tr || Number(tr.dataset.lot) !== d.lot || tr.dataset.msrow === d.id) return; e.preventDefault(); const r = tr.getBoundingClientRect(); msReorder(d.pid, d.lot, d.id, tr.dataset.msrow, e.clientY < r.top + r.height / 2); });
+document.addEventListener("dragend", () => { msDrag = null; document.querySelectorAll("tr.dragging, tr.drop-before, tr.drop-after").forEach(x => x.classList.remove("dragging", "drop-before", "drop-after")); });
 /* ---------- Prijsaanvragen (script 025): eenheidsprijzen opvragen bij aannemers via het aannemersportaal, vergelijken en overnemen als kostprijs ---------- */
 const PA_STATUS = { open: "In te vullen", ingediend: "Ingediend", gekozen: "Gekozen", afgesloten: "Afgesloten" };
 const paOf = (pid) => Object.values(S.prijsaanvragen || {}).filter(a => a.project_id === pid).sort((a, b) => (b.created_at || "").localeCompare(a.created_at || ""));
@@ -2449,6 +2472,7 @@ document.addEventListener("click", (e) => {
   if (d.act === "wb-new") return wbForm({}, d.pid);
   if (d.act === "plan-new") return planForm(d.pid);
   if (d.act === "wv-new") return wvForm(d.pid);
+  if (d.act === "ms-move") { const r = S.meetstaat_posten[d.id]; if (!r) return; const rows = msRows(r.project_id).filter(x => x.lot === r.lot); const i = rows.findIndex(x => x.id === r.id); const j = i + Number(d.dir); if (j < 0 || j >= rows.length) return; return msReorder(r.project_id, r.lot, r.id, rows[j].id, Number(d.dir) < 0); }
   if (d.act === "pa-new") return paForm(d.pid);
   if (d.act === "pa-cmp") return paVergelijk(d.pid);
   if (d.act === "pa-take") { if (d.fromcmp) closeModal(); return paOvernemen(d.id); }
