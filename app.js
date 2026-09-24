@@ -2,7 +2,7 @@
    BROS Planbord — app v1.0
    Statische webapp op Supabase (login, live-synchronisatie, rechten)
    ===================================================================== */
-const APP_VERSION = "1.24.8";
+const APP_VERSION = "1.24.9";
 const PROJ_STATUS = { offerte: "In offerte", lopend: "Lopend", on_hold: "On hold", afgerond: "Afgerond", verloren: "Verloren" };
 const KLANTTYPE = { particulier: "Particulier", zakelijk: "Zakelijk" };
 const KLANTCODE = { particulier: "PAR", zakelijk: "ZAK" };
@@ -375,7 +375,7 @@ function linkContactForm(pid, rol) {
     if (![...sel.selectedOptions].some(o => !o.hidden) && first) first.selected = true;
     form.querySelectorAll(".field.lot").forEach(el => el.style.display = ["aannemer", "leverancier", "studiebureau"].includes(rolSel.value) ? "" : "none"); };
   q.addEventListener("input", sync); rolSel.addEventListener("change", sync); sync();
-  form.querySelector("[data-act=contact-new-inline]").onclick = () => { const rolNow = rolSel.value; closeModal(); contactForm({ soort: soortFor(rolNow) || "andere" }, () => linkContactForm(pid, rolNow)); };
+  form.querySelector("[data-act=contact-new-inline]").onclick = () => { const rolNow = rolSel.value; if (!closeModal()) return; contactForm({ soort: soortFor(rolNow) || "andere" }, () => linkContactForm(pid, rolNow)); };
 }
 /* portaalkolom bij een contact: toegang geven (beheer, via het Drive-script), status en laatste bezoek */
 const KLANT_ROLLEN = ["bouwheer", "contactpersoon"];
@@ -863,7 +863,7 @@ function planView(id) {
     onSave: async () => { const naam = $("[data-plan-naam]").value.trim(); if (naam && naam !== pl.naam) await dbUpdate("werfplannen", id, { naam }); },
     onDelete: async () => { const n = vsOf(pl.project_id).filter(v => v.plan_id === id).length; if (n && !confirm(`${n} vaststelling${n === 1 ? " verwijst" : "en verwijzen"} naar dit plan; die pins gaan verloren. Toch verwijderen?`)) throw new Error("geannuleerd"); await dbDelete("werfplannen", id); if (pl.path) sb.storage.from("werf").remove([pl.path]).catch(() => { }); Object.values(S.vaststellingen).forEach(v => { if (v.plan_id === id) { v.plan_id = null; } }); toast("Plan verwijderd"); },
   });
-  $("#mform").querySelectorAll("[data-act=vs-open]").forEach(el => el.onclick = (e) => { e.preventDefault(); e.stopPropagation(); closeModal(); vsForm(S.vaststellingen[el.dataset.id]); });
+  $("#mform").querySelectorAll("[data-act=vs-open]").forEach(el => el.onclick = (e) => { e.preventDefault(); e.stopPropagation(); if (!closeModal()) return; vsForm(S.vaststellingen[el.dataset.id]); });
 }
 function wbForm(b = {}, pid) {
   const isNew = !b.id; const projectId = b.project_id || pid; const p = S.projecten[projectId]; if (!p) return;
@@ -886,9 +886,9 @@ function wbForm(b = {}, pid) {
     onDelete: isNew ? null : async () => { await dbDelete("werfbezoeken", b.id); toast("Werfbezoek verwijderd"); },
   });
   const f = $("#mform");
-  const add = f.querySelector("[data-wb-vs]"); if (add) add.onclick = () => { closeModal(); vsForm({}, projectId, b.id); };
-  const wv = f.querySelector("[data-wb-verslag]"); if (wv) wv.onclick = () => { closeModal(); wvForm(projectId, b.id); };
-  f.querySelectorAll("[data-wb-open]").forEach(r => r.onclick = () => { closeModal(); vsForm(S.vaststellingen[r.dataset.wbOpen]); });
+  const add = f.querySelector("[data-wb-vs]"); if (add) add.onclick = () => { if (!closeModal()) return; vsForm({}, projectId, b.id); };
+  const wv = f.querySelector("[data-wb-verslag]"); if (wv) wv.onclick = () => { if (!closeModal()) return; wvForm(projectId, b.id); };
+  f.querySelectorAll("[data-wb-open]").forEach(r => r.onclick = () => { if (!closeModal()) return; vsForm(S.vaststellingen[r.dataset.wbOpen]); });
 }
 /* ---------- Werfverslagen (stap 2b): pdf in de browser (jsPDF), bewaard in de bucket 'werf', gemaild via het Drive-script ---------- */
 const wvOf = (pid) => Object.values(S.werfverslagen).filter(w => w.project_id === pid).sort((a, b) => (b.nr || 0) - (a.nr || 0));
@@ -2189,12 +2189,35 @@ function openModal(title, bodyHtml, { onSave, onDelete, saveLabel = "Bewaren", w
     <div class="mf"><div>${onDelete ? `<button type="button" class="btn ghost danger" data-mdelete>Verwijderen</button>` : ""}</div><div style="display:flex;gap:8px"><button type="button" class="btn" data-close>Annuleren</button><button type="submit" class="btn primary">${saveLabel}</button></div></div></form>`;
   $("#modal").style.width = wide ? "min(820px, 100%)" : "";
   $("#modalBg").classList.add("show");
-  const form = $("#mform");
-  form.onsubmit = async (e) => { e.preventDefault(); const btn = form.querySelector('button[type=submit]'); btn.disabled = true; try { const d = Object.fromEntries(new FormData(form).entries()); d._fasen = [...form.querySelectorAll('input[name="fase"]:checked')].map(i => Number(i.value)); const ok = await onSave(d); if (ok !== false) closeModal(); } catch (err) { console.error(err); if (!(err && err.__toasted)) toast("Bewaren mislukt: " + ((err && err.message) || err), 6000); } btn.disabled = false; };
-  if (onDelete) $("[data-mdelete]").onclick = async () => { if (confirm("Zeker verwijderen?")) { try { await onDelete(); closeModal(); } catch (e) { } } };
+  const form = $("#mform"); MODAL.dirty = false; MODAL.title = title; MODAL.saved = false;
+  // niet-bewaarde invoer bewaren (per formuliertitel) zodat een per ongeluk gesloten of herladen formulier te herstellen is
+  const snapshot = () => { const o = {}; form.querySelectorAll("input[name],select[name],textarea[name]").forEach(el => { if (el.type === "checkbox" || el.type === "radio") { if (el.checked) (o[el.name] = o[el.name] || []).push(el.value); } else o[el.name] = el.value; }); return o; };
+  const isSame = (a, b) => JSON.stringify(a) === JSON.stringify(b);
+  const initial = snapshot();
+  // sleutel = titel + vingerafdruk van de beginwaarden: een concept hoort bij precies dit record (of bij een leeg nieuw formulier)
+  const hash = (str) => { let h = 0; for (let i = 0; i < str.length; i++) h = (h * 31 + str.charCodeAt(i)) | 0; return (h >>> 0).toString(36); };
+  const draftKey = "pb-draft:" + title + ":" + hash(JSON.stringify(initial)); let draft = null; try { draft = JSON.parse(sessionStorage.getItem(draftKey) || "null"); } catch (e) { }
+  if (draft && draft.v && !isSame(draft.v, initial) && Date.now() - (draft.t || 0) < 12 * 3600000) {
+    const bar = document.createElement("div"); bar.className = "draft-bar"; bar.innerHTML = `<span>Er staat nog niet-bewaarde invoer van ${new Date(draft.t).toLocaleTimeString("nl-BE", { hour: "2-digit", minute: "2-digit" })} klaar.</span><span><button type="button" class="btn sm primary" data-draft="ja">Herstellen</button> <button type="button" class="btn sm ghost" data-draft="nee">Weg</button></span>`;
+    form.querySelector(".mb").prepend(bar);
+    bar.querySelector('[data-draft="ja"]').onclick = () => { Object.entries(draft.v).forEach(([k, v]) => { form.querySelectorAll(`[name="${CSS.escape(k)}"]`).forEach(el => { if (el.type === "checkbox" || el.type === "radio") el.checked = Array.isArray(v) && v.includes(el.value); else el.value = v; el.dispatchEvent(new Event("change", { bubbles: true })); }); }); MODAL.dirty = true; bar.remove(); toast("Invoer hersteld"); };
+    bar.querySelector('[data-draft="nee"]').onclick = () => { try { sessionStorage.removeItem(draftKey); } catch (e) { } bar.remove(); };
+  }
+  form.addEventListener("input", () => { MODAL.dirty = true; clearTimeout(MODAL.t); MODAL.t = setTimeout(() => { try { sessionStorage.setItem(draftKey, JSON.stringify({ t: Date.now(), v: snapshot() })); } catch (e) { } }, 400); });
+  form.addEventListener("change", () => { MODAL.dirty = true; });
+  form.onsubmit = async (e) => { e.preventDefault(); const btn = form.querySelector('button[type=submit]'); btn.disabled = true; try { const d = Object.fromEntries(new FormData(form).entries()); d._fasen = [...form.querySelectorAll('input[name="fase"]:checked')].map(i => Number(i.value)); const ok = await onSave(d); if (ok !== false) { MODAL.dirty = false; MODAL.saved = true; try { sessionStorage.removeItem(draftKey); } catch (x) { } closeModal(); } } catch (err) { console.error(err); if (!(err && err.__toasted)) toast("Bewaren mislukt: " + ((err && err.message) || err), 6000); } btn.disabled = false; };
+  if (onDelete) $("[data-mdelete]").onclick = async () => { if (confirm("Zeker verwijderen?")) { try { await onDelete(); MODAL.dirty = false; closeModal(); } catch (e) { } } };
   setTimeout(() => form.querySelector("input:not([type=checkbox]),select,textarea")?.focus(), 30);
 }
-function closeModal() { $("#modalBg").classList.remove("show"); }
+/* sluiten: met onbewaarde invoer eerst bevestigen; een klik die in het formulier begon (tekst selecteren) en buiten eindigt, sluit niets */
+const MODAL = { dirty: false, title: "", t: null, downOnBg: false, saved: false };
+function closeModal(force) {
+  const bg = $("#modalBg"); if (!bg.classList.contains("show")) return true;
+  if (!force && MODAL.dirty && !confirm("Dit formulier heeft niet-bewaarde wijzigingen. Toch sluiten? (Je invoer blijft klaarstaan als je het formulier opnieuw opent.)")) return false;
+  MODAL.dirty = false; bg.classList.remove("show"); return true;
+}
+document.addEventListener("mousedown", (e) => { MODAL.downOnBg = e.target === $("#modalBg"); });
+window.addEventListener("beforeunload", (e) => { if ($("#modalBg")?.classList.contains("show") && MODAL.dirty) { e.preventDefault(); e.returnValue = ""; } });
 const opts = (arr, sel) => arr.map(([v, l]) => `<option value="${esc(v)}" ${String(v) === String(sel) ? "selected" : ""}>${esc(l)}</option>`).join("");
 const userOpts = (sel, allowEmpty) => (allowEmpty ? `<option value="">— niemand —</option>` : "") + opts(users().map(u => [u.id, u.name]), sel);
 const projOpts = (sel) => opts(projects().map(p => [p.id, projName(p)]), sel);
@@ -2412,10 +2435,10 @@ function userForm(u) {
 document.addEventListener("click", (e) => {
   if (e.target.closest("a[href][target=_blank]")) return; // externe links (bv. Drive-map) gewoon laten openen
   const el = e.target.closest("[data-vs],[data-nav],[data-act],[data-open],[data-back],[data-ptab],[data-edit-task],[data-edit-hours],[data-gnav],[data-wnav],[data-gtoggle],[data-close],[data-selfase],[data-sellot],[data-sort],[data-vtoggle],[data-contact]");
-  if (!el) { if (e.target === $("#modalBg")) closeModal(); else if (e.target.dataset && e.target.dataset.foto) fotoLightbox(e.target.dataset.foto); return; }
+  if (!el) { if (e.target === $("#modalBg")) { if (MODAL.downOnBg) closeModal(); } else if (e.target.dataset && e.target.dataset.foto) fotoLightbox(e.target.dataset.foto); return; }
   if (e.target.matches(".task-check") || e.target.matches("input,select")) { if (!e.target.closest("[data-act]")) return; }
   const d = el.dataset;
-  if (d.close != null && d.open) { closeModal(); S.view = "projecten"; S.project = d.open; S.ptab = S.ptab || "taken"; return render(); }
+  if (d.close != null && d.open) { if (!closeModal()) return; S.view = "projecten"; S.project = d.open; S.ptab = S.ptab || "taken"; return render(); }
   if (d.close != null) return closeModal();
   if (d.sort) { S.sort = { key: d.sort, dir: S.sort.key === d.sort && S.sort.dir === "asc" ? "desc" : S.sort.key === d.sort ? "asc" : (["klant", "lead", "status", "fase"].includes(d.sort) ? "asc" : "desc") }; try { localStorage.setItem("bros.sort", JSON.stringify(S.sort)); } catch (err) { } return render(); }
   if (d.nav) { S.view = d.nav; S.project = null; if (d.nav === "planning") S.filters.project = ""; return render(); }
@@ -2464,7 +2487,7 @@ document.addEventListener("click", (e) => {
   if (d.act === "gk-new") return gkForm(d.pid, d.soort || null);
   if (d.act === "note-new") return noteForm({}, d.pid);
   if (d.act === "vs-new") return vsForm({}, d.pid);
-  if (d.vs) { e.stopPropagation(); closeModal(); return vsForm(S.vaststellingen[d.vs]); }
+  if (d.vs) { e.stopPropagation(); if (!closeModal()) return; return vsForm(S.vaststellingen[d.vs]); }
   if (d.act === "kt-fill") { const [a, b] = ktTaskSpan(d.pid, Number(d.nr)); return ktSave(d.pid, Number(d.nr), { start: a, eind: b }); }
   if (d.act === "kt-clear") return ktClear(d.pid, Number(d.nr));
   if (d.act === "vs-open") { if (e.target.dataset.foto) return fotoLightbox(e.target.dataset.foto); const v = S.vaststellingen[d.id]; if (!v) return toast("Deze vaststelling bestaat niet meer."); return vsForm(v); }
@@ -2539,7 +2562,7 @@ document.addEventListener("input", (e) => {
   if (e.target.dataset.filter === "q") { S.filters.q = e.target.value; render(); const i = $("[data-filter=q]"); i.focus(); i.setSelectionRange(i.value.length, i.value.length); }
   if (e.target.dataset.cfilter === "q") { S.cfilters.q = e.target.value; render(); const i = $("[data-cfilter=q]"); i.focus(); i.setSelectionRange(i.value.length, i.value.length); }
 });
-document.addEventListener("keydown", (e) => { if (e.key === "Escape") closeModal(); if (e.key === "Enter" && e.target.classList && e.target.classList.contains("inline") && e.target.tagName === "INPUT") { e.preventDefault(); e.target.blur(); } });
+document.addEventListener("keydown", (e) => { if (e.key === "Escape" && !/^(SELECT)$/.test(document.activeElement?.tagName || "")) closeModal(); if (e.key === "Enter" && e.target.classList && e.target.classList.contains("inline") && e.target.tagName === "INPUT") { e.preventDefault(); e.target.blur(); } });
 
 /* ---------- versiecontrole: melden als er een nieuwe versie online staat ---------- */
 let updateAvailable = false;

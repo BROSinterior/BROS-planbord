@@ -344,6 +344,7 @@
   .modal { background: var(--surface); border-radius: 18px; box-shadow: var(--shadow); width: min(680px, 100%); max-height: calc(100vh - 32px); overflow: auto; }
   .modal .mh { padding: 14px 18px; border-bottom: 1px solid var(--line); display: flex; justify-content: space-between; align-items: center; }
   .modal .mb { padding: 18px; }
+  .modal .draft-bar { display: flex; justify-content: space-between; align-items: center; gap: 10px; flex-wrap: wrap; padding: 10px 12px; margin-bottom: 14px; border-radius: 10px; background: var(--warn-soft); color: var(--warn); font-size: 13px; }
   .modal .mf { padding: 12px 18px; border-top: 1px solid var(--line); display: flex; justify-content: space-between; gap: 8px; }
   .toast { pointer-events: none; position: fixed; bottom: 18px; left: 50%; transform: translateX(-50%); background: var(--ink); color: var(--ground); padding: 9px 14px; border-radius: 8px; font-size: 13px; z-index: 60; opacity: 0; transition: opacity .2s; pointer-events: none; }
   .toast.show { opacity: 1; }
@@ -474,11 +475,11 @@
 <div class="toast" id="toast" role="status"></div>
 <div class="loader" id="loader" aria-live="polite"><div class="logo"><i class="base"></i><i class="fill" id="loaderFill"></i></div><div class="pct" id="loaderPct">0%</div><div class="msg" id="loaderMsg">Even geduld…</div></div>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.45.4/dist/umd/supabase.min.js"></script>
-<script src="config.js?v=1.24.8"></script>
+<script src="config.js?v=1.24.9"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
-<script src="postcodes.js?v=1.24.8"></script>
-<script src="meetstaat-export.js?v=1.24.8"></script>
-<script src="meetstaat-import.js?v=1.24.8"></script>
-<script src="app.js?v=1.24.8"></script>
+<script src="postcodes.js?v=1.24.9"></script>
+<script src="meetstaat-export.js?v=1.24.9"></script>
+<script src="meetstaat-import.js?v=1.24.9"></script>
+<script src="app.js?v=1.24.9"></script>
 </body>
 </html>
