@@ -2,7 +2,7 @@
    BROS Planbord — app v1.0
    Statische webapp op Supabase (login, live-synchronisatie, rechten)
    ===================================================================== */
-const APP_VERSION = "1.24.9";
+const APP_VERSION = "1.24.10";
 const PROJ_STATUS = { offerte: "In offerte", lopend: "Lopend", on_hold: "On hold", afgerond: "Afgerond", verloren: "Verloren" };
 const KLANTTYPE = { particulier: "Particulier", zakelijk: "Zakelijk" };
 const KLANTCODE = { particulier: "PAR", zakelijk: "ZAK" };
@@ -473,8 +473,84 @@ function vMeetstaat(p) {
         <td style="width:104px">${sel(r, "status", opts(Object.entries(MS_STATUS), r.status))}${r.akkoord_op ? `<small class="muted" style="display:block;color:var(--ok)" title="Goedgekeurd door de klant in het portaal">✓ klant ${fmt(r.akkoord_op.slice(0, 10))}</small>` : ""}</td>
         <td class="r" style="width:36px"><button class="btn ghost sm danger" data-act="ms-del" data-id="${r.id}" aria-label="Verwijderen">✕</button></td></tr>`; }).join(""); }).join("");
   return kpi + vGoedkeuringen(p) + vPrijsaanvragen(p) + `<div class="panel"><div class="panel-head"><div><h3>Meetstaat</h3><div class="muted" style="font-size:12px;margin-top:2px">${rows.length ? `${rows.length} posten in ${lots.length} loten` : "Nog leeg"} · klik in een veld om het te wijzigen, bewaard bij verlaten van het veld</div></div>
-      <div class="actions"><button class="btn sm ${S.msRuimte ? "primary" : ""}" data-act="ms-ruimte" title="Posten per lot groeperen per ruimte (alfabetisch), enkel in deze weergave — de nummering en de export veranderen niet">${S.msRuimte ? "Per ruimte ✓" : "Per ruimte"}</button>${isBeheer() ? `<button class="btn sm ${S.msKlant ? "primary" : ""}" data-act="ms-klant" title="Kostprijs, marge en btw-kolom verbergen, bv. als je de meetstaat met de klant overloopt (sneltoets: K)">${S.msKlant ? "👁 Klantweergave aan" : "Klantweergave"}</button>` : ""}${schemaV() >= 13 && rows.some(r => gkKandidaat(r)) ? `<button class="btn sm" data-act="gk-new" data-pid="${p.id}" title="Offerte of meerwerk bevroren ter goedkeuring in het klantenportaal zetten">Ter goedkeuring voorleggen</button>` : ""}<button class="btn sm" data-act="ms-import" data-pid="${p.id}" title="Een bestaande meetstaat (Excel, elk BROS-sjabloon) inlezen als posten">Importeren uit Excel</button>${rows.length ? `<button class="btn sm" data-act="ms-export" data-pid="${p.id}" title="Excel in het BROS-sjabloon aanmaken in Documenten/Meetstaat van de projectmap">Exporteren naar Drive (Excel)</button>` : ""}<button class="btn sm" data-act="ms-add-post" data-pid="${p.id}">+ Post</button><button class="btn sm primary" data-act="ms-add-lot" data-pid="${p.id}">+ Lot toevoegen</button></div></div>
+      <div class="actions"><button class="btn sm ${S.msRuimte ? "primary" : ""}" data-act="ms-ruimte" title="Posten per lot groeperen per ruimte (alfabetisch), enkel in deze weergave — de nummering en de export veranderen niet">${S.msRuimte ? "Per ruimte ✓" : "Per ruimte"}</button>${isBeheer() ? `<button class="btn sm ${S.msKlant ? "primary" : ""}" data-act="ms-klant" title="Kostprijs, marge en btw-kolom verbergen, bv. als je de meetstaat met de klant overloopt (sneltoets: K)">${S.msKlant ? "👁 Klantweergave aan" : "Klantweergave"}</button>` : ""}${schemaV() >= 13 && rows.some(r => gkKandidaat(r)) ? `<button class="btn sm" data-act="gk-new" data-pid="${p.id}" title="Offerte of meerwerk bevroren ter goedkeuring in het klantenportaal zetten">Ter goedkeuring voorleggen</button>` : ""}<button class="btn sm" data-act="ms-import" data-pid="${p.id}" title="Een bestaande meetstaat (Excel, elk BROS-sjabloon) inlezen als posten">Importeren uit Excel</button>${rows.length ? `<button class="btn sm" data-act="ms-export" data-pid="${p.id}" title="Excel in het BROS-sjabloon aanmaken in Documenten/Meetstaat van de projectmap">Exporteren naar Drive (Excel)</button><button class="btn sm" data-act="ms-pdf" data-pid="${p.id}" title="Meetstaat als pdf: klantversie of interne versie, per lot of per ruimte">Pdf</button>` : ""}<button class="btn sm" data-act="ms-add-post" data-pid="${p.id}">+ Post</button><button class="btn sm primary" data-act="ms-add-lot" data-pid="${p.id}">+ Lot toevoegen</button></div></div>
     ${rows.length ? `<div class="tw"><table class="t ms"><thead><tr><th></th><th>Nr</th><th>Omschrijving</th><th>Locatie</th><th>Hoev.</th><th>Eenh.</th>${beheer ? `<th title="Kostprijs / aannemersprijs excl. btw">Kost EP</th><th>Marge</th>` : ""}<th class="r">Klant EP</th><th class="r">Totaal excl.</th>${beheer ? `<th>Btw</th>` : ""}<th>Status</th><th></th></tr></thead><tbody>${body}</tbody></table></div>` : `<div class="empty"><b>Nog geen posten</b>Voeg een lot toe (met de standaardposten) of kies losse posten uit de bibliotheek.</div>`}</div>`;
+}
+/* ---------- Meetstaat als pdf (jsPDF): klantversie (verkoopprijzen) of interne versie (kost, marge, verkoop) ---------- */
+async function msBuildPdf(p, o) {
+  const jsPDF = await loadJsPdf(); const doc = new jsPDF({ unit: "mm", format: "a4", compress: true });
+  const W = 210, H = 297, M = 14, CW = W - 2 * M; let y = M; const logo = await logoData();
+  const ink = [29, 29, 31], muted = [134, 134, 139], line = [220, 220, 224], soft = [240, 240, 242];
+  const clean = (t) => String(t || "").replace(/→/g, "->").replace(/[“”]/g, '"').replace(/[‘’]/g, "'").replace(/•/g, "-").replace(/ /g, " ");
+  const geld = (n) => clean(eur2(n)); const q = (r) => Number(r.hoeveelheid) ? nl(r.hoeveelheid, 2) + " " + (r.eenheid || "") : "";
+  const intern = o.versie === "intern";
+  const rows = msRows(p.id).filter(r => o.filter === "akkoord" ? ["akkoord", "meerwerk", "minwerk"].includes(r.status) : o.filter === "actief" ? r.status !== "vervallen" : true);
+  const rk = (r) => (r.locatie || "").trim();
+  // kolommen: [label, breedte, uitlijning, waarde]
+  const cols = intern
+    ? [["Nr", 12, "l", r => r.code], ["Omschrijving", 66, "l", r => r.omschrijving], ["Hoev.", 20, "r", q], ["Kost EP", 20, "r", r => Number(r.eenheidsprijs) ? geld(r.eenheidsprijs) : ""], ["Marge", 13, "r", r => Number(r.hoeveelheid) ? nl(msMarge(r) * 100, 0) + " %" : ""], ["Klant EP", 20, "r", r => Number(msVerkoopEP(r)) ? geld(msVerkoopEP(r)) : ""], ["Totaal", 22, "r", r => Number(r.hoeveelheid) ? geld(rowSigned(r)) : ""], ["Status", 9, "l", r => ({ offerte: "OFF", akkoord: "OK", meerwerk: "MW", minwerk: "MIN", vervallen: "X" })[r.status] || ""]]
+    : [["Nr", 13, "l", r => r.code], ["Omschrijving", 84, "l", r => r.omschrijving], ["Hoev.", 22, "r", q], ["Eenheidsprijs", 24, "r", r => Number(msVerkoopEP(r)) ? geld(msVerkoopEP(r)) : ""], ["Totaal", 24, "r", r => Number(r.hoeveelheid) ? geld(rowSigned(r)) : ""], ["Status", 15, "l", r => ({ offerte: "Offerte", akkoord: "Akkoord", meerwerk: "Meerwerk", minwerk: "Minwerk", vervallen: "Vervallen" })[r.status] || ""]];
+  const xs = []; let x = M; cols.forEach(c => { xs.push(x); x += c[1]; });
+  const header = () => { if (logo) doc.addImage(logo, "PNG", M, 10, 26, 7.8); doc.setFont("helvetica", "normal"); doc.setFontSize(8); doc.setTextColor(...muted); doc.text(`${clean(projName(p))} · Meetstaat${intern ? " (intern)" : ""} · ${fmtLong(o.datum)}`, W - M, 15, { align: "right" }); doc.setDrawColor(...line); doc.line(M, 20, W - M, 20); y = 26; };
+  const footer = () => { const n = doc.getNumberOfPages(); for (let i = 1; i <= n; i++) { doc.setPage(i); doc.setFontSize(8); doc.setTextColor(...muted); doc.text(intern ? "BROS · intern document, niet voor de klant" : "BROS · prijzen excl. btw, tenzij anders vermeld", M, H - 8); doc.text(`${i} / ${n}`, W - M, H - 8, { align: "right" }); } };
+  const need = (h) => { if (y + h > H - 16) { doc.addPage(); header(); colHead(); } };
+  const colHead = () => { doc.setFont("helvetica", "bold"); doc.setFontSize(7.5); doc.setTextColor(...muted); cols.forEach((c, i) => doc.text(c[0].toUpperCase(), c[2] === "r" ? xs[i] + c[1] - 1 : xs[i] + 1, y + 3, { align: c[2] === "r" ? "right" : "left" })); doc.setDrawColor(...line); doc.line(M, y + 4.5, W - M, y + 4.5); y += 6.5; };
+  header();
+  doc.setFont("helvetica", "bold"); doc.setFontSize(20); doc.setTextColor(...ink); doc.text(clean(o.titel || "Meetstaat"), M, y + 5); y += 9;
+  doc.setFont("helvetica", "normal"); doc.setFontSize(10); doc.setTextColor(...muted); doc.text(clean(`${projName(p)}${p.adres ? " · " + p.adres + (p.gemeente ? ", " + [p.postcode, p.gemeente].filter(Boolean).join(" ") : "") : ""}${p.nummer ? " · " + p.nummer : ""}`), M, y + 4); y += 7;
+  if (o.inleiding) { doc.setFontSize(9.5); doc.setTextColor(...ink); const ls = doc.splitTextToSize(clean(o.inleiding), CW); doc.text(ls, M, y + 4); y += ls.length * 4.6 + 3; }
+  y += 2;
+  const lots = [...new Set(rows.map(r => r.lot))].sort((a, b) => a - b); let totVerkoop = 0, totKost = 0, totMw = 0, totBtw = 0;
+  lots.forEach(lot => {
+    let lr = rows.filter(r => r.lot === lot);
+    if (o.perRuimte) lr = lr.slice().sort((a, b) => (rk(a) === "" ? 1 : 0) - (rk(b) === "" ? 1 : 0) || rk(a).localeCompare(rk(b), "nl", { sensitivity: "base" }) || (a.volgorde ?? 0) - (b.volgorde ?? 0));
+    const sub = lr.filter(msTelt).reduce((s, r) => s + rowSigned(r), 0);
+    need(22); y += 3; doc.setFillColor(...soft); doc.roundedRect(M, y, CW, 8, 2, 2, "F"); doc.setFont("helvetica", "bold"); doc.setFontSize(10); doc.setTextColor(...ink); doc.text(clean(lotName(lot)), M + 3, y + 5.5); doc.text(geld(sub), W - M - 3, y + 5.5, { align: "right" }); y += 10; colHead();
+    let kop = null;
+    lr.forEach(r => {
+      const k = o.perRuimte ? (rk(r) || "Zonder ruimte") : (r.groep || "");
+      if (k && k !== kop) { kop = k; need(8); doc.setFont("helvetica", "bold"); doc.setFontSize(8); doc.setTextColor(...muted); doc.text(clean(k).toUpperCase(), M + 1, y + 3.2); if (o.perRuimte) { const sk = lr.filter(x => msTelt(x) && (rk(x) || "Zonder ruimte") === k).reduce((s, x) => s + rowSigned(x), 0); doc.text(geld(sk), W - M - 1, y + 3.2, { align: "right" }); } y += 5.5; }
+      const oms = doc.splitTextToSize(clean(r.omschrijving) + (r.locatie && !o.perRuimte ? "  (" + clean(r.locatie) + ")" : ""), cols[1][1] - 2); const h = Math.max(1, oms.length) * 3.9 + 2.2;
+      need(h); doc.setFont("helvetica", "normal"); doc.setFontSize(8.5); doc.setTextColor(...(r.status === "vervallen" ? muted : ink));
+      cols.forEach((c, i) => { if (i === 1) doc.text(oms, xs[i] + 1, y + 3.2); else doc.text(clean(c[3](r)), c[2] === "r" ? xs[i] + c[1] - 1 : xs[i] + 1, y + 3.2, { align: c[2] === "r" ? "right" : "left" }); });
+      doc.setDrawColor(...line); doc.line(M, y + h, W - M, y + h); y += h;
+      if (msTelt(r)) { const v = rowSigned(r); if (r.status === "meerwerk" || r.status === "minwerk") totMw += v; else totVerkoop += v; totBtw += v * (Number(r.btw) || 0); totKost += msKost(r); }
+    });
+  });
+  // totalen
+  need(40); y += 6; const tot = [["Contract excl. btw", totVerkoop], ["Meer-/minwerk excl. btw", totMw], ["Totaal excl. btw", totVerkoop + totMw], [`Btw${p.btw_tarief ? " (" + p.btw_tarief + " %)" : ""}`, totBtw], ["Totaal incl. btw", totVerkoop + totMw + totBtw]];
+  if (intern) tot.splice(3, 0, ["Kostprijs excl. btw", totKost], ["Marge", totVerkoop + totMw - totKost]);
+  tot.forEach(([k, v], i) => { const bold = /^Totaal/.test(k) || k === "Marge"; doc.setFont("helvetica", bold ? "bold" : "normal"); doc.setFontSize(bold ? 10.5 : 9.5); doc.setTextColor(...ink); doc.text(clean(k), W - M - 70, y + 4, { align: "left" }); doc.text(geld(v), W - M - 1, y + 4, { align: "right" }); if (k === "Totaal excl. btw" || k === "Marge") { doc.setDrawColor(...line); doc.line(W - M - 70, y + 6, W - M, y + 6); } y += 6.5; });
+  if (o.slot) { y += 4; need(20); doc.setFont("helvetica", "normal"); doc.setFontSize(9); doc.setTextColor(...muted); const ls = doc.splitTextToSize(clean(o.slot), CW); doc.text(ls, M, y + 4); y += ls.length * 4.4; }
+  footer();
+  return doc.output("blob");
+}
+function msPdfForm(pid) {
+  const p = S.projecten[pid]; if (!p) return; const beheer = isBeheer();
+  const rows = msRows(pid); if (!rows.length) { toast("De meetstaat is nog leeg."); return; }
+  const inst = (S.instellingen.portaal && S.instellingen.portaal.value) || {};
+  openModal("Meetstaat als pdf", `<div class="form-grid">
+    <div class="field"><label for="mp_versie">Versie</label><select id="mp_versie" name="versie">${opts([["klant", "Voor de klant — verkoopprijzen, zonder kostprijs en marge"]].concat(beheer ? [["intern", "Intern — kostprijs, marge en verkoopprijs"]] : []), "klant")}</select></div>
+    <div class="field"><label for="mp_filter">Welke posten</label><select id="mp_filter" name="filter">${opts([["actief", "Alle posten behalve vervallen"], ["akkoord", "Enkel goedgekeurd (akkoord, meer-/minwerk)"], ["alle", "Alles, ook vervallen"]], "actief")}</select></div>
+    <div class="field span2"><label for="mp_titel">Titel</label><input id="mp_titel" name="titel" value="Meetstaat ${esc(p.klant)}"></div>
+    <div class="field"><label for="mp_datum">Datum</label><input id="mp_datum" name="datum" type="date" value="${todayIso}"></div>
+    <div class="field"><label class="sw-row" style="margin-top:22px"><input type="checkbox" class="sw" name="perRuimte" ${S.msRuimte ? "checked" : ""}><span><b>Per ruimte groeperen</b><small class="muted" style="display:block">Binnen elk lot alfabetisch per ruimte, met subtotaal.</small></span></label></div>
+    <div class="field span2"><label for="mp_inl">Inleiding (optioneel, bovenaan)</label><textarea id="mp_inl" name="inleiding" rows="2" placeholder="bv. Meetstaat bij de offerte van ${esc(fmtLong(todayIso))}. Prijzen excl. btw, geldig 30 dagen."></textarea></div>
+    <div class="field span2"><label for="mp_slot">Slottekst (optioneel, onder de totalen)</label><textarea id="mp_slot" name="slot" rows="2">${esc(inst.meetstaat_slot || "Hoeveelheden zijn vermoedelijk; de afrekening gebeurt op basis van de werkelijk uitgevoerde hoeveelheden volgens de vorderingsstaat.")}</textarea></div>
+    ${p.drive_folder_id && driveReady() ? `<div class="field span2"><label class="chk" style="font-size:13px"><input type="checkbox" name="drive" checked> Ook bewaren in de Drive-map (Documenten/Meetstaat)</label></div>` : ""}
+  </div>`, {
+    wide: true, saveLabel: "Pdf maken", onSave: async (d) => {
+      const btn = $("#mform").querySelector("button[type=submit]"); btn.textContent = "Pdf maken…";
+      const o = { versie: d.versie === "intern" && beheer ? "intern" : "klant", filter: d.filter, titel: d.titel.trim(), datum: d.datum || todayIso, perRuimte: d.perRuimte === "on", inleiding: (d.inleiding || "").trim(), slot: (d.slot || "").trim() };
+      try {
+        const blob = await msBuildPdf(p, o);
+        const naam = `${o.datum.split("-").reverse().join("")} MEETSTAAT ${p.klant.toUpperCase()}${o.versie === "intern" ? " INTERN" : ""}.pdf`;
+        const url = URL.createObjectURL(blob); const a = document.createElement("a"); a.href = url; a.download = naam; document.body.appendChild(a); a.click(); a.remove(); setTimeout(() => URL.revokeObjectURL(url), 30000);
+        if (d.drive === "on") { btn.textContent = "Bewaren in Drive…"; const b64 = await new Promise(r => { const fr = new FileReader(); fr.onload = () => r(String(fr.result).split(",")[1]); fr.readAsDataURL(blob); }); try { const j = await driveCall("put", { folderId: p.drive_folder_id, subpath: "Documenten/Meetstaat", name: naam, base64: b64, mime: "application/pdf" }); if (j.file) { const row = { project_id: pid, drive_id: j.file.id, naam: j.file.name, pad: j.file.path || "Documenten/Meetstaat", url: j.file.url, mime: "application/pdf", grootte: j.file.size || blob.size, gewijzigd: j.file.updated || new Date().toISOString(), gesynct_op: new Date().toISOString() }; const { data } = await sb.from("documenten").upsert(row, { onConflict: "project_id,drive_id" }).select().maybeSingle(); if (data) S.documenten[data.id] = data; } toast("Pdf gedownload en bewaard in Documenten/Meetstaat", 5000); } catch (e) { toast("Pdf gedownload, maar niet in Drive bewaard: " + e.message, 7000); } }
+        else toast("Pdf gedownload");
+      } catch (e) { toast("Pdf mislukt: " + e.message, 7000); btn.textContent = "Pdf maken"; return false; }
+    },
+  });
 }
 /* ---------- Meetstaat: posten verslepen binnen een lot; nummers (lot.n) en volgorde volgen automatisch ---------- */
 async function msReorder(pid, lot, movedId, targetId, before) {
@@ -2494,6 +2570,7 @@ document.addEventListener("click", (e) => {
   if (d.act === "wb-new") return wbForm({}, d.pid);
   if (d.act === "plan-new") return planForm(d.pid);
   if (d.act === "wv-new") return wvForm(d.pid);
+  if (d.act === "ms-pdf") return msPdfForm(d.pid);
   if (d.act === "ms-move") { const r = S.meetstaat_posten[d.id]; if (!r) return; const rows = msRows(r.project_id).filter(x => x.lot === r.lot); const i = rows.findIndex(x => x.id === r.id); const j = i + Number(d.dir); if (j < 0 || j >= rows.length) return; return msReorder(r.project_id, r.lot, r.id, rows[j].id, Number(d.dir) < 0); }
   if (d.act === "pa-new") return paForm(d.pid);
   if (d.act === "pa-cmp") return paVergelijk(d.pid);
