@@ -103,6 +103,9 @@
   .chat-form { display: flex; gap: 8px; padding: 12px 18px; border-top: 1px solid var(--line); }
   .chat-form input { flex: 1; padding: 11px 14px; border: 1px solid var(--line-2); border-radius: 12px; font: inherit; background: var(--surface); color: var(--ink); }
   .stack { display: grid; gap: 16px; }
+  .seg-btn { display: inline-flex; gap: 4px; background: var(--surface-2); padding: 3px; border-radius: 999px; }
+  .seg-btn .btn { border-color: transparent; }
+  .seg-btn .btn:not(.primary) { background: transparent; }
   .two { display: grid; grid-template-columns: 1.4fr 1fr; gap: 16px; }
   @media (max-width: 760px) { .two { grid-template-columns: 1fr; } }
   /* ---- welkom ---- */
@@ -168,7 +171,7 @@
 <div id="app"></div>
 <div id="fx"><canvas></canvas><div class="wel"><div id="fxTxt">Welkom</div></div></div>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.45.4/dist/umd/supabase.min.js"></script>
-<script src="../config.js?v=1.25.1"></script>
-<script src="portaal.js?v=1.25.1"></script>
+<script src="../config.js?v=1.24.8"></script>
+<script src="portaal.js?v=1.24.8"></script>
 </body>
 </html>

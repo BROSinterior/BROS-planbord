@@ -2,7 +2,7 @@
    BROS Planbord — app v1.0
    Statische webapp op Supabase (login, live-synchronisatie, rechten)
    ===================================================================== */
-const APP_VERSION = "1.25.1";
+const APP_VERSION = "1.24.8";
 const PROJ_STATUS = { offerte: "In offerte", lopend: "Lopend", on_hold: "On hold", afgerond: "Afgerond", verloren: "Verloren" };
 const KLANTTYPE = { particulier: "Particulier", zakelijk: "Zakelijk" };
 const KLANTCODE = { particulier: "PAR", zakelijk: "ZAK" };
@@ -34,7 +34,7 @@ const workdays = (a, b) => { let n = 0; for (let s = a; s <= b; s = addDays(s, 1
 /* ---------- state ---------- */
 const S = {
   session: null, me: null, setPassword: false, passwordForced: false,
-  profiles: {}, tarieven: {}, fasen: {}, standaardtaken: [], projecten: {}, taken: {}, uren: {}, documenten: {}, instellingen: {}, loten: {}, posten: {}, meetstaat_posten: {}, vorderingen: {}, vordering_regels: {}, contacten: {}, project_contacten: {}, goedkeuringen: {}, notities: {}, werfbezoeken: {}, vaststellingen: {}, klant_timing: {}, werfplannen: {}, werfverslagen: {}, tekenplannen: {}, taak_voorstellen: {}, assistent_berichten: {},
+  profiles: {}, tarieven: {}, fasen: {}, standaardtaken: [], projecten: {}, taken: {}, uren: {}, documenten: {}, instellingen: {}, loten: {}, posten: {}, meetstaat_posten: {}, vorderingen: {}, vordering_regels: {}, contacten: {}, project_contacten: {}, goedkeuringen: {}, notities: {}, werfbezoeken: {}, vaststellingen: {}, klant_timing: {}, werfplannen: {}, werfverslagen: {}, taak_voorstellen: {}, assistent_berichten: {},
   view: "overzicht", project: null, ptab: "taken",
   filters: { user: "", status: "", project: "", q: "" }, cfilters: { soort: "", q: "" },
   ganttStart: addDays(mondayOf(todayIso), -14), ganttDays: 112, ganttOpen: {},
@@ -110,8 +110,8 @@ function telFmt(s) {
 let toastT; function toast(msg, ms = 2800) { const t = $("#toast"); t.textContent = msg; t.classList.add("show"); clearTimeout(toastT); toastT = setTimeout(() => t.classList.remove("show"), Math.max(2800, ms)); }
 
 /* ---------- data laden en live houden ---------- */
-const TABLES = { profiles: "profiles", tarieven: "tarieven", fasen: "fasen", standaardtaken: "standaardtaken", projecten: "projecten", taken: "taken", uren: "uren", documenten: "documenten", instellingen: "instellingen", loten: "loten", posten: "posten", meetstaat_posten: "meetstaat_posten", vorderingen: "vorderingen", vordering_regels: "vordering_regels", contacten: "contacten", project_contacten: "project_contacten", goedkeuringen: "goedkeuringen", notities: "notities", werfbezoeken: "werfbezoeken", vaststellingen: "vaststellingen", klant_timing: "klant_timing", werfplannen: "werfplannen", werfverslagen: "werfverslagen", taak_voorstellen: "taak_voorstellen", assistent_berichten: "assistent_berichten", prijsaanvragen: "prijsaanvragen", prijsaanvraag_regels: "prijsaanvraag_regels", tekenplannen: "tekenplannen" };
-const OPTIONAL_TABLES = ["tarieven", "documenten", "instellingen", "loten", "posten", "meetstaat_posten", "vorderingen", "vordering_regels", "contacten", "project_contacten", "goedkeuringen", "notities", "werfbezoeken", "vaststellingen", "klant_timing", "werfplannen", "werfverslagen", "taak_voorstellen", "assistent_berichten", "prijsaanvragen", "prijsaanvraag_regels", "tekenplannen"]; // ontbreken zolang het bijbehorende sql-script niet is uitgevoerd
+const TABLES = { profiles: "profiles", tarieven: "tarieven", fasen: "fasen", standaardtaken: "standaardtaken", projecten: "projecten", taken: "taken", uren: "uren", documenten: "documenten", instellingen: "instellingen", loten: "loten", posten: "posten", meetstaat_posten: "meetstaat_posten", vorderingen: "vorderingen", vordering_regels: "vordering_regels", contacten: "contacten", project_contacten: "project_contacten", goedkeuringen: "goedkeuringen", notities: "notities", werfbezoeken: "werfbezoeken", vaststellingen: "vaststellingen", klant_timing: "klant_timing", werfplannen: "werfplannen", werfverslagen: "werfverslagen", taak_voorstellen: "taak_voorstellen", assistent_berichten: "assistent_berichten", prijsaanvragen: "prijsaanvragen", prijsaanvraag_regels: "prijsaanvraag_regels" };
+const OPTIONAL_TABLES = ["tarieven", "documenten", "instellingen", "loten", "posten", "meetstaat_posten", "vorderingen", "vordering_regels", "contacten", "project_contacten", "goedkeuringen", "notities", "werfbezoeken", "vaststellingen", "klant_timing", "werfplannen", "werfverslagen", "taak_voorstellen", "assistent_berichten", "prijsaanvragen", "prijsaanvraag_regels"]; // ontbreken zolang het bijbehorende sql-script niet is uitgevoerd
 const rowKey = (t, r) => t === "fasen" || t === "loten" ? r.nr : t === "klant_timing" ? r.project_id + "|" + r.fase_nr : t === "tarieven" ? r.user_id : t === "instellingen" ? r.key : t === "vordering_regels" ? (r.id || r.vordering_id + "|" + r.lot + "|" + (r.post_id || "")) : r.id;
 function ingest(table, rows) {
   if (table === "standaardtaken") { S.standaardtaken = rows.sort((a, b) => a.fase_nr - b.fase_nr || a.volgorde - b.volgorde); return; }
@@ -140,7 +140,7 @@ async function loadAll() {
 }
 function subscribe() {
   // Eén kanaal per tabel: als één tabel niet in de realtime-publicatie zit, blijven de andere werken.
-  ["profiles", "tarieven", "fasen", "standaardtaken", "projecten", "taken", "uren", "documenten", "loten", "posten", "meetstaat_posten", "meetstaat_prijzen", "vorderingen", "vordering_regels", "contacten", "project_contacten", "goedkeuringen", "notities", "werfbezoeken", "vaststellingen", "klant_timing", "werfplannen", "werfverslagen", "taak_voorstellen", "assistent_berichten", "prijsaanvragen", "prijsaanvraag_regels", "tekenplannen"].forEach(t => {
+  ["profiles", "tarieven", "fasen", "standaardtaken", "projecten", "taken", "uren", "documenten", "loten", "posten", "meetstaat_posten", "meetstaat_prijzen", "vorderingen", "vordering_regels", "contacten", "project_contacten", "goedkeuringen", "notities", "werfbezoeken", "vaststellingen", "klant_timing", "werfplannen", "werfverslagen", "taak_voorstellen", "assistent_berichten", "prijsaanvragen", "prijsaanvraag_regels"].forEach(t => {
     const ch = sb.channel("pb-" + t);
     ch.on("postgres_changes", { event: "*", schema: "public", table: t }, (payload) => {
       if (S.bulk) return;   // tijdens een bulkactie (import, lot wissen) niet per rij herbouwen; op het einde volgt één refetch
@@ -456,10 +456,12 @@ function vMeetstaat(p) {
   const num = (r, f, cls = "") => `<input class="inline num ${cls}" data-ms="${r.id}" data-f="${f}" type="number" step="any" inputmode="decimal" value="${r[f] == null || r[f] === "" ? "" : Number(r[f])}">`;
   const sel = (r, f, options) => `<select class="inline" data-ms="${r.id}" data-f="${f}">${options}</select>`;
   const cols = 9 + (beheer ? 3 : 0);
+  const perRuimte = !!S.msRuimte; const ruimteKey = (r) => (r.locatie || "").trim().toLowerCase();
+  if (perRuimte) lots.forEach(nr => byLot[nr].sort((a, b) => (ruimteKey(a) === "" ? 1 : 0) - (ruimteKey(b) === "" ? 1 : 0) || ruimteKey(a).localeCompare(ruimteKey(b), "nl") || (a.volgorde ?? 0) - (b.volgorde ?? 0) || (a.code || "").localeCompare(b.code || "")));
   const body = lots.map(nr => { const g = byLot[nr]; const sub = g.filter(msTelt).reduce((s, r) => s + msVerkoop(r), 0); const subk = g.filter(msTelt).reduce((s, r) => s + msKost(r), 0); let lastGroep = null;
     return `<tr class="ms-lot"><td colspan="${cols}"><div style="display:flex;justify-content:space-between;align-items:center;gap:8px;flex-wrap:wrap"><span>${esc(lotName(nr))} <span class="muted num" style="font-weight:400">${g.length} posten${beheer ? ` · kost ${eur(subk)}` : ""} · <b>${eur(sub)}</b> excl. btw</span></span><span class="actions"><button class="btn ghost sm" data-act="ms-add-post" data-pid="${p.id}" data-lot="${nr}">+ Post</button><button class="btn ghost sm danger" data-act="ms-del-lot" data-pid="${p.id}" data-lot="${nr}" title="Alle posten van dit lot verwijderen">✕</button></span></div></td></tr>` +
-      g.map((r, i) => { const gh = r.groep && r.groep !== lastGroep ? `<tr class="ms-groep"><td></td><td colspan="${cols - 1}">${esc(r.groep)}</td></tr>` : ""; lastGroep = r.groep || lastGroep; const dead = r.status === "vervallen";
-        return gh + `<tr class="${dead ? "ms-dead" : ""}" data-msrow="${r.id}" data-lot="${nr}"><td class="drag" style="width:26px"><span class="grip" draggable="true" data-drag="${r.id}" title="Sleep om de volgorde te wijzigen">⋮⋮</span><span class="updown"><button class="btn ghost sm" data-act="ms-move" data-id="${r.id}" data-dir="-1" ${i === 0 ? "disabled" : ""} aria-label="Omhoog">▲</button><button class="btn ghost sm" data-act="ms-move" data-id="${r.id}" data-dir="1" ${i === g.length - 1 ? "disabled" : ""} aria-label="Omlaag">▼</button></span></td><td class="num muted" style="width:52px">${esc(r.code)}</td>
+      g.map((r, i) => { const kop = perRuimte ? ((r.locatie || "").trim() || "Zonder ruimte") : r.groep; const gh = kop && kop !== lastGroep ? `<tr class="ms-groep"><td></td><td colspan="${cols - 1}">${esc(kop)}${perRuimte ? ` <span class="muted" style="font-weight:400;text-transform:none;letter-spacing:0">· ${g.filter(x => (perRuimte ? ((x.locatie || "").trim() || "Zonder ruimte") : x.groep) === kop).length} posten · ${eur(g.filter(x => msTelt(x) && ((x.locatie || "").trim() || "Zonder ruimte") === kop).reduce((s, x) => s + msVerkoop(x), 0))}</span>` : ""}</td></tr>` : ""; lastGroep = kop || lastGroep; const dead = r.status === "vervallen";
+        return gh + `<tr class="${dead ? "ms-dead" : ""}" data-msrow="${r.id}" data-lot="${nr}"><td class="drag" style="width:26px">${perRuimte ? `<span class="muted" title="Volgorde wijzigen kan in de gewone weergave (Per ruimte uit)">·</span>` : `<span class="grip" draggable="true" data-drag="${r.id}" title="Sleep om de volgorde te wijzigen">⋮⋮</span>`}<span class="updown">${perRuimte ? "" : `<button class="btn ghost sm" data-act="ms-move" data-id="${r.id}" data-dir="-1" ${i === 0 ? "disabled" : ""} aria-label="Omhoog">▲</button>`}${perRuimte ? "" : `<button class="btn ghost sm" data-act="ms-move" data-id="${r.id}" data-dir="1" ${i === g.length - 1 ? "disabled" : ""} aria-label="Omlaag">▼</button>`}</span></td><td class="num muted" style="width:52px">${esc(r.code)}</td>
         <td style="min-width:260px">${inp(r, "omschrijving", "wide")}</td>
         <td style="width:110px">${inp(r, "locatie", "", 'placeholder="locatie"')}</td>
         <td style="width:84px">${num(r, "hoeveelheid")}</td>
@@ -471,7 +473,7 @@ function vMeetstaat(p) {
         <td style="width:104px">${sel(r, "status", opts(Object.entries(MS_STATUS), r.status))}${r.akkoord_op ? `<small class="muted" style="display:block;color:var(--ok)" title="Goedgekeurd door de klant in het portaal">✓ klant ${fmt(r.akkoord_op.slice(0, 10))}</small>` : ""}</td>
         <td class="r" style="width:36px"><button class="btn ghost sm danger" data-act="ms-del" data-id="${r.id}" aria-label="Verwijderen">✕</button></td></tr>`; }).join(""); }).join("");
   return kpi + vGoedkeuringen(p) + vPrijsaanvragen(p) + `<div class="panel"><div class="panel-head"><div><h3>Meetstaat</h3><div class="muted" style="font-size:12px;margin-top:2px">${rows.length ? `${rows.length} posten in ${lots.length} loten` : "Nog leeg"} · klik in een veld om het te wijzigen, bewaard bij verlaten van het veld</div></div>
-      <div class="actions">${isBeheer() ? `<button class="btn sm ${S.msKlant ? "primary" : ""}" data-act="ms-klant" title="Kostprijs, marge en btw-kolom verbergen, bv. als je de meetstaat met de klant overloopt (sneltoets: K)">${S.msKlant ? "👁 Klantweergave aan" : "Klantweergave"}</button>` : ""}${schemaV() >= 13 && rows.some(r => gkKandidaat(r)) ? `<button class="btn sm" data-act="gk-new" data-pid="${p.id}" title="Offerte of meerwerk bevroren ter goedkeuring in het klantenportaal zetten">Ter goedkeuring voorleggen</button>` : ""}<button class="btn sm" data-act="ms-import" data-pid="${p.id}" title="Een bestaande meetstaat (Excel, elk BROS-sjabloon) inlezen als posten">Importeren uit Excel</button>${rows.length ? `<button class="btn sm" data-act="ms-export" data-pid="${p.id}" title="Excel in het BROS-sjabloon aanmaken in Documenten/Meetstaat van de projectmap">Exporteren naar Drive (Excel)</button>` : ""}<button class="btn sm" data-act="ms-add-post" data-pid="${p.id}">+ Post</button><button class="btn sm primary" data-act="ms-add-lot" data-pid="${p.id}">+ Lot toevoegen</button></div></div>
+      <div class="actions"><button class="btn sm ${S.msRuimte ? "primary" : ""}" data-act="ms-ruimte" title="Posten per lot groeperen per ruimte (alfabetisch), enkel in deze weergave — de nummering en de export veranderen niet">${S.msRuimte ? "Per ruimte ✓" : "Per ruimte"}</button>${isBeheer() ? `<button class="btn sm ${S.msKlant ? "primary" : ""}" data-act="ms-klant" title="Kostprijs, marge en btw-kolom verbergen, bv. als je de meetstaat met de klant overloopt (sneltoets: K)">${S.msKlant ? "👁 Klantweergave aan" : "Klantweergave"}</button>` : ""}${schemaV() >= 13 && rows.some(r => gkKandidaat(r)) ? `<button class="btn sm" data-act="gk-new" data-pid="${p.id}" title="Offerte of meerwerk bevroren ter goedkeuring in het klantenportaal zetten">Ter goedkeuring voorleggen</button>` : ""}<button class="btn sm" data-act="ms-import" data-pid="${p.id}" title="Een bestaande meetstaat (Excel, elk BROS-sjabloon) inlezen als posten">Importeren uit Excel</button>${rows.length ? `<button class="btn sm" data-act="ms-export" data-pid="${p.id}" title="Excel in het BROS-sjabloon aanmaken in Documenten/Meetstaat van de projectmap">Exporteren naar Drive (Excel)</button>` : ""}<button class="btn sm" data-act="ms-add-post" data-pid="${p.id}">+ Post</button><button class="btn sm primary" data-act="ms-add-lot" data-pid="${p.id}">+ Lot toevoegen</button></div></div>
     ${rows.length ? `<div class="tw"><table class="t ms"><thead><tr><th></th><th>Nr</th><th>Omschrijving</th><th>Locatie</th><th>Hoev.</th><th>Eenh.</th>${beheer ? `<th title="Kostprijs / aannemersprijs excl. btw">Kost EP</th><th>Marge</th>` : ""}<th class="r">Klant EP</th><th class="r">Totaal excl.</th>${beheer ? `<th>Btw</th>` : ""}<th>Status</th><th></th></tr></thead><tbody>${body}</tbody></table></div>` : `<div class="empty"><b>Nog geen posten</b>Voeg een lot toe (met de standaardposten) of kies losse posten uit de bibliotheek.</div>`}</div>`;
 }
 /* ---------- Meetstaat: posten verslepen binnen een lot; nummers (lot.n) en volgorde volgen automatisch ---------- */
@@ -1731,7 +1733,7 @@ function vProjecten() {
 function vProjectDetail(p) {
   const ts = tasksOf(p.id), pl = projPlanned(p.id), dn = projDone(p.id);
   const [st, en] = projSpan(p);
-  const tabs = [["taken", "Taken"], ["notities", "Notities" + (schemaV() >= 14 && notesOf(p.id).length ? ` <span class="cnt">${notesOf(p.id).length}</span>` : "")], ["meetstaat", "Meetstaat"], ["facturatie", "Facturatie"], ["werf", "Werf" + (schemaV() >= 16 && vsOf(p.id).some(v => v.status === "open") ? ` <span class="cnt">${vsOf(p.id).filter(v => v.status === "open").length}</span>` : "")], ["tekenen", "Plannen"], ["planning", "Planning"], ["uren", "Uren"], ["dossier", "Dossier"]].concat(schemaV() >= 23 ? [["vragen", "Vragen" + (voorstellenOpen().some(v => v.project_id === p.id) ? ` <span class="cnt" style="background:var(--crit);color:#fff">${voorstellenOpen().filter(v => v.project_id === p.id).length}</span>` : "")]] : []);
+  const tabs = [["taken", "Taken"], ["notities", "Notities" + (schemaV() >= 14 && notesOf(p.id).length ? ` <span class="cnt">${notesOf(p.id).length}</span>` : "")], ["meetstaat", "Meetstaat"], ["facturatie", "Facturatie"], ["werf", "Werf" + (schemaV() >= 16 && vsOf(p.id).some(v => v.status === "open") ? ` <span class="cnt">${vsOf(p.id).filter(v => v.status === "open").length}</span>` : "")], ["planning", "Planning"], ["uren", "Uren"], ["dossier", "Dossier"]].concat(schemaV() >= 23 ? [["vragen", "Vragen" + (voorstellenOpen().some(v => v.project_id === p.id) ? ` <span class="cnt" style="background:var(--crit);color:#fff">${voorstellenOpen().filter(v => v.project_id === p.id).length}</span>` : "")]] : []);
   let body = "";
   if (S.ptab === "taken") {
     const byFase = {}; ts.forEach(t => { (byFase[t.fase_nr || 0] = byFase[t.fase_nr || 0] || []).push(t); });
@@ -1749,8 +1751,6 @@ function vProjectDetail(p) {
     body = vFacturatie(p);
   } else if (S.ptab === "werf") {
     body = vWerf(p);
-  } else if (S.ptab === "tekenen") {
-    body = typeof vTekenen === "function" ? vTekenen(p) : "";
   } else if (S.ptab === "vragen") {
     body = vVragenProject(p);
   } else if (S.ptab === "planning") {
@@ -2453,6 +2453,7 @@ document.addEventListener("click", (e) => {
   if (d.act === "st-del") return stDel(d.id);
   if (d.sellot) { S.selLot = Number(d.sellot); return render(); }
   if (d.vtoggle) { S.vordOpen = S.vordOpen || {}; S.vordOpen[d.vtoggle] = !S.vordOpen[d.vtoggle]; return render(); }
+  if (d.act === "ms-ruimte") { S.msRuimte = !S.msRuimte; try { localStorage.setItem("bros.msRuimte", S.msRuimte ? "1" : ""); } catch (x) { } return render(); }
   if (d.act === "ms-klant") { S.msKlant = !S.msKlant; try { localStorage.setItem("bros.msKlant", S.msKlant ? "1" : ""); } catch (x) { } toast(S.msKlant ? "Klantweergave: kostprijs en marge verborgen" : "Volledige weergave"); return render(); }
   if (d.act === "ms-add-lot") return msAddLotForm(d.pid);
   if (d.act === "ms-open") { S.ptab = "meetstaat"; render(); if (!msRows(d.pid).length) msAddLotForm(d.pid); return; }
@@ -2463,8 +2464,6 @@ document.addEventListener("click", (e) => {
   if (d.act === "gk-new") return gkForm(d.pid, d.soort || null);
   if (d.act === "note-new") return noteForm({}, d.pid);
   if (d.act === "vs-new") return vsForm({}, d.pid);
-  if (d.act === "tk-new") return tkPlanForm(d.pid);
-  if (d.act === "tk-open") return tkOpen(d.id);
   if (d.vs) { e.stopPropagation(); closeModal(); return vsForm(S.vaststellingen[d.vs]); }
   if (d.act === "kt-fill") { const [a, b] = ktTaskSpan(d.pid, Number(d.nr)); return ktSave(d.pid, Number(d.nr), { start: a, eind: b }); }
   if (d.act === "kt-clear") return ktClear(d.pid, Number(d.nr));
@@ -2544,7 +2543,7 @@ document.addEventListener("keydown", (e) => { if (e.key === "Escape") closeModal
 
 /* ---------- versiecontrole: melden als er een nieuwe versie online staat ---------- */
 let updateAvailable = false;
-const APP_FILES = ["index.html", "app.js", "config.js", "postcodes.js", "meetstaat-export.js", "meetstaat-import.js", "tekenen.js", "symbolen.js", "vendor/dxf-parser.js", "version.json", "klant/index.html", "klant/portaal.js", "logo-mark.svg", "werf/index.html", "werf/werf.js", "werf/sw.js", "aannemer/index.html", "aannemer/aannemer.js"];
+const APP_FILES = ["index.html", "app.js", "config.js", "postcodes.js", "meetstaat-export.js", "meetstaat-import.js", "version.json", "klant/index.html", "klant/portaal.js", "logo-mark.svg", "werf/index.html", "werf/werf.js", "werf/sw.js", "aannemer/index.html", "aannemer/aannemer.js"];
 /* de browser-cache omzeilen: alle bestanden van de app vers ophalen (cache: "reload" ververst de HTTP-cache) en dan herladen */
 async function hardReload() {
   try { sessionStorage.setItem("pb-state", JSON.stringify({ view: S.view, project: S.project, ptab: S.ptab })); } catch (e) { }
@@ -2565,7 +2564,7 @@ async function checkVersion() {
 
 /* ---------- start ---------- */
 async function boot() {
-  try { const sv = JSON.parse(localStorage.getItem("bros.sort") || "null"); if (sv && sv.key) S.sort = sv; S.msKlant = localStorage.getItem("bros.msKlant") === "1"; } catch (e) { }
+  try { const sv = JSON.parse(localStorage.getItem("bros.sort") || "null"); if (sv && sv.key) S.sort = sv; S.msKlant = localStorage.getItem("bros.msKlant") === "1"; S.msRuimte = localStorage.getItem("bros.msRuimte") === "1"; } catch (e) { }
   if (location.hash === "#voorstellen") { S.view = "voorstellen"; history.replaceState(null, "", location.pathname); }
   try { const st = JSON.parse(sessionStorage.getItem("pb-state") || "null"); sessionStorage.removeItem("pb-state"); if (st && st.view) { S.view = st.view; S.project = st.project || null; S.ptab = st.ptab || "taken"; } } catch (e) { }
   render();

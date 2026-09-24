@@ -2,7 +2,7 @@
    BROS Klantenportaal — alleen-lezen zicht van de bouwheer op zijn project
    Leest uitsluitend de klant_*-views (databasescript 011): geen kostprijzen, marges of interne notities.
    ===================================================================== */
-const PORTAAL_VERSION = "1.25.1";
+const PORTAAL_VERSION = "1.24.8";
 const todayLocal = () => { const n = new Date(); return `${n.getFullYear()}-${String(n.getMonth() + 1).padStart(2, "0")}-${String(n.getDate()).padStart(2, "0")}`; };
 const safeUrl = (u) => /^https?:\/\//i.test(String(u || "")) ? u : "#";
 const cfg = window.PLANBORD_CONFIG || {};
@@ -29,7 +29,7 @@ const URL_AUTH = (() => {
   return { type: p.get("type") || "", error: err };
 })();
 
-const S = { session: null, me: null, ready: false, loadError: null, setPassword: false, passwordForced: false, tab: "welkom", project: null, data: null };
+const S = { session: null, me: null, ready: false, loadError: null, setPassword: false, passwordForced: false, tab: "welkom", project: null, data: null, msRuimte: (() => { try { return localStorage.getItem("bros.klant.msRuimte") !== "0"; } catch (e) { return true; } })() };
 let loginNotice = URL_AUTH.error ? (/expired|invalid|otp/i.test(URL_AUTH.error) ? "Deze link is vervallen of al gebruikt. Log in met je wachtwoord, of vraag hieronder een nieuwe link aan." : "Er ging iets mis met de link: " + URL_AUTH.error) : "";
 
 function toast(msg, ms = 3500) { const t = document.createElement("div"); t.className = "toast"; t.textContent = msg; document.body.appendChild(t); setTimeout(() => t.remove(), ms); }
@@ -162,13 +162,16 @@ function vMeetstaat(p) {
   const btwTot = rows.reduce((s, r) => s + signed(r) * (Number(r.btw) || 0), 0);
   const offerteOpen = rows.some(r => r.status === "offerte");
   const lots = [...new Set(rows.map(r => r.lot))];
-  const lotBlok = (lot) => { const rs = rows.filter(r => r.lot === lot); const som = rs.reduce((s, r) => s + signed(r), 0); let groep = null;
+  const perRuimte = S.msRuimte !== false; const rk = (r) => (r.locatie || "").trim();
+  const lotBlok = (lot) => { let rs = rows.filter(r => r.lot === lot); const som = rs.reduce((s, r) => s + signed(r), 0); let groep = null;
+    if (perRuimte) rs = rs.slice().sort((a, b) => (rk(a) === "" ? 1 : 0) - (rk(b) === "" ? 1 : 0) || rk(a).localeCompare(rk(b), "nl", { sensitivity: "base" }) || (a.volgorde ?? 0) - (b.volgorde ?? 0) || (a.code || "").localeCompare(b.code || ""));
+    const kopVan = (r) => perRuimte ? (rk(r) || "Zonder ruimte") : r.groep;
     return `<div class="panel"><div class="panel-head"><h3>${esc(lotNaam(lot))}</h3><span class="num" style="font-weight:700">${eur(som)}</span></div><div class="tw"><table class="t"><thead><tr><th style="width:60px">Nr</th><th>Omschrijving</th><th class="r">Hoev.</th><th class="r">Prijs</th><th class="r">Totaal</th><th>Status</th></tr></thead><tbody>
-      ${rs.map(r => { const isGroep = !Number(r.hoeveelheid) && !Number(r.prijs) && !r.code && (r.groep || r.omschrijving); let g = ""; if (r.groep && r.groep !== groep) { groep = r.groep; g = `<tr class="groep"><td colspan="6">${esc(r.groep)}</td></tr>`; }
-        if (isGroep && !r.groep) return `<tr class="groep"><td colspan="6">${esc(r.omschrijving)}</td></tr>`;
-        return g + `<tr><td class="num muted" style="font-size:12px">${esc(r.code)}</td><td>${esc(r.omschrijving).replace(/\n/g, "<br>")}${r.locatie ? `<div class="muted" style="font-size:12px">${esc(r.locatie)}</div>` : ""}</td><td class="r num">${Number(r.hoeveelheid) ? nl(r.hoeveelheid, 2) + " " + esc(r.eenheid) : ""}</td><td class="r num">${Number(r.prijs) ? eur(r.prijs) : ""}</td><td class="r num">${Number(r.totaal) ? eur(signed(r)) : ""}</td><td><span class="pill ${r.status}">${MS_STATUS[r.status] || esc(r.status)}</span>${r.akkoord_op ? `<div class="muted" style="font-size:11px">✓ ${fmt(r.akkoord_op)}</div>` : ""}</td></tr>`; }).join("")}
+      ${rs.map(r => { const isGroep = !Number(r.hoeveelheid) && !Number(r.prijs) && !r.code && (r.groep || r.omschrijving); let g = ""; const kop = kopVan(r); if (kop && kop !== groep) { groep = kop; const sub = perRuimte ? rs.filter(x => kopVan(x) === kop).reduce((s, x) => s + signed(x), 0) : null; g = `<tr class="groep"><td colspan="5">${esc(kop)}</td><td class="r num" style="text-transform:none;letter-spacing:0">${perRuimte ? eur(sub) : ""}</td></tr>`; }
+        if (isGroep && !r.groep && !perRuimte) return `<tr class="groep"><td colspan="6">${esc(r.omschrijving)}</td></tr>`;
+        return g + `<tr><td class="num muted" style="font-size:12px">${esc(r.code)}</td><td>${esc(r.omschrijving).replace(/\n/g, "<br>")}${r.locatie && !perRuimte ? `<div class="muted" style="font-size:12px">${esc(r.locatie)}</div>` : ""}</td><td class="r num">${Number(r.hoeveelheid) ? nl(r.hoeveelheid, 2) + " " + esc(r.eenheid) : ""}</td><td class="r num">${Number(r.prijs) ? eur(r.prijs) : ""}</td><td class="r num">${Number(r.totaal) ? eur(signed(r)) : ""}</td><td><span class="pill ${r.status}">${MS_STATUS[r.status] || esc(r.status)}</span>${r.akkoord_op ? `<div class="muted" style="font-size:11px">✓ ${fmt(r.akkoord_op)}</div>` : ""}</td></tr>`; }).join("")}
     </tbody></table></div></div>`; };
-  return `<h1 style="margin-bottom:6px">Meetstaat</h1><p class="muted" style="margin-bottom:16px">Alle posten van je project met de afgesproken prijzen (excl. btw). ${offerteOpen ? "Posten met status <b>Offerte</b> wachten nog op je akkoord; " : ""}<b>Meerwerk</b> en <b>minwerk</b> zijn wijzigingen na het contract.</p>
+  return `<div style="display:flex;justify-content:space-between;align-items:flex-start;gap:12px;flex-wrap:wrap"><h1 style="margin-bottom:6px">Meetstaat</h1><div class="seg-btn"><button class="btn sm ${perRuimte ? "primary" : ""}" data-act="ms-ruimte" data-on="1">Per ruimte</button><button class="btn sm ${perRuimte ? "" : "primary"}" data-act="ms-ruimte" data-on="0">Per nummer</button></div></div><p class="muted" style="margin-bottom:16px">Alle posten van je project met de afgesproken prijzen (excl. btw)${perRuimte ? ", per lot gegroepeerd per ruimte" : ""}. ${offerteOpen ? "Posten met status <b>Offerte</b> wachten nog op je akkoord; " : ""}<b>Meerwerk</b> en <b>minwerk</b> zijn wijzigingen na het contract.</p>
     <div class="kpis"><div class="kpi"><div class="k">Contract excl. btw</div><div class="v num">${eur(contract, 0)}</div></div><div class="kpi"><div class="k">Meer-/minwerk</div><div class="v num">${mw ? eur(mw, 0) : "—"}</div></div><div class="kpi"><div class="k">Btw</div><div class="v num">${eur(btwTot, 0)}</div><div class="muted" style="font-size:12px">${p.btw_tarief ? p.btw_tarief + " % op je project" : ""}</div></div><div class="kpi"><div class="k">Totaal incl. btw</div><div class="v num">${eur(contract + mw + btwTot, 0)}</div></div></div>
     <div class="stack">${lots.map(lotBlok).join("")}</div>`;
 }
@@ -344,6 +347,7 @@ document.addEventListener("click", (e) => {
   if (el.dataset.act === "gk-nee") { const box = $("#gk_nee_" + el.dataset.id); box.hidden = !box.hidden; if (!box.hidden) box.querySelector("textarea").focus(); }
   if (el.dataset.act === "gk-toon") { S.gkOpen = S.gkOpen === el.dataset.id ? null : el.dataset.id; render(); }
   if (el.dataset.act === "note-toggle") { S.noteOpen = S.noteOpen === el.dataset.id ? null : el.dataset.id; render(); }
+  if (el.dataset.act === "ms-ruimte") { S.msRuimte = el.dataset.on === "1"; try { localStorage.setItem("bros.klant.msRuimte", S.msRuimte ? "1" : "0"); } catch (x) { } render(); }
   if (el.dataset.act === "vl-toggle") { S.vlOpen = S.vlOpen || {}; S.vlOpen[el.dataset.key] = !S.vlOpen[el.dataset.key]; const y = window.scrollY; render(); window.scrollTo({ top: y }); }
 });
 document.addEventListener("submit", (e) => {
