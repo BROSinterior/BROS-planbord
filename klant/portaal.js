@@ -2,7 +2,7 @@
    BROS Klantenportaal — alleen-lezen zicht van de bouwheer op zijn project
    Leest uitsluitend de klant_*-views (databasescript 011): geen kostprijzen, marges of interne notities.
    ===================================================================== */
-const PORTAAL_VERSION = "1.24.10";
+const PORTAAL_VERSION = "1.24.11";
 const todayLocal = () => { const n = new Date(); return `${n.getFullYear()}-${String(n.getMonth() + 1).padStart(2, "0")}-${String(n.getDate()).padStart(2, "0")}`; };
 const safeUrl = (u) => /^https?:\/\//i.test(String(u || "")) ? u : "#";
 const cfg = window.PLANBORD_CONFIG || {};
@@ -193,8 +193,13 @@ function vordMatrix(p, vs) {
   const rows = msRows(); if (!rows.length) return "";
   const pct1 = (x) => nl(Math.round(x * 1000) / 10, 1) + " %";
   // per vordering: % per post (post-% overschrijft lot-%)
-  const rg = {}; vs.forEach(v => { const lot = {}, post = {}; D().regels.filter(r => r.vordering_id === v.id).forEach(r => { if (r.post_id) post[r.post_id] = Number(r.pct); else lot[r.lot] = Number(r.pct); }); rg[v.id] = { lot, post }; });
-  const pctVan = (v, r) => { if ((v.soort === "meerwerk") !== isMw(r)) return null; const x = rg[v.id].post[r.id] ?? rg[v.id].lot[r.lot]; return x == null ? null : x; };
+  // per vordering: % per post (post-% overschrijft lot-%). Is de factuur bevroren op een ander bedrag dan de berekening (meetstaat later gewijzigd),
+  // dan worden de percentages evenredig geschaald zodat de kolom precies op het factuurbedrag uitkomt — zo kloppen matrix, facturenlijst en 'nog te factureren' met elkaar.
+  const rg = {}; vs.forEach(v => { const lot = {}, post = {}; D().regels.filter(r => r.vordering_id === v.id).forEach(r => { if (r.post_id) post[r.post_id] = Number(r.pct); else lot[r.lot] = Number(r.pct); });
+    const berekend = rows.filter(r => (v.soort === "meerwerk") === isMw(r)).reduce((s, r) => { const x = post[r.id] ?? lot[r.lot]; return s + (x == null ? 0 : x * signed(r)); }, 0);
+    const vast = v.status !== "opgemaakt" && v.bedrag_excl != null; const f = vast && berekend && Math.abs(Number(v.bedrag_excl) - berekend) > 0.5 ? Number(v.bedrag_excl) / berekend : 1;
+    rg[v.id] = { lot, post, f }; });
+  const pctVan = (v, r) => { if ((v.soort === "meerwerk") !== isMw(r)) return null; const x = rg[v.id].post[r.id] ?? rg[v.id].lot[r.lot]; return x == null ? null : x * rg[v.id].f; };
   S.vlOpen = S.vlOpen || {};
   const blok = (soort) => { const rs = rows.filter(r => isMw(r) === (soort === "meerwerk") && Number(r.totaal)); if (!rs.length) return ""; const lots = [...new Set(rs.map(r => r.lot))];
     return lots.map(l => { const lr = rs.filter(r => r.lot === l); const base = lr.reduce((s, r) => s + signed(r), 0); const key = soort + l; const open = !!S.vlOpen[key];

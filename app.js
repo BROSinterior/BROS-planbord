@@ -2,7 +2,7 @@
    BROS Planbord — app v1.0
    Statische webapp op Supabase (login, live-synchronisatie, rechten)
    ===================================================================== */
-const APP_VERSION = "1.24.10";
+const APP_VERSION = "1.24.11";
 const PROJ_STATUS = { offerte: "In offerte", lopend: "Lopend", on_hold: "On hold", afgerond: "Afgerond", verloren: "Verloren" };
 const KLANTTYPE = { particulier: "Particulier", zakelijk: "Zakelijk" };
 const KLANTCODE = { particulier: "PAR", zakelijk: "ZAK" };
@@ -1371,7 +1371,8 @@ function fitRegels(pid, soort, regels, bedrag, calcs) {
 }
 /* bestaande, nog open vordering: percentages afleiden uit het ingevulde factuurbedrag */
 async function vordFit(vid) {
-  const v = S.vorderingen[vid]; if (!v || vordLocked(v) || v.bedrag_excl == null || v.bedrag_excl === "") return;
+  const v = S.vorderingen[vid]; if (!v || v.bedrag_excl == null || v.bedrag_excl === "") return;
+  if (vordLocked(v) && !confirm("Deze vordering is al verzonden of betaald. Het factuurbedrag blijft hetzelfde; enkel de verdeling in percentages over de loten en posten wordt herrekend zodat de vorderingsstaat (ook voor de klant) weer precies op het factuurbedrag uitkomt. Doorgaan?")) return;
   const bedrag = Number(v.bedrag_excl); const pid = v.project_id;
   const calcs = {}; vordOf(pid).filter(x => x.id !== vid).forEach(x => calcs[x.id] = vordCalc(x));
   let regels = Object.values(S.vordering_regels).filter(r => r.vordering_id === vid).map(r => ({ id: r.id, lot: r.lot, post_id: r.post_id, pct: Number(r.pct) }));
@@ -1428,7 +1429,7 @@ function vFacturatie(p) {
       <div class="vh-row"><span class="muted">Btw · incl.</span><span class="num">${eur(c.btw)} · <b>${eur(c.incl)}</b></span></div>
       ${beheer ? `<div class="vh-row"><span class="muted" title="Bedrag op de factuur in Yuki (excl. btw) — wordt bevroren zodra de status verzonden of betaald is. Wijkt het af van de berekening, dan kan je de percentages eruit laten afleiden.">Factuur excl.</span><input class="inline num" data-vf="${v.id}" data-f="bedrag_excl" type="number" step="any" value="${v.bedrag_excl == null ? "" : Number(v.bedrag_excl)}" placeholder="${Math.round(c.excl)}"></div>` : ""}
       ${frozen && Math.abs(diff) > 0.5 ? `<div class="vh-row" style="color:var(--warn)"><span>Verschil</span><span class="num">${eur(diff)}</span></div>` : ""}
-      ${beheer && !vordLocked(v) && v.bedrag_excl != null && v.bedrag_excl !== "" && Math.abs(Number(v.bedrag_excl) - c.excl) > 0.5 ? `<div class="vh-row"><button class="btn ghost sm" data-act="vord-fit" data-id="${v.id}" title="De percentages van deze vordering zo herrekenen dat de berekening precies op het factuurbedrag uitkomt (verschil nu ${eur(Number(v.bedrag_excl) - c.excl)})">Percentages afleiden uit ${eur(Number(v.bedrag_excl))}</button></div>` : ""}
+      ${beheer && v.bedrag_excl != null && v.bedrag_excl !== "" && Math.abs(Number(v.bedrag_excl) - c.excl) > 0.5 ? `<div class="vh-row"><button class="btn ghost sm" data-act="vord-fit" data-id="${v.id}" title="De percentages van deze vordering zo herrekenen dat de berekening precies op het factuurbedrag uitkomt (verschil nu ${eur(Number(v.bedrag_excl) - c.excl)})${vordLocked(v) ? " — het factuurbedrag verandert niet, enkel de verdeling" : ""}">Percentages herrekenen op ${eur(Number(v.bedrag_excl))}</button></div>` : ""}
       <div class="vh-row"><span class="muted">Status</span>${beheer ? `<select class="inline" data-vf="${v.id}" data-f="status">${opts(Object.entries(VORD_STATUS), v.status)}</select>` : `<span>${VORD_STATUS[v.status]}</span>`}</div></div></th>`; }).join("");
   const grid = `<div class="panel" style="margin-bottom:16px"><div class="panel-head"><div><h3>Vorderingsstaat</h3><div class="muted" style="font-size:12px;margin-top:2px">Per lot het % dat je in elke vordering factureert; klap een lot open (▸) om per post te werken — een post-% overschrijft het lot-%. Het voorschot telt overal mee. Meerwerk staat apart en zit niet in het voorschot.</div></div>
       <div class="actions">${beheer ? `${heeftVoorschot ? "" : `<button class="btn sm" data-act="vord-new" data-pid="${p.id}" data-soort="voorschot">+ Voorschot</button>`}<button class="btn sm primary" data-act="vord-new" data-pid="${p.id}" data-soort="vordering">+ Vordering</button>${meerwerk ? `<button class="btn sm" data-act="vord-new" data-pid="${p.id}" data-soort="meerwerk">+ Meerwerkfactuur</button>` : ""}<button class="btn sm" data-act="vord-new" data-pid="${p.id}" data-soort="slotfactuur" title="Alles wat nog openstaat, per post">+ Slotfactuur</button>` : ""}</div></div>
