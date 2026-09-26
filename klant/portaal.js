@@ -2,7 +2,7 @@
    BROS Klantenportaal — alleen-lezen zicht van de bouwheer op zijn project
    Leest uitsluitend de klant_*-views (databasescript 011): geen kostprijzen, marges of interne notities.
    ===================================================================== */
-const PORTAAL_VERSION = "1.24.11";
+const PORTAAL_VERSION = "1.24.12";
 const todayLocal = () => { const n = new Date(); return `${n.getFullYear()}-${String(n.getMonth() + 1).padStart(2, "0")}-${String(n.getDate()).padStart(2, "0")}`; };
 const safeUrl = (u) => /^https?:\/\//i.test(String(u || "")) ? u : "#";
 const cfg = window.PLANBORD_CONFIG || {};
