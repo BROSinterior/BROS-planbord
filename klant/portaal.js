@@ -2,7 +2,7 @@
    BROS Klantenportaal — alleen-lezen zicht van de bouwheer op zijn project
    Leest uitsluitend de klant_*-views (databasescript 011): geen kostprijzen, marges of interne notities.
    ===================================================================== */
-const PORTAAL_VERSION = "1.24.12";
+const PORTAAL_VERSION = "1.24.13";
 const todayLocal = () => { const n = new Date(); return `${n.getFullYear()}-${String(n.getMonth() + 1).padStart(2, "0")}-${String(n.getDate()).padStart(2, "0")}`; };
 const safeUrl = (u) => /^https?:\/\//i.test(String(u || "")) ? u : "#";
 const cfg = window.PLANBORD_CONFIG || {};
@@ -191,7 +191,7 @@ function vFacturatie(p) {
 /* vorderingsstaat per onderdeel: welk deel van elk lot (en elke post) in welke factuur zat, wat cumulatief gefactureerd is en wat nog rest */
 function vordMatrix(p, vs) {
   const rows = msRows(); if (!rows.length) return "";
-  const pct1 = (x) => nl(Math.round(x * 1000) / 10, 1) + " %";
+  const pct1 = (x) => nl(Math.round(x * 10000) / 100, 2) + " %"; /* 2 decimalen, zodat % × bedrag klopt met het getoonde bedrag */
   // per vordering: % per post (post-% overschrijft lot-%)
   // per vordering: % per post (post-% overschrijft lot-%). Is de factuur bevroren op een ander bedrag dan de berekening (meetstaat later gewijzigd),
   // dan worden de percentages evenredig geschaald zodat de kolom precies op het factuurbedrag uitkomt — zo kloppen matrix, facturenlijst en 'nog te factureren' met elkaar.
