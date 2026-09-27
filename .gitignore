@@ -2,3 +2,6 @@
 Claude outputs/
 *.lock.stale*
 drive/Code.ingevuld.gs
+*.ingevuld.*
+*.bak
+_to_delete/

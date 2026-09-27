@@ -3,7 +3,7 @@
    Leest uitsluitend de aan_*-views (databasescript 025): enkel de projecten en loten waaraan hij gekoppeld is,
    nooit prijzen van BROS of van andere aannemers. Schrijven gaat via functies (opgelost melden, prijzen, vragen).
    ===================================================================== */
-const PORTAAL_VERSION = "1.24.14";
+const PORTAAL_VERSION = "1.25.1";
 const todayLocal = () => { const n = new Date(); return `${n.getFullYear()}-${String(n.getMonth() + 1).padStart(2, "0")}-${String(n.getDate()).padStart(2, "0")}`; };
 const safeUrl = (u) => /^https?:\/\//i.test(String(u || "")) ? u : "#";
 const cfg = window.PLANBORD_CONFIG || {};
@@ -111,7 +111,7 @@ function vOverzicht(p) {
       <div class="kpi"><div class="k">Project</div><div class="v" style="font-size:16px">${PROJ_STATUS[p.status] || esc(p.status)}</div><div class="muted" style="font-size:12px">${p.fase_nr ? "stap " + p.fase_nr + " · " + esc(faseNaam(p.fase_nr)) : ""}</div></div></div>
     <div class="two"><div class="stack">
       <div class="panel"><div class="panel-head"><h2>Open werfpunten</h2><button class="btn sm" data-tab="werf">Alles →</button></div>${open.length ? `<div class="panel-body" style="display:grid;gap:8px">${open.slice(0, 5).map(vsCard).join("")}</div>` : `<div class="empty"><b>Geen open punten</b>Nieuwe vaststellingen van BROS verschijnen hier.</div>`}</div>
-      ${pa.length ? `<div class="panel" style="border-color:var(--blue)"><div class="panel-head"><h2>Prijsaanvraag in te vullen</h2></div><div class="panel-body">${pa.map(a => `<p><b>${esc(a.titel || "Prijsaanvraag")}</b> · ${a.loten.map(lotNaam).map(esc).join(", ")}${a.deadline ? ` · vóór ${fmt(a.deadline)}` : ""} <button class="btn sm primary" data-act="pa-open" data-id="${a.id}">Invullen →</button></p>`).join("")}</div></div>` : ""}
+      ${pa.length ? `<div class="panel" style="border-color:var(--blue)"><div class="panel-head"><h2>Prijsaanvraag in te vullen</h2></div><div class="panel-body">${pa.map(a => `<p><b>${esc(a.titel || "Prijsaanvraag")}</b> · ${a.loten.map(lotNaam).map(esc).join(", ")}${a.deadline ? (a.deadline < todayLocal() ? ` · <span class="pill late">gevraagd tegen ${fmt(a.deadline)}</span>` : ` · vóór ${fmt(a.deadline)}`) : ""} <button class="btn sm primary" data-act="pa-open" data-id="${a.id}">Invullen →</button></p>`).join("")}</div></div>` : ""}
     </div><div class="stack">
       <div class="panel"><div class="panel-head"><h2>Werf</h2></div><div class="panel-body"><p><b>${projTitel(p)}</b></p><p class="muted" style="font-size:14px">${esc([p.adres, [p.postcode, p.gemeente].filter(Boolean).join(" ")].filter(Boolean).join(", "))}</p>${p.start || p.eind ? `<p class="muted" style="font-size:13px">${p.start ? "gestart " + fmtLang(p.start) : ""}${p.eind ? " · geplande oplevering " + fmtLang(p.eind) : ""}</p>` : ""}</div></div>
       ${lead ? `<div class="panel"><div class="panel-head"><h2>Je aanspreekpunt bij BROS</h2></div><div class="panel-body"><div class="person">${avatar(lead, 56)}<div><b>${esc(lead.name)}</b><div class="muted" style="font-size:13px">${esc(lead.functie || "BROS")}</div></div></div></div></div>` : ""}

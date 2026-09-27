@@ -11,7 +11,7 @@ Statische webapp (geen build-stap) op een Supabase-database.
 | `app.js` | alle logica |
 | `config.js` | koppeling met de database — **hier de Project URL en anon-sleutel invullen** |
 | `version.json` | versienummer; de app meldt een nieuwe versie aan wie ze open heeft |
-| `sql/001_init.sql` … `sql/027_*.sql` | databasescripts, in volgorde uit te voeren (`versie_schema` in instellingen bewaakt de volgorde vanaf 022) |
+| `sql/001_init.sql` … `sql/028_*.sql` | databasescripts, in volgorde uit te voeren (`versie_schema` in instellingen bewaakt de volgorde vanaf 022) |
 | `drive/Code.gs` | Google Apps Script dat projectmappen aanmaakt/koppelt op Drive en de meetstaat-export wegschrijft (installatie: zie bovenaan dat bestand) |
 | `meetstaat-export.js` | schrijft de meetstaat van een project in het Excel-sjabloon (zip/XML, opmaak en formules blijven intact) |
 | `klant/` | het klantenportaal (index.html + portaal.js): alleen-lezen zicht van de bouwheer op zijn project |
@@ -131,7 +131,7 @@ Wat hij kan:
 - **Werfpunten**: de vaststellingen die aan hem toegewezen zijn (foto's, ruimte, lot, deadline, pin op het plan). Hij meldt ze **opgelost met bewijsfoto** en/of opmerking (`aannemer_vaststelling_melden`); BROS zet ze daarna op gecontroleerd. De gekoppelde taak en de status in het Planbord lopen mee. Op de werf gebruikt hij dezelfde login in de **werfmodus** (`werf/`): enkel zijn punten, enkel opgelost melden en foto's toevoegen, ook zonder bereik.
 - **Plannen** (alle werfplannen van het project, met zijn pins), **Documenten** (bestanden met de schakelaar *aannemers* in Dossier › Documenten — naast *klant*) en **Werfverslagen** (verslagen die naar zijn e-mailadres gemaild zijn, plus verslagen met de knop *Aannemers* in de lijst Werfverslagen).
 - **Planning**: de fasen met de gedeelde timing en de taken met "timing delen" (zelfde als in het klantenportaal).
-- **Prijsaanvragen**: BROS stuurt vanuit projectfiche › Meetstaat › *Prijsaanvragen* → *+ Prijsaanvraag* een aannemer de posten van één of meer loten (hoeveelheden en eenheden; de aannemer krijgt een mail, en als hij nog geen login heeft zit de uitnodiging erbij). Hij vult per post een eenheidsprijs en opmerking in (bewaard bij verlaten van het veld) en dient in; BROS krijgt een mail. *Vergelijken* zet de aanvragen naast elkaar en naast de huidige kostprijs (laagste prijs groen); *Overnemen* zet de ingevulde prijzen van die aannemer als kostprijs in `meetstaat_prijzen` (enkel beheer; de klantprijs volgt via de marge) en mailt de aannemer dat zijn prijzen weerhouden zijn. *Herinneren*, *Afsluiten* en verwijderen zitten in dezelfde lijst.
+- **Prijsaanvragen**: BROS stuurt vanuit projectfiche › Meetstaat › *Prijsaanvragen* → *+ Prijsaanvraag* een aannemer de posten van één of meer loten (hoeveelheden en eenheden; de aannemer krijgt een mail, en als hij nog geen login heeft zit de uitnodiging erbij). *Reageren vóór* staat in de mail en in zijn portaal; vanaf script 028 stuurt het Drive-script elke week automatisch een herinnering zolang de aanvraag open staat (werkdagen vanaf 8 u, via de uurlijkse trigger van `digestInstall()`; na 4 herinneringen stopt het en mailt het de projectlead één keer). Indienen of *Afsluiten* stopt de herinneringen; de lijst toont hoe vaak er herinnerd is. Hij vult per post een eenheidsprijs en opmerking in (bewaard bij verlaten van het veld) en dient in; BROS krijgt een mail. *Vergelijken* zet de aanvragen naast elkaar en naast de huidige kostprijs (laagste prijs groen); *Overnemen* zet de ingevulde prijzen van die aannemer als kostprijs in `meetstaat_prijzen` (enkel beheer; de klantprijs volgt via de marge) en mailt de aannemer dat zijn prijzen weerhouden zijn. *Herinneren*, *Afsluiten* en verwijderen zitten in dezelfde lijst.
 - **Vragen**: een vraag of melding voor BROS wordt een **taakvoorstel** met bron *aannemer* in de wachtrij Voorstellen (routering per onderwerp uit Instellingen → AI-assistent, klacht = dringend), met een mail naar de verantwoordelijke (antwoorden kan rechtstreeks per mail). Bevestigen maakt er een taak van; weigeren met een reden = het antwoord dat de aannemer in zijn portaal leest. Daaronder zijn actiepunten uit verslagen (afvinken).
 
 Activeren (eenmalig):
@@ -142,6 +142,10 @@ Activeren (eenmalig):
 
 Gebruik: Dossier › Contacten → bij een aannemer de knop **Aannemersportaal** (beheer) → hij krijgt een mail met een persoonlijke link. Instellingen → Klantenportaal toont wie toegang heeft (klant/aannemer). Een aannemer die op het Planbord of het klantenportaal inlogt, wordt doorgestuurd.
 
+## Aannemer verwittigen bij koppeling (script 028, v1.25)
+- Dossier › Contacten → *+ Aannemer* (of leverancier/studiebureau/…): met het vinkje *Verwittigen per mail* (standaard aan) krijgt de partij een mail dat ze aan het project gekoppeld is, met adres, loten en de notitie. Heeft ze nog geen portaallogin, dan zit de uitnodiging voor het aannemersportaal in dezelfde mail; anders een korte melding met de portaallink. De kolom *Portaal* toont *verwittigd op …*. Voor de klant blijft *Portaal-toegang geven* de weg.
+- Vereist `sql/028_aannemer_meldingen.sql` en het nieuwe `drive/Code.gs` (actie `koppelmail` + `prijsaanvraagHerinneringen`). Geen extra trigger nodig: de herinneringen lopen mee met de uurlijkse trigger van `documentenDigest` (eenmalig `digestInstall()`; instelbaar via `HERINNERING` bovenaan dat blok).
+
 ## Melding bij gedeelde documenten (script 027, v1.24.4)
 
 Zet je bij een bestand de schakelaar *klant* of *aannemers* aan, dan krijgt de betrokkene een **gebundelde mail**: het Drive-script (`documentenDigest`, uurlijkse trigger) kijkt welke bestanden nog niet gemeld zijn en stuurt per project en per doelgroep één overzicht — pas als er 45 minuten niets meer gedeeld werd (zodat een reeks bestanden in één mail zit) en niet tussen 21 u en 7 u. Enkel contacten met een portaallogin krijgen de mail (de knop leidt naar het portaal). Script 027 zet `gedeeld_op`/`gemeld_*` op `documenten` via een trigger; bestanden die vóór het script al gedeeld waren, worden niet alsnog gemeld. Activeren: script 027 uitvoeren, nieuwe `Code.ingevuld.gs` deployen en in de scripteditor eenmalig `digestInstall()` uitvoeren (functie kiezen → Uitvoeren; de eerste keer toestemming geven).
@@ -149,6 +153,11 @@ Zet je bij een bestand de schakelaar *klant* of *aannemers* aan, dan krijgt de b
 ## Telefoonnummers (script 026, v1.24.1)
 
 GSM- en telefoonnummers worden overal in één formaat bewaard: `+32/471.93.06.33` (mobiel), `+32/3.123.45.67` of `+32/16.12.34.56` (vast), `+31/612.34.56.78` (buitenland). De databasefunctie `tel_format()` doet dat via een trigger op `contacten` (gsm, tel) en `projecten` (gsm1, gsm2), dus ook bij import; het Planbord zet het veld al om zodra je het verlaat. Script 026 zet de bestaande nummers eenmalig om.
+
+## Sleutels (v1.25.1)
+- Het Planbord, de portalen en de werfmodus gebruiken de **publishable key** (`sb_publishable_…`) in `config.js`; die is publiek.
+- Het Drive-script gebruikt in `Code.ingevuld.gs` (nooit in git) een **secret key** (`sb_secret_…`, Supabase → Project Settings → API Keys → Secret keys) als `PORTAAL.SERVICE_KEY`, en de publishable key als `YUKI.PLANBORD_KEY`. De Edge Function `assistent` leest de sleutels uit `SUPABASE_PUBLISHABLE_KEYS` / `SUPABASE_SECRET_KEYS` (automatisch aanwezig). De legacy anon/service_role-JWT's kunnen dus uitgeschakeld blijven (API Keys → *Disable JWT-based API keys*).
+- Lekt een sleutel (bv. een melding van GitGuardian), maak dan een nieuwe secret key, schakel de oude uit, zet de nieuwe in `Code.ingevuld.gs` en deploy; vernieuw ook `CONFIG.SECRET` (zelfde waarde in Instellingen → Drive) en het bot-wachtwoord (`botWachtwoordVernieuwen()` in de scripteditor → Logboek → `YUKI.BOT_PASSWORD`). `.gitignore` sluit `*.ingevuld.*` en `*.bak` uit; maak nooit kopieën van `Code.ingevuld.gs` in de projectmap.
 
 ## Beveiliging en robuustheid (script 022, v1.22)
 

@@ -22,6 +22,7 @@ function doPost(e) {
     if (body.action === "gkmail") return json(goedkeuringMail(body)); // portaal (klant beslist) én Planbord: identiteit en rol via het meegestuurde login-token
     if (body.action === "voorstelmail") return json(voorstelMailAannemer(body)); // aannemersportaal: melding van een vraag/opmerking (token-gecontroleerd, aannemer)
     if (body.action === "prijsaanvraagmail") return json(prijsaanvraagMail(body)); // prijsaanvragen: team (token) → aannemer, of aannemer (token) → BROS
+    if (body.action === "koppelmail") return json(koppelMail(body)); // team (token): aannemer verwittigen dat hij aan een project gekoppeld is (met uitnodiging als hij nog geen login heeft)
     if (!body.secret || body.secret !== CONFIG.SECRET) return json({ ok: false, error: "Geen toegang (secret klopt niet)." });
     if (body.action === "ping") return json({ ok: true, info: "Verbinding en secret in orde.", projecten: DriveApp.getFolderById(CONFIG.PROJECTEN_FOLDER_ID).getName(), sjabloon: DriveApp.getFolderById(CONFIG.SJABLOON_FOLDER_ID).getName() });
     // Drive-acties: naast het secret ook een geldig teamlogin vereist (het secret alleen volstaat niet meer), en enkel mappen onder PROJECTEN
@@ -242,7 +243,8 @@ const YUKI = {
 };
 /* =====================================================================
    Klantenportaal — uitnodigen en bestanden delen (vanuit het Planbord, actie "invite" en "share")
-   Vereist PORTAAL.SERVICE_KEY: Supabase → Project Settings → API → service_role (secret). Die sleutel mag
+   Vereist PORTAAL.SERVICE_KEY: Supabase → Project Settings → API Keys → Secret keys → een sb_secret_…-key (de oude
+   service_role-JWT werkt ook zolang de legacy keys aanstaan). Die sleutel mag
    ALLEEN hier staan (Code.ingevuld.gs, buiten git) — nooit in de app of in config.js.
    De uitnodigingsmail vertrekt uit de Gmail van het script (brosburo@gmail.com), zodat er geen SMTP-instelling nodig is.
    ===================================================================== */
@@ -264,7 +266,9 @@ function portaalMail(to, subject, text, html) {
 function portaalAliassen() { Logger.log("Aliassen van " + Session.getActiveUser().getEmail() + ": " + JSON.stringify(GmailApp.getAliases()) + " — PORTAAL.VAN = " + PORTAAL.VAN); }
 function pbAdmin(path, method, body) {
   if (!PORTAAL.SERVICE_KEY || PORTAAL.SERVICE_KEY === "VUL-IN") throw new Error("PORTAAL.SERVICE_KEY is niet ingevuld in het Drive-script.");
-  const opt = { method: method || "get", contentType: "application/json", headers: { apikey: PORTAAL.SERVICE_KEY, Authorization: "Bearer " + PORTAAL.SERVICE_KEY }, muteHttpExceptions: true };
+  const headers = { apikey: PORTAAL.SERVICE_KEY };
+  if (PORTAAL.SERVICE_KEY.indexOf("sb_") !== 0) headers.Authorization = "Bearer " + PORTAAL.SERVICE_KEY;   // enkel de oude service_role-JWT hoort ook als Bearer; een sb_secret_-key niet
+  const opt = { method: method || "get", contentType: "application/json", headers: headers, muteHttpExceptions: true };
   if (body) opt.payload = JSON.stringify(body);
   const r = UrlFetchApp.fetch(YUKI.PLANBORD_URL + path, opt); const t = r.getContentText();
   if (r.getResponseCode() >= 300) throw new Error("Supabase " + r.getResponseCode() + ": " + t.slice(0, 300));
@@ -500,9 +504,10 @@ function prijsaanvraagMail(body) {
     GmailApp.sendEmail(to, "Prijsopgave ingediend · " + proj + " · " + c.naam, c.naam + " diende zijn prijzen in voor " + proj + " (" + lotTxt + "). Bekijken: " + link, opt);
     return { ok: true, naar: to };
   }
-  const wie = caller(body.token, false);
+  const wie = AUTO_WIE || caller(body.token, false);
   if (!c.email) return { ok: false, error: "Dit contact heeft geen e-mailadres." };
   const naam = c.contactpersoon || c.naam; const aanhef = "Beste " + naam;
+  const verstreken = !!(a.deadline && a.deadline < Utilities.formatDate(new Date(), Session.getScriptTimeZone(), "yyyy-MM-dd"));
   let uitgenodigd = false, linkHtml = "", linkTxt = "";
   if (!c.user_id && soort !== "gekozen") {
     const r = portaalLink(String(c.email).trim().toLowerCase(), naam, c.id, "aannemer"); uitgenodigd = !r.bestaand;
@@ -516,15 +521,90 @@ function prijsaanvraagMail(body) {
     tekst = aanhef + ",\n\nBROS heeft je prijsopgave voor " + proj + " (" + lotTxt + ") weerhouden. " + wie.name + " neemt contact met je op.\n\n" + wie.name + " — BROS";
   } else {
     const her = soort === "herinnering";
-    onderwerp = (her ? "Herinnering: prijsaanvraag" : "Prijsaanvraag") + " · " + proj + (dl ? " · vóór " + dl : "");
-    html = wrap("<p>" + aanhef + ",</p>" + (her ? "<p>Een korte herinnering: we wachten nog op je prijsopgave voor <b>" + esc(proj) + "</b>" + (dl ? " (graag vóór <b>" + dl + "</b>)" : "") + ".</p>" : "<p>BROS vraagt je een prijsopgave voor <b>" + esc(proj) + "</b>" + (p.adres ? " (" + esc(p.adres) + (p.gemeente ? ", " + esc(p.gemeente) : "") + ")" : "") + ": <b>" + esc(lotTxt) + "</b>." + (dl ? " Graag je prijzen vóór <b>" + dl + "</b>." : "") + "</p>")
+    onderwerp = (her ? "Herinnering: prijsaanvraag" : "Prijsaanvraag") + " · " + proj + (dl ? (her && verstreken ? " · gevraagd tegen " : " · vóór ") + dl : "");
+    const herTxt = her ? (verstreken ? "We wachten nog op je prijsopgave voor <b>" + esc(proj) + "</b> (" + esc(lotTxt) + "). De gevraagde datum, <b>" + dl + "</b>, is intussen verstreken — laat ons weten wanneer we je prijzen mogen verwachten, of dat je deze keer niet meedoet, dan plannen wij verder." : "Een korte herinnering: we wachten nog op je prijsopgave voor <b>" + esc(proj) + "</b> (" + esc(lotTxt) + ")" + (dl ? ", graag vóór <b>" + dl + "</b>" : "") + ".") : "";
+    html = wrap("<p>" + aanhef + ",</p>" + (her ? "<p>" + herTxt + "</p>" : "<p>BROS vraagt je een prijsopgave voor <b>" + esc(proj) + "</b>" + (p.adres ? " (" + esc(p.adres) + (p.gemeente ? ", " + esc(p.gemeente) : "") + ")" : "") + ": <b>" + esc(lotTxt) + "</b>." + (dl ? " Graag je prijzen vóór <b>" + dl + "</b>." : "") + "</p>")
       + (a.bericht ? "<p style=\"padding:10px 14px;border-left:3px solid #DAD8D0;white-space:pre-line\">" + esc(a.bericht) + "</p>" : "")
       + "<p>In het aannemersportaal zie je de posten met hoeveelheden en eenheden; je vult per post je eenheidsprijs (excl. btw) in, met eventueel een opmerking, en dient in als alles klopt.</p>" + linkHtml
       + "<p>Met vriendelijke groeten,<br>" + esc(wie.name) + " — BROS</p>");
-    tekst = aanhef + ",\n\n" + (her ? "Herinnering: we wachten nog op je prijsopgave voor " + proj : "BROS vraagt je een prijsopgave voor " + proj + ": " + lotTxt) + (dl ? " (vóór " + dl + ")" : "") + ".\n" + (a.bericht ? "\n" + a.bericht + "\n" : "") + linkTxt + "\n\n" + wie.name + " — BROS";
+    tekst = aanhef + ",\n\n" + (her ? "Herinnering: we wachten nog op je prijsopgave voor " + proj + " (" + lotTxt + ")" + (dl ? (verstreken ? " — de gevraagde datum " + dl + " is verstreken; laat ons weten wanneer we je prijzen mogen verwachten" : " (vóór " + dl + ")") : "") : "BROS vraagt je een prijsopgave voor " + proj + ": " + lotTxt + (dl ? " (vóór " + dl + ")" : "")) + ".\n" + (a.bericht ? "\n" + a.bericht + "\n" : "") + linkTxt + "\n\n" + wie.name + " — BROS";
   }
   portaalMail(String(c.email).trim(), onderwerp, tekst, html);
+  if (soort === "herinnering") { try { pbAdmin("/rest/v1/prijsaanvragen?id=eq." + a.id, "patch", { herinnerd_op: new Date().toISOString(), herinneringen: (Number(a.herinneringen) || 0) + 1 }); } catch (e) { } }
   return { ok: true, naar: c.email, uitgenodigd: uitgenodigd };
+}
+/* =====================================================================
+   Aannemer verwittigen (script 028)
+   koppelmail: het Planbord roept dit aan wanneer een partij aan een project gekoppeld wordt (vinkje in het koppelformulier).
+   Heeft ze al een login voor het aannemersportaal, dan gaat een korte melding; anders vertrekt meteen de uitnodiging.
+   ===================================================================== */
+function koppelMail(body) {
+  const wie = caller(body.token, false);
+  const pc = (pbAdmin("/rest/v1/project_contacten?id=eq." + encodeURIComponent(String(body.id || "")) + "&select=id,project_id,contact_id,rol,loten,notitie", "get") || [])[0];
+  if (!pc) return { ok: false, error: "Koppeling niet gevonden." };
+  if (pc.rol === "bouwheer" || pc.rol === "contactpersoon") return { ok: false, error: "Voor de klant gebruik je 'Portaal-toegang geven'." };
+  const c = (pbAdmin("/rest/v1/contacten?id=eq." + pc.contact_id + "&select=id,naam,bedrijf,contactpersoon,email,user_id,soort", "get") || [])[0];
+  if (!c) return { ok: false, error: "Contact niet gevonden." };
+  if (c.soort === "klant") return { ok: false, error: "Dit contact is een klant." };
+  if (!c.email) return { ok: false, error: "Dit contact heeft geen e-mailadres." };
+  const p = (pbAdmin("/rest/v1/projecten?id=eq." + pc.project_id + "&select=nummer,klant,naam,adres,gemeente", "get") || [])[0] || {};
+  const proj = (p.klant || "") + (p.naam && p.naam !== p.klant ? " · " + p.naam : "");
+  const loten = (pc.loten || []).length ? (pbAdmin("/rest/v1/loten?nr=in.(" + pc.loten.join(",") + ")&select=nr,naam", "get") || []) : [];
+  const lotTxt = (pc.loten || []).map(n => { const l = loten.find(x => x.nr === n); return l ? n + ". " + l.naam : String(n); }).join(", ");
+  const esc = (t) => String(t || "").replace(/</g, "&lt;");
+  const knop = (url, txt) => "<p style=\"margin:24px 0\"><a href=\"" + url + "\" style=\"background:#1B1E1C;color:#fff;text-decoration:none;padding:12px 20px;border-radius:8px;font-weight:600;display:inline-block\">" + txt + "</a></p>";
+  const naam = c.contactpersoon || c.naam; const aanhef = "Beste " + naam;
+  const waar = p.adres ? " (" + esc(p.adres) + (p.gemeente ? ", " + esc(p.gemeente) : "") + ")" : "";
+  const intro = "<p>BROS werkt met je samen op het project <b>" + esc(proj) + "</b>" + waar + (lotTxt ? " voor <b>" + esc(lotTxt) + "</b>" : "") + ".</p>"
+    + "<p>In het aannemersportaal vind je vanaf nu per project de werfpunten die aan jou toegewezen zijn (met foto's en plannen), de werfverslagen, de documenten die we delen, de planning en de prijsaanvragen die we je sturen. Werfpunten meld je er als opgelost, met een bewijsfoto.</p>"
+    + (pc.notitie ? "<p style=\"padding:10px 14px;border-left:3px solid #DAD8D0;white-space:pre-line\">" + esc(pc.notitie) + "</p>" : "");
+  let uitgenodigd = false, html, tekst;
+  if (!c.user_id) {
+    const r = portaalLink(String(c.email).trim().toLowerCase(), naam, c.id, "aannemer"); uitgenodigd = !r.bestaand;
+    html = "<p>" + aanhef + ",</p>" + intro + "<p>Kies eerst je wachtwoord:</p>" + knop(r.link, "Kies je wachtwoord")
+      + "<p style=\"color:#767D78;font-size:13px\">Daarna log je altijd in op <a href=\"" + PORTAAL.URL_AANNEMER + "\">" + PORTAAL.URL_AANNEMER + "</a> met je e-mailadres en wachtwoord. Op de werf gebruik je dezelfde login in de werfmodus (" + PORTAAL.URL_AANNEMER.replace(/aannemer\/?$/, "werf/") + "). De link is beperkt geldig; vervallen? Klik op het portaal op \"Wachtwoord vergeten\".</p>";
+    tekst = aanhef + ",\n\nBROS werkt met je samen op het project " + proj + (lotTxt ? " voor " + lotTxt : "") + ". In het aannemersportaal vind je de werfpunten, verslagen, documenten, planning en prijsaanvragen van je projecten.\n\nKies eerst je wachtwoord via " + r.link + " en log daarna in op " + PORTAAL.URL_AANNEMER;
+  } else {
+    html = "<p>" + aanhef + ",</p>" + intro + knop(PORTAAL.URL_AANNEMER, "Naar het aannemersportaal") + "<p style=\"color:#767D78;font-size:13px\">Je logt in met je bestaande e-mailadres en wachtwoord; het project staat in je lijst.</p>";
+    tekst = aanhef + ",\n\nBROS werkt met je samen op het project " + proj + (lotTxt ? " voor " + lotTxt : "") + ". Het staat vanaf nu in je aannemersportaal: " + PORTAAL.URL_AANNEMER;
+  }
+  html = "<div style=\"font-family:Helvetica,Arial,sans-serif;font-size:15px;line-height:1.5;color:#1B1E1C;max-width:720px\">" + html + "<p>Met vriendelijke groeten,<br>" + esc(wie.name) + " — BROS</p></div>";
+  portaalMail(String(c.email).trim(), "Nieuw project · " + proj + (lotTxt ? " · " + lotTxt : ""), tekst + "\n\n" + wie.name + " — BROS", html);
+  try { pbAdmin("/rest/v1/project_contacten?id=eq." + pc.id, "patch", { verwittigd_op: new Date().toISOString() }); } catch (e) { }
+  return { ok: true, naar: c.email, uitgenodigd: uitgenodigd };
+}
+/* =====================================================================
+   Prijsaanvragen — automatische wekelijkse herinnering (script 028)
+   Loopt mee met de uurlijkse trigger van documentenDigest (digestInstall). Een prijsaanvraag die HERINNERING.DAGEN dagen open staat
+   zonder indiening krijgt een herinnering, en daarna elke week opnieuw (op werkdagen, vanaf HERINNERING.VAN_UUR). Na HERINNERING.MAX
+   herinneringen stopt het en krijgt de projectlead één mail dat de aannemer niet reageert. Afsluiten of indienen stopt het altijd.
+   ===================================================================== */
+const HERINNERING = { DAGEN: 7, VAN_UUR: 8, MAX: 4 };
+let AUTO_WIE = null;   // afzender voor automatische mails (geen login-token beschikbaar in een trigger)
+function prijsaanvraagHerinneringen() {
+  const nu = new Date(); const dag = nu.getDay(); if (dag === 0 || dag === 6 || nu.getHours() < HERINNERING.VAN_UUR) return 0;
+  const open = pbAdmin("/rest/v1/prijsaanvragen?status=eq.open&select=id,project_id,contact_id,titel,deadline,created_at,herinnerd_op,herinneringen,created_by", "get") || [];
+  const grens = nu.getTime() - HERINNERING.DAGEN * 86400000; let n = 0;
+  const profs = open.length ? (pbAdmin("/rest/v1/profiles?select=id,name,email,role&active=eq.true", "get") || []) : [];
+  open.forEach(a => {
+    const ref = new Date(a.herinnerd_op || a.created_at).getTime(); if (ref > grens) return;
+    const p = (pbAdmin("/rest/v1/projecten?id=eq." + a.project_id + "&select=klant,naam,lead", "get") || [])[0] || {};
+    const lead = profs.find(x => x.id === a.created_by) || profs.find(x => x.id === p.lead) || profs.find(x => x.role === "beheer");
+    if ((Number(a.herinneringen) || 0) >= HERINNERING.MAX) {
+      if ((Number(a.herinneringen) || 0) === HERINNERING.MAX) {
+        const c = (pbAdmin("/rest/v1/contacten?id=eq." + a.contact_id + "&select=naam,email", "get") || [])[0] || {};
+        const proj = (p.klant || "") + (p.naam && p.naam !== p.klant ? " · " + p.naam : "");
+        if (lead && lead.email) portaalMail(lead.email, "Geen reactie op prijsaanvraag · " + proj + " · " + (c.naam || ""), "Dag " + lead.name + ",\n\n" + (c.naam || "De aannemer") + " heeft na " + HERINNERING.MAX + " herinneringen nog geen prijzen ingediend voor " + proj + " (" + (a.titel || "prijsaanvraag") + "). Het Planbord stuurt geen herinneringen meer; bel hem even, of sluit de aanvraag af (projectfiche › Meetstaat › Prijsaanvragen).\n\nBROS Planbord", "<div style=\"font-family:Helvetica,Arial,sans-serif;font-size:15px;line-height:1.5;color:#1B1E1C\"><p>Dag " + lead.name + ",</p><p><b>" + String(c.naam || "De aannemer").replace(/</g, "&lt;") + "</b> heeft na " + HERINNERING.MAX + " herinneringen nog geen prijzen ingediend voor <b>" + proj.replace(/</g, "&lt;") + "</b> (" + String(a.titel || "prijsaanvraag").replace(/</g, "&lt;") + "). Het Planbord stuurt geen herinneringen meer; bel hem even, of sluit de aanvraag af (projectfiche › Meetstaat › Prijsaanvragen).</p><p>BROS Planbord</p></div>");
+        pbAdmin("/rest/v1/prijsaanvragen?id=eq." + a.id, "patch", { herinneringen: HERINNERING.MAX + 1, herinnerd_op: nu.toISOString() });
+      }
+      return;
+    }
+    AUTO_WIE = { id: lead ? lead.id : null, name: lead ? lead.name : "Het team van BROS", role: "beheer" };
+    try { const r = prijsaanvraagMail({ id: a.id, soort: "herinnering" }); if (r && r.ok) n++; else Logger.log("Herinnering niet verstuurd (" + a.id + "): " + (r && r.error)); }
+    catch (e) { Logger.log("Herinnering mislukt (" + a.id + "): " + e); }
+    AUTO_WIE = null;
+  });
+  Logger.log(n + " herinnering(en) voor prijsaanvragen verstuurd."); return n;
 }
 /* =====================================================================
    Gedeelde documenten — verzamelmail (script 027)
@@ -536,10 +616,11 @@ const DIGEST = { WACHT_MIN: 45, VAN_UUR: 7, TOT_UUR: 21 };   // niet 's nachts m
 function digestInstall() {
   ScriptApp.getProjectTriggers().filter(t => t.getHandlerFunction() === "documentenDigest").forEach(t => ScriptApp.deleteTrigger(t));
   ScriptApp.newTrigger("documentenDigest").timeBased().everyHours(1).create();
-  Logger.log("OK — uurlijkse trigger voor documentenDigest aangemaakt. Test nu met documentenDigest().");
+  Logger.log("OK — uurlijkse trigger voor documentenDigest aangemaakt (verzamelmail documenten + herinneringen prijsaanvragen). Test nu met documentenDigest().");
 }
 function documentenDigest() {
   const uur = new Date().getHours(); if (uur < DIGEST.VAN_UUR || uur >= DIGEST.TOT_UUR) return;
+  try { prijsaanvraagHerinneringen(); } catch (e) { Logger.log("Herinneringen prijsaanvragen: " + e); }   // script 028
   const docs = pbAdmin("/rest/v1/documenten?or=(gemeld_klant.eq.false,gemeld_aannemers.eq.false)&select=id,project_id,naam,pad,url,gedeeld,gedeeld_aannemers,gedeeld_op,gedeeld_aannemers_op,gemeld_klant,gemeld_aannemers&limit=500", "get") || [];
   if (!docs.length) { Logger.log("Niets te melden."); return; }
   const grens = Date.now() - DIGEST.WACHT_MIN * 60000; let mails = 0;
@@ -593,6 +674,17 @@ function portaalShare(body) {
   return { ok: true };
 }
 
+/** Nieuw wachtwoord voor de bot-login (YUKI.BOT_EMAIL) zetten en een eventuele ban opheffen — uitvoeren in de editor (vereist PORTAAL.SERVICE_KEY).
+ *  Het nieuwe wachtwoord staat daarna eenmalig in het Logboek: kopieer het naar YUKI.BOT_PASSWORD, bewaar en deploy opnieuw. */
+function botWachtwoordVernieuwen() {
+  const email = String(YUKI.BOT_EMAIL || "").trim().toLowerCase(); if (!email || email === "vul-in") throw new Error("YUKI.BOT_EMAIL is niet ingevuld.");
+  const users = pbAdmin("/auth/v1/admin/users?page=1&per_page=1000", "get"); const lijst = (users && users.users) || users || [];
+  const u = lijst.find(x => String(x.email || "").toLowerCase() === email); if (!u) throw new Error("Geen login gevonden voor " + email);
+  const tekens = "abcdefghijkmnopqrstuvwxyzABCDEFGHJKLMNPQRSTUVWXYZ23456789"; let pw = "";
+  for (let i = 0; i < 28; i++) pw += tekens.charAt(Math.floor(Math.random() * tekens.length));
+  pbAdmin("/auth/v1/admin/users/" + u.id, "put", { password: pw, ban_duration: "none" });
+  Logger.log("Nieuw wachtwoord voor " + email + " (ban opgeheven). Zet dit in YUKI.BOT_PASSWORD, bewaar en deploy:\n" + pw);
+}
 function yukiInstall() {
   GmailApp.createLabel(YUKI.LABEL); GmailApp.createLabel(YUKI.LABEL_CHECK);
   ScriptApp.getProjectTriggers().filter(t => t.getHandlerFunction() === "yukiSync").forEach(t => ScriptApp.deleteTrigger(t));
@@ -650,7 +742,8 @@ function yukiPdfText(blob) {
 }
 /* ---- Planbord-database (Supabase REST) ---- */
 function pbReq(path, method, body, token, prefer) {
-  const opt = { method: method || "get", contentType: "application/json", headers: { apikey: YUKI.PLANBORD_KEY, Authorization: "Bearer " + (token || YUKI.PLANBORD_KEY) }, muteHttpExceptions: true };
+  const headers = { apikey: YUKI.PLANBORD_KEY }; if (token) headers.Authorization = "Bearer " + token; else if (YUKI.PLANBORD_KEY.indexOf("sb_") !== 0) headers.Authorization = "Bearer " + YUKI.PLANBORD_KEY;
+  const opt = { method: method || "get", contentType: "application/json", headers: headers, muteHttpExceptions: true };
   if (prefer) opt.headers.Prefer = prefer; if (body) opt.payload = JSON.stringify(body);
   const r = UrlFetchApp.fetch(YUKI.PLANBORD_URL + path, opt); const t = r.getContentText();
   if (r.getResponseCode() >= 300) throw new Error("Planbord " + r.getResponseCode() + ": " + t.slice(0, 200));

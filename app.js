@@ -2,7 +2,7 @@
    BROS Planbord — app v1.0
    Statische webapp op Supabase (login, live-synchronisatie, rechten)
    ===================================================================== */
-const APP_VERSION = "1.24.14";
+const APP_VERSION = "1.25.1";
 const PROJ_STATUS = { offerte: "In offerte", lopend: "Lopend", on_hold: "On hold", afgerond: "Afgerond", verloren: "Verloren" };
 const KLANTTYPE = { particulier: "Particulier", zakelijk: "Zakelijk" };
 const KLANTCODE = { particulier: "PAR", zakelijk: "ZAK" };
@@ -360,20 +360,29 @@ function linkContactForm(pid, rol) {
     <div class="field span2"><label for="lc_c">Contact</label><select id="lc_c" name="contact_id" size="8" style="height:auto">${cs.map(c => `<option value="${c.id}" data-soort="${c.soort}">${esc(contactLabel(c))} — ${CONTACT_SOORT[c.soort]}${c.vakgebied ? " · " + esc(c.vakgebied) : ""}${c.gemeente ? " · " + esc(c.gemeente) : ""}</option>`).join("")}</select><span class="muted" style="font-size:12px">Staat de partij er nog niet bij? <button type="button" class="btn ghost sm" data-act="contact-new-inline">+ Nieuw contact</button></span></div>
     <div class="field span2 lot"><label>Loten van dit project voor deze partij</label><div class="fase-list">${lotenList().map(l => `<label class="chk"><input type="checkbox" name="lot" value="${l.nr}"> <span>${esc(lotName(l.nr))}</span></label>`).join("")}</div></div>
     <div class="field span2"><label for="lc_not">Notitie</label><input id="lc_not" name="notitie" placeholder="bv. offerte gevraagd op 12/09"></div>
+    ${schemaV() >= 28 && driveReady() ? `<div class="field span2 lc-mail"><label class="chk"><input type="checkbox" name="mail" checked> <span>Verwittigen per mail — <span class="muted">de partij krijgt een mail dat ze aan dit project gekoppeld is (met de loten en de notitie); zonder portaallogin zit de uitnodiging voor het aannemersportaal erbij</span></span></label></div>` : ""}
   </div>`, {
     saveLabel: "Koppelen", wide: true,
     onSave: async (d) => {
       if (!d.contact_id) { toast("Kies een contact."); return false; }
       if (present.has(d.contact_id + "|" + d.rol)) { toast("Dit contact is al met die rol gekoppeld."); return false; }
       const row = { project_id: pid, contact_id: d.contact_id, rol: d.rol, intern: ROL_INTERN[d.rol] !== false, loten: [...$("#mform").querySelectorAll('input[name="lot"]:checked')].map(i => Number(i.value)), notitie: (d.notitie || "").trim() };
-      await dbInsert("project_contacten", row); toast("Contact gekoppeld");
+      const mail = !!$("#mform").querySelector('input[name="mail"]:checked'); const c = S.contacten[d.contact_id];
+      const nieuw = await dbInsert("project_contacten", row);
+      if (mail && !KLANT_ROLLEN.includes(d.rol) && c && c.soort !== "klant" && driveReady()) {
+        if (!c.email) { toast("Contact gekoppeld — niet gemaild: geen e-mailadres bij dit contact.", 6000); return; }
+        loader.start("pc.mail", "Aannemer verwittigen…", 6000);
+        try { const j = await driveCall("koppelmail", { id: nieuw.id, token: S.session?.access_token || "" }); loader.done("pc.mail"); toast(`Contact gekoppeld en gemaild naar ${j.naar || c.email}${j.uitgenodigd ? " (met uitnodiging voor het aannemersportaal)" : ""}`, 6000); if (S.project_contacten[nieuw.id]) S.project_contacten[nieuw.id].verwittigd_op = new Date().toISOString(); }
+        catch (e) { loader.fail(); toast("Contact gekoppeld, maar mailen mislukte: " + e.message, 8000); }
+      } else toast("Contact gekoppeld");
     },
   });
   const form = $("#mform"); const sel = $("#lc_c"), q = $("#lc_q"), rolSel = $("#lc_rol");
   const sync = () => { const soort = soortFor(rolSel.value); const qq = q.value.trim().toLowerCase(); let first = null;
     [...sel.options].forEach(o => { const c = S.contacten[o.value]; const hit = (!qq || o.textContent.toLowerCase().includes(qq)) && (!soort || c.soort === soort || qq); o.hidden = !hit; if (hit && !first) first = o; });
     if (![...sel.selectedOptions].some(o => !o.hidden) && first) first.selected = true;
-    form.querySelectorAll(".field.lot").forEach(el => el.style.display = ["aannemer", "leverancier", "studiebureau"].includes(rolSel.value) ? "" : "none"); };
+    form.querySelectorAll(".field.lot").forEach(el => el.style.display = ["aannemer", "leverancier", "studiebureau"].includes(rolSel.value) ? "" : "none");
+    form.querySelectorAll(".field.lc-mail").forEach(el => el.style.display = KLANT_ROLLEN.includes(rolSel.value) ? "none" : ""); };
   q.addEventListener("input", sync); rolSel.addEventListener("change", sync); sync();
   form.querySelector("[data-act=contact-new-inline]").onclick = () => { const rolNow = rolSel.value; if (!closeModal()) return; contactForm({ soort: soortFor(rolNow) || "andere" }, () => linkContactForm(pid, rolNow)); };
 }
@@ -383,10 +392,11 @@ function portaalCel(x) {
   const c = x.c; const klantRol = KLANT_ROLLEN.includes(x.rol); const rol = klantRol ? "klant" : "aannemer";
   if (!klantRol && (schemaV() < 25 || c.soort === "klant")) return `<span class="muted">—</span>`;
   const lbl = klantRol ? "" : `<small class="muted" style="display:block">aannemersportaal</small>`;
-  if (c.user_id) return `<span class="pill st-afgerond">actief</span>${lbl}<small class="muted" style="display:block">${c.portaal_login ? "laatst " + fmtLong(c.portaal_login.slice(0, 10)) : "nog niet ingelogd"}</small>${isBeheer() && driveReady() ? `<button class="btn ghost sm" data-act="portaal-invite" data-cid="${c.id}" data-pid="${x.project_id}" data-rol="${rol}" title="Nieuwe link om (opnieuw) een wachtwoord te kiezen">Link opnieuw sturen</button>` : ""}`;
+  const verw = x.verwittigd_op ? `<small class="muted" style="display:block">verwittigd ${fmtLong(x.verwittigd_op.slice(0, 10))}</small>` : "";
+  if (c.user_id) return `<span class="pill st-afgerond">actief</span>${lbl}<small class="muted" style="display:block">${c.portaal_login ? "laatst " + fmtLong(c.portaal_login.slice(0, 10)) : "nog niet ingelogd"}</small>${verw}${isBeheer() && driveReady() ? `<button class="btn ghost sm" data-act="portaal-invite" data-cid="${c.id}" data-pid="${x.project_id}" data-rol="${rol}" title="Nieuwe link om (opnieuw) een wachtwoord te kiezen">Link opnieuw sturen</button>` : ""}`;
   if (!c.email) return `<span class="muted">geen e-mail</span>`;
   if (!isBeheer()) return `<span class="muted">geen toegang</span>`;
-  return driveReady() ? `<button class="btn sm" data-act="portaal-invite" data-cid="${c.id}" data-pid="${x.project_id}" data-rol="${rol}">${klantRol ? "Portaal-toegang geven" : "Aannemersportaal"}</button>` : `<span class="muted">Drive-script nodig</span>`;
+  return driveReady() ? `<button class="btn sm" data-act="portaal-invite" data-cid="${c.id}" data-pid="${x.project_id}" data-rol="${rol}">${klantRol ? "Portaal-toegang geven" : "Aannemersportaal"}</button>${verw}` : `<span class="muted">Drive-script nodig</span>`;
 }
 function portaalInviteForm(cid, pid, rol = "klant") {
   const c = S.contacten[cid], p = S.projecten[pid]; if (!c || !p) return;
@@ -596,11 +606,11 @@ const paPosten = (a) => msRows(a.project_id).filter(r => (a.loten || []).include
 function vPrijsaanvragen(p) {
   if (schemaV() < 25 || !isBeheer() || S.msKlant) return "";
   const as = paOf(p.id); const aannemers = contactsOf(p.id).filter(x => !KLANT_ROLLEN.includes(x.rol) && x.c.soort !== "klant");
-  return `<div class="panel" style="margin-bottom:16px"><div class="panel-head"><div><h3>Prijsaanvragen bij aannemers</h3><div class="muted" style="font-size:12px;margin-top:2px">De aannemer vult per post een eenheidsprijs in via zijn portaal (hij ziet enkel hoeveelheden, nooit jullie prijzen); daarna vergelijk je en neem je de gekozen prijzen over als kostprijs.</div></div>
+  return `<div class="panel" style="margin-bottom:16px"><div class="panel-head"><div><h3>Prijsaanvragen bij aannemers</h3><div class="muted" style="font-size:12px;margin-top:2px">De aannemer krijgt een mail (met uitnodiging voor het portaal als hij nog geen login heeft) en vult per post een eenheidsprijs in via zijn portaal (hij ziet enkel hoeveelheden, nooit jullie prijzen); daarna vergelijk je en neem je de gekozen prijzen over als kostprijs.${schemaV() >= 28 ? " Zolang een aanvraag open staat, stuurt het Drive-script elke week automatisch een herinnering (op werkdagen; na 4 herinneringen krijg jij een seintje). Indienen of afsluiten stopt dat." : ""}</div></div>
       <div class="actions">${as.some(a => a.status !== "afgesloten") ? `<button class="btn sm" data-act="pa-cmp" data-pid="${p.id}">Vergelijken</button>` : ""}<button class="btn sm primary" data-act="pa-new" data-pid="${p.id}" ${aannemers.length ? "" : `title="Koppel eerst een aannemer aan dit project (Dossier › Contacten)"`}>+ Prijsaanvraag</button></div></div>
     ${as.length ? `<div class="tw"><table class="t"><thead><tr><th>Aanvraag</th><th>Aannemer</th><th>Loten</th><th class="r">Ingevuld</th><th class="r">Totaal</th><th>Reageren vóór</th><th>Status</th><th></th></tr></thead><tbody>
       ${as.map(a => { const c = S.contacten[a.contact_id]; const ps = paPosten(a); const rs = paRegels(a.id).filter(r => r.eenheidsprijs != null); const byPost = Object.fromEntries(rs.map(r => [r.post_id, r])); const tot = ps.reduce((s, r) => s + (byPost[r.id] ? Number(byPost[r.id].eenheidsprijs) * Number(r.hoeveelheid || 0) : 0), 0);
-        return `<tr class="${a.status === "afgesloten" ? "ms-dead" : ""}"><td><div class="row-title">${esc(a.titel || "Prijsaanvraag")}<small>${fmtLong((a.created_at || "").slice(0, 10))}${a.ingediend_op ? " · ingediend " + fmtLong(a.ingediend_op.slice(0, 10)) : ""}${a.opmerking ? ` · “${esc(a.opmerking)}”` : ""}</small></div></td><td>${c ? `<a href="#" data-contact="${c.id}">${esc(c.naam)}</a>${c.user_id ? "" : ` <span class="pill st-offerte" title="Nog geen login voor het aannemersportaal; de uitnodiging zit in de mail">geen login</span>`}` : "—"}</td><td class="muted" style="font-size:12px">${(a.loten || []).map(l => esc(lotName(l))).join("<br>")}</td><td class="r num">${ps.filter(r => byPost[r.id]).length} / ${ps.length}</td><td class="r num">${rs.length ? eur(tot) : "—"}</td><td class="num ${a.status === "open" && a.deadline && a.deadline < todayIso ? "late" : ""}">${a.deadline ? fmtLong(a.deadline) : "—"}</td><td><span class="pill ${a.status === "gekozen" ? "done" : a.status === "ingediend" ? "st-lopend" : a.status === "open" ? "st-offerte" : "kl"}">${PA_STATUS[a.status]}</span></td>
+        return `<tr class="${a.status === "afgesloten" ? "ms-dead" : ""}"><td><div class="row-title">${esc(a.titel || "Prijsaanvraag")}<small>${fmtLong((a.created_at || "").slice(0, 10))}${a.ingediend_op ? " · ingediend " + fmtLong(a.ingediend_op.slice(0, 10)) : ""}${a.herinneringen ? ` · ${Math.min(a.herinneringen, 4)}× herinnerd${a.herinnerd_op ? ", laatst " + fmtLong(a.herinnerd_op.slice(0, 10)) : ""}${a.herinneringen > 4 ? " — gestopt" : ""}` : ""}${a.opmerking ? ` · “${esc(a.opmerking)}”` : ""}</small></div></td><td>${c ? `<a href="#" data-contact="${c.id}">${esc(c.naam)}</a>${c.user_id ? "" : ` <span class="pill st-offerte" title="Nog geen login voor het aannemersportaal; de uitnodiging zit in de mail">geen login</span>`}` : "—"}</td><td class="muted" style="font-size:12px">${(a.loten || []).map(l => esc(lotName(l))).join("<br>")}</td><td class="r num">${ps.filter(r => byPost[r.id]).length} / ${ps.length}</td><td class="r num">${rs.length ? eur(tot) : "—"}</td><td class="num ${a.status === "open" && a.deadline && a.deadline < todayIso ? "late" : ""}">${a.deadline ? fmtLong(a.deadline) : "—"}</td><td><span class="pill ${a.status === "gekozen" ? "done" : a.status === "ingediend" ? "st-lopend" : a.status === "open" ? "st-offerte" : "kl"}">${PA_STATUS[a.status]}</span></td>
           <td class="r" style="white-space:nowrap">${a.status !== "afgesloten" && rs.length ? `<button class="btn ghost sm" data-act="pa-take" data-id="${a.id}" title="De ingevulde prijzen van deze aannemer overnemen als kostprijs in de meetstaat">Overnemen</button>` : ""}${a.status === "open" && driveReady() ? `<button class="btn ghost sm" data-act="pa-remind" data-id="${a.id}" title="Herinnering mailen">Herinneren</button>` : ""}${a.status !== "afgesloten" ? `<button class="btn ghost sm" data-act="pa-close" data-id="${a.id}" title="Afsluiten (de aannemer kan niets meer invullen)">Afsluiten</button>` : ""}<button class="btn ghost sm danger" data-act="pa-del" data-id="${a.id}" aria-label="Verwijderen">✕</button></td></tr>`; }).join("")}
     </tbody></table></div>` : `<div class="empty"><b>Nog geen prijsaanvragen</b>Stuur een aannemer de posten van zijn lot(en); hij vult de prijzen in via het aannemersportaal.</div>`}</div>`;
 }
@@ -613,7 +623,7 @@ function paForm(pid) {
   const d0 = new Date(); d0.setDate(d0.getDate() + 14); const dl = d0.toISOString().slice(0, 10);
   openModal("Prijsaanvraag versturen", `<div class="form-grid">
     <div class="field"><label for="pa_c">Aannemer</label><select id="pa_c" name="contact_id">${aannemers.map(x => `<option value="${x.c.id}" data-loten="${(x.loten || []).length ? x.loten.join(",") : (x.c.loten || []).join(",")}">${esc(x.c.naam)}${x.c.vakgebied ? " · " + esc(x.c.vakgebied) : ""}${x.c.email ? "" : " (geen e-mail!)"}${x.c.user_id ? "" : " · nog geen portaallogin"}</option>`).join("")}</select><small class="muted">Zonder login krijgt hij in dezelfde mail een uitnodiging voor het aannemersportaal.</small></div>
-    <div class="field"><label for="pa_dl">Reageren vóór</label><input id="pa_dl" name="deadline" type="date" value="${dl}"></div>
+    <div class="field"><label for="pa_dl">Reageren vóór</label><input id="pa_dl" name="deadline" type="date" value="${dl}"><small class="muted">Staat in de mail en in zijn portaal${schemaV() >= 28 ? "; na een week zonder indiening volgt automatisch elke week een herinnering" : ""}. Leeg = geen datum.</small></div>
     <div class="field span2"><label for="pa_t">Titel</label><input id="pa_t" name="titel" value="Prijsaanvraag ${esc(p.klant)}"></div>
     <div class="field span2"><label>Loten <span class="muted" style="font-weight:400">— de aannemer ziet de posten van deze loten met hoeveelheden en eenheden</span></label><div class="fase-list">${lots.map(l => `<label class="chk"><input type="checkbox" name="lot" value="${l}"> <span>${esc(lotName(l))} <small class="muted">${msRows(pid).filter(r => r.lot === l && r.status !== "vervallen").length} posten</small></span></label>`).join("")}</div></div>
     <div class="field span2"><label for="pa_b">Bericht aan de aannemer</label><textarea id="pa_b" name="bericht" rows="3">Beste, graag je eenheidsprijzen (excl. btw, inclusief levering en plaatsing) voor onderstaande posten. Opmerkingen of alternatieven kan je per post toevoegen.</textarea></div>

@@ -5,13 +5,20 @@
 //
 // Installatie (Supabase → Edge Functions → Deploy a new function → via editor): naam "assistent", deze code plakken,
 // "Verify JWT" UIT (we controleren het token zelf, ook voor klantlogins), secrets: OPENAI_API_KEY (en optioneel ANTHROPIC_API_KEY).
-// SUPABASE_URL, SUPABASE_ANON_KEY en SUPABASE_SERVICE_ROLE_KEY zijn standaard aanwezig.
+// SUPABASE_URL is standaard aanwezig; de sleutels komen uit SUPABASE_PUBLISHABLE_KEYS / SUPABASE_SECRET_KEYS (nieuwe API keys,
+// automatisch aanwezig zodra er een publishable/secret key bestaat) en anders uit de legacy SUPABASE_ANON_KEY / SUPABASE_SERVICE_ROLE_KEY.
+// Werkt dus ook als de legacy JWT-keys uitgeschakeld zijn (Project Settings → API Keys).
 
 import { createClient } from "npm:@supabase/supabase-js@2.45.4";
 
 const CORS = { "Access-Control-Allow-Origin": "*", "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type", "Access-Control-Allow-Methods": "POST, OPTIONS" };
 const json = (o: unknown, status = 200) => new Response(JSON.stringify(o), { status, headers: { ...CORS, "Content-Type": "application/json" } });
 const PRIJS: Record<string, [number, number]> = { "gpt-4o-mini": [0.15, 0.60], "gpt-4.1-mini": [0.40, 1.60], "gpt-4.1-nano": [0.10, 0.40], "claude-3-5-haiku-latest": [0.80, 4.00], "claude-haiku-4-5": [1.00, 5.00] }; // USD per 1M tokens (in, uit)
+/** eerste sleutel uit een SUPABASE_*_KEYS-json ('default' als die bestaat), anders de legacy variabele */
+const keyFrom = (jsonVar: string, legacyVar: string): string => {
+  try { const j = JSON.parse(Deno.env.get(jsonVar) || "{}"); const k = j.default || Object.values(j).find((v) => typeof v === "string" && (v as string).startsWith("sb_")); if (typeof k === "string" && k) return k; } catch { /* geen json */ }
+  return Deno.env.get(legacyVar) || "";
+};
 const fmtD = (s?: string | null) => s ? String(s).slice(0, 10).split("-").reverse().join("/") : "";
 const eur = (n: unknown) => "€ " + Math.round(Number(n) || 0).toLocaleString("nl-BE");
 
@@ -19,7 +26,8 @@ Deno.serve(async (req) => {
   if (req.method === "OPTIONS") return new Response("ok", { headers: CORS });
   if (req.method !== "POST") return json({ error: "POST verwacht" }, 405);
   try {
-    const url = Deno.env.get("SUPABASE_URL")!, anon = Deno.env.get("SUPABASE_ANON_KEY")!, service = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
+    const url = Deno.env.get("SUPABASE_URL")!, anon = keyFrom("SUPABASE_PUBLISHABLE_KEYS", "SUPABASE_ANON_KEY"), service = keyFrom("SUPABASE_SECRET_KEYS", "SUPABASE_SERVICE_ROLE_KEY");
+    if (!anon || !service) return json({ error: "Geen API-sleutels beschikbaar in de functie (SUPABASE_SECRET_KEYS ontbreekt) — maak een secret key aan onder Project Settings → API Keys." }, 500);
     const auth = req.headers.get("Authorization") || "";
     if (!auth.startsWith("Bearer ")) return json({ error: "Niet aangemeld." }, 401);
     const body = await req.json().catch(() => ({}));
