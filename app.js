@@ -2,7 +2,7 @@
    BROS Planbord — app v1.0
    Statische webapp op Supabase (login, live-synchronisatie, rechten)
    ===================================================================== */
-const APP_VERSION = "1.28.0";
+const APP_VERSION = "1.29.0";
 const PROJ_STATUS = { offerte: "In offerte", lopend: "Lopend", on_hold: "On hold", afgerond: "Afgerond", verloren: "Verloren" };
 const KLANTTYPE = { particulier: "Particulier", zakelijk: "Zakelijk" };
 const KLANTCODE = { particulier: "PAR", zakelijk: "ZAK" };
@@ -1888,7 +1888,7 @@ function render() {
     <div class="top-in">
       <div class="brand"><span class="mark">BROS</span><span class="name">Planbord</span></div>
       <nav class="tabs" aria-label="Hoofdnavigatie">${TABS.filter(([, , r]) => !r || isBeheer()).filter(([k]) => k !== "voorstellen" || schemaV() >= 23).map(([k, l]) => `<button data-nav="${k}" ${S.view === k ? 'aria-current="page"' : ""}>${l}${k === "voorstellen" && voorstellenOpen().length ? ` <span class="cnt" style="background:var(--crit);color:#fff">${voorstellenOpen().length}</span>` : ""}</button>`).join("")}</nav>
-      <div class="who">${dagRing()}<span class="who-cell">${avatar(S.me.id)}<span style="font-weight:600">${esc(S.me.name)}</span></span><button class="btn ghost sm" data-act="change-password" title="Wachtwoord wijzigen">Wachtwoord</button><button class="btn ghost sm" data-act="logout" title="Uitloggen">Uitloggen</button></div>
+      <div class="who"><button class="zk-knop" type="button" data-act="zoek" title="Snel zoeken — ⌘K of /"><span>⌕</span><span class="zk-lbl">Zoeken</span><kbd>${/Mac|iPhone|iPad/.test(navigator.platform || navigator.userAgent) ? "⌘" : "Ctrl "}K</kbd></button>${dagRing()}<span class="who-cell">${avatar(S.me.id)}<span style="font-weight:600">${esc(S.me.name)}</span></span><button class="btn ghost sm" data-act="change-password" title="Wachtwoord wijzigen">Wachtwoord</button><button class="btn ghost sm" data-act="logout" title="Uitloggen">Uitloggen</button></div>
     </div>
     <div class="update" id="updateBar"><span>Er is een nieuwe versie van het Planbord.</span><button class="btn sm primary" data-act="reload">Nu herladen</button><button class="btn sm ghost" data-act="update-later">Later</button></div>
   </header>
@@ -2728,6 +2728,121 @@ function userForm(u) {
   });
 }
 
+
+/* =====================================================================
+   Snel zoeken & springen — ⌘K / Ctrl+K (of /): projecten (ook rechtstreeks naar een tabblad), taken, contacten,
+   verslagen, werfpunten, documenten, meetstaatposten en acties. Alles lokaal en meteen; recent gebruikte items bovenaan.
+   ===================================================================== */
+const ZK = { open: false, q: "", sel: 0, lijst: [], el: null };
+const zkNorm = (t) => String(t || "").toLowerCase().normalize("NFD").replace(/[̀-ͯ]/g, "").replace(/[·•|/\\,;:()]+/g, " ");
+const zkRecent = {
+  get() { try { return JSON.parse(localStorage.getItem("bros.zoek.recent") || "[]"); } catch (e) { return []; } },
+  add(k) { try { const a = this.get().filter(x => x !== k); a.unshift(k); localStorage.setItem("bros.zoek.recent", JSON.stringify(a.slice(0, 10))); } catch (e) { } },
+};
+const zkTel = (...ts) => ts.map(t => { const d = String(t || "").replace(/\D/g, ""); return d ? d + (d.startsWith("32") ? " 0" + d.slice(2) : "") : ""; }).join(" ");   // 0471 93 06 33 vindt +32/471.93.06.33
+const ZK_PTABS = [["taken", "Taken"], ["notities", "Notities verslagen"], ["meetstaat", "Meetstaat"], ["facturatie", "Facturatie vorderingen"], ["werf", "Werf werfpunten"], ["planning", "Planning"], ["uren", "Uren"], ["dossier", "Dossier documenten contacten"]];
+function zkOpenProject(pid, tab) { S.view = "projecten"; S.project = pid; S.ptab = tab || S.ptab || "taken"; render(); window.scrollTo({ top: 0 }); }
+function zkIndex() {
+  const it = []; const add = (o) => { o.hay = zkNorm(o.titel + " " + (o.extra || "") + " " + (o.sub || "")); o.tn = zkNorm(o.titel); it.push(o); };
+  const proj = (pid) => S.projecten[pid];
+  // acties
+  const hier = S.project && S.projecten[S.project] ? S.project : null;
+  add({ k: "a:uren", type: "actie", ic: "⏱", titel: "Uren registreren", extra: "uren invullen tijd registratie", go: () => hoursForm({}, hier) });
+  add({ k: "a:taak", type: "actie", ic: "＋", titel: "Nieuwe taak", extra: "taak toevoegen todo", go: () => taskForm({}, hier) });
+  if (hier && schemaV() >= 14) add({ k: "a:verslag", type: "actie", ic: "📝", titel: "Nieuw verslag", sub: projName(S.projecten[hier]), extra: "notitie vergadering werfverslag", go: () => noteForm({}, hier) });
+  add({ k: "a:contact", type: "actie", ic: "＋", titel: "Nieuw contact", extra: "aannemer leverancier klant toevoegen", go: () => contactForm({}) });
+  if (isBeheer()) add({ k: "a:project", type: "actie", ic: "＋", titel: "Nieuw project", extra: "project aanmaken", go: () => projectForm({}) });
+  add({ k: "a:dag", type: "actie", ic: "◔", titel: "Jouw dag", extra: "dagring dagdoel uren vandaag geluid animaties", go: () => dagForm() });
+  TABS.filter(([, , r]) => !r || isBeheer()).forEach(([k, l]) => add({ k: "n:" + k, type: "ga naar", ic: "→", titel: l, extra: "ga naar open scherm", go: () => { S.view = k; S.project = null; render(); window.scrollTo({ top: 0 }); } }));
+  // projecten (+ rechtstreeks naar een tabblad)
+  Object.values(S.projecten).forEach(p => {
+    const sub = [p.nummer, p.gemeente, PROJ_STATUS[p.status] || p.status].filter(Boolean).join(" · ");
+    const extra = [p.klant, p.naam, p.nummer, p.adres, p.postcode, p.gemeente, p.email1, p.email2, zkTel(p.gsm1, p.gsm2)].join(" ");
+    add({ k: "p:" + p.id, type: "project", ic: "📁", titel: projName(p), sub, extra, pid: p.id, go: () => zkOpenProject(p.id, "taken"), w: p.status === "lopend" ? 5 : p.status === "offerte" ? 4 : 2 });
+    ZK_PTABS.forEach(([tab, lbl]) => it.push({ k: "pt:" + p.id + ":" + tab, type: "tabblad", ic: "↳", titel: `${projName(p)} › ${lbl.split(" ")[0]}`, sub, tabWoorden: zkNorm(lbl), hay: zkNorm(extra + " " + lbl), tn: zkNorm(projName(p)), alleenMetTab: true, go: () => zkOpenProject(p.id, tab), w: 3 }));
+  });
+  // taken
+  Object.values(S.taken).forEach(t => { const p = proj(t.project_id); const wie = t.assignee ? userById(t.assignee)?.name : t.contact_id ? S.contacten[t.contact_id]?.naam : "";
+    add({ k: "t:" + t.id, type: "taak", ic: t.status === "done" ? "✓" : "○", titel: t.titel, sub: [p ? projName(p) : "", faseShort(t.fase_nr), wie, TASK_STATUS[t.status]].filter(Boolean).join(" · "), extra: t.notitie || "", go: () => taskForm(t), w: t.status === "done" ? -2 : 1 }); });
+  // contacten
+  Object.values(S.contacten).filter(c => c.actief !== false).forEach(c => add({ k: "c:" + c.id, type: "contact", ic: "👤", titel: contactLabel(c), sub: [CONTACT_SOORT[c.soort], c.vakgebied, c.gsm || c.tel, c.email].filter(Boolean).join(" · "), extra: [c.contactpersoon, c.gemeente, c.gsm, c.tel, c.email, c.btw_nummer, zkTel(c.gsm, c.tel)].join(" "), tel: c.gsm || c.tel || "", mail: c.email || "", go: () => contactForm(c), w: 2 }));
+  // verslagen
+  Object.values(S.notities || {}).forEach(n => { const p = proj(n.project_id); add({ k: "v:" + n.id, type: "verslag", ic: "📝", titel: n.titel || NOTE_SOORT[n.soort] || "Verslag", sub: [NOTE_SOORT[n.soort], fmt(n.datum), p ? projName(p) : ""].filter(Boolean).join(" · "), extra: String(n.inhoud || "").slice(0, 400), go: () => noteForm(n), w: 1 }); });
+  // werfpunten
+  Object.values(S.vaststellingen || {}).forEach(v => { const p = proj(v.project_id); add({ k: "w:" + v.id, type: "werfpunt", ic: "📍", titel: `${vsNr(v)} ${v.titel || String(v.omschrijving || "").slice(0, 80)}`, sub: [p ? projName(p) : "", v.ruimte, v.status].filter(Boolean).join(" · "), extra: v.omschrijving || "", go: () => vsForm(v), w: v.status === "open" ? 1 : -1 }); });
+  // documenten
+  Object.values(S.documenten || {}).forEach(d => { const p = proj(d.project_id); add({ k: "d:" + d.id, type: "document", ic: "📄", titel: d.naam, sub: [p ? projName(p) : "", (d.pad || "").replace(/\//g, " › ")].filter(Boolean).join(" · "), go: () => { if (d.url) window.open(d.url, "_blank", "noopener"); else zkOpenProject(d.project_id, "dossier"); }, w: -1 }); });
+  // meetstaatposten
+  Object.values(S.meetstaat_posten || {}).forEach(r => { if (r.status === "vervallen") return; const p = proj(r.project_id);
+    add({ k: "m:" + r.id, type: "post", ic: "≡", titel: `${r.code || ""} ${r.omschrijving}`.trim(), sub: [p ? projName(p) : "", lotName(r.lot), r.locatie].filter(Boolean).join(" · "), go: () => { zkOpenProject(r.project_id, "meetstaat"); setTimeout(() => { const tr = document.querySelector(`tr[data-msrow="${r.id}"]`); if (tr) { tr.scrollIntoView({ block: "center" }); tr.classList.add("zk-flash"); setTimeout(() => tr.classList.remove("zk-flash"), 2200); } }, 80); }, w: -2 }); });
+  return it;
+}
+let ZK_IDX = null;
+function zkZoek(q) {
+  const toks = zkNorm(q).split(/\s+/).filter(Boolean).map(t => /^[\d+.\-]{3,}$/.test(t) ? t.replace(/\D/g, "") : t).filter(Boolean); const rec = zkRecent.get();
+  if (!toks.length) {
+    const byK = Object.fromEntries(ZK_IDX.map(i => [i.k, i]));
+    const recent = rec.map(k => byK[k]).filter(Boolean).map(i => ({ ...i, kop: "Recent" }));
+    const acties = ZK_IDX.filter(i => i.type === "actie").map(i => ({ ...i, kop: "Acties" }));
+    return recent.concat(acties);
+  }
+  const qn = toks.join(" "); const uit = [];
+  for (const i of ZK_IDX) {
+    let sc = 0, ok = true, tabHit = false;
+    for (const t of toks) {
+      const pos = i.hay.indexOf(t); if (pos < 0) { ok = false; break; }
+      sc += (pos === 0 || i.hay[pos - 1] === " ") ? 3 : 1;
+      if (i.tabWoorden && (" " + i.tabWoorden).includes(" " + t)) tabHit = true;
+    }
+    if (!ok || (i.alleenMetTab && !tabHit)) continue;
+    if (i.tn.startsWith(qn)) sc += 8; else if (i.tn.includes(qn)) sc += 4;
+    if (i.type === "actie" || i.type === "ga naar") { if (!toks.every(t => i.tn.includes(t) || i.hay.includes(t))) continue; sc += 2; }
+    sc += (i.w || 0); const r = rec.indexOf(i.k); if (r >= 0) sc += 6 - r * 0.4;
+    uit.push({ ...i, sc });
+  }
+  return uit.sort((a, b) => b.sc - a.sc || a.titel.localeCompare(b.titel)).slice(0, 40);
+}
+function zkTeken() {
+  const box = ZK.el.querySelector(".zk-lijst"); const L = ZK.lijst;
+  if (!L.length) { box.innerHTML = `<div class="zk-leeg">Niets gevonden voor “${esc(ZK.q)}”. Probeer een deel van een naam, een projectnummer, een postcode of een gsm-nummer.</div>`; return; }
+  let vorigeKop = null;
+  box.innerHTML = L.map((i, n) => { const kop = i.kop && i.kop !== vorigeKop ? `<div class="zk-kop">${esc(i.kop)}</div>` : ""; vorigeKop = i.kop || vorigeKop;
+    const p = i.type === "project" ? i.pid : null;
+    return kop + `<div class="zk-item ${n === ZK.sel ? "on" : ""}" data-zk="${n}" role="option" aria-selected="${n === ZK.sel}"><span class="zk-ic">${i.ic}</span><span class="zk-tx"><b>${esc(i.titel)}</b>${i.sub ? `<small>${esc(i.sub)}</small>` : ""}</span>`
+      + (p ? `<span class="zk-chips">${ZK_PTABS.slice(0, 6).map(([t, l]) => `<button type="button" data-zkpt="${t}" data-zkp="${p}">${esc(l.split(" ")[0])}</button>`).join("")}</span>` : "")
+      + (i.tel ? `<a class="zk-chip" href="tel:${esc(String(i.tel).replace(/[^\d+]/g, ""))}" title="Bellen">☎</a>` : "") + (i.mail ? `<a class="zk-chip" href="mailto:${esc(i.mail)}" title="Mailen">✉</a>` : "")
+      + `<span class="zk-type">${esc(i.type)}</span></div>`; }).join("");
+  const on = box.querySelector(".zk-item.on"); if (on) on.scrollIntoView({ block: "nearest" });
+}
+function zkUpdate() { ZK.lijst = zkZoek(ZK.q); ZK.sel = 0; zkTeken(); }
+function zkKies(n) { const i = ZK.lijst[n]; if (!i) return; if (!closeModal()) return; zkSluit(); zkRecent.add(i.k); i.go(); }
+function zkOpen() {
+  if (!S.ready || !S.me || ZK.open) return; ZK.open = true; ZK.q = ""; ZK_IDX = zkIndex();
+  if (!ZK.el) {
+    ZK.el = document.createElement("div"); ZK.el.className = "zk"; ZK.el.innerHTML = `<div class="zk-paneel" role="dialog" aria-label="Snel zoeken"><div class="zk-in"><span>⌕</span><input type="text" placeholder="Zoek een project, taak, contact, verslag, werfpunt, document, post… of een actie" autocomplete="off" spellcheck="false"><kbd>esc</kbd></div><div class="zk-lijst" role="listbox"></div><div class="zk-voet"><span><kbd>↑</kbd><kbd>↓</kbd> kiezen</span><span><kbd>↵</kbd> openen</span><span>tip: “appel fact” springt naar Facturatie van Appelmans</span></div></div>`;
+    document.body.appendChild(ZK.el);
+    const inp = ZK.el.querySelector("input");
+    inp.addEventListener("input", () => { ZK.q = inp.value; zkUpdate(); });
+    inp.addEventListener("keydown", (e) => {
+      if (e.key === "ArrowDown") { e.preventDefault(); ZK.sel = Math.min(ZK.lijst.length - 1, ZK.sel + 1); zkTeken(); }
+      else if (e.key === "ArrowUp") { e.preventDefault(); ZK.sel = Math.max(0, ZK.sel - 1); zkTeken(); }
+      else if (e.key === "Enter") { e.preventDefault(); zkKies(ZK.sel); }
+      else if (e.key === "Escape") { e.preventDefault(); e.stopPropagation(); zkSluit(); }
+    });
+    ZK.el.addEventListener("mousedown", (e) => { if (e.target === ZK.el) zkSluit(); });
+    ZK.el.addEventListener("click", (e) => {
+      const pt = e.target.closest("[data-zkpt]"); if (pt) { e.stopPropagation(); if (!closeModal()) return; zkSluit(); zkRecent.add("p:" + pt.dataset.zkp); zkOpenProject(pt.dataset.zkp, pt.dataset.zkpt); return; }
+      if (e.target.closest("a.zk-chip")) return;
+      const it = e.target.closest("[data-zk]"); if (it) zkKies(Number(it.dataset.zk)); });
+    ZK.el.addEventListener("mousemove", (e) => { const it = e.target.closest("[data-zk]"); if (it && Number(it.dataset.zk) !== ZK.sel) { ZK.sel = Number(it.dataset.zk); ZK.el.querySelectorAll(".zk-item").forEach((x, n) => x.classList.toggle("on", n === ZK.sel)); } });
+  }
+  const inp = ZK.el.querySelector("input"); inp.value = ""; ZK.el.classList.add("show"); zkUpdate(); setTimeout(() => inp.focus(), 0);
+}
+function zkSluit() { if (!ZK.el) return; ZK.open = false; ZK.el.classList.remove("show"); }
+document.addEventListener("keydown", (e) => {
+  if ((e.metaKey || e.ctrlKey) && !e.altKey && (e.key === "k" || e.key === "K")) { if (!S.ready) return; e.preventDefault(); e.stopPropagation(); ZK.open ? zkSluit() : zkOpen(); return; }
+  if (e.key === "/" && !ZK.open && !e.metaKey && !e.ctrlKey && !e.altKey) { const t = e.target; if (t && (t.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(t.tagName))) return; if ($("#modalBg")?.classList.contains("show")) return; if (!S.ready) return; e.preventDefault(); zkOpen(); }
+}, true);
 /* ---------- events ---------- */
 document.addEventListener("click", (e) => {
   if (e.target.closest("a[href][target=_blank]")) return; // externe links (bv. Drive-map) gewoon laten openen
@@ -2819,6 +2934,7 @@ document.addEventListener("click", (e) => {
   if (d.act === "post-del") return postDel(d.id);
   if (d.act === "logout") return sb.auth.signOut().then(() => location.reload());
   if (d.act === "dagring") { dagForm(); return; }
+  if (d.act === "zoek") { zkOpen(); return; }
   if (d.act === "fx-demo") { const r = el.getBoundingClientRect(); const f = $("#mform"); const g = f ? f.querySelector('[name="fx_geluid"]').checked : undefined; FX.burst(r.left + 24, r.top + r.height / 2, true, g); return; }
   if (d.act === "change-password") { S.setPassword = true; S.passwordForced = false; render(); return; }
   if (d.act === "reload") return hardReload();

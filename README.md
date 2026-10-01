@@ -160,6 +160,12 @@ Zet je bij een bestand de schakelaar *klant* of *aannemers* aan, dan krijgt de b
 
 GSM- en telefoonnummers worden overal in één formaat bewaard: `+32/471.93.06.33` (mobiel), `+32/3.123.45.67` of `+32/16.12.34.56` (vast), `+31/612.34.56.78` (buitenland). De databasefunctie `tel_format()` doet dat via een trigger op `contacten` (gsm, tel) en `projecten` (gsm1, gsm2), dus ook bij import; het Planbord zet het veld al om zodra je het verlaat. Script 026 zet de bestaande nummers eenmalig om.
 
+## Snel zoeken (v1.29)
+- **⌘K** (Mac) / **Ctrl+K** (Windows), of **/** buiten een invulveld, of de knop *Zoeken* in de kopbalk.
+- Zoekt meteen in projecten (nummer, adres, postcode, gsm), taken, contacten (ook op gsm-nummer in elke schrijfwijze), verslagen (ook in de tekst), werfpunten, documenten, meetstaatposten en acties (*Uren registreren*, *Nieuwe taak*, *Nieuw verslag*, *Jouw dag*, *Ga naar …*).
+- Projectnaam + tabblad (bv. *appel fact*, *genbrugge werf*) springt rechtstreeks naar dat tabblad; bij het gekozen project staan knoppen naar elk tabblad. Bij een contact: bellen of mailen in één klik. Een meetstaatpost opent de meetstaat en licht de rij even op.
+- ↑↓ kiezen, Enter openen, Esc sluiten. Zonder zoekterm: je recent gekozen items en de acties.
+
 ## Afvinken en dagring (v1.26)
 - Taak afvinken (takenlijsten, of status *Klaar* in het taakformulier): vinkje met puls en een chip *x van y* voor de fase (of het project); ongeveer één keer op zeven net iets uitbundiger. Laatste taak van een fase of van een project: kort mijlpaalmoment met het BROS-logo dat volloopt (klik om weg te klikken).
 - Uren invullen voor jezelf, vandaag: de **dagring** in de kopbalk loopt vol; chip *+2 u · 6 van 8 u vandaag*. Haal je je dagdoel, dan één keer per dag een mijlpaal.

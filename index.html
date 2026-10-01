@@ -460,6 +460,40 @@
   .rend .v { font-family: var(--font-display); font-weight: 700; font-size: 20px; letter-spacing: -.02em; margin-top: 2px; font-variant-numeric: tabular-nums; }
   .rend .v.neg { color: var(--crit); } .rend .v.pos { color: var(--ok); }
   /* laadscherm: BROS-logo dat volloopt */
+  /* Snel zoeken (⌘K) */
+  .zk-knop { display: inline-flex; align-items: center; gap: 6px; padding: 4px 6px 4px 10px; margin-right: 2px; border: 1px solid var(--line-2); border-radius: 999px; background: var(--surface); color: var(--muted); font: inherit; font-size: 12.5px; cursor: pointer; }
+  .zk-knop:hover { color: var(--ink); border-color: var(--muted); }
+  .zk-knop > span:first-child { font-size: 15px; line-height: 1; }
+  .zk-knop kbd, .zk kbd { font: 600 10.5px/1 var(--font-mono, ui-monospace, monospace); padding: 3px 5px; border-radius: 5px; background: var(--surface-2); color: var(--muted); border: 1px solid var(--line); }
+  .zk { position: fixed; inset: 0; z-index: 80; display: none; align-items: flex-start; justify-content: center; padding: 11vh 16px 16px; background: color-mix(in srgb, var(--ground) 50%, transparent); backdrop-filter: blur(4px); }
+  .zk.show { display: flex; animation: zkin .14s ease-out; }
+  @keyframes zkin { from { opacity: 0; } }
+  .zk-paneel { width: min(660px, 100%); max-height: 76vh; display: flex; flex-direction: column; background: var(--surface); border: 1px solid var(--line); border-radius: 16px; box-shadow: 0 30px 80px rgba(0,0,0,.25); overflow: hidden; animation: zkpop .16s cubic-bezier(.2,.8,.2,1); }
+  @keyframes zkpop { from { transform: translateY(-6px) scale(.985); } }
+  .zk-in { display: flex; align-items: center; gap: 10px; padding: 14px 16px; border-bottom: 1px solid var(--line); }
+  .zk-in > span { font-size: 20px; color: var(--muted); }
+  .zk-in input { flex: 1; border: 0; outline: 0; background: transparent; font: inherit; font-size: 17px; color: var(--ink); padding: 0; }
+  .zk-lijst { overflow: auto; padding: 6px; }
+  .zk-kop { padding: 10px 10px 4px; font-size: 11px; font-weight: 650; letter-spacing: .04em; text-transform: uppercase; color: var(--muted); }
+  .zk-item { display: flex; align-items: center; gap: 10px; padding: 8px 10px; border-radius: 10px; cursor: pointer; }
+  .zk-item.on { background: var(--accent-soft, var(--surface-2)); }
+  .zk-ic { width: 22px; text-align: center; flex: none; color: var(--muted); }
+  .zk-tx { flex: 1; min-width: 0; }
+  .zk-tx b { display: block; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .zk-tx small { display: block; color: var(--muted); font-size: 12px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .zk-type { flex: none; font-size: 11px; color: var(--muted); }
+  .zk-chips { display: none; gap: 4px; flex: none; }
+  .zk-item.on .zk-chips { display: flex; }
+  .zk-chips button { border: 1px solid var(--line-2); background: var(--surface); color: var(--ink); border-radius: 999px; padding: 2px 8px; font: inherit; font-size: 11.5px; cursor: pointer; }
+  .zk-chips button:hover { border-color: var(--accent); color: var(--accent); }
+  .zk-chip { flex: none; display: inline-flex; align-items: center; justify-content: center; width: 26px; height: 26px; border-radius: 999px; border: 1px solid var(--line-2); text-decoration: none; color: var(--ink); font-size: 13px; }
+  .zk-chip:hover { border-color: var(--accent); color: var(--accent); }
+  .zk-leeg { padding: 26px 16px; color: var(--muted); text-align: center; }
+  .zk-voet { display: flex; gap: 16px; flex-wrap: wrap; padding: 9px 14px; border-top: 1px solid var(--line); font-size: 11.5px; color: var(--muted); }
+  .zk-voet kbd { margin-right: 2px; }
+  tr.zk-flash td { animation: zkflash 2.2s ease-out; }
+  @keyframes zkflash { 0%, 30% { background: color-mix(in srgb, var(--accent) 18%, transparent); } }
+  @media (max-width: 640px) { .zk-knop .zk-lbl, .zk-knop kbd { display: none; } .zk-knop { padding: 4px 8px; } .zk { padding-top: 8px; } .zk-voet span:last-child { display: none; } .zk-type { display: none; } .zk-item.on .zk-chips { display: none; } }
   /* Nieuwe vordering — per post invullen */
   .form-grid [hidden] { display: none !important; }
   .seg-row { display: flex; gap: 6px; }
@@ -527,11 +561,11 @@
 <div class="toast" id="toast" role="status"></div>
 <div class="loader" id="loader" aria-live="polite"><div class="logo"><i class="base"></i><i class="fill" id="loaderFill"></i></div><div class="pct" id="loaderPct">0%</div><div class="msg" id="loaderMsg">Even geduld…</div></div>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.45.4/dist/umd/supabase.min.js"></script>
-<script src="config.js?v=1.28.0"></script>
+<script src="config.js?v=1.29.0"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
-<script src="postcodes.js?v=1.28.0"></script>
-<script src="meetstaat-export.js?v=1.28.0"></script>
-<script src="meetstaat-import.js?v=1.28.0"></script>
-<script src="app.js?v=1.28.0"></script>
+<script src="postcodes.js?v=1.29.0"></script>
+<script src="meetstaat-export.js?v=1.29.0"></script>
+<script src="meetstaat-import.js?v=1.29.0"></script>
+<script src="app.js?v=1.29.0"></script>
 </body>
 </html>
