@@ -2,7 +2,7 @@
    BROS Planbord — app v1.0
    Statische webapp op Supabase (login, live-synchronisatie, rechten)
    ===================================================================== */
-const APP_VERSION = "1.26.0";
+const APP_VERSION = "1.26.1";
 const PROJ_STATUS = { offerte: "In offerte", lopend: "Lopend", on_hold: "On hold", afgerond: "Afgerond", verloren: "Verloren" };
 const KLANTTYPE = { particulier: "Particulier", zakelijk: "Zakelijk" };
 const KLANTCODE = { particulier: "PAR", zakelijk: "ZAK" };
@@ -91,7 +91,9 @@ const wieSplit = (v) => v && v.startsWith("c:") ? { assignee: null, contact_id: 
 const safeColor = (c) => /^#[0-9a-fA-F]{3,8}$/.test(String(c || "")) ? c : "#6B6B7B";
 const avatar = (id) => { const u = userById(id); return `<span class="avatar" style="background:${safeColor(u.color)}" title="${esc(u.name)}">${esc(u.initials)}</span>`; };
 const vsTag = (t) => t.vaststelling_id && S.vaststellingen[t.vaststelling_id] ? ` <span class="pill kl" data-vs="${t.vaststelling_id}" title="Uit een vaststelling op de werf — klik om ze te openen" style="cursor:pointer">📍 ${vsNr(S.vaststellingen[t.vaststelling_id])}</span>` : "";
-const klantTag = (t) => vsTag(t) + (t.uren_klant ? ` <span class="pill kl" title="Uren van deze taak zijn zichtbaar voor de klant">uren → klant</span>` : "") + (t.timing_klant ? ` <span class="pill kl" title="Titel en timing van deze taak staan in de planning van de klant">timing → klant</span>` : "");
+/* actiepunt uit een verslag: klik opent het verslag */
+const noteTag = (t) => { const n = t.notitie_id && S.notities && S.notities[t.notitie_id]; return n ? ` <span class="pill kl" data-act="note-open" data-id="${n.id}" title="Actiepunt uit ${esc(n.titel || "dit verslag")} — klik om het verslag te openen" style="cursor:pointer">📝 ${esc(NOTE_SOORT[n.soort] || "Verslag")} ${esc(fmt(n.datum))}</span>` : ""; };
+const klantTag = (t) => vsTag(t) + noteTag(t) + (t.uren_klant ? ` <span class="pill kl" title="Uren van deze taak zijn zichtbaar voor de klant">uren → klant</span>` : "") + (t.timing_klant ? ` <span class="pill kl" title="Titel en timing van deze taak staan in de planning van de klant">timing → klant</span>` : "");
 const pill = (t) => isLate(t) ? `<span class="pill late">Te laat</span>` : `<span class="pill ${esc(t.status)}">${esc(TASK_STATUS[t.status] || t.status)}</span>`;
 const kost = (uid, uren, soort) => (Number(S.tarieven[uid]?.[soort]) || 0) * uren;
 const projKost = (pid, soort) => Object.values(S.uren).filter(h => h.project_id === pid).reduce((s, h) => s + kost(h.user_id, Number(h.uren) || 0, soort), 0);
@@ -1984,7 +1986,7 @@ function vProjectDetail(p) {
     body = `<div class="panel"><div class="panel-head"><h3>Taken</h3><div class="actions"><button class="btn sm" data-act="add-fase" data-pid="${p.id}">+ Fase toevoegen</button><button class="btn sm primary" data-act="new-task" data-pid="${p.id}">+ Taak</button></div></div>
       ${ts.length ? `<div class="tw"><table class="t"><thead><tr><th></th><th>Taak</th><th>Wie</th><th>Start</th><th>Einde</th><th class="r">Uren</th><th>Status</th></tr></thead><tbody>
       ${groups.map(nr => { const g = byFase[nr]; const done = g.filter(t => t.status === "done").length; return `<tr><td colspan="7" style="background:var(--surface-2);font-weight:700;font-family:var(--font-display)">${esc(faseName(nr) || "Zonder fase")} <span class="muted num" style="font-weight:400">${done}/${g.length}</span></td></tr>` + g.map(t => `<tr class="click" data-edit-task="${t.id}"><td style="width:28px"><input type="checkbox" class="task-check" data-toggle="${t.id}" ${t.status === "done" ? "checked" : ""} aria-label="Klaar"></td>
-        <td><div class="row-title">${esc(t.titel)}${klantTag(t)}${t.notitie_id && S.notities[t.notitie_id] ? ` <span class="pill kl" title="Actiepunt uit een verslag">📝 ${esc(S.notities[t.notitie_id].titel || "verslag")}</span>` : ""}${t.notitie ? `<small>${esc(t.notitie)}</small>` : ""}</div></td><td>${wieCell(t)}</td>
+        <td><div class="row-title">${esc(t.titel)}${klantTag(t)}${t.notitie ? `<small>${esc(t.notitie)}</small>` : ""}</div></td><td>${wieCell(t)}</td>
         <td class="num">${fmt(t.start)}</td><td class="num" style="color:${isLate(t) ? "var(--crit)" : "inherit"}">${fmt(t.eind)}</td><td class="r num">${nl(taskDone(t.id))} / ${nl(t.uren_gepland)}</td><td>${pill(t)}</td></tr>`).join(""); }).join("")}</tbody></table></div>` : `<div class="empty"><b>Nog geen taken</b>Voeg een fase toe (met de standaardtaken) of maak een losse taak.</div>`}</div>`;
   } else if (S.ptab === "notities") {
     body = vNotities(p);
@@ -2594,7 +2596,7 @@ function taskForm(t = {}, pid) {
     <div class="field"><label for="t_start">Start</label><input id="t_start" type="date" name="start" value="${esc(t.start || "")}"></div>
     <div class="field"><label for="t_eind">Einde</label><input id="t_eind" type="date" name="eind" value="${esc(t.eind || "")}"></div>
     <div class="field"><label for="t_uren">Geplande uren</label><input id="t_uren" type="number" step="0.5" min="0" name="uren_gepland" value="${esc(t.uren_gepland ?? 0)}"></div>
-    ${schemaV() >= 14 ? `<div class="field"><label for="t_note">Uit verslag</label><select id="t_note" name="notitie_id"><option value="">— geen —</option>${opts(notesOf(projectId).map(n => [n.id, `${fmt(n.datum)} · ${n.titel || NOTE_SOORT[n.soort]}`]), t.notitie_id || "")}</select></div>` : ""}
+    ${schemaV() >= 14 ? `<div class="field"><label for="t_note">Uit verslag</label><select id="t_note" name="notitie_id"><option value="">— geen —</option>${opts(notesOf(projectId).map(n => [n.id, `${fmt(n.datum)} · ${n.titel || NOTE_SOORT[n.soort]}`]), t.notitie_id || "")}</select>${t.notitie_id && S.notities[t.notitie_id] ? `<button type="button" class="btn ghost sm" data-act="note-open" data-id="${t.notitie_id}" style="align-self:flex-start;margin-top:4px">Verslag openen →</button>` : ""}</div>` : ""}
     <div class="field"><label for="t_not">Notitie</label><input id="t_not" name="notitie" value="${esc(t.notitie || "")}"></div>
     ${schemaV() >= 10 ? `<div class="field span2"><label class="sw-row"><input type="checkbox" class="sw" name="uren_klant" value="1" ${t.uren_klant ? "checked" : ""}><span><b>Gepresteerde uren zichtbaar voor de klant</b><small class="muted" style="display:block">De klant ziet de geregistreerde uren van deze taak, met datum en tijdstip. Staat standaard uit.</small></span></label></div>` : ""}
     ${schemaV() >= 17 ? `<div class="field span2"><label class="sw-row"><input type="checkbox" class="sw" name="timing_klant" value="1" ${t.timing_klant ? "checked" : ""}><span><b>Timing delen met de klant</b><small class="muted" style="display:block">Titel en van–tot van deze taak verschijnen onder de fase in de planning van het portaal (geen uren, geen wie). Staat standaard uit.</small></span></label></div>` : ""}
@@ -2751,7 +2753,7 @@ document.addEventListener("click", (e) => {
   if (d.act === "wv-del") { const w = S.werfverslagen[d.id]; if (w && confirm(`Werfverslag ${w.nr} verwijderen? De pdf wordt ook gewist.`)) dbDelete("werfverslagen", d.id).then(() => { if (w.pdf_path) sb.storage.from("werf").remove([w.pdf_path]).catch(() => { }); }).catch(() => { }); return; }
   if (d.act === "plan-view") return planView(d.id);
   if (d.act === "wb-open") { const b = S.werfbezoeken[d.id]; if (!b) return toast("Dit werfbezoek bestaat niet meer."); return wbForm(b); }
-  if (d.act === "note-open") { const n = S.notities[d.id]; if (!n) return toast("Deze notitie bestaat niet meer."); return noteForm(n); }
+  if (d.act === "note-open") { e.stopPropagation(); const n = S.notities[d.id]; if (!n) return toast("Dit verslag bestaat niet meer."); if (!closeModal()) return; return noteForm(n); }
   if (d.act === "gk-view") return gkView(d.id);
   if (d.act === "gk-withdraw") return gkWithdraw(d.id);
   if (d.act === "ms-export") return exportMeetstaat(S.projecten[d.pid]).catch(err => { loader.fail(); toast("Export: " + err.message); });
