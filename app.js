@@ -2,7 +2,7 @@
    BROS Planbord — app v1.0
    Statische webapp op Supabase (login, live-synchronisatie, rechten)
    ===================================================================== */
-const APP_VERSION = "1.25.2";
+const APP_VERSION = "1.26.0";
 const PROJ_STATUS = { offerte: "In offerte", lopend: "Lopend", on_hold: "On hold", afgerond: "Afgerond", verloren: "Verloren" };
 const KLANTTYPE = { particulier: "Particulier", zakelijk: "Zakelijk" };
 const KLANTCODE = { particulier: "PAR", zakelijk: "ZAK" };
@@ -243,6 +243,128 @@ const loader = (() => {
     fail() { clearInterval(timer); $("#loader").classList.remove("show"); },
   };
 })();
+/* ---------- Afvinken voelt goed: kleine bevestiging bij elke vink, betekenis (x van y), en zelden een mijlpaal ----------
+   Voorkeuren per browser (Dagring in de kopbalk → klik): animaties aan/uit, geluid aan/uit (standaard uit), dagdoel in uren.
+   'Minder beweging' in het systeem → geen deeltjes of vul-animatie, enkel rustige meldingen. */
+const FX = (() => {
+  const reduce = () => !!(window.matchMedia && matchMedia("(prefers-reduced-motion: reduce)").matches);
+  const pref = (k, d) => { try { const v = localStorage.getItem("bros.fx." + k); return v == null ? d : v === "1"; } catch (e) { return d; } };
+  const setPref = (k, v) => { try { localStorage.setItem("bros.fx." + k, v ? "1" : "0"); } catch (e) { } };
+  const doel = () => { try { const v = Number(localStorage.getItem("bros.fx.doel")); return v >= 1 && v <= 16 ? v : 8; } catch (e) { return 8; } };
+  const setDoel = (v) => { try { localStorage.setItem("bros.fx.doel", String(v)); } catch (e) { } };
+  let ac = null;
+  /* zachte tonen, synthetisch (geen geluidsbestanden): kort en laag volume */
+  const toon = (freqs, dur = 0.09, gap = 0.07, vol = 0.05, forceer) => {
+    if (!(forceer ?? pref("geluid", false))) return;
+    try {
+      ac = ac || new (window.AudioContext || window.webkitAudioContext)(); if (ac.state === "suspended") ac.resume();
+      const t0 = ac.currentTime + 0.01;
+      freqs.forEach((f, i) => { const o = ac.createOscillator(), g = ac.createGain(); o.type = "sine"; o.frequency.value = f; const st = t0 + i * gap;
+        g.gain.setValueAtTime(0.0001, st); g.gain.exponentialRampToValueAtTime(vol, st + 0.012); g.gain.exponentialRampToValueAtTime(0.0001, st + dur);
+        o.connect(g); g.connect(ac.destination); o.start(st); o.stop(st + dur + 0.03); });
+    } catch (e) { }
+  };
+  const layer = () => { let l = document.getElementById("fxLayer"); if (!l) { l = document.createElement("div"); l.id = "fxLayer"; l.setAttribute("aria-hidden", "true"); document.body.appendChild(l); } return l; };
+  const weg = (el, ms) => setTimeout(() => el.remove(), ms);
+  function burst(x, y, groot, geluid) {
+    if (!pref("aan", true)) return;
+    const l = layer();
+    if (!reduce()) {
+      const ring = document.createElement("i"); ring.className = "fx-ring" + (groot ? " groot" : ""); ring.style.left = x + "px"; ring.style.top = y + "px"; l.appendChild(ring); weg(ring, 750);
+      l.insertAdjacentHTML("beforeend", `<svg class="fx-check" viewBox="0 0 24 24" style="left:${x}px;top:${y}px"><path d="M5 12.5l4.2 4.2L19 7"/></svg>`); weg(l.lastElementChild, 950);
+      const n = groot ? 14 : 7;
+      for (let i = 0; i < n; i++) {
+        const p = document.createElement("i"); p.className = "fx-dot" + (groot && i % 3 === 0 ? " alt" : "");
+        const a = Math.PI * 2 * i / n + Math.random() * 0.6, d = (groot ? 30 : 18) + Math.random() * (groot ? 28 : 12);
+        p.style.left = x + "px"; p.style.top = y + "px"; p.style.setProperty("--dx", (Math.cos(a) * d).toFixed(1) + "px"); p.style.setProperty("--dy", (Math.sin(a) * d).toFixed(1) + "px");
+        l.appendChild(p); weg(p, 850);
+      }
+    }
+    toon(groot ? [988, 1319] : [1175], 0.08, 0.06, 0.05, geluid);
+  }
+  function chip(x, y, html, onder) {
+    if (!pref("aan", true)) return false;
+    const l = layer(); l.querySelectorAll(".fx-chip").forEach(c => c.remove());
+    const c = document.createElement("div"); c.className = "fx-chip"; c.innerHTML = html; l.appendChild(c);
+    const w = c.offsetWidth || 200, vw = window.innerWidth;
+    const left = onder ? x - w / 2 : x + 16; c.style.left = Math.max(8, Math.min(left, vw - w - 8)) + "px";
+    c.style.top = Math.max(8, onder ? y + 18 : y - 15) + "px";
+    setTimeout(() => c.classList.add("weg"), 1900); weg(c, 2500); return true;
+  }
+  function mijlpaal(titel, sub) {
+    if (!pref("aan", true)) { toast(titel + (sub ? " — " + sub : "")); return; }
+    const l = layer(); l.querySelectorAll(".fx-mijl").forEach(e => e.remove());
+    const m = document.createElement("div"); m.className = "fx-mijl" + (reduce() ? " rustig" : ""); m.setAttribute("role", "status");
+    m.innerHTML = `<div class="kaart"><div class="logo"><i class="base"></i><i class="fill"></i></div><div class="t">${esc(titel)}</div>${sub ? `<div class="s">${esc(sub)}</div>` : ""}</div>`;
+    m.onclick = () => m.remove(); l.appendChild(m);
+    requestAnimationFrame(() => requestAnimationFrame(() => m.classList.add("in")));
+    toon([784, 988, 1175, 1568], 0.24, 0.09, 0.045);
+    setTimeout(() => m.classList.add("uit"), 2700); weg(m, 3200);
+  }
+  return { burst, chip, mijlpaal, pref, setPref, doel, setDoel, toon, reduce };
+})();
+const fxPick = (a) => a[Math.floor(Math.random() * a.length)];
+/* taak t (nog in de oude toestand) wordt nu afgevinkt; el = het aangeklikte vinkje (of null vanuit een formulier) */
+function vierTaak(t, el) {
+  try {
+    const r = el && el.getBoundingClientRect ? el.getBoundingClientRect() : null;
+    const x = r ? r.left + r.width / 2 : window.innerWidth / 2, y = r ? r.top + r.height / 2 : 96;
+    const p = S.projecten[t.project_id]; const projTxt = p ? p.klant + (p.naam && p.naam !== p.klant ? " · " + p.naam : "") : "";
+    const ts = Object.values(S.taken).filter(x => x.project_id === t.project_id);
+    const klaar = (x) => x.id === t.id || x.status === "done";
+    const fase = t.fase_nr ? ts.filter(x => x.fase_nr === t.fase_nr) : [];
+    const projRond = ts.length >= 2 && ts.every(klaar), faseRond = fase.length >= 2 && fase.every(klaar);
+    const verrassing = Math.random() < 1 / 7;   // af en toe net iets meer — zo went het niet
+    FX.burst(x, y, verrassing || faseRond || projRond);
+    if (projRond) { setTimeout(() => FX.mijlpaal(fxPick(["Alles afgevinkt", "Alle taken afgewerkt"]), `${projTxt} · ${ts.length} taken`), 380); return; }
+    if (faseRond) { setTimeout(() => FX.mijlpaal(fxPick([`Fase ${faseShort(t.fase_nr)} rond`, `${faseShort(t.fase_nr)}: afgerond`]), projTxt), 380); return; }
+    const basis = fase.length ? fase : ts, n = basis.filter(klaar).length;
+    FX.chip(x, y, `${verrassing ? fxPick(["Netjes.", "Goed bezig.", "Weer eentje.", "Mooi zo."]) + " " : ""}<b>${n} van ${basis.length}</b> ${fase.length ? esc(faseShort(t.fase_nr)) : "taken"}${p ? ` · ${esc(p.klant)}` : ""}`);
+  } catch (e) { }
+}
+/* ---------- Dagring: eigen uren van vandaag t.o.v. het dagdoel ---------- */
+let RING_LAST = null;
+const mijnUrenOp = (datum) => S.me ? Object.values(S.uren).filter(h => h.user_id === S.me.id && h.datum === datum).reduce((s, h) => s + (Number(h.uren) || 0), 0) : 0;
+function dagRing() {
+  if (!S.me || !S.ready) return "";
+  const u = mijnUrenOp(todayIso), doel = FX.doel(), pct = Math.min(1, u / doel);
+  const van = FX.reduce() ? pct : (RING_LAST == null ? 0 : RING_LAST); RING_LAST = pct;
+  const C = 2 * Math.PI * 9;
+  return `<button class="dagring ${pct >= 1 ? "vol" : ""}" type="button" data-act="dagring" title="Vandaag ${nl(u)} van ${nl(doel)} u ingevuld — klik voor je dagdoel en de instellingen" aria-label="Uren vandaag: ${nl(u)} van ${nl(doel)}"><svg viewBox="0 0 24 24"><circle class="bg" cx="12" cy="12" r="9"/><circle class="fg" cx="12" cy="12" r="9" style="--c:${C.toFixed(2)};--van:${(C * (1 - van)).toFixed(2)};--naar:${(C * (1 - pct)).toFixed(2)}"/></svg><span>${nl(u)} u</span></button>`;
+}
+/* na het bewaren van een (nieuwe) urenregistratie; voor = eigen uren vandaag vóór het bewaren */
+function vierUren(row, voor) {
+  if (!S.me || row.user_id !== S.me.id || row.datum !== todayIso) return false;
+  const el = document.querySelector('[data-act="dagring"]'); const r = el ? el.getBoundingClientRect() : null;
+  const x = r ? r.left + r.width / 2 : window.innerWidth - 140, y = r ? r.top + r.height / 2 : 30;
+  const na = mijnUrenOp(todayIso), doel = FX.doel(); let al = false;
+  try { al = localStorage.getItem("bros.fx.ring." + todayIso) === "1"; } catch (e) { }
+  FX.burst(x, y, false);
+  if (voor < doel && na >= doel && !al) {
+    try { localStorage.setItem("bros.fx.ring." + todayIso, "1"); } catch (e) { }
+    setTimeout(() => FX.mijlpaal(fxPick(["Je dag zit erop", "Dagring rond"]), `${nl(na)} u ingevuld vandaag`), 500); return true;
+  }
+  return FX.chip(x, y, `+${nl(row.uren)} u · <b>${nl(na)} van ${nl(doel)} u</b> vandaag`, true);
+}
+function dagForm() {
+  const u = mijnUrenOp(todayIso); const per = {};
+  Object.values(S.uren).filter(h => h.user_id === S.me.id && h.datum === todayIso).forEach(h => { const k = h.project_id || ""; per[k] = (per[k] || 0) + (Number(h.uren) || 0); });
+  const lijst = Object.entries(per).sort((a, b) => b[1] - a[1]).map(([pid, n]) => `<div style="display:flex;justify-content:space-between;padding:4px 0;border-bottom:1px solid var(--line)"><span>${esc(S.projecten[pid]?.klant || "Algemeen")}</span><span class="num">${nl(n)} u</span></div>`).join("");
+  openModal("Jouw dag", `<div class="form-grid">
+    <div class="field span2"><div style="font-size:28px;font-weight:700;font-family:var(--font-display)" class="num">${nl(u)} <span class="muted" style="font-size:16px;font-weight:500">van ${nl(FX.doel())} u vandaag</span></div>${lijst ? `<div style="margin-top:8px;font-size:13px">${lijst}</div>` : `<p class="muted" style="margin:6px 0 0">Nog geen uren ingevuld vandaag.</p>`}</div>
+    <div class="field"><label for="fx_doel">Dagdoel (uren)</label><input id="fx_doel" name="doel" type="number" min="1" max="16" step="0.5" value="${FX.doel()}"><small class="muted">De ring sluit als je dit haalt — één keer per dag een klein feestje.</small></div>
+    <div class="field"></div>
+    <div class="field span2"><label class="sw-row"><input type="checkbox" class="sw" name="fx_aan" ${FX.pref("aan", true) ? "checked" : ""}><span><b>Animaties bij afvinken en uren</b><small class="muted" style="display:block">Vinkje, voortgang (x van y) en af en toe een mijlpaal: fase rond, project rond, dagring rond.</small></span></label></div>
+    <div class="field span2"><label class="sw-row"><input type="checkbox" class="sw" name="fx_geluid" ${FX.pref("geluid", false) ? "checked" : ""}><span><b>Zacht geluid</b><small class="muted" style="display:block">Een korte tik bij elke vink en een akkoord bij een mijlpaal. Enkel op dit toestel.</small></span></label></div>
+    <div class="field span2" style="display:block"><button type="button" class="btn sm" data-act="fx-demo" style="width:auto">Even proberen</button></div>
+  </div>`, {
+    saveLabel: "Bewaren", onSave: async (d) => {
+      const f = $("#mform"); FX.setPref("aan", f.querySelector('[name="fx_aan"]').checked); FX.setPref("geluid", f.querySelector('[name="fx_geluid"]').checked);
+      const v = Number(String(d.doel || "").replace(",", ".")); if (v >= 1 && v <= 16) FX.setDoel(v);
+      render(); toast("Bewaard");
+    },
+  });
+}
 async function driveSync(p, action, quiet) {
   const label = action === "create" ? "Projectmap aanmaken op Drive" : action === "link" ? "Map zoeken op Drive" : "Bestanden vernieuwen";
   if (!quiet) loader.start("drive." + action, label + "…", action === "create" ? 12000 : 7000);
@@ -1713,7 +1835,7 @@ function render() {
     <div class="top-in">
       <div class="brand"><span class="mark">BROS</span><span class="name">Planbord</span></div>
       <nav class="tabs" aria-label="Hoofdnavigatie">${TABS.filter(([, , r]) => !r || isBeheer()).filter(([k]) => k !== "voorstellen" || schemaV() >= 23).map(([k, l]) => `<button data-nav="${k}" ${S.view === k ? 'aria-current="page"' : ""}>${l}${k === "voorstellen" && voorstellenOpen().length ? ` <span class="cnt" style="background:var(--crit);color:#fff">${voorstellenOpen().length}</span>` : ""}</button>`).join("")}</nav>
-      <div class="who"><span class="who-cell">${avatar(S.me.id)}<span style="font-weight:600">${esc(S.me.name)}</span></span><button class="btn ghost sm" data-act="change-password" title="Wachtwoord wijzigen">Wachtwoord</button><button class="btn ghost sm" data-act="logout" title="Uitloggen">Uitloggen</button></div>
+      <div class="who">${dagRing()}<span class="who-cell">${avatar(S.me.id)}<span style="font-weight:600">${esc(S.me.name)}</span></span><button class="btn ghost sm" data-act="change-password" title="Wachtwoord wijzigen">Wachtwoord</button><button class="btn ghost sm" data-act="logout" title="Uitloggen">Uitloggen</button></div>
     </div>
     <div class="update" id="updateBar"><span>Er is een nieuwe versie van het Planbord.</span><button class="btn sm primary" data-act="reload">Nu herladen</button><button class="btn sm ghost" data-act="update-later">Later</button></div>
   </header>
@@ -2483,7 +2605,7 @@ function taskForm(t = {}, pid) {
       if (schemaV() >= 17) row.timing_klant = !!d.timing_klant;
       if (row.start && !row.eind) row.eind = row.start; if (row.eind && !row.start) row.start = row.eind; if (row.eind < row.start) row.eind = row.start;
       if (isNew) { row.volgorde = (row.fase_nr || 99) * 100 + 90; await dbInsert("taken", row); toast("Taak aangemaakt"); }
-      else { await dbUpdate("taken", t.id, row); toast("Taak bewaard"); }
+      else { const wasKlaar = t.status === "done"; if (row.status === "done" && !wasKlaar) vierTaak(t, null); await dbUpdate("taken", t.id, row); toast("Taak bewaard"); }
     },
     onDelete: isNew ? null : async () => { await dbDelete("taken", t.id); toast("Taak verwijderd"); },
   });
@@ -2507,8 +2629,9 @@ function hoursForm(h = {}, pid) {
     onSave: async (d) => {
       const row = { user_id: isBeheer() ? d.user_id : (h.user_id || S.me.id), datum: d.datum, project_id: d.project_id, taak_id: d.taak_id || null, uren: Number(d.uren) || 0, notitie: d.notitie };
       if (schemaV() >= 10) { row.tijd_van = d.tijd_van || null; row.tijd_tot = d.tijd_tot || null; if (row.tijd_van && row.tijd_tot && row.tijd_tot <= row.tijd_van) { toast("Het einduur moet na het beginuur liggen."); return false; } }
+      const voor = mijnUrenOp(todayIso) - (!isNew && h.user_id === S.me.id && h.datum === todayIso ? Number(h.uren) || 0 : 0);
       if (isNew) await dbInsert("uren", row); else await dbUpdate("uren", h.id, row);
-      toast(`${nl(row.uren)} u geregistreerd`);
+      if (!(isNew && vierUren(row, voor))) toast(`${nl(row.uren)} u geregistreerd`);
     },
     onDelete: isNew ? null : async () => { await dbDelete("uren", h.id); toast("Registratie verwijderd"); },
   });
@@ -2642,6 +2765,8 @@ document.addEventListener("click", (e) => {
   if (d.act === "vord-fit") return vordFit(d.id);
   if (d.act === "post-del") return postDel(d.id);
   if (d.act === "logout") return sb.auth.signOut().then(() => location.reload());
+  if (d.act === "dagring") { dagForm(); return; }
+  if (d.act === "fx-demo") { const r = el.getBoundingClientRect(); const f = $("#mform"); const g = f ? f.querySelector('[name="fx_geluid"]').checked : undefined; FX.burst(r.left + 24, r.top + r.height / 2, true, g); return; }
   if (d.act === "change-password") { S.setPassword = true; S.passwordForced = false; render(); return; }
   if (d.act === "reload") return hardReload();
   if (d.act === "update-later") { updateAvailable = false; $("#updateBar")?.classList.remove("show"); }
@@ -2669,7 +2794,7 @@ document.addEventListener("change", (e) => {
   if (el.dataset.werff) { S.werfF = S.werfF || { status: "actief", wie: "", q: "", groep: false }; S.werfF[el.dataset.werff] = el.type === "checkbox" ? el.checked : el.value; return render(); }
   if (el.dataset.hoursUser != null) { S.hoursUser = el.value; return render(); }
   if (el.dataset.rapjaar != null) { S.rapJaar = el.value; return render(); }
-  if (el.dataset.toggle) { const t = S.taken[el.dataset.toggle]; if (t) dbUpdate("taken", t.id, { status: el.checked ? "done" : "todo" }).catch(() => { }); }
+  if (el.dataset.toggle) { const t = S.taken[el.dataset.toggle]; if (t) { if (el.checked && t.status !== "done") vierTaak(t, el); dbUpdate("taken", t.id, { status: el.checked ? "done" : "todo" }).catch(() => { }); } }
   if (el.dataset.kt && el.type === "date") { const cur = ktOf(el.dataset.pid, Number(el.dataset.kt)); if ((cur?.[el.dataset.f] || "") !== el.value) ktSave(el.dataset.pid, Number(el.dataset.kt), { [el.dataset.f]: el.value || null }); return; }
   if (el.dataset.ttoggle) { const t = S.taken[el.dataset.ttoggle]; if (t) dbUpdate("taken", t.id, { timing_klant: el.checked }).then(() => toast(el.checked ? "Timing van deze taak staat in de klantplanning" : "Timing niet meer gedeeld")).catch(() => { }); return; }
   if (el.dataset.ktoggle) { const t = S.taken[el.dataset.ktoggle]; if (t) dbUpdate("taken", t.id, { uren_klant: el.checked }).then(() => toast(el.checked ? "Uren van deze taak zijn zichtbaar voor de klant" : "Uren verborgen voor de klant")).catch(() => { }); }

@@ -460,6 +460,44 @@
   .rend .v { font-family: var(--font-display); font-weight: 700; font-size: 20px; letter-spacing: -.02em; margin-top: 2px; font-variant-numeric: tabular-nums; }
   .rend .v.neg { color: var(--crit); } .rend .v.pos { color: var(--ok); }
   /* laadscherm: BROS-logo dat volloopt */
+  /* Afvinken: vinkje, deeltjes, voortgangschip, mijlpaal en dagring (app.js FX) */
+  #fxLayer { position: fixed; inset: 0; pointer-events: none; z-index: 70; }
+  .fx-ring { position: absolute; width: 12px; height: 12px; margin: -6px 0 0 -6px; border-radius: 50%; border: 2px solid var(--ok); animation: fxring .6s cubic-bezier(.2,.7,.3,1) forwards; }
+  .fx-ring.groot { border-color: var(--accent); animation-duration: .75s; }
+  @keyframes fxring { from { transform: scale(.5); opacity: .9; } to { transform: scale(3.4); opacity: 0; } }
+  .fx-check { position: absolute; width: 28px; height: 28px; margin: -14px 0 0 -14px; overflow: visible; fill: none; stroke: var(--ok); stroke-width: 2.8; stroke-linecap: round; stroke-linejoin: round; stroke-dasharray: 21; stroke-dashoffset: 21; animation: fxcheck .3s cubic-bezier(.3,.7,.3,1) forwards, fxfade .35s .55s ease-in forwards; }
+  @keyframes fxcheck { to { stroke-dashoffset: 0; } }
+  @keyframes fxfade { to { opacity: 0; transform: scale(1.18); } }
+  .fx-dot { position: absolute; width: 5px; height: 5px; margin: -2.5px 0 0 -2.5px; border-radius: 50%; background: var(--ok); animation: fxdot .7s cubic-bezier(.15,.7,.3,1) forwards; }
+  .fx-dot.alt { background: var(--accent); }
+  @keyframes fxdot { from { transform: translate(0,0) scale(1); opacity: 1; } to { transform: translate(var(--dx),var(--dy)) scale(.3); opacity: 0; } }
+  .fx-chip { position: absolute; padding: 6px 12px; border-radius: 999px; background: var(--ink); color: var(--ground); font-size: 12.5px; line-height: 1.3; white-space: nowrap; box-shadow: 0 8px 24px rgba(0,0,0,.18); animation: fxchip .35s cubic-bezier(.2,.8,.2,1); transition: opacity .5s, transform .5s; }
+  .fx-chip b { font-variant-numeric: tabular-nums; font-weight: 650; }
+  .fx-chip.weg { opacity: 0; transform: translateY(-8px); }
+  @keyframes fxchip { from { opacity: 0; transform: translateY(6px) scale(.96); } }
+  .fx-mijl { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; padding: 16px; pointer-events: auto; cursor: pointer; background: color-mix(in srgb, var(--ground) 45%, transparent); opacity: 0; transition: opacity .3s; }
+  .fx-mijl.in { opacity: 1; } .fx-mijl.uit { opacity: 0; }
+  .fx-mijl .kaart { background: var(--surface); border-radius: 18px; padding: 26px 34px 22px; min-width: min(280px, 100%); text-align: center; box-shadow: 0 24px 70px rgba(0,0,0,.2); transform: scale(.94) translateY(6px); transition: transform .5s cubic-bezier(.2,.9,.25,1.25); }
+  .fx-mijl.in .kaart { transform: none; }
+  .fx-mijl .logo { position: relative; width: 170px; aspect-ratio: 969.97 / 292.17; margin: 0 auto 16px; }
+  .fx-mijl .logo i { position: absolute; inset: 0; display: block; -webkit-mask: url(logo-mark.svg) no-repeat center / contain; mask: url(logo-mark.svg) no-repeat center / contain; }
+  .fx-mijl .logo .base { background: var(--line-2); }
+  .fx-mijl .logo .fill { background: var(--ok); clip-path: inset(0 100% 0 0); }
+  .fx-mijl.in .logo .fill { animation: fxlogo 1.1s .15s cubic-bezier(.55,0,.2,1) forwards; }
+  @keyframes fxlogo { to { clip-path: inset(0 0 0 0); } }
+  .fx-mijl .t { font-family: var(--font-display); font-weight: 700; font-size: 19px; }
+  .fx-mijl .s { color: var(--muted); font-size: 13px; margin-top: 4px; }
+  .fx-mijl.rustig .kaart { transform: none; transition: none; }
+  .fx-mijl.rustig .logo .fill { clip-path: none; animation: none; }
+  .dagring { display: inline-flex; align-items: center; gap: 5px; padding: 3px 8px 3px 4px; margin-right: 4px; background: none; border: 0; border-radius: 999px; cursor: pointer; color: var(--muted); font: inherit; font-size: 12px; font-variant-numeric: tabular-nums; }
+  .dagring:hover { background: var(--surface-2); color: var(--ink); }
+  .dagring svg { width: 22px; height: 22px; transform: rotate(-90deg); }
+  .dagring circle { fill: none; stroke-width: 3; }
+  .dagring .bg { stroke: var(--line-2); }
+  .dagring .fg { stroke: var(--ok); stroke-linecap: round; stroke-dasharray: var(--c); stroke-dashoffset: var(--naar); animation: ringvul .9s cubic-bezier(.2,.8,.2,1); }
+  @keyframes ringvul { from { stroke-dashoffset: var(--van); } to { stroke-dashoffset: var(--naar); } }
+  .dagring.vol span { color: var(--ok); font-weight: 650; }
+  @media (prefers-reduced-motion: reduce) { .fx-chip { animation: none; transition: opacity .3s; } .fx-chip.weg { transform: none; } .dagring .fg { animation: none; } }
   .loader { position: fixed; inset: 0; z-index: 60; display: none; align-items: center; justify-content: center; flex-direction: column; gap: 18px; background: color-mix(in srgb, var(--ground) 88%, transparent); backdrop-filter: blur(3px); }
   .loader.show { display: flex; }
   .loader .logo { position: relative; width: min(280px, 60vw); aspect-ratio: 969.97 / 292.17; }
@@ -476,11 +514,11 @@
 <div class="toast" id="toast" role="status"></div>
 <div class="loader" id="loader" aria-live="polite"><div class="logo"><i class="base"></i><i class="fill" id="loaderFill"></i></div><div class="pct" id="loaderPct">0%</div><div class="msg" id="loaderMsg">Even geduld…</div></div>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.45.4/dist/umd/supabase.min.js"></script>
-<script src="config.js?v=1.25.2"></script>
+<script src="config.js?v=1.26.0"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
-<script src="postcodes.js?v=1.25.2"></script>
-<script src="meetstaat-export.js?v=1.25.2"></script>
-<script src="meetstaat-import.js?v=1.25.2"></script>
-<script src="app.js?v=1.25.2"></script>
+<script src="postcodes.js?v=1.26.0"></script>
+<script src="meetstaat-export.js?v=1.26.0"></script>
+<script src="meetstaat-import.js?v=1.26.0"></script>
+<script src="app.js?v=1.26.0"></script>
 </body>
 </html>

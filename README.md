@@ -154,6 +154,11 @@ Zet je bij een bestand de schakelaar *klant* of *aannemers* aan, dan krijgt de b
 
 GSM- en telefoonnummers worden overal in één formaat bewaard: `+32/471.93.06.33` (mobiel), `+32/3.123.45.67` of `+32/16.12.34.56` (vast), `+31/612.34.56.78` (buitenland). De databasefunctie `tel_format()` doet dat via een trigger op `contacten` (gsm, tel) en `projecten` (gsm1, gsm2), dus ook bij import; het Planbord zet het veld al om zodra je het verlaat. Script 026 zet de bestaande nummers eenmalig om.
 
+## Afvinken en dagring (v1.26)
+- Taak afvinken (takenlijsten, of status *Klaar* in het taakformulier): vinkje met puls en een chip *x van y* voor de fase (of het project); ongeveer één keer op zeven net iets uitbundiger. Laatste taak van een fase of van een project: kort mijlpaalmoment met het BROS-logo dat volloopt (klik om weg te klikken).
+- Uren invullen voor jezelf, vandaag: de **dagring** in de kopbalk loopt vol; chip *+2 u · 6 van 8 u vandaag*. Haal je je dagdoel, dan één keer per dag een mijlpaal.
+- Klik op de dagring: je uren van vandaag per project, je **dagdoel**, *Animaties* aan/uit en *Zacht geluid* (standaard uit). Die voorkeuren gelden per browser. Met 'Minder beweging' in macOS/iOS blijft enkel een rustige versie over.
+
 ## Sleutels (v1.25.1)
 - Het Planbord, de portalen en de werfmodus gebruiken de **publishable key** (`sb_publishable_…`) in `config.js`; die is publiek.
 - Het Drive-script heeft **geen geheimen in de code**. Ze staan in de **Scripteigenschappen** van het Apps Script-project (tandwiel *Projectinstellingen* → *Scripteigenschappen*): `SERVICE_KEY` (de secret key van Supabase, `sb_secret_…`, zelf in te vullen), `DRIVE_SECRET` en `BOT_PASSWORD` (allebei gezet door `sleutelsInstellen()`). Een nieuwe versie van het script plakken wist ze dus niet; `Code.ingevuld.gs` bevat enkel map-ID's, URL's en adressen.
