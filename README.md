@@ -156,8 +156,10 @@ GSM- en telefoonnummers worden overal in één formaat bewaard: `+32/471.93.06.3
 
 ## Sleutels (v1.25.1)
 - Het Planbord, de portalen en de werfmodus gebruiken de **publishable key** (`sb_publishable_…`) in `config.js`; die is publiek.
-- Het Drive-script gebruikt in `Code.ingevuld.gs` (nooit in git) een **secret key** (`sb_secret_…`, Supabase → Project Settings → API Keys → Secret keys) als `PORTAAL.SERVICE_KEY`, en de publishable key als `YUKI.PLANBORD_KEY`. De Edge Function `assistent` leest de sleutels uit `SUPABASE_PUBLISHABLE_KEYS` / `SUPABASE_SECRET_KEYS` (automatisch aanwezig). De legacy anon/service_role-JWT's kunnen dus uitgeschakeld blijven (API Keys → *Disable JWT-based API keys*).
-- Lekt een sleutel (bv. een melding van GitGuardian), maak dan een nieuwe secret key, schakel de oude uit, zet de nieuwe in `Code.ingevuld.gs` en deploy; vernieuw ook `CONFIG.SECRET` (zelfde waarde in Instellingen → Drive) en het bot-wachtwoord (`botWachtwoordVernieuwen()` in de scripteditor → Logboek → `YUKI.BOT_PASSWORD`). `.gitignore` sluit `*.ingevuld.*` en `*.bak` uit; maak nooit kopieën van `Code.ingevuld.gs` in de projectmap.
+- Het Drive-script heeft **geen geheimen in de code**. Ze staan in de **Scripteigenschappen** van het Apps Script-project (tandwiel *Projectinstellingen* → *Scripteigenschappen*): `SERVICE_KEY` (de secret key van Supabase, `sb_secret_…`, zelf in te vullen), `DRIVE_SECRET` en `BOT_PASSWORD` (allebei gezet door `sleutelsInstellen()`). Een nieuwe versie van het script plakken wist ze dus niet; `Code.ingevuld.gs` bevat enkel map-ID's, URL's en adressen.
+- `sleutelsInstellen()` (in de editor uitvoeren): test de secret key, maakt een nieuw Drive-secret en zet het ook in het Planbord (Instellingen → Drive), geeft de bot-login een nieuw wachtwoord en test die. Niets geheims komt in het Logboek. Daarna een nieuwe versie deployen.
+- De Edge Function `assistent` leest de sleutels uit `SUPABASE_PUBLISHABLE_KEYS` / `SUPABASE_SECRET_KEYS` (automatisch aanwezig). De legacy anon/service_role-JWT's blijven uitgeschakeld.
+- **Bij een lek**: nieuwe secret key maken in Supabase en de oude verwijderen → `SERVICE_KEY` in de Scripteigenschappen vervangen → `sleutelsInstellen()` → deployen. `.gitignore` sluit `*.ingevuld.*` en `*.bak` uit.
 
 ## Beveiliging en robuustheid (script 022, v1.22)
 

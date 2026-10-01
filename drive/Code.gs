@@ -4,13 +4,24 @@
  *
  * Installatie (eenmalig):
  *  1. Log in als brosburo@gmail.com op https://script.google.com → Nieuw project → plak dit bestand.
- *  2. Vul CONFIG in: een zelfgekozen SECRET, en de map-ID's (het deel van de URL na /folders/).
+ *  2. Vul de map-ID's in CONFIG in (het deel van de URL na /folders/) en de rest van YUKI en PORTAAL (geen geheimen).
  *  3. Deploy → New deployment → type "Web app" → Execute as: Me → Who has access: Anyone → Deploy.
- *     Kopieer de "Web app URL" en zet die samen met de SECRET in het Planbord onder Instellingen → Drive.
+ *     Kopieer de "Web app URL" naar het Planbord onder Instellingen → Drive.
+ *  4. Geheimen staan NIET in deze code maar in de Scripteigenschappen (tandwiel "Projectinstellingen" → Scripteigenschappen):
+ *     zet daar SERVICE_KEY = de secret key van Supabase (sb_secret_…) en voer dan één keer sleutelsInstellen() uit.
+ *     Die maakt zelf een nieuw Drive-secret (en zet het ook in het Planbord) en een nieuw wachtwoord voor de bot-login.
+ *     Een nieuwe versie van dit script plakken wist de geheimen dus niet meer.
  *  Bij een latere wijziging aan dit script: Deploy → Manage deployments → potlood → Version: New → Deploy.
  */
+/* ---- Geheimen: uit de Scripteigenschappen, nooit in de code (en dus nooit in git) ---- */
+let _geheimen = null;
+function geheim(naam) {
+  if (!_geheimen) _geheimen = PropertiesService.getScriptProperties().getProperties();
+  return String(_geheimen[naam] || "").trim();
+}
+function willekeurig() { return (Utilities.getUuid() + Utilities.getUuid()).replace(/-/g, ""); }   // 64 tekens, cryptografisch willekeurig
 const CONFIG = {
-  SECRET: "VUL-IN",                 // zelf kiezen, bv. een lange willekeurige tekst
+  get SECRET() { return geheim("DRIVE_SECRET"); },   // scripteigenschap, gezet door sleutelsInstellen() (zelfde waarde staat in Planbord → Instellingen → Drive)
   PROJECTEN_FOLDER_ID: "VUL-IN",    // map BROS/PROJECTEN
   SJABLOON_FOLDER_ID: "VUL-IN",     // map BROS/PROJECTEN/A SJABLOON
 };
@@ -234,7 +245,7 @@ const YUKI = {
   PLANBORD_URL: "VUL-IN",          // Supabase Project URL, bv. https://xxxx.supabase.co
   PLANBORD_KEY: "VUL-IN",          // publishable/anon key (zelfde als in config.js)
   BOT_EMAIL: "VUL-IN",             // Planbord-gebruiker voor de koppeling (bv. planbord-bot@bros.be)
-  BOT_PASSWORD: "VUL-IN",
+  get BOT_PASSWORD() { return geheim("BOT_PASSWORD"); },   // scripteigenschap, gezet door sleutelsInstellen()
   REPORT_TO: "info@bros.be",       // samenvatting na elke run met resultaat
   QUERY: 'subject:"Factuur van BROS" newer_than:60d -label:planbord-verwerkt -label:planbord-te-bekijken',   // Yuki verstuurt "namens" accounting@bros.be via yukiworks.be
   LABEL: "Planbord/verwerkt",
@@ -243,13 +254,12 @@ const YUKI = {
 };
 /* =====================================================================
    Klantenportaal — uitnodigen en bestanden delen (vanuit het Planbord, actie "invite" en "share")
-   Vereist PORTAAL.SERVICE_KEY: Supabase → Project Settings → API Keys → Secret keys → een sb_secret_…-key (de oude
-   service_role-JWT werkt ook zolang de legacy keys aanstaan). Die sleutel mag
-   ALLEEN hier staan (Code.ingevuld.gs, buiten git) — nooit in de app of in config.js.
+   Vereist de scripteigenschap SERVICE_KEY: Supabase → Project Settings → API Keys → Secret keys → een sb_secret_…-key.
+   Die sleutel staat ALLEEN in de Scripteigenschappen van dit script — nooit in de code, de app of config.js.
    De uitnodigingsmail vertrekt uit de Gmail van het script (brosburo@gmail.com), zodat er geen SMTP-instelling nodig is.
    ===================================================================== */
 const PORTAAL = {
-  SERVICE_KEY: "VUL-IN",
+  get SERVICE_KEY() { return geheim("SERVICE_KEY"); },   // scripteigenschap: de secret key van Supabase (sb_secret_…), zelf in te vullen
   URL: "https://brosinterior.github.io/BROS-planbord/klant/",   // ook toevoegen bij Supabase → Authentication → URL Configuration → Redirect URLs
   URL_AANNEMER: "https://brosinterior.github.io/BROS-planbord/aannemer/",   // aannemersportaal — idem bij Redirect URLs
   AFZENDER: "BROS",
@@ -265,7 +275,7 @@ function portaalMail(to, subject, text, html) {
 /** Controle: welke afzenders kan dit account gebruiken? (Uitvoeren in de editor → Logboek.) */
 function portaalAliassen() { Logger.log("Aliassen van " + Session.getActiveUser().getEmail() + ": " + JSON.stringify(GmailApp.getAliases()) + " — PORTAAL.VAN = " + PORTAAL.VAN); }
 function pbAdmin(path, method, body) {
-  if (!PORTAAL.SERVICE_KEY || PORTAAL.SERVICE_KEY === "VUL-IN") throw new Error("PORTAAL.SERVICE_KEY is niet ingevuld in het Drive-script.");
+  if (!PORTAAL.SERVICE_KEY) throw new Error("De secret key van Supabase ontbreekt: zet ze als scripteigenschap SERVICE_KEY (Projectinstellingen → Scripteigenschappen).");
   const headers = { apikey: PORTAAL.SERVICE_KEY };
   if (PORTAAL.SERVICE_KEY.indexOf("sb_") !== 0) headers.Authorization = "Bearer " + PORTAAL.SERVICE_KEY;   // enkel de oude service_role-JWT hoort ook als Bearer; een sb_secret_-key niet
   const opt = { method: method || "get", contentType: "application/json", headers: headers, muteHttpExceptions: true };
@@ -674,16 +684,34 @@ function portaalShare(body) {
   return { ok: true };
 }
 
-/** Nieuw wachtwoord voor de bot-login (YUKI.BOT_EMAIL) zetten en een eventuele ban opheffen — uitvoeren in de editor (vereist PORTAAL.SERVICE_KEY).
- *  Het nieuwe wachtwoord staat daarna eenmalig in het Logboek: kopieer het naar YUKI.BOT_PASSWORD, bewaar en deploy opnieuw. */
+/** Eénmalig (en na elk lek) uitvoeren in de editor, nadat de scripteigenschap SERVICE_KEY gezet is:
+ *  test de secret key, maakt een nieuw Drive-secret (scripteigenschap + Planbord → Instellingen → Drive) en een nieuw
+ *  bot-wachtwoord (scripteigenschap + Supabase), en test de bot-login. Niets geheims komt in het Logboek.
+ *  Daarna: Implementeren → Implementaties beheren → potlood → Nieuwe versie. */
+function sleutelsInstellen() {
+  if (!geheim("SERVICE_KEY")) throw new Error("Zet eerst de secret key van Supabase als scripteigenschap: tandwiel 'Projectinstellingen' (links) → onderaan 'Scripteigenschappen' → 'Scripteigenschap toevoegen' → naam SERVICE_KEY, waarde sb_secret_… → Opslaan. Voer daarna sleutelsInstellen opnieuw uit.");
+  if (geheim("SERVICE_KEY").indexOf("sb_secret_") !== 0) Logger.log("Let op: SERVICE_KEY begint niet met sb_secret_ — is het wel de secret key?");
+  pbAdmin("/rest/v1/instellingen?key=eq.app&select=key", "get");   // secret key werkt?
+  Logger.log("1/3 Secret key van Supabase werkt.");
+  const secret = willekeurig(); const nu = new Date().toISOString();
+  const cur = (pbAdmin("/rest/v1/instellingen?key=eq.drive&select=value", "get") || [])[0];
+  const value = Object.assign({}, (cur && cur.value) || {}, { secret: secret });
+  if (cur) pbAdmin("/rest/v1/instellingen?key=eq.drive", "patch", { value: value, updated_at: nu });
+  else pbAdmin("/rest/v1/instellingen", "post", { key: "drive", value: value, updated_at: nu });
+  PropertiesService.getScriptProperties().setProperty("DRIVE_SECRET", secret); _geheimen = null;
+  Logger.log("2/3 Nieuw Drive-secret bewaard in het script en in het Planbord (Instellingen → Drive)" + (value.url ? "." : " — vul daar nog de Web app-URL in."));
+  botWachtwoordVernieuwen(); pbLogin();
+  Logger.log("3/3 Nieuw wachtwoord voor de bot-login " + YUKI.BOT_EMAIL + " gezet en getest.\nKlaar. Nu nog: Implementeren → Implementaties beheren → potlood → Nieuwe versie → Implementeren. Wie het Planbord open heeft, herlaadt één keer.");
+}
+/** Nieuw wachtwoord voor de bot-login (YUKI.BOT_EMAIL): in Supabase en als scripteigenschap BOT_PASSWORD; heft een eventuele ban op.
+ *  Wordt aangeroepen door sleutelsInstellen(); het wachtwoord komt nergens in beeld. */
 function botWachtwoordVernieuwen() {
   const email = String(YUKI.BOT_EMAIL || "").trim().toLowerCase(); if (!email || email === "vul-in") throw new Error("YUKI.BOT_EMAIL is niet ingevuld.");
   const users = pbAdmin("/auth/v1/admin/users?page=1&per_page=1000", "get"); const lijst = (users && users.users) || users || [];
   const u = lijst.find(x => String(x.email || "").toLowerCase() === email); if (!u) throw new Error("Geen login gevonden voor " + email);
-  const tekens = "abcdefghijkmnopqrstuvwxyzABCDEFGHJKLMNPQRSTUVWXYZ23456789"; let pw = "";
-  for (let i = 0; i < 28; i++) pw += tekens.charAt(Math.floor(Math.random() * tekens.length));
+  const pw = willekeurig();
   pbAdmin("/auth/v1/admin/users/" + u.id, "put", { password: pw, ban_duration: "none" });
-  Logger.log("Nieuw wachtwoord voor " + email + " (ban opgeheven). Zet dit in YUKI.BOT_PASSWORD, bewaar en deploy:\n" + pw);
+  PropertiesService.getScriptProperties().setProperty("BOT_PASSWORD", pw); _geheimen = null;
 }
 function yukiInstall() {
   GmailApp.createLabel(YUKI.LABEL); GmailApp.createLabel(YUKI.LABEL_CHECK);
