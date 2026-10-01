@@ -2,7 +2,7 @@
    BROS Planbord — app v1.0
    Statische webapp op Supabase (login, live-synchronisatie, rechten)
    ===================================================================== */
-const APP_VERSION = "1.26.1";
+const APP_VERSION = "1.27.0";
 const PROJ_STATUS = { offerte: "In offerte", lopend: "Lopend", on_hold: "On hold", afgerond: "Afgerond", verloren: "Verloren" };
 const KLANTTYPE = { particulier: "Particulier", zakelijk: "Zakelijk" };
 const KLANTCODE = { particulier: "PAR", zakelijk: "ZAK" };
@@ -1629,23 +1629,50 @@ function vordForm(pid, soort) {
   const nextNr = soort === "voorschot" ? 0 : Math.max(0, ...vs.map(v => v.nr)) + 1;
   const isVoorschot = soort === "voorschot", isSlot = soort === "slotfactuur";
   const restLot = (l, srt) => { const base = vordBase(basis, l, srt); const inv = vs.reduce((s, v) => s + ((v.soort === "meerwerk") === (srt === "meerwerk") ? (calcs[v.id].perLot[l]?.excl || 0) : 0), 0); return base - inv; };
+  /* per post invullen (vordering en meerwerk): alle posten in één tabel, per lot een veld 'alle', live totaal */
+  const perPost = !isVoorschot && !isSlot;
+  const pf = (x) => nl(Math.round(x * 10000) / 100, 2) + " %";
+  const rowsAll = perPost ? vordRows(pid, soort).filter(r => Math.abs(rowSigned(r)) > 0.005) : [];
+  const ppHtml = !perPost ? "" : `<div class="field span2 pp-wrap" hidden>
+      <div class="pp-modus"><span class="muted">Wat typ je in?</span>
+        <label class="chk"><input type="radio" name="pp_modus" value="factuur" checked> <span>% van de post <b>in deze factuur</b></span></label>
+        <label class="chk"><input type="radio" name="pp_modus" value="totaal"> <span>% <b>klaar in totaal</b> (stand van de werken)</span></label></div>
+      <div class="tw pp-tw"><table class="t pp"><thead><tr><th>Post</th><th class="r">Bedrag</th><th class="r">Al gefactureerd</th><th class="r" id="pp_kop">Deze factuur</th><th class="r">Excl. btw</th></tr></thead>
+      ${lots.map(l => { const rs = rowsAll.filter(r => r.lot === l); if (!rs.length) return "";
+        return `<tbody><tr class="pp-lot"><td><b>${esc(lotName(l))}</b> <small class="muted">${rs.length} post${rs.length === 1 ? "" : "en"}</small></td><td class="r num">${eur2(rs.reduce((t, r) => t + rowSigned(r), 0))}</td><td></td><td class="r" style="white-space:nowrap"><input class="inline num pp-all" data-pplot="${l}" inputmode="decimal" autocomplete="off" placeholder="alle" title="Zelfde % voor alle posten van dit lot"> %</td><td class="r num" data-pplotsum="${l}">—</td></tr>`
+          + rs.map(r => { const amt = rowSigned(r), cum = cumPost(pid, calcs, r), dicht = 1 - cum < 1e-6;
+            return `<tr class="${dicht ? "pp-dicht" : ""}"><td><span class="muted num" style="font-size:11px">${esc(r.code || "")}</span> ${esc(r.omschrijving)}${r.locatie ? ` <small class="muted">· ${esc(r.locatie)}</small>` : ""}</td><td class="r num">${eur2(amt)}</td><td class="r num muted">${cum > 1e-6 ? pf(cum) : "—"}</td><td class="r" style="white-space:nowrap"><input class="inline num pp-in" name="pp_${r.id}" data-pp="${r.id}" data-lot="${l}" data-amt="${amt}" data-cum="${cum}" inputmode="decimal" autocomplete="off" ${dicht ? `disabled title="Volledig gefactureerd"` : ""}> %</td><td class="r num" data-ppeur="${r.id}">—</td></tr>`; }).join("") + `</tbody>`; }).join("")}
+      <tfoot><tr><td><b>Totaal deze factuur</b></td><td></td><td></td><td></td><td class="r num"><b id="pp_tot">—</b></td></tr></tfoot></table></div>
+      <small class="muted">Tab of Enter springt naar de volgende post. Een veld 'alle' in de lotrij vult elke post van dat lot. Rood = meer dan wat nog openstaat (of, bij 'klaar in totaal', minder dan wat al gefactureerd is).</small></div>`;
   openModal({ voorschot: "Voorschotfactuur", vordering: "Nieuwe vordering", slotfactuur: "Slotfactuur", meerwerk: "Meerwerkfactuur" }[soort] + " — " + p.klant, `<div class="form-grid">
       <div class="field"><label for="vo_oms">Omschrijving</label><input id="vo_oms" name="omschrijving" value="${esc(isVoorschot ? "Voorschot bij ondertekening" : isSlot ? "Slotfactuur bij oplevering" : "")}" placeholder="bv. Afwerking lot 8 en 9"></div>
       <div class="field"><label for="vo_datum">Datum</label><input id="vo_datum" name="datum" type="date" value="${todayIso}"></div>
       ${isVoorschot ? `<div class="field"><label for="vo_pct">Voorschot % op het contract</label><input id="vo_pct" name="pct" type="number" step="any" min="0" max="100" value="30"></div><div class="field"><label>Contract excl. btw</label><div class="num" style="padding:8px 0">${eur(lots.reduce((s, l) => s + basis[l].offerte, 0))}</div></div>`
       : isSlot ? `<div class="field span2"><p class="muted" style="margin:0">Alles wat nog openstaat wordt gefactureerd: per post het resterende % op het contract${lots.some(l => basis[l].meerwerk) ? " (meerwerk factureer je apart via + Meerwerkfactuur)" : ""}. Nog open: <b>${eur(lots.reduce((s, l) => s + restLot(l, "vordering"), 0))}</b> excl. btw.</p></div>`
-      : `<div class="field span2"><label>Loten die je nu factureert — het resterende % wordt voorgesteld (of vul hieronder een bedrag in); daarna per lot of per post aanpasbaar in de tabel</label><div class="fase-list">${lots.map(l => { const rest = restLot(l, soort); const base = vordBase(basis, l, soort); return `<label class="chk"><input type="checkbox" name="lot" value="${l}" ${Math.abs(rest) <= 0.005 ? "disabled" : ""}> <span>${esc(lotName(l))}<small class="muted" style="display:block">rest ${base ? nl(rest / base * 100, 0) : 0} % · ${eur(rest)}</small></span></label>`; }).join("")}</div></div>`}
-      ${isSlot ? "" : `<div class="field span2"><label for="vo_bedrag">${isVoorschot ? "Of een bedrag excl. btw" : "Bedrag excl. btw (optioneel)"}</label><input id="vo_bedrag" name="bedrag" type="number" step="any" min="0" placeholder="${isVoorschot ? "leeg = het % hierboven" : "leeg = het resterende % van de gekozen loten"}" style="max-width:220px"><small class="muted" style="display:block;margin-top:4px">Vul je een bedrag in — bv. een factuur die al verstuurd is — dan worden de percentages zo berekend dat deze vordering precies op dat bedrag uitkomt en wordt het van de rest afgehouden.</small></div>`}
+      : `<div class="field span2 vo-keuze"><div class="seg-row"><button type="button" class="btn sm primary" data-vomode="lot">Per lot</button><button type="button" class="btn sm" data-vomode="post">Per post</button></div></div>${ppHtml}<div class="field span2 vo-lot"><label>Loten die je nu factureert — het resterende % wordt voorgesteld (of vul hieronder een bedrag in); daarna per lot of per post aanpasbaar in de tabel</label><div class="fase-list">${lots.map(l => { const rest = restLot(l, soort); const base = vordBase(basis, l, soort); return `<label class="chk"><input type="checkbox" name="lot" value="${l}" ${Math.abs(rest) <= 0.005 ? "disabled" : ""}> <span>${esc(lotName(l))}<small class="muted" style="display:block">rest ${base ? nl(rest / base * 100, 0) : 0} % · ${eur(rest)}</small></span></label>`; }).join("")}</div></div>`}
+      ${isSlot ? "" : `<div class="field span2 vo-lot"><label for="vo_bedrag">${isVoorschot ? "Of een bedrag excl. btw" : "Bedrag excl. btw (optioneel)"}</label><input id="vo_bedrag" name="bedrag" type="number" step="any" min="0" placeholder="${isVoorschot ? "leeg = het % hierboven" : "leeg = het resterende % van de gekozen loten"}" style="max-width:220px"><small class="muted" style="display:block;margin-top:4px">Vul je een bedrag in — bv. een factuur die al verstuurd is — dan worden de percentages zo berekend dat deze vordering precies op dat bedrag uitkomt en wordt het van de rest afgehouden.</small></div>`}
     </div>`, {
     saveLabel: "Aanmaken", wide: !isVoorschot,
     onSave: async (d) => {
+      const f = $("#mform"); const modusPost = perPost && f.dataset.mode === "post";
+      let regels, bedrag = null, fitMsg = "";
+      if (modusPost) {
+        const per = {}; let fout = 0;
+        f.querySelectorAll(".pp-in").forEach(inp => { const x = ppInc(inp); if (!x) return; if (ppBad(inp, x)) { fout++; return; } (per[inp.dataset.lot] = per[inp.dataset.lot] || []).push({ id: inp.dataset.pp, pct: x }); });
+        if (fout) { toast(`${fout} post${fout > 1 ? "en hebben" : " heeft"} een ongeldig percentage (in het rood).`, 6000); return false; }
+        regels = [];
+        Object.entries(per).forEach(([l, arr]) => { const lot = Number(l), alle = rowsAll.filter(r => r.lot === lot);
+          if (arr.length === alle.length && arr.every(a => Math.abs(a.pct - arr[0].pct) < 1e-9)) regels.push({ lot, post_id: null, pct: arr[0].pct });   // overal hetzelfde: één lot-%
+          else arr.forEach(a => regels.push({ lot, post_id: a.id, pct: a.pct })); });
+        if (!regels.length) { toast("Vul bij minstens één post een percentage in."); return false; }
+      } else {
       const sel = isVoorschot || isSlot ? lots : [...$("#mform").querySelectorAll('input[name="lot"]:checked')].map(i => Number(i.value));
       if (!sel.length) { toast("Kies minstens één lot."); return false; }
-      let regels = isVoorschot ? sel.map(l => ({ lot: l, post_id: null, pct: (Number(d.pct) || 0) / 100 })) : restRegels(pid, isSlot ? "vordering" : soort, sel, calcs);
+      regels = isVoorschot ? sel.map(l => ({ lot: l, post_id: null, pct: (Number(d.pct) || 0) / 100 })) : restRegels(pid, isSlot ? "vordering" : soort, sel, calcs);
       if (!regels.length) { toast("Er staat niets meer open voor deze loten."); return false; }
-      const bedrag = d.bedrag == null || String(d.bedrag).trim() === "" ? null : Number(String(d.bedrag).replace(",", "."));
-      let fitMsg = "";
+      bedrag = d.bedrag == null || String(d.bedrag).trim() === "" ? null : Number(String(d.bedrag).replace(",", "."));
       if (bedrag != null && !isSlot) { if (!(bedrag > 0)) { toast("Vul een bedrag groter dan 0 in, of laat het veld leeg."); return false; } const fit = fitRegels(pid, soort, regels, bedrag, calcs); regels = fit.regels; if (Math.abs(fit.tekort) > 0.5) fitMsg = ` — let op: ${eur(fit.tekort)} meer dan er nog openstaat voor deze loten; percentages op het maximum gezet`; else fitMsg = ` — percentages afgeleid uit ${eur(bedrag)}`; }
+      }
       const { data: v, error } = await sb.from("vorderingen").insert({ project_id: pid, nr: nextNr, soort, omschrijving: d.omschrijving.trim(), datum: d.datum || null, status: "opgemaakt", bedrag_excl: bedrag }).select().single();
       if (error) { toast("Mislukt: " + error.message); return false; }
       S.vorderingen[v.id] = v;
@@ -1654,7 +1681,31 @@ function vordForm(pid, soort) {
       render(); toast(`${VORD_SOORT[soort]} aangemaakt${fitMsg}`);
     },
   });
+  if (!perPost) return;
+  const f = $("#mform"); f.dataset.mode = "lot";
+  const modus = () => f.querySelector('[name="pp_modus"]:checked').value;
+  const parse = (v) => { const t = String(v || "").replace(",", ".").replace("%", "").trim(); if (!t) return null; const x = Number(t); return isFinite(x) ? x / 100 : NaN; };
+  const ins = [...f.querySelectorAll(".pp-in")]; const eurCel = {}; f.querySelectorAll("[data-ppeur]").forEach(td => eurCel[td.dataset.ppeur] = td);
+  ppInc = (inp) => { const v = parse(inp.value); if (v == null) return 0; if (isNaN(v)) return NaN; return modus() === "totaal" ? v - Number(inp.dataset.cum) : v; };
+  ppBad = (inp, x) => isNaN(x) || x < -1e-9 || x > Math.max(0, 1 - Number(inp.dataset.cum)) + 1e-6;
+  const recalc = () => { let tot = 0; const lotSum = {};
+    ins.forEach(inp => { const x = ppInc(inp), bad = !!inp.value.trim() && ppBad(inp, x); inp.classList.toggle("bad", bad); const e = !bad && x ? x * Number(inp.dataset.amt) : 0; eurCel[inp.dataset.pp].textContent = e ? eur2(e) : "—"; tot += e; lotSum[inp.dataset.lot] = (lotSum[inp.dataset.lot] || 0) + e; });
+    f.querySelectorAll("[data-pplotsum]").forEach(td => { const v = lotSum[td.dataset.pplotsum] || 0; td.textContent = v ? eur2(v) : "—"; }); $("#pp_tot").textContent = eur2(tot); };
+  f.addEventListener("input", (e) => { const t = e.target;
+    if (t.classList.contains("pp-all")) ins.filter(i => i.dataset.lot === t.dataset.pplot && !i.disabled).forEach(i => i.value = t.value);
+    if (t.classList.contains("pp-in") || t.classList.contains("pp-all")) recalc(); });
+  f.querySelectorAll('[name="pp_modus"]').forEach(rb => rb.addEventListener("change", () => {
+    const naarTotaal = modus() === "totaal"; $("#pp_kop").textContent = naarTotaal ? "Klaar in totaal" : "Deze factuur";
+    ins.forEach(i => { const v = parse(i.value); if (v == null || isNaN(v)) return; const n = naarTotaal ? v + Number(i.dataset.cum) : v - Number(i.dataset.cum); i.value = String(Math.round(n * 10000) / 100).replace(".", ","); });
+    f.querySelectorAll(".pp-all").forEach(a => a.value = ""); recalc(); }));
+  f.addEventListener("keydown", (e) => { if (e.key !== "Enter" || !e.target.matches(".pp-in,.pp-all")) return; e.preventDefault();
+    const alle = [...f.querySelectorAll(".pp-all,.pp-in")].filter(i => !i.disabled); const k = alle.indexOf(e.target); if (alle[k + 1]) { alle[k + 1].focus(); alle[k + 1].select(); } });
+  f.querySelectorAll("[data-vomode]").forEach(b => b.onclick = () => { const post = b.dataset.vomode === "post"; f.dataset.mode = post ? "post" : "lot";
+    f.querySelectorAll("[data-vomode]").forEach(x => x.classList.toggle("primary", x === b)); f.querySelectorAll(".vo-lot").forEach(x => x.hidden = post); f.querySelector(".pp-wrap").hidden = !post;
+    if (post) { const eerste = ins.find(i => !i.disabled); if (eerste) eerste.focus(); } });
+  recalc();
 }
+let ppInc = () => 0, ppBad = () => false;
 /* % wijzigen: op lot-niveau (post_id leeg → post-regels van dat lot worden gewist) of op post-niveau */
 async function vordEditPct(vid, lot, raw, postId) {
   const v = S.vorderingen[vid]; if (!v || vordLocked(v)) return;

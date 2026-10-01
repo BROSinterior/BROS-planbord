@@ -460,6 +460,19 @@
   .rend .v { font-family: var(--font-display); font-weight: 700; font-size: 20px; letter-spacing: -.02em; margin-top: 2px; font-variant-numeric: tabular-nums; }
   .rend .v.neg { color: var(--crit); } .rend .v.pos { color: var(--ok); }
   /* laadscherm: BROS-logo dat volloopt */
+  /* Nieuwe vordering — per post invullen */
+  .form-grid [hidden] { display: none !important; }
+  .seg-row { display: flex; gap: 6px; }
+  .pp-modus { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 16px; margin-bottom: 8px; font-size: 13px; }
+  .pp-tw { max-height: 52vh; overflow: auto; border: 1px solid var(--line); border-radius: 10px; }
+  .pp-tw thead th { position: sticky; top: 0; z-index: 1; background: var(--surface); }
+  .pp-tw tfoot td { position: sticky; bottom: 0; background: var(--surface); border-top: 1px solid var(--line-2); }
+  .pp .pp-lot td { background: var(--surface-2); }
+  .pp input.inline { width: 68px; text-align: right; padding: 4px 7px; border: 1px solid var(--line-2); border-radius: 7px; background: var(--surface); }
+  .pp input.inline:disabled { background: transparent; border-color: transparent; }
+  .pp input.pp-all { background: var(--surface-2); }
+  .pp input.bad { border-color: var(--crit); color: var(--crit); background: color-mix(in srgb, var(--crit) 8%, var(--surface)); }
+  .pp .pp-dicht td { opacity: .45; }
   /* Afvinken: vinkje, deeltjes, voortgangschip, mijlpaal en dagring (app.js FX) */
   #fxLayer { position: fixed; inset: 0; pointer-events: none; z-index: 70; }
   .fx-ring { position: absolute; width: 12px; height: 12px; margin: -6px 0 0 -6px; border-radius: 50%; border: 2px solid var(--ok); animation: fxring .6s cubic-bezier(.2,.7,.3,1) forwards; }
@@ -514,11 +527,11 @@
 <div class="toast" id="toast" role="status"></div>
 <div class="loader" id="loader" aria-live="polite"><div class="logo"><i class="base"></i><i class="fill" id="loaderFill"></i></div><div class="pct" id="loaderPct">0%</div><div class="msg" id="loaderMsg">Even geduld…</div></div>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.45.4/dist/umd/supabase.min.js"></script>
-<script src="config.js?v=1.26.1"></script>
+<script src="config.js?v=1.27.0"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
-<script src="postcodes.js?v=1.26.1"></script>
-<script src="meetstaat-export.js?v=1.26.1"></script>
-<script src="meetstaat-import.js?v=1.26.1"></script>
-<script src="app.js?v=1.26.1"></script>
+<script src="postcodes.js?v=1.27.0"></script>
+<script src="meetstaat-export.js?v=1.27.0"></script>
+<script src="meetstaat-import.js?v=1.27.0"></script>
+<script src="app.js?v=1.27.0"></script>
 </body>
 </html>
