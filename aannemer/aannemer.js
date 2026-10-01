@@ -3,7 +3,7 @@
    Leest uitsluitend de aan_*-views (databasescript 025): enkel de projecten en loten waaraan hij gekoppeld is,
    nooit prijzen van BROS of van andere aannemers. Schrijven gaat via functies (opgelost melden, prijzen, vragen).
    ===================================================================== */
-const PORTAAL_VERSION = "1.27.0";
+const PORTAAL_VERSION = "1.28.0";
 const todayLocal = () => { const n = new Date(); return `${n.getFullYear()}-${String(n.getMonth() + 1).padStart(2, "0")}-${String(n.getDate()).padStart(2, "0")}`; };
 const safeUrl = (u) => /^https?:\/\//i.test(String(u || "")) ? u : "#";
 const cfg = window.PLANBORD_CONFIG || {};
@@ -37,23 +37,24 @@ function toast(msg, ms = 3500) { const t = document.createElement("div"); t.clas
 /* ---------- gegevens ---------- */
 async function loadAll() {
   const q = (v, sel = "*", opt = false) => sb.from(v).select(sel).then(r => { if (r.error) { if (opt) return []; throw new Error(v + ": " + r.error.message); } return r.data || []; });
-  const [me, projecten, vs, plannen, verslagen, documenten, planning, planTaken, taken, aanvragen, aanvraagPosten, vragen, team, ik, fasen, loten, inst] = await Promise.all([
+  const [me, projecten, vs, plannen, verslagen, documenten, planning, planTaken, taken, aanvragen, aanvraagPosten, vragen, team, ik, meetstaat, fasen, loten, inst] = await Promise.all([
     sb.from("profiles").select("id,name,email,role").eq("id", S.session.user.id).maybeSingle().then(r => r.data),
     q("aan_project"), q("aan_vaststellingen"), q("aan_werfplannen"), q("aan_werfverslagen"), q("aan_documenten"), q("aan_planning"), q("aan_planning_taken"),
-    q("aan_taken"), q("aan_prijsaanvragen"), q("aan_prijsaanvraag_posten"), q("aan_vragen"), q("klant_team", "*", true), q("klant_ik", "*", true),
+    q("aan_taken"), q("aan_prijsaanvragen"), q("aan_prijsaanvraag_posten"), q("aan_vragen"), q("klant_team", "*", true), q("klant_ik", "*", true), q("aan_meetstaat", "*", true),
     q("fasen"), sb.from("loten_v").select("nr,naam").then(r => r.error ? [] : (r.data || [])),
     sb.from("instellingen").select("value").eq("key", "portaal").maybeSingle().then(r => r.data?.value || {}),
   ]);
   S.me = me;
   S.data = { projecten: projecten.sort((a, b) => (b.nummer || "").localeCompare(a.nummer || "")), vs: vs.sort((a, b) => (b.nr || 0) - (a.nr || 0)), plannen: plannen.sort((a, b) => (a.volgorde || 0) - (b.volgorde || 0)),
     verslagen: verslagen.sort((a, b) => (b.nr || 0) - (a.nr || 0)), documenten, planning, planTaken, taken, aanvragen: aanvragen.sort((a, b) => (b.created_at || "").localeCompare(a.created_at || "")), aanvraagPosten, vragen: vragen.sort((a, b) => (b.created_at || "").localeCompare(a.created_at || "")),
-    team, ik, fasen: fasen.filter(f => f.actief !== false).sort((a, b) => a.nr - b.nr), loten: Object.fromEntries(loten.map(l => [l.nr, l])), inst };
+    team, ik, meetstaat, fasen: fasen.filter(f => f.actief !== false).sort((a, b) => a.nr - b.nr), loten: Object.fromEntries(loten.map(l => [l.nr, l])), inst };
   if (!S.project || !projecten.some(p => p.id === S.project)) S.project = projecten[0]?.id || null;
   sb.rpc("portaal_bezoek").then(() => { });
 }
 const D = () => S.data;
 const P = () => D().projecten.find(p => p.id === S.project);
 const voornaam = () => { const n = (S.me?.name || D().ik[0]?.naam || "").trim(); return n.split(/\s+/)[0] || n; };
+const msOf = (pid) => D().meetstaat.filter(r => r.project_id === pid).sort((a, b) => a.lot - b.lot || (a.volgorde ?? 0) - (b.volgorde ?? 0) || String(a.code).localeCompare(String(b.code), "nl", { numeric: true }));
 const lotNaam = (nr) => D().loten[nr] ? `${nr}. ${D().loten[nr].naam}` : String(nr);
 const faseNaam = (nr) => D().fasen.find(f => f.nr === nr)?.naam || "";
 const vsOf = (pid) => D().vs.filter(v => v.project_id === pid);
@@ -91,11 +92,11 @@ function render() {
   const p = P(); const vs = vsOf(p.id);
   const nOpen = vs.filter(v => v.status === "open").length, nPa = D().aanvragen.filter(a => a.project_id === p.id && a.status === "open").length, nTk = D().taken.filter(t => t.project_id === p.id && !t.vaststelling_id && t.status !== "done").length;
   const badge = (n) => n ? ` <span class="badge">${n}</span>` : "";
-  const tabs = [["overzicht", "Overzicht"], ["werf", "Werfpunten" + badge(nOpen)], ["prijzen", "Prijsaanvragen" + badge(nPa)], ["plannen", "Plannen"], ["documenten", "Documenten"], ["planning", "Planning"], ["vragen", "Vragen" + badge(nTk)], ["team", "Wie is wie"]];
+  const tabs = [["overzicht", "Overzicht"], ["werf", "Werfpunten" + badge(nOpen)], ["prijzen", "Prijsaanvragen" + badge(nPa)], ...(msOf(p.id).length ? [["meetstaat", "Meetstaat"]] : []), ["plannen", "Plannen"], ["documenten", "Documenten"], ["planning", "Planning"], ["vragen", "Vragen" + badge(nTk)], ["team", "Wie is wie"]];
   $("#app").innerHTML = `<header class="top"><div class="top-in"><div class="brand"><span class="mark">BROS</span><span class="name">Aannemersportaal</span></div>
       <div class="who">${D().projecten.length > 1 ? `<select id="projSel" class="btn sm">${D().projecten.map(x => `<option value="${x.id}" ${x.id === p.id ? "selected" : ""}>${esc(x.nummer ? x.nummer + " · " : "")}${esc(x.klant || x.naam)}</option>`).join("")}</select>` : ""}<span>${esc(S.me?.name || "")}</span><button class="btn ghost sm" data-act="logout">Uitloggen</button></div></div>
     <nav class="tabs">${tabs.map(([k, l]) => `<button class="${S.tab === k ? "on" : ""}" data-tab="${k}">${l}</button>`).join("")}</nav></header>
-    <main>${(({ overzicht: vOverzicht, werf: vWerf, prijzen: vPrijzen, plannen: vPlannen, documenten: vDocumenten, planning: vPlanning, vragen: vVragen, team: vTeam })[S.tab] || vOverzicht)(p)}</main>`;
+    <main>${(({ overzicht: vOverzicht, werf: vWerf, prijzen: vPrijzen, meetstaat: vMeetstaat, plannen: vPlannen, documenten: vDocumenten, planning: vPlanning, vragen: vVragen, team: vTeam })[S.tab] || vOverzicht)(p)}</main>`;
   window.scrollTo({ top: 0 });
 }
 const projTitel = (p) => `${esc(p.klant || "")}${p.naam && p.naam !== p.klant ? " · " + esc(p.naam) : ""}`;
@@ -179,6 +180,90 @@ function vPlanning(p) {
     </tbody></table></div></div>`;
 }
 /* ---------- prijsaanvragen ---------- */
+/* ---------- Meetstaat: de posten van mijn loten (zonder prijzen) + pdf om door te sturen ---------- */
+const MS_TAG = { meerwerk: "meerwerk", minwerk: "minwerk" };
+const msHoev = (r) => Number(r.hoeveelheid) ? nl(r.hoeveelheid, 2) : (r.prijstype && r.prijstype !== "EP" ? r.prijstype : "");
+function vMeetstaat(p) {
+  const rows = msOf(p.id); const lots = [...new Set(rows.map(r => r.lot))];
+  const chk = (id, label, on, uitleg) => `<label style="display:flex;gap:8px;align-items:flex-start;margin:6px 0;cursor:pointer"><input type="checkbox" id="${id}" ${on ? "checked" : ""} style="margin-top:3px"><span>${label}${uitleg ? `<small class="muted" style="display:block">${uitleg}</small>` : ""}</span></label>`;
+  return `<h1 style="margin-bottom:6px">Meetstaat</h1><p class="muted" style="margin-bottom:16px">De posten van ${lots.length === 1 ? "jouw lot" : "jouw loten"} in dit project, met hoeveelheden en eenheden — zonder prijzen. Maak er een pdf van om door te sturen naar je eigen onderaannemers of leveranciers.</p>
+    <div class="panel" style="margin-bottom:16px"><div class="panel-head"><h2>Pdf maken</h2><button class="btn primary" data-act="ms-pdf">Pdf downloaden</button></div><div class="panel-body" style="padding:12px 18px 16px">
+      ${lots.length > 1 ? `<div style="margin-bottom:8px"><div class="muted" style="font-size:13px;margin-bottom:2px">Loten</div>${lots.map(l => chk("msp_lot_" + l, esc(lotNaam(l)), true)).join("")}</div>` : ""}
+      ${chk("msp_leeg", "Lege kolommen voor eenheidsprijs en totaal", true, "Zo kan je onderaannemer zijn prijzen meteen invullen; onderaan staan velden voor firma, datum en handtekening.")}
+      ${chk("msp_ruimte", "Per ruimte groeperen", false, "Anders per lot in de volgorde van de meetstaat.")}
+      ${chk("msp_klant", "Naam en adres van de klant vermelden", false, "Standaard staat enkel het projectnummer en de gemeente op de pdf.")}
+      <label for="msp_bericht" class="muted" style="display:block;font-size:13px;margin:10px 0 4px">Bericht bovenaan (optioneel)</label>
+      <textarea id="msp_bericht" rows="2" style="width:100%;font:inherit;padding:8px 10px;border:1px solid var(--line-2,#ccc);border-radius:8px" placeholder="bv. Graag je prijs voor deze posten tegen vrijdag."></textarea>
+    </div></div>
+    ${lots.map(l => { const rs = rows.filter(r => r.lot === l);
+      return `<div class="panel" style="margin-bottom:16px"><div class="panel-head"><h3>${esc(lotNaam(l))}</h3><span class="muted" style="font-size:13px">${rs.length} post${rs.length === 1 ? "" : "en"}</span></div><div class="tw"><table class="t"><thead><tr><th>Nr</th><th>Omschrijving</th><th style="text-align:right">Hoeveelheid</th><th>Eenheid</th></tr></thead><tbody>${rs.map(r => `<tr><td class="num muted" style="white-space:nowrap">${esc(r.code || "")}</td><td>${esc(r.omschrijving)}${r.locatie ? ` <small class="muted">· ${esc(r.locatie)}</small>` : ""}${MS_TAG[r.status] ? ` <span class="pill">${MS_TAG[r.status]}</span>` : ""}</td><td class="num" style="text-align:right">${esc(msHoev(r))}</td><td>${esc(r.eenheid || "")}</td></tr>`).join("")}</tbody></table></div></div>`; }).join("")}`;
+}
+async function loadJsPdf() {
+  if (window.jspdf && window.jspdf.jsPDF) return window.jspdf.jsPDF;
+  await new Promise((res, rej) => { const el = document.createElement("script"); el.src = "https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"; el.onload = res; el.onerror = () => rej(new Error("De pdf-module kon niet geladen worden.")); document.head.appendChild(el); });
+  return window.jspdf.jsPDF;
+}
+async function logoPng() {
+  try { const img = await new Promise((res, rej) => { const i = new Image(); i.onload = () => res(i); i.onerror = rej; i.src = "../logo-mark.svg"; }); const c = document.createElement("canvas"); c.width = 600; c.height = 181; c.getContext("2d").drawImage(img, 0, 0, 600, 181); return c.toDataURL("image/png"); } catch (e) { return null; }
+}
+async function msPdf(p) {
+  const alle = msOf(p.id); const lotsAlle = [...new Set(alle.map(r => r.lot))];
+  const lots = lotsAlle.length > 1 ? lotsAlle.filter(l => $("#msp_lot_" + l)?.checked) : lotsAlle;
+  if (!lots.length) { toast("Kies minstens één lot."); return; }
+  const o = { leeg: !!$("#msp_leeg")?.checked, ruimte: !!$("#msp_ruimte")?.checked, klant: !!$("#msp_klant")?.checked, bericht: ($("#msp_bericht")?.value || "").trim() };
+  const rows = alle.filter(r => lots.includes(r.lot));
+  const btn = $('[data-act="ms-pdf"]'); if (btn) { btn.disabled = true; btn.textContent = "Pdf maken…"; }
+  try {
+    const jsPDF = await loadJsPdf(); const doc = new jsPDF({ unit: "mm", format: "a4", compress: true });
+    const W = 210, H = 297, M = 14, CW = W - 2 * M; let y = M; const logo = await logoPng();
+    const ink = [29, 29, 31], muted = [134, 134, 139], line = [220, 220, 224], soft = [240, 240, 242];
+    const clean = (t) => String(t || "").replace(/→/g, "->").replace(/[“”]/g, '"').replace(/[‘’]/g, "'").replace(/[•·]/g, "-").replace(/\u00a0|\u202f/g, " ");
+    const projLabel = o.klant ? `${p.klant || ""}${p.naam && p.naam !== p.klant ? " - " + p.naam : ""}${p.adres ? ", " + p.adres : ""}${p.gemeente ? ", " + [p.postcode, p.gemeente].filter(Boolean).join(" ") : ""}` : `Project ${p.nummer || ""}${p.gemeente ? " - " + p.gemeente : ""}`;
+    const cols = o.leeg
+      ? [["Nr", 14, "l"], ["Omschrijving", 88, "l"], ["Hoev.", 18, "r"], ["Eenh.", 14, "l"], ["Eenheidsprijs", 24, "r"], ["Totaal", 24, "r"]]
+      : [["Nr", 14, "l"], ["Omschrijving", 132, "l"], ["Hoev.", 22, "r"], ["Eenh.", 14, "l"]];
+    const xs = []; let x = M; cols.forEach(c => { xs.push(x); x += c[1]; });
+    const datum = fmt(todayLocal());
+    const header = () => { if (logo) doc.addImage(logo, "PNG", M, 10, 26, 7.8); doc.setFont("helvetica", "normal"); doc.setFontSize(8); doc.setTextColor(...muted); doc.text(clean(`Meetstaat - ${projLabel} - ${datum}`), W - M, 15, { align: "right" }); doc.setDrawColor(...line); doc.line(M, 20, W - M, 20); y = 26; };
+    const colHead = () => { doc.setFont("helvetica", "bold"); doc.setFontSize(7.5); doc.setTextColor(...muted); cols.forEach((c, i) => doc.text(c[0].toUpperCase(), c[2] === "r" ? xs[i] + c[1] - 1 : xs[i] + 1, y + 3, { align: c[2] === "r" ? "right" : "left" })); doc.setDrawColor(...line); doc.line(M, y + 4.5, W - M, y + 4.5); y += 6; };
+    const need = (h, metKop) => { if (y + h > H - 18) { doc.addPage(); header(); if (metKop) colHead(); } };
+    header();
+    doc.setFont("helvetica", "bold"); doc.setFontSize(20); doc.setTextColor(...ink); doc.text("Meetstaat", M, y + 5); y += 9;
+    doc.setFont("helvetica", "normal"); doc.setFontSize(10); doc.setTextColor(...muted); doc.text(doc.splitTextToSize(clean(`${lots.map(lotNaam).join(", ")} - ${projLabel}`), CW), M, y + 4); y += 7 + (lots.length > 3 ? 4 : 0);
+    if (o.bericht) { doc.setFontSize(9.5); doc.setTextColor(...ink); const ls = doc.splitTextToSize(clean(o.bericht), CW); doc.text(ls, M, y + 4); y += ls.length * 4.6 + 3; }
+    if (o.leeg) { doc.setFontSize(8.5); doc.setTextColor(...muted); doc.text("Prijzen excl. btw, inclusief levering en plaatsing, tenzij anders vermeld. Hoeveelheden ter indicatie - te controleren ter plaatse.", M, y + 4); y += 7; }
+    y += 2;
+    lots.forEach(lot => {
+      let lr = rows.filter(r => r.lot === lot); const rk = (r) => (r.locatie || "").trim();
+      if (o.ruimte) lr = lr.slice().sort((a, b) => (rk(a) === "" ? 1 : 0) - (rk(b) === "" ? 1 : 0) || rk(a).localeCompare(rk(b), "nl", { sensitivity: "base" }) || (a.volgorde ?? 0) - (b.volgorde ?? 0));
+      need(22); y += 3; doc.setFillColor(...soft); doc.roundedRect(M, y, CW, 8, 2, 2, "F"); doc.setFont("helvetica", "bold"); doc.setFontSize(10); doc.setTextColor(...ink); doc.text(clean(lotNaam(lot)), M + 3, y + 5.5); y += 10; colHead();
+      let kop = null;
+      lr.forEach(r => {
+        const k = o.ruimte ? (rk(r) || "Zonder ruimte") : (r.groep || "");
+        if (k && k !== kop) { kop = k; need(9, true); doc.setFont("helvetica", "bold"); doc.setFontSize(8); doc.setTextColor(...muted); doc.text(clean(k).toUpperCase(), M + 1, y + 3.2); y += 5; }
+        const tekst = clean(r.omschrijving) + (r.locatie && !o.ruimte ? "  (" + clean(r.locatie) + ")" : "") + (MS_TAG[r.status] ? "  [" + MS_TAG[r.status] + "]" : "");
+        const oms = doc.splitTextToSize(tekst, cols[1][1] - 2); const h = Math.max(1, oms.length) * 3.9 + 2.4;
+        need(h, true); doc.setFont("helvetica", "normal"); doc.setFontSize(8.5); doc.setTextColor(...ink);
+        doc.text(clean(r.code || ""), xs[0] + 1, y + 3.2); doc.text(oms, xs[1] + 1, y + 3.2);
+        doc.text(clean(msHoev(r)), xs[2] + cols[2][1] - 1, y + 3.2, { align: "right" }); doc.text(clean(r.eenheid || ""), xs[3] + 1, y + 3.2);
+        if (o.leeg) { doc.setDrawColor(...line); doc.line(xs[4] + 3, y + h - 1.2, xs[4] + cols[4][1] - 1, y + h - 1.2); doc.line(xs[5] + 3, y + h - 1.2, xs[5] + cols[5][1] - 1, y + h - 1.2); }
+        doc.setDrawColor(...line); doc.line(M, y + h, W - M, y + h); y += h;
+      });
+      if (o.leeg) { need(9); doc.setFont("helvetica", "bold"); doc.setFontSize(9); doc.setTextColor(...ink); doc.text(clean("Totaal " + lotNaam(lot)), xs[4] - 2, y + 5, { align: "right" }); doc.setDrawColor(...muted); doc.line(xs[5] + 3, y + 5.6, W - M - 1, y + 5.6); y += 9; }
+    });
+    if (o.leeg) {
+      need(46); y += 6; doc.setFont("helvetica", "bold"); doc.setFontSize(10.5); doc.setTextColor(...ink); doc.text("Totaal excl. btw", xs[4] - 2, y + 4, { align: "right" }); doc.setDrawColor(...ink); doc.line(xs[5] + 3, y + 4.8, W - M - 1, y + 4.8); y += 14;
+      doc.setFont("helvetica", "normal"); doc.setFontSize(9); doc.setTextColor(...muted); doc.setDrawColor(...line);
+      [["Firma", M, 70], ["Naam", M + 76, 52], ["Datum", M + 134, 48]].forEach(([l, x0, w]) => { doc.text(l, x0, y); doc.line(x0, y + 8, x0 + w, y + 8); }); y += 16;
+      doc.text("Handtekening", M, y); doc.line(M, y + 12, M + 70, y + 12);
+    }
+    const n = doc.getNumberOfPages(); for (let i = 1; i <= n; i++) { doc.setPage(i); doc.setFontSize(8); doc.setTextColor(...muted); doc.text("Meetstaat opgemaakt door BROS - zonder prijzen van BROS", M, H - 8); doc.text(`${i} / ${n}`, W - M, H - 8, { align: "right" }); }
+    const naam = `Meetstaat ${p.nummer || ""} ${lots.length === 1 ? lotNaam(lots[0]) : lots.length + " loten"}`.replace(/[^\w\s.-]+/g, "").replace(/\s+/g, " ").trim() + ".pdf";
+    const url = URL.createObjectURL(doc.output("blob")); const a = document.createElement("a"); a.href = url; a.download = naam; document.body.appendChild(a); a.click(); a.remove(); setTimeout(() => URL.revokeObjectURL(url), 4000);
+    toast("Pdf gedownload: " + naam);
+  } catch (e) { toast("Pdf maken mislukt: " + (e.message || e), 6000); }
+  finally { if (btn) { btn.disabled = false; btn.textContent = "Pdf downloaden"; } }
+}
 function vPrijzen(p) {
   const as = D().aanvragen.filter(a => a.project_id === p.id);
   if (S.aanvraag) { const a = as.find(x => x.id === S.aanvraag); if (a) return vAanvraag(p, a); S.aanvraag = null; }
@@ -318,6 +403,7 @@ document.addEventListener("click", async (e) => {
   if (d.act === "vs-back") { S.detail = null; S.nieuw.forEach(f => URL.revokeObjectURL(f.url)); S.nieuw = []; render(); }
   if (d.act === "vs-opgelost") { if (S.bezig) return; if (!S.nieuw.length && !confirm("Geen bewijsfoto toegevoegd. Toch als opgelost melden?")) return; await vsMelden(d.id, true); }
   if (d.act === "vs-foto") { if (S.bezig) return; await vsMelden(d.id, false); }
+  if (d.act === "ms-pdf") { const p = P(); if (p) await msPdf(p); return; }
   if (d.act === "pa-open") { S.tab = "prijzen"; S.aanvraag = d.id; render(); }
   if (d.act === "pa-back") { S.aanvraag = null; render(); }
   if (d.act === "pa-indienen") {

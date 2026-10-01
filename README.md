@@ -11,7 +11,7 @@ Statische webapp (geen build-stap) op een Supabase-database.
 | `app.js` | alle logica |
 | `config.js` | koppeling met de database — **hier de Project URL en anon-sleutel invullen** |
 | `version.json` | versienummer; de app meldt een nieuwe versie aan wie ze open heeft |
-| `sql/001_init.sql` … `sql/028_*.sql` | databasescripts, in volgorde uit te voeren (`versie_schema` in instellingen bewaakt de volgorde vanaf 022) |
+| `sql/001_init.sql` … `sql/029_*.sql` | databasescripts, in volgorde uit te voeren (`versie_schema` in instellingen bewaakt de volgorde vanaf 022) |
 | `drive/Code.gs` | Google Apps Script dat projectmappen aanmaakt/koppelt op Drive en de meetstaat-export wegschrijft (installatie: zie bovenaan dat bestand) |
 | `meetstaat-export.js` | schrijft de meetstaat van een project in het Excel-sjabloon (zip/XML, opmaak en formules blijven intact) |
 | `klant/` | het klantenportaal (index.html + portaal.js): alleen-lezen zicht van de bouwheer op zijn project |
@@ -142,6 +142,11 @@ Activeren (eenmalig):
 4. Edge Function `assistent` opnieuw plakken (weigert nu aannemerslogins) en pushen.
 
 Gebruik: Dossier › Contacten → bij een aannemer de knop **Aannemersportaal** (beheer) → hij krijgt een mail met een persoonlijke link. Instellingen → Klantenportaal toont wie toegang heeft (klant/aannemer). Een aannemer die op het Planbord of het klantenportaal inlogt, wordt doorgestuurd.
+
+## Meetstaat in het aannemersportaal (script 029, v1.28)
+- De aannemer ziet onder **Meetstaat** de posten van de loten waaraan hij in dat project gekoppeld is (Dossier › Contacten › loten bij de koppeling): nummer, omschrijving, ruimte, hoeveelheid en eenheid, nooit prijzen. Zonder gekoppelde loten verschijnt het tabblad niet.
+- **Pdf downloaden**: loten kiezen, lege kolommen voor eenheidsprijs en totaal (met velden firma, naam, datum, handtekening), per ruimte groeperen, klantnaam en adres al dan niet vermelden (standaard enkel projectnummer en gemeente), eigen bericht bovenaan. Zo kan hij de meetstaat zelf doorsturen naar zijn onderaannemers.
+- Vereist `sql/029_aannemer_meetstaat.sql` (view `aan_meetstaat`).
 
 ## Aannemer verwittigen bij koppeling (script 028, v1.25)
 - Dossier › Contacten → *+ Aannemer* (of leverancier/studiebureau/…): met het vinkje *Verwittigen per mail* (standaard aan) krijgt de partij een mail dat ze aan het project gekoppeld is, met adres, loten en de notitie. Heeft ze nog geen portaallogin, dan zit de uitnodiging voor het aannemersportaal in dezelfde mail; anders een korte melding met de portaallink. De kolom *Portaal* toont *verwittigd op …*. Voor de klant blijft *Portaal-toegang geven* de weg.
