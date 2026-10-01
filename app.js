@@ -2,7 +2,7 @@
    BROS Planbord — app v1.0
    Statische webapp op Supabase (login, live-synchronisatie, rechten)
    ===================================================================== */
-const APP_VERSION = "1.25.1";
+const APP_VERSION = "1.25.2";
 const PROJ_STATUS = { offerte: "In offerte", lopend: "Lopend", on_hold: "On hold", afgerond: "Afgerond", verloren: "Verloren" };
 const KLANTTYPE = { particulier: "Particulier", zakelijk: "Zakelijk" };
 const KLANTCODE = { particulier: "PAR", zakelijk: "ZAK" };
@@ -208,8 +208,17 @@ const SCHEMA_HINT = (n) => `<div class="empty" style="padding:10px 12px;margin-b
 const driveReady = () => !!(driveCfg().url && driveCfg().secret);
 async function driveCall(action, payload) {
   const c = driveCfg(); if (!c.url) throw new Error("Drive-koppeling niet ingesteld (Instellingen → Drive).");
-  const r = await fetch(c.url, { method: "POST", body: JSON.stringify({ token: S.session?.access_token || "", ...payload, action, secret: c.secret }), redirect: "follow" });
-  const j = await r.json().catch(() => ({ ok: false, error: "Onleesbaar antwoord van het Drive-script." }));
+  /* tijdslimiet: een hangend Drive-script mag het Planbord niet eindeloos laten wachten (laadbalk op 92 %) */
+  const limiet = ["list", "create", "link", "put", "template"].includes(action) ? 90000 : 45000;
+  const ac = new AbortController(); const tm = setTimeout(() => ac.abort(), limiet);
+  let j;
+  try {
+    const r = await fetch(c.url, { method: "POST", body: JSON.stringify({ token: S.session?.access_token || "", ...payload, action, secret: c.secret }), redirect: "follow", signal: ac.signal });
+    j = await r.json().catch((e) => { if (e && e.name === "AbortError") throw e; return { ok: false, error: "Onleesbaar antwoord van het Drive-script." }; });
+  } catch (e) {
+    if (e && e.name === "AbortError") throw new Error(`Het Drive-script antwoordt niet (na ${limiet / 1000} s). Probeer het zo opnieuw; blijft het hangen, kijk dan in de scripteditor bij Uitvoeringen.`);
+    throw new Error("Drive-script niet bereikbaar: " + (e && e.message || e));
+  } finally { clearTimeout(tm); }
   if (!j.ok) throw new Error(j.error || "Drive-script gaf een fout.");
   return j;
 }
@@ -272,15 +281,26 @@ function driveAutoRefresh(p) {
   driveSync(p, "list", true).catch(e => console.warn("Drive automatisch vernieuwen:", e.message));
 }
 /* document delen met de klant: eerst de Drive-rechten (iedereen met de link mag lezen), dan het vinkje in de database */
+/* Delen: de schakelaar springt meteen om en wordt meteen bewaard; de Drive-rechten (link leesbaar) volgen op de achtergrond.
+   Zolang dat loopt, staat de schakelaar van dat bestand even vast (geen dubbele klikken die elkaar kruisen). */
+const DOC_BUSY = new Set();
 async function docShare(id, on, wie = "klant") {
   const d = S.documenten[id]; if (!d) return;
+  if (DOC_BUSY.has(id)) { render(); return; }
   const veld = wie === "aannemers" ? "gedeeld_aannemers" : "gedeeld";
   // de link moet leesbaar zijn zolang het bestand met iemand (klant of aannemers) gedeeld is
+  const wasLink = !!d.gedeeld || !!d.gedeeld_aannemers;
   const andere = wie === "aannemers" ? !!d.gedeeld : !!d.gedeeld_aannemers; const linkAan = on || andere;
-  try { if (driveReady() && linkAan !== (!!d.gedeeld || !!d.gedeeld_aannemers)) await driveCall("share", { fileId: d.drive_id, on: linkAan, token: S.session?.access_token || "" }); }
-  catch (e) { toast("Drive-rechten niet aangepast: " + e.message, 6000); render(); return; }
-  await dbUpdate("documenten", id, { [veld]: on }).catch(() => { });
-  toast(on ? (wie === "aannemers" ? "Gedeeld met de aannemers van dit project" : "Gedeeld met de klant") : "Niet meer gedeeld" + (wie === "aannemers" ? " met de aannemers" : " met de klant"));
+  DOC_BUSY.add(id);
+  try { await dbUpdate("documenten", id, { [veld]: on }); }
+  catch (e) { DOC_BUSY.delete(id); render(); return; }
+  try {
+    if (driveReady() && linkAan !== wasLink) await driveCall("share", { fileId: d.drive_id, on: linkAan, token: S.session?.access_token || "" });
+    toast(on ? (wie === "aannemers" ? "Gedeeld met de aannemers van dit project" : "Gedeeld met de klant") : "Niet meer gedeeld" + (wie === "aannemers" ? " met de aannemers" : " met de klant"));
+  } catch (e) {
+    if (on) { await dbUpdate("documenten", id, { [veld]: false }).catch(() => { }); toast("Niet gedeeld — de Drive-link kon niet opengezet worden: " + e.message, 7000); }
+    else toast("Niet meer gedeeld in het portaal, maar de Drive-link staat mogelijk nog open: " + e.message, 7000);
+  } finally { DOC_BUSY.delete(id); render(); }
 }
 const docsOf = (pid) => Object.values(S.documenten).filter(d => d.project_id === pid).sort((a, b) => (a.pad || "").localeCompare(b.pad || "") || a.naam.localeCompare(b.naam));
 
@@ -1884,7 +1904,7 @@ function vProjectDetail(p) {
     const docs = docsOf(p.id); const groups = [...new Set(docs.map(d => d.pad || ""))];
     body = vProjectContacten(p) + `<div class="panel" style="margin-bottom:16px"><div class="panel-head"><div><h3>Projectmap op Google Drive</h3><div class="muted" style="font-size:12px;margin-top:2px"><span class="drive-path">${esc(map)}</span></div></div>
       <div class="actions">${p.drive_url ? `<a class="btn" href="${esc(p.drive_url)}" target="_blank" rel="noopener">Open map in Drive ↗</a><button class="btn sm" data-act="drive-list" data-pid="${p.id}">Vernieuwen</button>` : driveReady() ? `<button class="btn sm" data-act="drive-link" data-pid="${p.id}">Bestaande map koppelen</button><button class="btn sm primary" data-act="drive-create" data-pid="${p.id}">Map aanmaken uit sjabloon</button>` : `<span class="pill st-offerte">Drive-koppeling nog niet ingesteld</span>`}</div></div>
-      ${docs.length ? `<div class="panel-body">${schemaV() >= 11 ? `<p class="muted" style="font-size:12px;margin:0 0 10px">Schakelaars bij een bestand: <b>klant</b> = zichtbaar in het klantenportaal${schemaV() >= 25 ? `, <b>aannemers</b> = zichtbaar voor de aannemers van dit project in hun portaal` : ""} (het bestand wordt dan leesbaar via de link). ${docs.filter(d => d.gedeeld).length} met de klant${schemaV() >= 25 ? `, ${docs.filter(d => d.gedeeld_aannemers).length} met aannemers` : ""} gedeeld.</p>` : ""}<div class="docs">${groups.map(g => `${g ? `<div style="grid-column:1/-1" class="eyebrow">${esc(g)}</div>` : ""}${docs.filter(d => (d.pad || "") === g).map(d => `<div class="doc-wrap ${d.gedeeld ? "shared" : ""}"><a class="doc" href="${esc(d.url)}" target="_blank" rel="noopener" style="text-decoration:none;color:inherit"><div class="ico ${docIcon(d.mime, d.naam)}">${docIcon(d.mime, d.naam) === "map" ? "DOC" : docIcon(d.mime, d.naam).toUpperCase()}</div><div style="min-width:0"><div class="n" style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(d.naam)}</div><div class="s">${d.gewijzigd ? "gewijzigd " + fmtLong(d.gewijzigd.slice(0, 10)) : ""}${d.gedeeld ? ` · <span style="color:var(--ok)">klant</span>` : ""}${d.gedeeld_aannemers ? ` · <span style="color:var(--ok)">aannemers</span>` : ""}</div></div></a>${schemaV() >= 11 ? `<label class="sw-lbl" title="${d.gedeeld ? "Gedeeld met de klant" : "Delen met de klant"}"><input type="checkbox" class="sw" data-dshare="${d.id}" ${d.gedeeld ? "checked" : ""} aria-label="Delen met de klant"><small>klant</small></label>` : ""}${schemaV() >= 25 ? `<label class="sw-lbl" title="${d.gedeeld_aannemers ? "Gedeeld met de aannemers van dit project" : "Delen met de aannemers van dit project"}"><input type="checkbox" class="sw" data-dshare-a="${d.id}" ${d.gedeeld_aannemers ? "checked" : ""} aria-label="Delen met aannemers"><small>aannemers</small></label>` : ""}</div>`).join("")}`).join("")}</div>
+      ${docs.length ? `<div class="panel-body">${schemaV() >= 11 ? `<p class="muted" style="font-size:12px;margin:0 0 10px">Schakelaars bij een bestand: <b>klant</b> = zichtbaar in het klantenportaal${schemaV() >= 25 ? `, <b>aannemers</b> = zichtbaar voor de aannemers van dit project in hun portaal` : ""} (het bestand wordt dan leesbaar via de link). ${docs.filter(d => d.gedeeld).length} met de klant${schemaV() >= 25 ? `, ${docs.filter(d => d.gedeeld_aannemers).length} met aannemers` : ""} gedeeld.</p>` : ""}<div class="docs">${groups.map(g => `${g ? `<div style="grid-column:1/-1" class="eyebrow">${esc(g)}</div>` : ""}${docs.filter(d => (d.pad || "") === g).map(d => `<div class="doc-wrap ${d.gedeeld ? "shared" : ""}"><a class="doc" href="${esc(d.url)}" target="_blank" rel="noopener" style="text-decoration:none;color:inherit"><div class="ico ${docIcon(d.mime, d.naam)}">${docIcon(d.mime, d.naam) === "map" ? "DOC" : docIcon(d.mime, d.naam).toUpperCase()}</div><div style="min-width:0"><div class="n" style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(d.naam)}</div><div class="s">${d.gewijzigd ? "gewijzigd " + fmtLong(d.gewijzigd.slice(0, 10)) : ""}${d.gedeeld ? ` · <span style="color:var(--ok)">klant</span>` : ""}${d.gedeeld_aannemers ? ` · <span style="color:var(--ok)">aannemers</span>` : ""}</div></div></a>${schemaV() >= 11 ? `<label class="sw-lbl" title="${d.gedeeld ? "Gedeeld met de klant" : "Delen met de klant"}"><input type="checkbox" class="sw" data-dshare="${d.id}" ${d.gedeeld ? "checked" : ""} ${DOC_BUSY.has(d.id) ? "disabled" : ""} aria-label="Delen met de klant"><small>klant</small></label>` : ""}${schemaV() >= 25 ? `<label class="sw-lbl" title="${d.gedeeld_aannemers ? "Gedeeld met de aannemers van dit project" : "Delen met de aannemers van dit project"}"><input type="checkbox" class="sw" data-dshare-a="${d.id}" ${d.gedeeld_aannemers ? "checked" : ""} ${DOC_BUSY.has(d.id) ? "disabled" : ""} aria-label="Delen met aannemers"><small>aannemers</small></label>` : ""}</div>`).join("")}`).join("")}</div>
         <p class="muted" style="font-size:12px;margin:12px 0 0">Laatst gesynchroniseerd ${docs[0].gesynct_op ? fmtLong(docs[0].gesynct_op.slice(0, 10)) + " " + docs[0].gesynct_op.slice(11, 16) : "—"}${S.driveAuto && S.driveAuto[p.id] && Date.now() - S.driveAuto[p.id] < 15000 ? " · wordt vernieuwd…" : ""}. Bij het openen van dit tabblad wordt de lijst automatisch vernieuwd als ze ouder is dan een uur; anders via "Vernieuwen"; foto's en video's worden niet opgesomd (die open je via de map).</p></div>` : `<div class="empty">${p.drive_url ? "Nog geen bestanden gevonden — klik op Vernieuwen." : "Nog geen map gekoppeld. \"Bestaande map koppelen\" zoekt in PROJECTEN naar een map met de naam uit het veld Drive-map (of de klantnaam)."}</div>`}</div>
       <div class="panel"><div class="panel-head"><h3>Gegevens</h3></div>
       <div class="panel-body"><div class="meta">

@@ -173,6 +173,7 @@
   .sw::after { content: ""; position: absolute; top: 2px; left: 2px; width: 14px; height: 14px; border-radius: 50%; background: #fff; box-shadow: 0 1px 2px rgba(0,0,0,.35); transition: left .15s; }
   .sw:checked { background: var(--ok); border-color: var(--ok); }
   .sw:checked::after { left: 16px; }
+  .sw:disabled { opacity: .55; cursor: progress; }
   .field .sw, .field label.sw-row input.sw { width: 34px; height: 20px; padding: 0; border-radius: 10px; }
   .field label.sw-row { display: flex; flex-direction: row; gap: 12px; align-items: flex-start; cursor: pointer; padding: 10px 12px; border: 1px solid var(--line); border-radius: 10px; background: var(--surface-2); font-weight: 400; color: var(--ink); font-size: 13px; }
   .sw-row .sw { margin-top: 1px; }
@@ -475,11 +476,11 @@
 <div class="toast" id="toast" role="status"></div>
 <div class="loader" id="loader" aria-live="polite"><div class="logo"><i class="base"></i><i class="fill" id="loaderFill"></i></div><div class="pct" id="loaderPct">0%</div><div class="msg" id="loaderMsg">Even geduld…</div></div>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.45.4/dist/umd/supabase.min.js"></script>
-<script src="config.js?v=1.25.1"></script>
+<script src="config.js?v=1.25.2"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
-<script src="postcodes.js?v=1.25.1"></script>
-<script src="meetstaat-export.js?v=1.25.1"></script>
-<script src="meetstaat-import.js?v=1.25.1"></script>
-<script src="app.js?v=1.25.1"></script>
+<script src="postcodes.js?v=1.25.2"></script>
+<script src="meetstaat-export.js?v=1.25.2"></script>
+<script src="meetstaat-import.js?v=1.25.2"></script>
+<script src="app.js?v=1.25.2"></script>
 </body>
 </html>
