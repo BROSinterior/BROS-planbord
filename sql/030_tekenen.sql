@@ -1,17 +1,19 @@
 -- =====================================================================
---  BROS Planbord — databasescript 028: tekenmodule (fase 0 + 1)
+--  BROS Planbord — databasescript 030: tekenmodule (fase 0 + 1)
 --  - tekenplannen:   een tekening per project, met onderlegger (pdf / afbeelding / dxf) en schaal (kalibratie)
 --  - plan_objecten:  de getekende objecten (vanaf fase 2: symbolen, tekst, lijnen) — één rij per object, in mm
 --  - plan_versies:   momentopnames van een plan (herstel)
 --  - plan_symbolen:  de symbolenbibliotheek (naam, laag, standaardhoogte, koppeling met een meetstaatpost);
 --                    de tekening van elk symbool zit in symbolen.js
 --  Bestanden (onderleggers) gaan in de bestaande bucket 'werf' onder <project>/tekenen/.
---  Alleen toevoegingen; mag opnieuw uitgevoerd worden (na script 027).
+--  Alleen toevoegingen; mag opnieuw uitgevoerd worden (na script 029).
+--  Vervangt 028_tekenen.sql (nummer 028 werd ook voor de aannemersmeldingen gebruikt). Was 028_tekenen al uitgevoerd:
+--  dit script nog eens uitvoeren is veilig — het maakt niets dubbel.
 -- =====================================================================
 
 do $$ begin
-  if coalesce((select (value->>'versie_schema')::int from public.instellingen where key = 'app'), 0) < 27 then
-    raise exception 'Voer eerst de scripts tot en met 027 uit.';
+  if coalesce((select (value->>'versie_schema')::int from public.instellingen where key = 'app'), 0) < 29 then
+    raise exception 'Voer eerst de scripts tot en met 029 uit.';
   end if;
 end $$;
 
@@ -134,7 +136,7 @@ do $$ begin
   if not exists (select 1 from pg_publication_tables where pubname = 'supabase_realtime' and tablename = 'plan_objecten') then alter publication supabase_realtime add table public.plan_objecten; end if;
 end $$;
 
-update public.instellingen set value = jsonb_set(value, '{versie_schema}', '28'::jsonb), updated_at = now() where key = 'app';
+update public.instellingen set value = jsonb_set(value, '{versie_schema}', to_jsonb(greatest(30, coalesce((value->>'versie_schema')::int, 0)))), updated_at = now() where key = 'app';
 
 -- Controle: moet 4 teruggeven
 select count(*) from information_schema.tables where table_schema = 'public' and table_name in ('tekenplannen', 'plan_objecten', 'plan_versies', 'plan_symbolen');

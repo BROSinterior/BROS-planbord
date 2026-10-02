@@ -2,7 +2,8 @@
    BROS Klantenportaal — alleen-lezen zicht van de bouwheer op zijn project
    Leest uitsluitend de klant_*-views (databasescript 011): geen kostprijzen, marges of interne notities.
    ===================================================================== */
-const PORTAAL_VERSION = "1.29.0";
+if (window.top !== window.self) { try { window.top.location.replace(window.location.href); } catch (e) { document.documentElement.innerHTML = ""; } }   // niet in een vreemd frame (clickjacking)
+const PORTAAL_VERSION = "1.31.0";
 const todayLocal = () => { const n = new Date(); return `${n.getFullYear()}-${String(n.getMonth() + 1).padStart(2, "0")}-${String(n.getDate()).padStart(2, "0")}`; };
 const safeUrl = (u) => /^https?:\/\//i.test(String(u || "")) ? u : "#";
 const cfg = window.PLANBORD_CONFIG || {};
@@ -171,7 +172,7 @@ function vMeetstaat(p) {
         if (isGroep && !r.groep && !perRuimte) return `<tr class="groep"><td colspan="6">${esc(r.omschrijving)}</td></tr>`;
         return g + `<tr><td class="num muted" style="font-size:12px">${esc(r.code)}</td><td>${esc(r.omschrijving).replace(/\n/g, "<br>")}${r.locatie && !perRuimte ? `<div class="muted" style="font-size:12px">${esc(r.locatie)}</div>` : ""}</td><td class="r num">${Number(r.hoeveelheid) ? nl(r.hoeveelheid, 2) + " " + esc(r.eenheid) : ""}</td><td class="r num">${Number(r.prijs) ? eur(r.prijs) : ""}</td><td class="r num">${Number(r.totaal) ? eur(signed(r)) : ""}</td><td><span class="pill ${r.status}">${MS_STATUS[r.status] || esc(r.status)}</span>${r.akkoord_op ? `<div class="muted" style="font-size:11px">✓ ${fmt(r.akkoord_op)}</div>` : ""}</td></tr>`; }).join("")}
     </tbody></table></div></div>`; };
-  return `<div style="display:flex;justify-content:space-between;align-items:flex-start;gap:12px;flex-wrap:wrap"><h1 style="margin-bottom:6px">Meetstaat</h1><div class="seg-btn"><button class="btn sm ${perRuimte ? "primary" : ""}" data-act="ms-ruimte" data-on="1">Per ruimte</button><button class="btn sm ${perRuimte ? "" : "primary"}" data-act="ms-ruimte" data-on="0">Per nummer</button></div></div><p class="muted" style="margin-bottom:16px">Alle posten van je project met de afgesproken prijzen (excl. btw)${perRuimte ? ", per lot gegroepeerd per ruimte" : ""}. ${offerteOpen ? "Posten met status <b>Offerte</b> wachten nog op je akkoord; " : ""}<b>Meerwerk</b> en <b>minwerk</b> zijn wijzigingen na het contract.</p>
+  return `<div style="display:flex;justify-content:space-between;align-items:flex-start;gap:12px;flex-wrap:wrap"><h1 style="margin-bottom:6px">Meetstaat</h1><div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap"><button class="btn sm" data-act="ms-pdf" title="De meetstaat zoals je ze hier ziet, als pdf">⤓ Pdf</button><div class="seg-btn"><button class="btn sm ${perRuimte ? "primary" : ""}" data-act="ms-ruimte" data-on="1">Per ruimte</button><button class="btn sm ${perRuimte ? "" : "primary"}" data-act="ms-ruimte" data-on="0">Per nummer</button></div></div></div><p class="muted" style="margin-bottom:16px">Alle posten van je project met de afgesproken prijzen (excl. btw)${perRuimte ? ", per lot gegroepeerd per ruimte" : ""}. ${offerteOpen ? "Posten met status <b>Offerte</b> wachten nog op je akkoord; " : ""}<b>Meerwerk</b> en <b>minwerk</b> zijn wijzigingen na het contract.</p>
     <div class="kpis"><div class="kpi"><div class="k">Contract excl. btw</div><div class="v num">${eur(contract, 0)}</div></div><div class="kpi"><div class="k">Meer-/minwerk</div><div class="v num">${mw ? eur(mw, 0) : "—"}</div></div><div class="kpi"><div class="k">Btw</div><div class="v num">${eur(btwTot, 0)}</div><div class="muted" style="font-size:12px">${p.btw_tarief ? p.btw_tarief + " % op je project" : ""}</div></div><div class="kpi"><div class="k">Totaal incl. btw</div><div class="v num">${eur(contract + mw + btwTot, 0)}</div></div></div>
     <div class="stack">${lots.map(lotBlok).join("")}</div>`;
 }
@@ -245,6 +246,121 @@ function vVerslagen(p) {
       return `<div class="panel"><div class="panel-head" style="cursor:pointer" data-act="note-toggle" data-id="${n.id}"><div><h2 style="font-size:17px">${esc(n.titel || NOTE_SOORT[n.soort])}</h2><div class="muted" style="font-size:13px">${NOTE_SOORT[n.soort] || esc(n.soort)} · ${fmtLang(n.datum)}${n.auteur_naam ? " · " + esc(n.auteur_naam) : ""}${n.deelnemers ? " · aanwezig: " + esc(n.deelnemers) : ""}</div></div><span class="muted">${open ? "▾" : "▸"}</span></div>
         ${open ? `<div class="panel-body" style="white-space:pre-line;font-size:14px">${esc(n.inhoud)}</div>${ts.length ? `<div class="panel-body" style="border-top:1px solid var(--line)"><h3 style="margin-bottom:8px">Actiepunten</h3><table class="t"><tbody>${ts.map(t => `<tr><td style="width:28px">${t.voor_mij ? `<input type="checkbox" data-mijntaak="${t.id}" ${t.status === "done" ? "checked" : ""} style="width:18px;height:18px">` : t.status === "done" ? "✅" : "◻︎"}</td><td>${esc(t.titel)}${t.voor_mij ? ` <span class="pill verzonden">voor jou</span>` : ""}</td><td class="muted" style="font-size:13px">${esc(t.wie || "")}</td><td class="num muted" style="font-size:13px">${t.eind ? fmt(t.eind) : ""}</td></tr>`).join("")}</tbody></table></div>` : ""}` : ""}</div>`; }).join("")}</div>` : `<div class="panel"><div class="empty"><b>Nog geen verslagen gedeeld</b>Zodra we een verslag met je delen, staat het hier.</div></div>`}`;
 }
+/* ---------- Pdf: meetstaat en dossier (documenten, foto's, werfverslagen) ---------- */
+const pdfBaar = (d) => /pdf|image\/|google-apps\.(document|presentation|spreadsheet|drawing)/i.test(d.mime || "") || /\.(pdf|jpe?g|png|heic|webp)$/i.test(d.naam || "");
+function laadScript(src, glob) {
+  if (window[glob]) return Promise.resolve(window[glob]);
+  return new Promise((res, rej) => { const el = document.createElement("script"); el.src = src; el.onload = () => res(window[glob]); el.onerror = () => rej(new Error("De pdf-module kon niet geladen worden. Probeer opnieuw.")); document.head.appendChild(el); });
+}
+const laadJsPdf = () => laadScript("https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js", "jspdf").then(x => x.jsPDF);
+const laadPdfLib = () => laadScript("https://cdn.jsdelivr.net/npm/pdf-lib@1.17.1/dist/pdf-lib.min.js", "PDFLib");
+async function logoPng() {
+  try { const img = await new Promise((res, rej) => { const i = new Image(); i.onload = () => res(i); i.onerror = rej; i.src = "../logo-mark.svg"; }); const c = document.createElement("canvas"); c.width = 600; c.height = 181; c.getContext("2d").drawImage(img, 0, 0, 600, 181); return c.toDataURL("image/png"); } catch (e) { return null; }
+}
+const pdfTekst = (t) => String(t ?? "").replace(/→/g, "->").replace(/[“”]/g, '"').replace(/[‘’]/g, "'").replace(/[•·]/g, "-").replace(/[\u00a0\u202f]/g, " ").replace(/[^\x09\x0a\x0d\x20-\x7e\u00a0-\u00ff€]/g, "");
+const projTitel = (p) => `${p.klant || ""}${p.naam && p.naam !== p.klant ? " - " + p.naam : ""}`;
+function bewaarPdf(bytesOfBlob, naam) {
+  const blob = bytesOfBlob instanceof Blob ? bytesOfBlob : new Blob([bytesOfBlob], { type: "application/pdf" });
+  const url = URL.createObjectURL(blob); const a = document.createElement("a"); a.href = url; a.download = naam.replace(/[\\/:*?"<>|]+/g, "-"); document.body.appendChild(a); a.click(); a.remove(); setTimeout(() => URL.revokeObjectURL(url), 8000);
+}
+/* de meetstaat zoals de klant ze ziet (verkoopprijzen), per ruimte of per nummer */
+async function msPdfDoc(p) {
+  const jsPDF = await laadJsPdf(); const doc = new jsPDF({ unit: "mm", format: "a4", compress: true });
+  const W = 210, H = 297, M = 14, CW = W - 2 * M; let y = M; const logo = await logoPng();
+  const ink = [29, 29, 31], muted = [134, 134, 139], line = [220, 220, 224], soft = [240, 240, 242];
+  const rows = msRows(); const perRuimte = S.msRuimte !== false; const rk = (r) => (r.locatie || "").trim();
+  const cols = [["Nr", 13, "l"], ["Omschrijving", 88, "l"], ["Hoev.", 22, "r"], ["Prijs", 22, "r"], ["Totaal", 24, "r"], ["Status", 13, "l"]];
+  const xs = []; let x = M; cols.forEach(c => { xs.push(x); x += c[1]; });
+  const datum = fmt(todayLocal());
+  const header = () => { if (logo) doc.addImage(logo, "PNG", M, 10, 26, 7.8); doc.setFont("helvetica", "normal"); doc.setFontSize(8); doc.setTextColor(...muted); doc.text(pdfTekst(`${projTitel(p)} - Meetstaat - ${datum}`), W - M, 15, { align: "right" }); doc.setDrawColor(...line); doc.line(M, 20, W - M, 20); y = 26; };
+  const colHead = () => { doc.setFont("helvetica", "bold"); doc.setFontSize(7.5); doc.setTextColor(...muted); cols.forEach((c, i) => doc.text(c[0].toUpperCase(), c[2] === "r" ? xs[i] + c[1] - 1 : xs[i] + 1, y + 3, { align: c[2] === "r" ? "right" : "left" })); doc.setDrawColor(...line); doc.line(M, y + 4.5, W - M, y + 4.5); y += 6; };
+  const need = (h, kop) => { if (y + h > H - 18) { doc.addPage(); header(); if (kop) colHead(); } };
+  header();
+  doc.setFont("helvetica", "bold"); doc.setFontSize(20); doc.setTextColor(...ink); doc.text("Meetstaat", M, y + 5); y += 9;
+  doc.setFont("helvetica", "normal"); doc.setFontSize(10); doc.setTextColor(...muted); doc.text(doc.splitTextToSize(pdfTekst(`${projTitel(p)}${p.adres ? " - " + p.adres : ""}${p.gemeente ? ", " + p.gemeente : ""}${p.nummer ? " - project " + p.nummer : ""}`), CW), M, y + 4); y += 10;
+  const lots = [...new Set(rows.map(r => r.lot))];
+  lots.forEach(lot => {
+    let lr = rows.filter(r => r.lot === lot);
+    if (perRuimte) lr = lr.slice().sort((a, b) => (rk(a) === "" ? 1 : 0) - (rk(b) === "" ? 1 : 0) || rk(a).localeCompare(rk(b), "nl", { sensitivity: "base" }) || (a.volgorde ?? 0) - (b.volgorde ?? 0));
+    const sub = lr.reduce((t, r) => t + signed(r), 0);
+    need(22); y += 3; doc.setFillColor(...soft); doc.roundedRect(M, y, CW, 8, 2, 2, "F"); doc.setFont("helvetica", "bold"); doc.setFontSize(10); doc.setTextColor(...ink); doc.text(pdfTekst(lotNaam(lot)), M + 3, y + 5.5); doc.text(pdfTekst(eur(sub)), W - M - 3, y + 5.5, { align: "right" }); y += 10; colHead();
+    let kop = null;
+    lr.forEach(r => {
+      const k = perRuimte ? (rk(r) || "Zonder ruimte") : (r.groep || "");
+      if (k && k !== kop) { kop = k; need(9, true); doc.setFont("helvetica", "bold"); doc.setFontSize(8); doc.setTextColor(...muted); doc.text(pdfTekst(k).toUpperCase(), M + 1, y + 3.2); if (perRuimte) doc.text(pdfTekst(eur(lr.filter(z => (rk(z) || "Zonder ruimte") === k).reduce((t, z) => t + signed(z), 0))), W - M - 1, y + 3.2, { align: "right" }); y += 5; }
+      const oms = doc.splitTextToSize(pdfTekst(r.omschrijving) + (r.locatie && !perRuimte ? "  (" + pdfTekst(r.locatie) + ")" : ""), cols[1][1] - 2); const h = Math.max(1, oms.length) * 3.9 + 2.2;
+      need(h, true); doc.setFont("helvetica", "normal"); doc.setFontSize(8.5); doc.setTextColor(...ink);
+      const waarden = [r.code || "", null, Number(r.hoeveelheid) ? nl(r.hoeveelheid, 2) + " " + (r.eenheid || "") : "", Number(r.prijs) ? eur(r.prijs) : "", Number(r.totaal) ? eur(signed(r)) : "", MS_STATUS[r.status] || ""];
+      cols.forEach((c, i) => { if (i === 1) doc.text(oms, xs[i] + 1, y + 3.2); else doc.text(pdfTekst(waarden[i]), c[2] === "r" ? xs[i] + c[1] - 1 : xs[i] + 1, y + 3.2, { align: c[2] === "r" ? "right" : "left" }); });
+      doc.setDrawColor(...line); doc.line(M, y + h, W - M, y + h); y += h;
+    });
+  });
+  const contract = rows.filter(r => !isMw(r)).reduce((t, r) => t + Number(r.totaal), 0), mw = rows.filter(isMw).reduce((t, r) => t + signed(r), 0), btw = rows.reduce((t, r) => t + signed(r) * (Number(r.btw) || 0), 0);
+  need(36); y += 6;
+  [["Contract excl. btw", contract], ["Meer-/minwerk excl. btw", mw], ["Totaal excl. btw", contract + mw], [`Btw${p.btw_tarief ? " (" + p.btw_tarief + " %)" : ""}`, btw], ["Totaal incl. btw", contract + mw + btw]].forEach(([k, v]) => { const vet = /^Totaal/.test(k); doc.setFont("helvetica", vet ? "bold" : "normal"); doc.setFontSize(vet ? 10.5 : 9.5); doc.setTextColor(...ink); doc.text(pdfTekst(k), W - M - 72, y + 4); doc.text(pdfTekst(eur(v)), W - M - 1, y + 4, { align: "right" }); y += 6.2; });
+  const n = doc.getNumberOfPages(); for (let i = 1; i <= n; i++) { doc.setPage(i); doc.setFontSize(8); doc.setTextColor(...muted); doc.text("BROS - prijzen excl. btw, tenzij anders vermeld", M, H - 8); doc.text(`${i} / ${n}`, W - M, H - 8, { align: "right" }); }
+  return doc.output("arraybuffer");
+}
+async function msPdf(p, knop) {
+  const oud = knop ? knop.textContent : ""; if (knop) { knop.disabled = true; knop.textContent = "Pdf maken…"; }
+  try { bewaarPdf(await msPdfDoc(p), `Meetstaat ${projTitel(p)} ${todayLocal()}.pdf`); toast("Pdf gedownload"); }
+  catch (e) { toast("Pdf maken mislukt: " + (e.message || e), 6000); }
+  finally { if (knop) { knop.disabled = false; knop.textContent = oud; } }
+}
+/* één gedeeld document ophalen via het Drive-script (controleert login en toegang) */
+async function haalDocument(d) {
+  if (!cfg.driveScriptUrl) throw new Error("Documenten ophalen is nog niet ingesteld bij BROS.");
+  const ac = new AbortController(); const tm = setTimeout(() => ac.abort(), 120000);
+  try {
+    const r = await fetch(cfg.driveScriptUrl, { method: "POST", body: JSON.stringify({ action: "bestand", id: d.id, token: S.session?.access_token || "" }), redirect: "follow", signal: ac.signal });
+    const j = await r.json(); if (!j.ok) { const e = new Error(j.error || "Document niet beschikbaar"); e.overslaan = !!j.overslaan; throw e; }
+    const bin = atob(j.b64); const u8 = new Uint8Array(bin.length); for (let i = 0; i < bin.length; i++) u8[i] = bin.charCodeAt(i);
+    return { mime: j.mime, bytes: u8 };
+  } finally { clearTimeout(tm); }
+}
+async function dossierPdf(p, knop) {
+  const K = S.dossier; if (!K) return;
+  const docs = D().documenten.filter(d => d.project_id === p.id && K.sel.has(d.id)).sort((a, b) => (a.pad || "").localeCompare(b.pad || "") || a.naam.localeCompare(b.naam));
+  const wvs = (D().werfverslagen || []).filter(w => w.project_id === p.id && K.wv.has(w.id)).sort((a, b) => (a.nr || 0) - (b.nr || 0));
+  const stappen = (K.ms ? 1 : 0) + docs.length + wvs.length; if (!stappen) return;
+  const zet = (t) => { if (knop) knop.textContent = t; }; if (knop) knop.disabled = true;
+  try {
+    const PDFLib = await laadPdfLib(); const uit = await PDFLib.PDFDocument.create(); const font = await uit.embedFont(PDFLib.StandardFonts.Helvetica);
+    const inhoud = []; const fouten = []; let stap = 0;
+    // voorblad
+    const jsPDF = await laadJsPdf(); const vb = new jsPDF({ unit: "mm", format: "a4" }); const logo = await logoPng();
+    const lijst = [...(K.ms ? ["Meetstaat"] : []), ...docs.map(d => (d.pad ? d.pad.replace(/\//g, " > ") + " > " : "") + d.naam), ...wvs.map(w => w.titel || "Werfverslag " + w.nr)];
+    if (logo) vb.addImage(logo, "PNG", 14, 18, 40, 12);
+    vb.setFont("helvetica", "bold"); vb.setFontSize(24); vb.setTextColor(29, 29, 31); vb.text("Dossier", 14, 52);
+    vb.setFont("helvetica", "normal"); vb.setFontSize(12); vb.setTextColor(90, 90, 96); vb.text(vb.splitTextToSize(pdfTekst(`${projTitel(p)}${p.gemeente ? " - " + p.gemeente : ""}`), 182), 14, 61); vb.text(pdfTekst("Samengesteld op " + fmtLang(todayLocal())), 14, 68);
+    vb.setFontSize(10); vb.setTextColor(29, 29, 31); let yy = 84; vb.setFont("helvetica", "bold"); vb.text("Inhoud", 14, yy); yy += 7; vb.setFont("helvetica", "normal");
+    lijst.forEach((t, i) => { const ls = vb.splitTextToSize(pdfTekst(`${i + 1}.  ${t}`), 180); if (yy + ls.length * 5 > 280) { vb.addPage(); yy = 20; } vb.text(ls, 14, yy); yy += ls.length * 5 + 1; });
+    const vbDoc = await PDFLib.PDFDocument.load(vb.output("arraybuffer")); (await uit.copyPages(vbDoc, vbDoc.getPageIndices())).forEach(pg => uit.addPage(pg));
+    const voegPdfToe = async (bytes) => { const src = await PDFLib.PDFDocument.load(bytes, { ignoreEncryption: true }); (await uit.copyPages(src, src.getPageIndices())).forEach(pg => uit.addPage(pg)); };
+    const voegBeeldToe = async (bytes, mime, titel) => {
+      const img = mime === "image/png" ? await uit.embedPng(bytes) : await uit.embedJpg(bytes);
+      const liggend = img.width > img.height; const [PW, PH] = liggend ? [841.89, 595.28] : [595.28, 841.89]; const m = 28, onder = 22;
+      const sc = Math.min((PW - 2 * m) / img.width, (PH - 2 * m - onder) / img.height, 1.5); const w = img.width * sc, h = img.height * sc;
+      const pg = uit.addPage([PW, PH]); pg.drawImage(img, { x: (PW - w) / 2, y: onder + m + (PH - 2 * m - onder - h) / 2, width: w, height: h });
+      pg.drawText(pdfTekst(titel).slice(0, 120), { x: m, y: 16, size: 8, font, color: PDFLib.rgb(0.45, 0.45, 0.48) });
+    };
+    if (K.ms) { zet(`Meetstaat… (${++stap}/${stappen})`); await voegPdfToe(await msPdfDoc(p)); }
+    for (const d of docs) {
+      zet(`${d.naam.slice(0, 28)}… (${++stap}/${stappen})`);
+      try { const f = await haalDocument(d); if (f.mime === "application/pdf") await voegPdfToe(f.bytes); else await voegBeeldToe(f.bytes, f.mime, d.naam); }
+      catch (e) { fouten.push(d.naam + (e.overslaan ? " (bestandstype)" : "")); }
+    }
+    for (const w of wvs) {
+      zet(`Werfverslag ${w.nr}… (${++stap}/${stappen})`);
+      try { const r = await fetch(safeUrl(w.pdf_url)); if (!r.ok) throw new Error(); await voegPdfToe(new Uint8Array(await r.arrayBuffer())); }
+      catch (e) { fouten.push(w.titel || "Werfverslag " + w.nr); }
+    }
+    zet("Pdf bewaren…");
+    bewaarPdf(await uit.save(), `Dossier ${projTitel(p)} ${todayLocal()}.pdf`);
+    toast(fouten.length ? `Pdf gedownload — niet opgenomen: ${fouten.join(", ")}` : "Pdf gedownload", fouten.length ? 9000 : 3500);
+    S.dossier = null; render();
+  } catch (e) { toast("Pdf maken mislukt: " + (e.message || e), 7000); if (knop) { knop.disabled = false; render(); } }
+}
 /* ---------- AI-assistent: vragen over het eigen dossier ---------- */
 const assistentAan = (p) => !!(D().assistent && D().assistent.actief !== false && p && p.assistent !== false);
 function vVragen(p) {
@@ -274,8 +390,13 @@ function vDocumenten(p) {
   const ext = (n) => (n.match(/\.([a-z0-9]{2,5})$/i) || [, "doc"])[1].toUpperCase();
   const size = (b) => !b ? "" : b > 1e6 ? (b / 1e6).toFixed(1) + " MB" : Math.round(b / 1e3) + " kB";
   const groups = [...new Set(docs.map(d => d.pad || ""))];
-  return `<h1 style="margin-bottom:6px">Documenten</h1><p class="muted" style="margin-bottom:16px">Plannen, presentaties en documenten die we met je delen — altijd de laatste versie.</p>
-    ${docs.length ? `<div class="stack">${groups.map(g => `<div class="panel"><div class="panel-head"><h3>${esc(g.replace(/\//g, " › ") || "Algemeen")}</h3></div><div class="panel-body" style="padding-top:4px;padding-bottom:4px">${docs.filter(d => (d.pad || "") === g).map(d => `<a class="doc" href="${esc(safeUrl(d.url))}" target="_blank" rel="noopener"><span class="ic">${esc(ext(d.naam))}</span><span><div class="nm">${esc(d.naam)}</div><small>${d.gewijzigd ? fmt(d.gewijzigd) : ""}${d.grootte ? " · " + size(d.grootte) : ""}</small></span></a>`).join("")}</div></div>`).join("")}</div>` : `<div class="panel"><div class="empty"><b>Nog geen documenten gedeeld</b>Zodra we plannen of documenten voor je klaarzetten, verschijnen ze hier.</div></div>`}`;
+  const K = S.dossier; const wvs = (D().werfverslagen || []).filter(w => w.project_id === p.id && w.pdf_url);
+  const kies = (d) => K ? (pdfBaar(d) ? `<input type="checkbox" class="dos-chk" data-dos="${d.id}" ${K.sel.has(d.id) ? "checked" : ""} aria-label="Opnemen in de pdf">` : `<span class="dos-chk muted" title="Dit bestandstype kan niet in een pdf">—</span>`) : "";
+  const docRij = (d) => K ? `<label class="doc">${kies(d)}<span class="ic">${esc(ext(d.naam))}</span><span><div class="nm">${esc(d.naam)}</div><small>${d.gewijzigd ? fmt(d.gewijzigd) : ""}${d.grootte ? " · " + size(d.grootte) : ""}${pdfBaar(d) ? "" : " · kan niet in een pdf"}</small></span></label>` : `<a class="doc" href="${esc(safeUrl(d.url))}" target="_blank" rel="noopener"><span class="ic">${esc(ext(d.naam))}</span><span><div class="nm">${esc(d.naam)}</div><small>${d.gewijzigd ? fmt(d.gewijzigd) : ""}${d.grootte ? " · " + size(d.grootte) : ""}</small></span></a>`;
+  const nKeuze = K ? K.sel.size + (K.ms ? 1 : 0) + K.wv.size : 0;
+  return `<div style="display:flex;justify-content:space-between;align-items:flex-start;gap:12px;flex-wrap:wrap"><h1 style="margin-bottom:6px">Documenten</h1>${(docs.length || msRows().length) ? (K ? `<div style="display:flex;gap:8px;flex-wrap:wrap"><button class="btn sm" data-act="dos-alles">${docs.filter(pdfBaar).every(d => K.sel.has(d.id)) ? "Niets" : "Alles"} selecteren</button><button class="btn sm" data-act="dos-stop">Annuleren</button><button class="btn sm primary" data-act="dos-maak" ${nKeuze ? "" : "disabled"}>Pdf downloaden (${nKeuze})</button></div>` : `<button class="btn sm" data-act="dos-start" title="Kies documenten, foto's, de meetstaat en werfverslagen en bundel ze in één pdf">⤓ Pdf maken</button>`) : ""}</div><p class="muted" style="margin-bottom:16px">${K ? "Vink aan wat in je pdf moet. Plannen en documenten komen er volledig in, foto's en renders elk op een eigen pagina." : "Plannen, presentaties en documenten die we met je delen — altijd de laatste versie."}</p>
+    ${K ? `<div class="panel" style="margin-bottom:16px"><div class="panel-head"><h3>Ook opnemen</h3></div><div class="panel-body" style="padding-top:4px;padding-bottom:4px">${msRows().length ? `<label class="doc"><input type="checkbox" class="dos-chk" data-dosms="1" ${K.ms ? "checked" : ""}><span class="ic">€</span><span><div class="nm">Meetstaat</div><small>met de afgesproken prijzen, ${S.msRuimte !== false ? "per ruimte" : "per nummer"}</small></span></label>` : ""}${wvs.map(w => `<label class="doc"><input type="checkbox" class="dos-chk" data-doswv="${w.id}" ${K.wv.has(w.id) ? "checked" : ""}><span class="ic">PDF</span><span><div class="nm">${esc(w.titel || "Werfverslag " + w.nr)}</div><small>werfverslag · ${fmt(w.datum)}</small></span></label>`).join("")}</div></div>` : ""}
+    ${docs.length ? `<div class="stack">${groups.map(g => `<div class="panel"><div class="panel-head"><h3>${esc(g.replace(/\//g, " › ") || "Algemeen")}</h3></div><div class="panel-body" style="padding-top:4px;padding-bottom:4px">${docs.filter(d => (d.pad || "") === g).map(docRij).join("")}</div></div>`).join("")}</div>` : `<div class="panel"><div class="empty"><b>Nog geen documenten gedeeld</b>Zodra we plannen of documenten voor je klaarzetten, verschijnen ze hier.</div></div>`}`;
 }
 
 function vTeam() {
@@ -347,11 +468,16 @@ function vuurwerk(naam, kop) {
 /* ---------- gebeurtenissen ---------- */
 document.addEventListener("click", (e) => {
   const el = e.target.closest("[data-tab],[data-act]"); if (!el) return;
-  if (el.dataset.tab) { S.tab = el.dataset.tab; render(); }
+  if (el.dataset.tab) { S.tab = el.dataset.tab; S.dossier = null; render(); }
   if (el.dataset.act === "logout") sb.auth.signOut().then(() => location.reload());
   if (el.dataset.act === "gk-nee") { const box = $("#gk_nee_" + el.dataset.id); box.hidden = !box.hidden; if (!box.hidden) box.querySelector("textarea").focus(); }
   if (el.dataset.act === "gk-toon") { S.gkOpen = S.gkOpen === el.dataset.id ? null : el.dataset.id; render(); }
   if (el.dataset.act === "note-toggle") { S.noteOpen = S.noteOpen === el.dataset.id ? null : el.dataset.id; render(); }
+  if (el.dataset.act === "ms-pdf") { const p = D().projecten.find(x => x.id === S.project); if (p) msPdf(p, el); return; }
+  if (el.dataset.act === "dos-start") { const p = D().projecten.find(x => x.id === S.project); S.dossier = { sel: new Set(D().documenten.filter(d => d.project_id === p.id && pdfBaar(d)).map(d => d.id)), ms: msRows().length > 0, wv: new Set() }; render(); return; }
+  if (el.dataset.act === "dos-stop") { S.dossier = null; render(); return; }
+  if (el.dataset.act === "dos-alles") { const p = D().projecten.find(x => x.id === S.project); const alle = D().documenten.filter(d => d.project_id === p.id && pdfBaar(d)); const aan = !alle.every(d => S.dossier.sel.has(d.id)); S.dossier.sel = new Set(aan ? alle.map(d => d.id) : []); render(); return; }
+  if (el.dataset.act === "dos-maak") { const p = D().projecten.find(x => x.id === S.project); if (p) dossierPdf(p, el); return; }
   if (el.dataset.act === "ms-ruimte") { S.msRuimte = el.dataset.on === "1"; try { localStorage.setItem("bros.klant.msRuimte", S.msRuimte ? "1" : "0"); } catch (x) { } render(); }
   if (el.dataset.act === "vl-toggle") { S.vlOpen = S.vlOpen || {}; S.vlOpen[el.dataset.key] = !S.vlOpen[el.dataset.key]; const y = window.scrollY; render(); window.scrollTo({ top: y }); }
 });
@@ -365,7 +491,15 @@ document.addEventListener("submit", (e) => {
   else { const opm = form.querySelector('[name="opmerking"]').value.trim(); if (!opm) { m.className = "msg err"; m.textContent = "Schrijf kort wat je wil aanpassen of vragen."; return; } gkBeslis(id, false, naam, opm, form); }
 });
 document.addEventListener("change", async (e) => {
-  if (e.target.id === "projSel") { S.project = e.target.value; render(); }
+  if (S.dossier && e.target.classList && e.target.classList.contains("dos-chk")) {
+    const t = e.target, K = S.dossier;
+    if (t.dataset.dos) K.sel[t.checked ? "add" : "delete"](t.dataset.dos);
+    else if (t.dataset.doswv) K.wv[t.checked ? "add" : "delete"](t.dataset.doswv);
+    else if (t.dataset.dosms) K.ms = t.checked;
+    const n = K.sel.size + K.wv.size + (K.ms ? 1 : 0); const b = document.querySelector('[data-act="dos-maak"]'); if (b) { b.textContent = `Pdf downloaden (${n})`; b.disabled = !n; }
+    return;
+  }
+  if (e.target.id === "projSel") { S.project = e.target.value; S.dossier = null; render(); }
   if (e.target.dataset.mijntaak) { const id = e.target.dataset.mijntaak, klaar = e.target.checked; e.target.disabled = true;
     const { error } = await sb.rpc("klant_taak_klaar", { p_id: id, p_klaar: klaar });
     if (error) { toast("Dat lukte niet: " + error.message); e.target.checked = !klaar; e.target.disabled = false; return; }

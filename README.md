@@ -11,7 +11,7 @@ Statische webapp (geen build-stap) op een Supabase-database.
 | `app.js` | alle logica |
 | `config.js` | koppeling met de database — **hier de Project URL en anon-sleutel invullen** |
 | `version.json` | versienummer; de app meldt een nieuwe versie aan wie ze open heeft |
-| `sql/001_init.sql` … `sql/029_*.sql` | databasescripts, in volgorde uit te voeren (`versie_schema` in instellingen bewaakt de volgorde vanaf 022) |
+| `sql/001_init.sql` … `sql/031_*.sql` | databasescripts, in volgorde uit te voeren (`versie_schema` in instellingen bewaakt de volgorde vanaf 022) |
 | `drive/Code.gs` | Google Apps Script dat projectmappen aanmaakt/koppelt op Drive en de meetstaat-export wegschrijft (installatie: zie bovenaan dat bestand) |
 | `meetstaat-export.js` | schrijft de meetstaat van een project in het Excel-sjabloon (zip/XML, opmaak en formules blijven intact) |
 | `klant/` | het klantenportaal (index.html + portaal.js): alleen-lezen zicht van de bouwheer op zijn project |
@@ -170,6 +170,21 @@ GSM- en telefoonnummers worden overal in één formaat bewaard: `+32/471.93.06.3
 - Taak afvinken (takenlijsten, of status *Klaar* in het taakformulier): vinkje met puls en een chip *x van y* voor de fase (of het project); ongeveer één keer op zeven net iets uitbundiger. Laatste taak van een fase of van een project: kort mijlpaalmoment met het BROS-logo dat volloopt (klik om weg te klikken).
 - Uren invullen voor jezelf, vandaag: de **dagring** in de kopbalk loopt vol; chip *+2 u · 6 van 8 u vandaag*. Haal je je dagdoel, dan één keer per dag een mijlpaal.
 - Klik op de dagring: je uren van vandaag per project, je **dagdoel**, *Animaties* aan/uit en *Zacht geluid* (standaard uit). Die voorkeuren gelden per browser. Met 'Minder beweging' in macOS/iOS blijft enkel een rustige versie over.
+
+## Pdf's in het klantenportaal (v1.31)
+- **Meetstaat › ⤓ Pdf**: de meetstaat met verkoopprijzen, per ruimte of per nummer (zoals de klant ze op het scherm heeft staan), met subtotalen per lot/ruimte en de totalen met btw.
+- **Documenten › ⤓ Pdf maken**: de klant vinkt aan wat erin moet (standaard alle gedeelde pdf's, afbeeldingen en Google-documenten; ook de meetstaat en werfverslagen) en downloadt één pdf met voorblad en inhoudstafel. Plannen en presentaties komen er volledig in, foto's/renders elk op een eigen pagina (max. 2000 px). Excel, dwg en andere types kunnen er niet in en zijn niet aan te vinken.
+- Documenten worden opgehaald via het Drive-script (actie `bestand`): enkel voor een actieve klant- of aannemerslogin, enkel documenten die in zijn eigen view (`klant_documenten` / `aan_documenten`) staan, max. 25 MB per bestand en 150 per uur. Vereist het nieuwe `drive/Code.gs`.
+
+## Beveiliging — ronde 2 (script 031, v1.30)
+- **Views alleen-lezen.** Supabase geeft elke nieuwe view ook schrijfrechten; script 031 zet alle views op enkel SELECT voor ingelogde gebruikers en ontneemt `anon` alle rechten. **Na elk script dat een view (her)maakt: `select public.rechten_herstellen();` uitvoeren** (staat onderaan elk nieuw script).
+- **Registraties.** Nieuwe accounts zijn altijd een inactieve medewerker zonder toegang; de metadata die iemand zelf meestuurt (rol, contact) wordt genegeerd. Klant- en aannemerslogins krijgen hun rol en contact enkel via het Drive-script (`portaal_koppel`, alleen met de geheime sleutel). Zet in Supabase → Authentication → Sign In / Providers **"Allow new users to sign up" uit** (uitnodigen blijft werken); het loginscherm maakt ook geen accounts meer aan.
+- **Foto's en opslag.** Foto's bij werfpunten moeten in de map van dat project/werfpunt staan en een https-link naar de werf-opslag hebben; aannemers kunnen enkel .jpg opladen bij hun eigen werfpunten; werfverslag-pdf's krijgen een niet-raadbare naam.
+- **Rechten.** Offerteprijzen van aannemers (worden kostprijzen) enkel voor beheer; medewerkers registreren en wijzigen enkel hun eigen uren; fasen en portaalinstellingen enkel voor actieve gebruikers; profielkleur/-foto gecontroleerd.
+- **Drive-script.** Alles wat in mails komt wordt ge-escaped; limieten per adres/gebruiker tegen mailbommen (Gmail heeft een dagquotum); 'wachtwoord vergeten' duurt altijd even lang en is begrensd; een map (of PROJECTEN zelf) kan niet publiek gedeeld worden; Yuki-mails worden enkel verwerkt als ze echt via yukiworks komen en enkel gekoppeld bij een overeenkomend bedrag; geen technische foutmeldingen naar buiten; inactieve logins worden geweigerd.
+- **Assistent.** Max. 5 vragen per minuut en 60 per dag per klantlogin; de teamlijst toont enkel BROS-teamleden.
+- **App.** Links/afbeeldingen uit de database enkel https (nooit `javascript:`); pdf-plannen zonder eval (pdf.js-lek); CSV-export beschermd tegen formules; uitloggen wist lokale gegevens (zoekgeschiedenis, concepten; in de werfmodus ook de wachtrij en foto-cache); niet in een vreemd frame te laden.
+- **Nog open (bewust):** een Content-Security-Policy en integriteitscontrole (SRI) op de CDN-scripts; medewerkers kunnen het Drive-secret lezen (nodig voor de Drive-acties, en het werkt enkel samen met een geldige teamlogin); de werf-opslag is publiek leesbaar voor wie de (lange, willekeurige) link kent.
 
 ## Sleutels (v1.25.1)
 - Het Planbord, de portalen en de werfmodus gebruiken de **publishable key** (`sb_publishable_…`) in `config.js`; die is publiek.

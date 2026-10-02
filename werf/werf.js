@@ -3,7 +3,8 @@
    Zelfde database als het Planbord (Supabase). Werkt offline: foto's en punten wachten in een
    lokale wachtrij (IndexedDB) en worden verzonden zodra er weer verbinding is.
    ===================================================================== */
-const WERF_VERSION = "1.24.0";
+if (window.top !== window.self) { try { window.top.location.replace(window.location.href); } catch (e) { document.documentElement.innerHTML = ""; } }   // niet in een vreemd frame (clickjacking)
+const WERF_VERSION = "1.30.0";
 const cfg = window.PLANBORD_CONFIG || {};
 if (!window.supabase) { document.getElementById("app").innerHTML = '<main><div class="empty"><b>De werfmodus is nog niet volledig geladen.</b><br>Open ze één keer met bereik; daarna werkt ze ook offline.<br><br><button class="btn" onclick="location.reload()">Opnieuw proberen</button></div></main>'; throw new Error("supabase-js niet geladen"); }
 const sb = window.supabase.createClient(cfg.supabaseUrl, cfg.supabaseAnonKey);
@@ -18,6 +19,7 @@ const VS_PRIO = { laag: "Laag", normaal: "Normaal", hoog: "Hoog" };
 const WEER = ["", "Zonnig", "Bewolkt", "Regen", "Wind", "Vriezend", "Sneeuw"];
 const ROL = { aannemer: "Aannemer", leverancier: "Leverancier", architect: "Architect", studiebureau: "Studiebureau", andere: "Andere", bouwheer: "Bouwheer", contactpersoon: "Contactpersoon" };
 let toastT; const toast = (m, ms = 2600) => { const t = $("#toast"); t.textContent = m; t.classList.add("show"); clearTimeout(toastT); toastT = setTimeout(() => t.classList.remove("show"), ms); };
+const veiligSrc = (u) => /^(https:|blob:|data:image\/)/i.test(String(u || "")) ? String(u) : "";
 const store = { get: (k, d) => { try { const v = localStorage.getItem("werf." + k); return v == null ? d : JSON.parse(v); } catch (e) { return d; } }, set: (k, v) => { try { localStorage.setItem("werf." + k, JSON.stringify(v)); } catch (e) { } }, del: (k) => { try { localStorage.removeItem("werf." + k); } catch (e) { } } };
 
 /* ---------- state ---------- */
@@ -46,6 +48,12 @@ const idb = {
   async put(item) { const db = await this.open(); return new Promise((res, rej) => { const q = db.transaction("queue", "readwrite").objectStore("queue").put(item); q.onsuccess = () => res(q.result); q.onerror = () => rej(q.error); }); },
   async del(id) { const db = await this.open(); return new Promise((res, rej) => { const q = db.transaction("queue", "readwrite").objectStore("queue").delete(id); q.onsuccess = () => res(); q.onerror = () => rej(q.error); }); },
 };
+/* afmelden op een gedeeld toestel: geen gegevens, wachtrij of foto's van de vorige gebruiker achterlaten */
+async function opruimenNaUitloggen() {
+  try { Object.keys(localStorage).filter(k => k.startsWith("werf.")).forEach(k => localStorage.removeItem(k)); } catch (e) { }
+  try { for (const q of (S.queue || [])) await idb.del(q.id); S.queue = []; } catch (e) { }
+  try { if (window.caches) await caches.delete("bros-werf-fotos"); } catch (e) { }
+}
 async function loadQueue() { try { S.queue = await idb.all(); } catch (e) { S.queue = []; } }
 async function enqueue(item) {
   item.t = Date.now(); item.pid = item.pid || S.project;
@@ -226,7 +234,7 @@ function vList() {
   const b = S.bezoek ? allWb().find(x => x.id === S.bezoek) : null;
   const n = (k) => all.filter(v => k === "alle" ? true : v.status === k).length;
   const perLot = S.perLot && list.some(v => v.lot);
-  const card = (v) => `<button class="card ${v.status === "gecontroleerd" || v.status === "vervallen" ? "dim" : ""}" data-act="open" data-id="${v.id}">${(v.fotos || [])[0] ? `<img class="th" src="${esc(v.fotos[0].url)}" alt="">` : `<div class="th">geen foto</div>`}<div class="bd"><div class="hd"><span class="nr">${vsNr(v)}</span>${v.prioriteit === "hoog" ? `<span class="pill late">!</span>` : ""}${pill(v)}${v._pending ? `<span class="pill pend">wacht</span>` : ""}</div><div class="tx">${v.titel ? `<b>${esc(v.titel)}</b>${v.omschrijving ? ` <span style="color:var(--muted)">${esc(v.omschrijving)}</span>` : ""}` : esc(v.omschrijving || "—")}</div><div class="mt">${[v.ruimte, !perLot && v.lot ? lotName(v.lot) : "", wie(v), v.deadline ? (isLate(v) ? `<span class="late">tegen ${fmt(v.deadline)}</span>` : "tegen " + fmt(v.deadline)) : ""].filter(Boolean).join(" · ")}</div></div></button>`;
+  const card = (v) => `<button class="card ${v.status === "gecontroleerd" || v.status === "vervallen" ? "dim" : ""}" data-act="open" data-id="${v.id}">${(v.fotos || [])[0] ? `<img class="th" src="${esc(veiligSrc(v.fotos[0].url))}" alt="">` : `<div class="th">geen foto</div>`}<div class="bd"><div class="hd"><span class="nr">${vsNr(v)}</span>${v.prioriteit === "hoog" ? `<span class="pill late">!</span>` : ""}${pill(v)}${v._pending ? `<span class="pill pend">wacht</span>` : ""}</div><div class="tx">${v.titel ? `<b>${esc(v.titel)}</b>${v.omschrijving ? ` <span style="color:var(--muted)">${esc(v.omschrijving)}</span>` : ""}` : esc(v.omschrijving || "—")}</div><div class="mt">${[esc(v.ruimte), !perLot && v.lot ? esc(lotName(v.lot)) : "", esc(wie(v)), v.deadline ? (isLate(v) ? `<span class="late">tegen ${esc(fmt(v.deadline))}</span>` : "tegen " + esc(fmt(v.deadline))) : ""].filter(Boolean).join(" · ")}</div></div></button>`;
   let body;
   if (perLot) { const g = {}; list.forEach(v => (g[v.lot || 0] = g[v.lot || 0] || []).push(v)); body = Object.keys(g).map(Number).sort((a, b) => (a ? 0 : 1) - (b ? 0 : 1) || a - b).map(nr => `<h2 style="margin:14px 0 8px;font-size:15px">${nr ? esc(lotName(nr)) : "Zonder lot"} <span class="cnt">${g[nr].length}</span></h2>` + g[nr].map(card).join("")).join(""); }
   else body = list.map(card).join("");
@@ -238,12 +246,12 @@ function vDetail() {
   const v = allVs().find(x => x.id === S.detail); if (!v) { S.view = "list"; return vList(); }
   const fotos = v.fotos || [], bewijs = v.opgelost_fotos || [];
   return `<button class="back" data-act="back">‹ Terug</button>
-    ${fotos.length ? `<div class="gallery">${fotos.map(f => `<img src="${esc(f.url)}" alt="" data-lb="${esc(f.url)}">`).join("")}</div>` : ""}
+    ${fotos.length ? `<div class="gallery">${fotos.map(f => `<img src="${esc(veiligSrc(f.url))}" alt="" data-lb="${esc(veiligSrc(f.url))}">`).join("")}</div>` : ""}
     <div class="hd" style="display:flex;gap:8px;align-items:center;margin-bottom:6px"><span class="nr" style="font-size:18px">${vsNr(v)}</span>${v.prioriteit === "hoog" ? `<span class="pill late">Hoge prioriteit</span>` : ""}${pill(v)}${v._pending ? `<span class="pill pend">nog te verzenden</span>` : ""}</div>
     ${v.titel ? `<h1 style="margin:0 0 6px">${esc(v.titel)}</h1>` : ""}<p style="font-size:17px;margin:0 0 10px;white-space:pre-wrap">${esc(v.omschrijving || (v.titel ? "" : "—"))}</p>
     <div class="meta">${v.ruimte ? `<div>Ruimte: <b>${esc(v.ruimte)}</b></div>` : ""}${v.lot ? `<div>Lot: <b>${esc(lotName(v.lot))}</b></div>` : ""}<div>Verantwoordelijke: <b>${esc(wie(v) || "nog niet toegewezen")}</b></div>${v.deadline ? `<div>Op te lossen tegen: <b class="${isLate(v) ? "late" : ""}">${fmtLong(v.deadline)}</b></div>` : ""}${v.opgelost_op ? `<div>Opgelost op <b>${fmtLong(v.opgelost_op.slice(0, 10))}</b>${v.opgelost_door ? " door " + esc(profile(v.opgelost_door)?.name || "") : ""}</div>` : ""}${v.opmerking ? `<div>Opmerking: <b>${esc(v.opmerking)}</b></div>` : ""}</div>
     ${v.plan_id && plan(v.plan_id) && v.plan_x != null ? `<h2>Op het plan · ${esc(plan(v.plan_id).naam)}</h2><div class="plan-wrap"><img src="${esc(plan(v.plan_id).url)}" alt="">${pinHtml(v)}</div>` : ""}
-    ${bewijs.length ? `<h2>Bewijsfoto's</h2><div class="fotos">${bewijs.map(f => `<img src="${esc(f.url)}" alt="" data-lb="${esc(f.url)}">`).join("")}</div>` : ""}
+    ${bewijs.length ? `<h2>Bewijsfoto's</h2><div class="fotos">${bewijs.map(f => `<img src="${esc(veiligSrc(f.url))}" alt="" data-lb="${esc(veiligSrc(f.url))}">`).join("")}</div>` : ""}
     <div style="margin-top:18px;display:grid;gap:10px">
       ${v.status === "open" ? `<label class="btn ok" style="text-align:center">✓ Opgelost — met bewijsfoto<input type="file" accept="image/*" capture="environment" hidden data-oplos="${v.id}"></label><button class="btn" data-act="oplos" data-id="${v.id}">✓ Opgelost zonder foto</button>` : ""}
       ${isAan() ? (v.status === "opgelost" ? `<p class="meta" style="text-align:center">Gemeld als opgelost — BROS controleert dit bij het volgende werfbezoek.</p>` : "") : `${v.status === "opgelost" ? `<button class="btn ok" data-act="status" data-id="${v.id}" data-s="gecontroleerd">✓ Gecontroleerd en in orde</button><button class="btn" data-act="status" data-id="${v.id}" data-s="open">Heropenen — nog niet in orde</button>` : ""}
@@ -284,7 +292,7 @@ function bindForm() {
       const cl = pb.querySelector("[data-pin-clear]"); if (cl) cl.onclick = () => { pin = null; drawPlan(); }; };
     planSel.addEventListener("change", () => { pin = null; drawPlan(); }); drawPlan(); }
   const box = $("#f_fotos");
-  const draw = () => { box.innerHTML = (v.id ? (v.fotos || []).map(f => `<div class="fi"><img src="${esc(f.url)}" alt=""></div>`).join("") : "") + v._nieuw.map((f, i) => `<div class="fi"><img src="${f.url}" alt=""><button type="button" class="x" data-x="${i}">✕</button></div>`).join(""); box.querySelectorAll("[data-x]").forEach(b => b.onclick = () => { v._nieuw.splice(Number(b.dataset.x), 1); draw(); }); };
+  const draw = () => { box.innerHTML = (v.id ? (v.fotos || []).map(f => `<div class="fi"><img src="${esc(veiligSrc(f.url))}" alt=""></div>`).join("") : "") + v._nieuw.map((f, i) => `<div class="fi"><img src="${f.url}" alt=""><button type="button" class="x" data-x="${i}">✕</button></div>`).join(""); box.querySelectorAll("[data-x]").forEach(b => b.onclick = () => { v._nieuw.splice(Number(b.dataset.x), 1); draw(); }); };
   draw();
   document.querySelectorAll("[data-file]").forEach(inp => inp.addEventListener("change", async (e) => {
     const sv = $("#f_save"); if (sv) { sv.disabled = true; sv.textContent = "Foto's verwerken…"; }
@@ -354,7 +362,7 @@ document.addEventListener("click", async (e) => {
     const mislukt = S.queue.filter(q => (q.tries || 0) >= 5);
     if (mislukt.length) { const txt = mislukt.map(q => "• " + (q.kind === "vs-new" ? (q.row.titel || q.row.omschrijving || "vaststelling") : q.kind) + ": " + (q.err || "?")).join("\n"); if (confirm(mislukt.length + " item(s) konden niet verzonden worden:\n" + txt + "\n\nOK = nog eens proberen · Annuleren = niets doen")) { mislukt.forEach(q => { q.tries = 0; idb.put(q).catch(() => { }); }); return sync(); } return; }
     if (!S.online) return toast("Geen verbinding — de wachtrij wordt verzonden zodra er bereik is"); if (!S.queue.length) { refresh(); return toast("Alles is verzonden"); } return sync(); }
-  if (d.act === "logout") { if (S.queue.length && !confirm(S.queue.length + " item(s) zijn nog niet verzonden. Toch afmelden? Ze worden pas verzonden na een volgende aanmelding.")) return; await sb.auth.signOut(); S.session = null; S.me = null; store.del("me"); return render(); }
+  if (d.act === "logout") { if (S.queue.length && !confirm(S.queue.length + " item(s) zijn nog niet verzonden. Toch afmelden? Ze worden dan van dit toestel gewist.")) return; await sb.auth.signOut(); S.session = null; S.me = null; await opruimenNaUitloggen(); return render(); }
 });
 document.addEventListener("change", async (e) => {
   const t = e.target;

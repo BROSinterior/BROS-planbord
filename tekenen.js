@@ -6,7 +6,7 @@
    Coördinaten: wereld = millimeter, y naar boven (zoals in CAD).
    Onderlegger → wereld:  w = t + s · R(rot) · (u, ±v)    (± : beeld/pdf heeft y naar beneden, dxf naar boven)
    Wereld → scherm:       X = W/2 + (x − cx)·z,  Y = H/2 − (y − cy)·z   (z = schermpixels per mm)
-   Nodig: databasescript 028.
+   Nodig: databasescript 030 (zelfde inhoud als het vroegere 028_tekenen).
    ===================================================================== */
 const TK_LAGEN = [
   ["onderlegger", "Onderlegger", "#8E8E93"],
@@ -14,7 +14,7 @@ const TK_LAGEN = [
   ["afbraak", "Afbraak", "#D42A20"],
   ["nieuw", "Nieuw", "#1D1D1F"],
   ["elektro", "Elektro", "#D42A20"],
-  ["verlichting", "Verlichting", "#C77700"],
+  ["verlichting", "Verlichting", "#D42A20"],
   ["sanitair", "Sanitair", "#1F5FD6"],
   ["hvac", "HVAC / ventilatie", "#2E9E4F"],
   ["tekst", "Tekst", "#1D1D1F"],
@@ -23,7 +23,7 @@ const TK_LAGEN = [
 const TK_PT_MM = 25.4 / 72;                 // 1 pdf-punt in mm
 const TK_BEELD_MAX = 4800;                  // langste zijde van de basisafbeelding (onder de canvaslimiet van iPad/iPhone)
 const TK_SCHALEN = [10, 20, 25, 50, 100, 200, 500];
-const tkOk = () => schemaV() >= 28;
+const tkOk = () => schemaV() >= 30;
 const tkPlansOf = (pid) => Object.values(S.tekenplannen || {}).filter(x => x.project_id === pid).sort((a, b) => (a.volgorde ?? 0) - (b.volgorde ?? 0) || (a.naam || "").localeCompare(b.naam || ""));
 const tkOnSchaal = (pl) => !!(pl.kalibratie && pl.kalibratie.bron);
 const tkBronTekst = (pl) => {
@@ -37,7 +37,7 @@ const tkSoortTekst = { pdf: "PDF", beeld: "Afbeelding", dxf: "DXF", werfplan: "W
 
 /* ---------- tabblad Plannen ---------- */
 function vTekenen(p) {
-  if (!tkOk()) return SCHEMA_HINT(28);
+  if (!tkOk()) return SCHEMA_HINT(30);
   const pls = tkPlansOf(p.id);
   return `<div class="panel" style="margin-bottom:16px"><div class="panel-head"><div><h3>Plannen</h3><div class="muted" style="font-size:12px;margin-top:2px">Tekenmodule — zet een plan van de architect (pdf, dxf, foto) op schaal als onderlegger; meten en kalibreren. Technieken intekenen volgt in de volgende versie.</div></div><div class="actions"><button class="btn sm primary" data-act="tk-new" data-pid="${p.id}">+ Plan</button></div></div>
     ${pls.length ? `<div class="plan-grid">${pls.map(pl => { const o = pl.onderlegger || {}; const img = o.beeld_url || o.thumb_url || o.url; return `<div class="plan-card" data-act="tk-open" data-id="${pl.id}">${img && o.soort !== "dxf" || o.thumb_url ? `<img src="${esc(o.soort === "dxf" ? o.thumb_url : img)}" alt="" loading="lazy">` : `<div class="tk-noimg">${esc(tkSoortTekst[o.soort] || "Leeg plan")}</div>`}<div class="plan-name"><span>${esc(pl.naam || "Plan")}</span><span class="pill ${tkOnSchaal(pl) ? "done" : "vs-open"}" title="${esc(tkBronTekst(pl))}">${tkOnSchaal(pl) ? "1:" + (pl.schaal || 50) : "kalibreren"}</span></div></div>`; }).join("")}</div>`

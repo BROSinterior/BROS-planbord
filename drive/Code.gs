@@ -33,7 +33,8 @@ function doPost(e) {
     if (body.action === "gkmail") return json(goedkeuringMail(body)); // portaal (klant beslist) én Planbord: identiteit en rol via het meegestuurde login-token
     if (body.action === "voorstelmail") return json(voorstelMailAannemer(body)); // aannemersportaal: melding van een vraag/opmerking (token-gecontroleerd, aannemer)
     if (body.action === "prijsaanvraagmail") return json(prijsaanvraagMail(body)); // prijsaanvragen: team (token) → aannemer, of aannemer (token) → BROS
-    if (body.action === "koppelmail") return json(koppelMail(body)); // team (token): aannemer verwittigen dat hij aan een project gekoppeld is (met uitnodiging als hij nog geen login heeft)
+    if (body.action === "koppelmail") return json(koppelMail(body));
+    if (body.action === "bestand") return json(portaalBestand(body)); // klant/aannemer: een gedeeld document ophalen om er een pdf-dossier van te maken (login + toegang gecontroleerd) // team (token): aannemer verwittigen dat hij aan een project gekoppeld is (met uitnodiging als hij nog geen login heeft)
     if (!body.secret || body.secret !== CONFIG.SECRET) return json({ ok: false, error: "Geen toegang (secret klopt niet)." });
     if (body.action === "ping") return json({ ok: true, info: "Verbinding en secret in orde.", projecten: DriveApp.getFolderById(CONFIG.PROJECTEN_FOLDER_ID).getName(), sjabloon: DriveApp.getFolderById(CONFIG.SJABLOON_FOLDER_ID).getName() });
     // Drive-acties: naast het secret ook een geldig teamlogin vereist (het secret alleen volstaat niet meer), en enkel mappen onder PROJECTEN
@@ -49,11 +50,25 @@ function doPost(e) {
     if (body.action === "werfverslagmail") return json(werfverslagMail(body));
     return json({ ok: false, error: "Onbekende actie." });
   } catch (err) {
-    return json({ ok: false, error: String(err && err.message || err) });
+    const msg = String(err && err.message || err); console.error(msg);
+    return json({ ok: false, error: /^(Supabase|Planbord|Drive:|Exception|TypeError|ReferenceError)/.test(msg) ? "Er ging iets mis in het Drive-script. Probeer het opnieuw of verwittig BROS." : msg });
   }
 }
 function doGet() { return json({ ok: true, info: "BROS Planbord Drive-script actief." }); }
 function json(o) { return ContentService.createTextOutput(JSON.stringify(o)).setMimeType(ContentService.MimeType.JSON); }
+/* ---- beveiliging (v1.30) ---- */
+/** HTML-escape voor alles wat in een mail terechtkomt (namen, titels, opmerkingen van klanten en aannemers). */
+function H(t) { return String(t == null ? "" : t).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;").replace(/'/g, "&#39;"); }
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+function uuid(x) { const v = String(x || "").trim(); if (!UUID_RE.test(v)) throw new Error("Ongeldige verwijzing."); return v; }
+/** Teller tegen misbruik (mailbommen, dagquotum Gmail): max `max` keer per `sec` seconden per sleutel. */
+function quotum(key, max, sec) {
+  const lock = LockService.getScriptLock(); lock.waitLock(5000);
+  try { const c = CacheService.getScriptCache(); const k = "q:" + key; const n = Number(c.get(k) || 0); if (n >= max) return false; c.put(k, String(n + 1), sec); return true; }
+  finally { lock.releaseLock(); }
+}
+/** Eénmalig per sleutel binnen `sec` seconden (bv. één mail per beslissing). */
+function eenmalig(key, sec) { return quotum("1:" + key, 1, sec); }
 /** Beveiliging: een map-id moet onder BROS/PROJECTEN liggen (max. 8 niveaus diep), anders geen toegang. */
 function onderProjecten(folderId) {
   if (!folderId) throw new Error("Geen map-id.");
@@ -268,6 +283,7 @@ const PORTAAL = {
 };
 /** Mail naar de klant: vanuit PORTAAL.VAN als dat een Gmail-alias is, anders vanuit het scriptaccount met PORTAAL.VAN als reply-to. */
 function portaalMail(to, subject, text, html) {
+  subject = String(subject || "").replace(/[\r\n]+/g, " ").slice(0, 240);
   const opt = { htmlBody: html, name: PORTAAL.AFZENDER };
   if (PORTAAL.VAN) { const aliases = GmailApp.getAliases(); if (aliases.indexOf(PORTAAL.VAN) >= 0) opt.from = PORTAAL.VAN; else opt.replyTo = PORTAAL.VAN; }
   GmailApp.sendEmail(to, subject, text, opt);
@@ -297,19 +313,25 @@ function caller(token, beheerOnly) {
 function portaalLink(email, naam, contactId, rol) {
   const url = rol === "aannemer" ? PORTAAL.URL_AANNEMER : PORTAAL.URL;
   let j, bestaand = false;
-  try { j = pbAdmin("/auth/v1/admin/generate_link", "post", { type: "invite", email: email, data: { name: naam, rol: rol, contact_id: contactId }, redirect_to: url }); }
+  if (contactId) contactId = uuid(contactId);
+  try { j = pbAdmin("/auth/v1/admin/generate_link", "post", { type: "invite", email: email, data: { name: String(naam || "").slice(0, 80) }, redirect_to: url }); }
   catch (e) {
     if (!/already|exists|registered|duplicate/i.test(String(e))) throw e;
     bestaand = true;
     j = pbAdmin("/auth/v1/admin/generate_link", "post", { type: "recovery", email: email, redirect_to: url });
   }
-  const link = j.action_link || (j.properties && j.properties.action_link); const userId = j.id || (j.user && j.user.id);
+  const link = j.action_link || (j.properties && j.properties.action_link); let userId = j.id || (j.user && j.user.id);
   if (!link) throw new Error("Geen uitnodigingslink gekregen van Supabase.");
-  if (bestaand && userId) {
-    const prof = pbAdmin("/rest/v1/profiles?id=eq." + userId + "&select=role", "get");
-    if (prof && prof[0] && prof[0].role !== rol) throw new Error("Dit e-mailadres hoort al bij een " + (prof[0].role === "beheer" || prof[0].role === "medewerker" ? "teamlid van het Planbord" : "login als " + prof[0].role) + "; gebruik een ander adres.");
+  if (!userId) { const pr = pbAdmin("/rest/v1/profiles?email=eq." + encodeURIComponent(email) + "&select=id", "get") || []; userId = pr[0] && pr[0].id; }
+  if (!userId) throw new Error("Geen gebruiker gekregen van Supabase.");
+  if (bestaand) {
+    const prof = pbAdmin("/rest/v1/profiles?id=eq." + userId + "&select=role,active", "get");
+    const r0 = prof && prof[0];
+    // een inactieve 'medewerker' is een (al dan niet ongewenste) registratie zonder toegang: die mag een portaallogin worden
+    if (r0 && r0.role !== rol && !(r0.role === "medewerker" && !r0.active)) throw new Error("Dit e-mailadres hoort al bij een " + (r0.role === "beheer" || r0.role === "medewerker" ? "teamlid van het Planbord" : "login als " + r0.role) + "; gebruik een ander adres.");
   }
-  if (contactId && userId) pbAdmin("/rest/v1/contacten?id=eq." + contactId, "patch", { user_id: userId, portaal_sinds: new Date().toISOString() });
+  pbAdmin("/rest/v1/rpc/portaal_koppel", "post", { p_user: userId, p_rol: rol, p_contact: contactId || null });   // rol + koppeling (script 030)
+  if (contactId) pbAdmin("/rest/v1/contacten?id=eq." + contactId, "patch", { portaal_sinds: new Date().toISOString() });
   return { link: link, userId: userId || null, bestaand: bestaand, url: url };
 }
 function portaalInvite(body) {
@@ -339,13 +361,17 @@ function portaalInvite(body) {
 }
 /** "Wachtwoord vergeten" op het portaal: herstellink per Gmail, enkel voor klantlogins; geeft nooit prijs of een adres bestaat. */
 function portaalReset(body) {
+  const t0 = Date.now();
+  try { return portaalResetIntern(body); }
+  finally { const rest = 3500 - (Date.now() - t0); if (rest > 0) Utilities.sleep(rest); }   // altijd even lang: verraadt niet of er een account bestaat
+}
+function portaalResetIntern(body) {
   const email = String(body.email || "").trim().toLowerCase();
-  if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email)) return { ok: true };
-  const cache = CacheService.getScriptCache(); const key = "reset:" + email;
-  if (cache.get(key)) return { ok: true };            // max. één mail per 10 minuten per adres
-  cache.put(key, "1", 600);
+  if (email.length > 200 || !/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email)) return { ok: true };
+  if (!eenmalig("reset:" + email, 600)) return { ok: true };          // max. één mail per 10 minuten per adres
+  if (!quotum("reset-alle", 30, 3600)) return { ok: true };           // en hoogstens 30 per uur in totaal
   try {
-    const prof = pbAdmin("/rest/v1/profiles?email=eq." + encodeURIComponent(email) + "&role=in.(klant,aannemer)&select=id,name,role", "get");
+    const prof = pbAdmin("/rest/v1/profiles?email=eq." + encodeURIComponent(email) + "&role=in.(klant,aannemer)&active=eq.true&select=id,name,role", "get");
     if (!prof || !prof.length) return { ok: true };
     const url = prof[0].role === "aannemer" ? PORTAAL.URL_AANNEMER : PORTAAL.URL;
     const j = pbAdmin("/auth/v1/admin/generate_link", "post", { type: "recovery", email: email, redirect_to: url });
@@ -353,7 +379,7 @@ function portaalReset(body) {
     const naam = prof[0].name || "";
     const pnaam = prof[0].role === "aannemer" ? "BROS-aannemersportaal" : "BROS-klantenportaal";
     portaalMail(email, "Nieuw wachtwoord voor je " + pnaam, "Beste " + naam + ",\n\nVia deze link kies je een nieuw wachtwoord voor het " + pnaam + ":\n" + link + "\n\nVroeg je dit niet aan, dan mag je deze mail negeren.\n\nBROS",
-      "<div style=\"font-family:Helvetica,Arial,sans-serif;font-size:15px;line-height:1.5;color:#1B1E1C\"><p>Beste " + naam + ",</p><p>Via de knop hieronder kies je een nieuw wachtwoord voor het " + pnaam + ".</p><p style=\"margin:24px 0\"><a href=\"" + link + "\" style=\"background:#1B1E1C;color:#fff;text-decoration:none;padding:12px 20px;border-radius:8px;font-weight:600;display:inline-block\">Nieuw wachtwoord kiezen</a></p><p style=\"color:#767D78;font-size:13px\">Vroeg je dit niet aan, dan mag je deze mail negeren.</p><p>BROS</p></div>");
+      "<div style=\"font-family:Helvetica,Arial,sans-serif;font-size:15px;line-height:1.5;color:#1B1E1C\"><p>Beste " + H(naam) + ",</p><p>Via de knop hieronder kies je een nieuw wachtwoord voor het " + pnaam + ".</p><p style=\"margin:24px 0\"><a href=\"" + link + "\" style=\"background:#1B1E1C;color:#fff;text-decoration:none;padding:12px 20px;border-radius:8px;font-weight:600;display:inline-block\">Nieuw wachtwoord kiezen</a></p><p style=\"color:#767D78;font-size:13px\">Vroeg je dit niet aan, dan mag je deze mail negeren.</p><p>BROS</p></div>");
   } catch (e) { Logger.log("reset: " + e); }
   return { ok: true };
 }
@@ -361,23 +387,27 @@ function portaalReset(body) {
 function callerAny(token) {
   if (!token) throw new Error("Geen login meegestuurd.");
   const u = pbReq("/auth/v1/user", "get", null, token);
-  const prof = pbReq("/rest/v1/profiles?id=eq." + u.id + "&select=role,name,email", "get", null, token);
-  if (!prof || !prof[0]) throw new Error("Geen profiel.");
+  const prof = pbReq("/rest/v1/profiles?id=eq." + u.id + "&select=role,name,email,active", "get", null, token);
+  if (!prof || !prof[0] || prof[0].active === false) throw new Error("Geen actieve login.");
   return { id: u.id, name: prof[0].name, role: prof[0].role, email: prof[0].email || u.email };
 }
 /** Goedkeuringsmails: "voorgelegd" (team → klant: er wacht een voorstel) en "beslist" (klant → BROS-melding + bevestiging aan de klant). */
 function goedkeuringMail(body) {
   const wie = callerAny(body.token); const soort = String(body.soort || "");
-  const g = (pbAdmin("/rest/v1/goedkeuringen?id=eq." + encodeURIComponent(String(body.id || "")) + "&select=*", "get") || [])[0];
-  if (!g) return { ok: false, error: "Voorstel niet gevonden." };
+  if (soort !== "voorgelegd" && soort !== "beslist") return { ok: false, error: "Onbekende soort." };
   if (soort === "voorgelegd" && wie.role !== "beheer" && wie.role !== "medewerker") return { ok: false, error: "Geen toegang." };
-  if (soort === "beslist" && (wie.role !== "klant" || g.beslist_door !== wie.id)) return { ok: false, error: "Geen toegang." };
+  if (soort === "beslist" && wie.role !== "klant") return { ok: false, error: "Geen toegang." };
+  const g = (pbAdmin("/rest/v1/goedkeuringen?id=eq." + uuid(body.id) + "&select=*", "get") || [])[0];
+  if (!g) return { ok: false, error: "Voorstel niet gevonden." };
+  if (soort === "beslist" && g.beslist_door !== wie.id) return { ok: false, error: "Geen toegang." };
+  if (soort === "beslist" && !eenmalig("gk:" + g.id + ":" + g.status + ":" + (g.beslist_op || ""), 21600)) return { ok: true };   // één mail per beslissing
+  if (soort === "voorgelegd" && !quotum("gkv:" + g.id, 3, 3600)) return { ok: false, error: "Dit voorstel werd net al gemaild; probeer het later opnieuw." };
   const p = (pbAdmin("/rest/v1/projecten?id=eq." + g.project_id + "&select=nummer,klant,naam,lead", "get") || [])[0] || {};
   const pcs = pbAdmin("/rest/v1/project_contacten?project_id=eq." + g.project_id + "&rol=in.(bouwheer,contactpersoon)&select=contact_id", "get") || [];
   const klanten = pcs.length ? (pbAdmin("/rest/v1/contacten?id=in.(" + pcs.map(x => x.contact_id).join(",") + ")&user_id=not.is.null&select=naam,email", "get") || []).filter(c => c.email) : [];
   const eur = (n) => "€ " + Number(n || 0).toLocaleString("nl-BE", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
   const nl = (n) => Number(n || 0).toLocaleString("nl-BE", { maximumFractionDigits: 2 });
-  const rows = (g.posten || []).map(x => "<tr><td style=\"padding:4px 8px;color:#767D78;font-family:monospace\">" + x.code + "</td><td style=\"padding:4px 8px\">" + String(x.omschrijving || "").replace(/</g, "&lt;") + (x.locatie ? " <span style=\"color:#767D78\">· " + x.locatie + "</span>" : "") + "</td><td style=\"padding:4px 8px;text-align:right;white-space:nowrap\">" + nl(x.hoeveelheid) + " " + x.eenheid + "</td><td style=\"padding:4px 8px;text-align:right;white-space:nowrap\">" + eur(x.prijs) + "</td><td style=\"padding:4px 8px;text-align:right;white-space:nowrap\">" + eur(x.totaal) + "</td></tr>").join("");
+  const rows = (g.posten || []).map(x => "<tr><td style=\"padding:4px 8px;color:#767D78;font-family:monospace\">" + H(x.code) + "</td><td style=\"padding:4px 8px\">" + String(x.omschrijving || "").replace(/</g, "&lt;") + (x.locatie ? " <span style=\"color:#767D78\">· " + H(x.locatie) + "</span>" : "") + "</td><td style=\"padding:4px 8px;text-align:right;white-space:nowrap\">" + nl(x.hoeveelheid) + " " + H(x.eenheid) + "</td><td style=\"padding:4px 8px;text-align:right;white-space:nowrap\">" + eur(x.prijs) + "</td><td style=\"padding:4px 8px;text-align:right;white-space:nowrap\">" + eur(x.totaal) + "</td></tr>").join("");
   const tabel = "<table style=\"border-collapse:collapse;width:100%;font-size:13px\"><thead><tr style=\"color:#767D78;font-size:11px;text-transform:uppercase\"><th align=\"left\" style=\"padding:4px 8px\">Nr</th><th align=\"left\" style=\"padding:4px 8px\">Omschrijving</th><th align=\"right\" style=\"padding:4px 8px\">Hoev.</th><th align=\"right\" style=\"padding:4px 8px\">Prijs</th><th align=\"right\" style=\"padding:4px 8px\">Totaal</th></tr></thead><tbody>" + rows
     + "<tr><td colspan=\"4\" style=\"padding:6px 8px;border-top:2px solid #C6C3B9\"><b>Totaal excl. btw</b></td><td style=\"padding:6px 8px;text-align:right;border-top:2px solid #C6C3B9\"><b>" + eur(g.totaal_excl) + "</b></td></tr><tr><td colspan=\"4\" style=\"padding:2px 8px\">Btw</td><td style=\"padding:2px 8px;text-align:right\">" + eur(g.btw) + "</td></tr><tr><td colspan=\"4\" style=\"padding:2px 8px\"><b>Totaal incl. btw</b></td><td style=\"padding:2px 8px;text-align:right\"><b>" + eur(g.totaal_incl) + "</b></td></tr></tbody></table>";
   const kop = (g.soort === "meerwerk" ? "Meerwerkvoorstel" : "Offerte") + " · " + (p.klant || "") + (p.naam && p.naam !== p.klant ? " · " + p.naam : "");
@@ -386,15 +416,15 @@ function goedkeuringMail(body) {
   if (soort === "voorgelegd") {
     klanten.forEach(c => {
       const tot = g.geldig_tot ? " Graag je reactie vóór <b>" + g.geldig_tot.split("-").reverse().join("/") + "</b>." : "";
-      const html = wrap("<p>Beste " + (c.naam || "") + ",</p><p>Er staat een voorstel voor je klaar in je BROS-klantenportaal: <b>" + g.titel + "</b>." + tot + (g.toelichting ? "</p><p style=\"white-space:pre-line\">" + g.toelichting.replace(/</g, "&lt;") : "") + "</p><p style=\"margin:24px 0\"><a href=\"" + PORTAAL.URL + "\" style=\"background:#1B1E1C;color:#fff;text-decoration:none;padding:12px 20px;border-radius:8px;font-weight:600;display:inline-block\">Bekijken en goedkeuren</a></p>" + tabel + "<p style=\"margin-top:20px\">Vragen? Antwoord gerust op deze mail.<br>" + wie.name + " — BROS</p>");
+      const html = wrap("<p>Beste " + H(c.naam || "") + ",</p><p>Er staat een voorstel voor je klaar in je BROS-klantenportaal: <b>" + H(g.titel) + "</b>." + tot + (g.toelichting ? "</p><p style=\"white-space:pre-line\">" + H(g.toelichting) : "") + "</p><p style=\"margin:24px 0\"><a href=\"" + PORTAAL.URL + "\" style=\"background:#1B1E1C;color:#fff;text-decoration:none;padding:12px 20px;border-radius:8px;font-weight:600;display:inline-block\">Bekijken en goedkeuren</a></p>" + tabel + "<p style=\"margin-top:20px\">Vragen? Antwoord gerust op deze mail.<br>" + H(wie.name) + " — BROS</p>");
       portaalMail(c.email, "Voorstel ter goedkeuring: " + g.titel, "Beste " + (c.naam || "") + ",\n\nEr staat een voorstel voor je klaar in je BROS-klantenportaal: " + g.titel + " (" + eur(g.totaal_incl) + " incl. btw).\nBekijken en goedkeuren: " + PORTAAL.URL + "\n\n" + wie.name + " — BROS", html); naar.push(c.email);
     });
   } else {
     const ok = g.status === "akkoord"; const wanneer = g.beslist_op ? new Date(g.beslist_op).toLocaleString("nl-BE", { timeZone: "Europe/Brussels" }) : "";
-    const melding = wrap("<p>" + (ok ? "<b>Akkoord</b> van de klant" : "<b>Niet akkoord</b> / vraag van de klant") + " voor <b>" + kop + "</b>.</p><p>Voorstel: <b>" + g.titel + "</b> (" + eur(g.totaal_incl) + " incl. btw)<br>Beslist door: " + g.beslist_naam + " (" + g.beslist_email + ") op " + wanneer + "</p>" + (g.opmerking ? "<p style=\"padding:10px 14px;border-left:3px solid #B93A34;background:#F7DEDC\">“" + g.opmerking.replace(/</g, "&lt;") + "”</p>" : "") + tabel + "<p style=\"color:#767D78;font-size:13px\">Automatische melding uit het BROS Planbord — de posten staan " + (ok ? "op Akkoord" : "ongewijzigd") + " in de meetstaat van project " + (p.nummer || "") + ".</p>");
+    const melding = wrap("<p>" + (ok ? "<b>Akkoord</b> van de klant" : "<b>Niet akkoord</b> / vraag van de klant") + " voor <b>" + H(kop) + "</b>.</p><p>Voorstel: <b>" + H(g.titel) + "</b> (" + eur(g.totaal_incl) + " incl. btw)<br>Beslist door: " + H(g.beslist_naam) + " (" + H(g.beslist_email) + ") op " + wanneer + "</p>" + (g.opmerking ? "<p style=\"padding:10px 14px;border-left:3px solid #B93A34;background:#F7DEDC\">“" + H(g.opmerking) + "”</p>" : "") + tabel + "<p style=\"color:#767D78;font-size:13px\">Automatische melding uit het BROS Planbord — de posten staan " + (ok ? "op Akkoord" : "ongewijzigd") + " in de meetstaat van project " + (p.nummer || "") + ".</p>");
     portaalMail(YUKI.REPORT_TO, (ok ? "✔ Akkoord" : "✖ Niet akkoord") + " — " + kop + " — " + g.titel, (ok ? "Akkoord" : "Niet akkoord") + " van " + g.beslist_naam + " voor " + g.titel + " (" + kop + ")" + (g.opmerking ? "\n\nOpmerking: " + g.opmerking : ""), melding); naar.push(YUKI.REPORT_TO);
     if (g.beslist_email) {
-      const bevestiging = wrap("<p>Beste " + g.beslist_naam + ",</p>" + (ok ? "<p>Bedankt voor je akkoord op <b>" + g.titel + "</b>. Dit is je bevestiging; hieronder staat wat je hebt goedgekeurd.</p>" : "<p>We hebben je reactie op <b>" + g.titel + "</b> goed ontvangen en nemen contact met je op.</p><p style=\"padding:10px 14px;border-left:3px solid #C6C3B9;background:#ECEAE3\">“" + (g.opmerking || "").replace(/</g, "&lt;") + "”</p>") + tabel + "<p style=\"color:#767D78;font-size:13px\">Vastgelegd op " + wanneer + " door " + g.beslist_naam + " (" + g.beslist_email + ").</p><p>BROS</p>");
+      const bevestiging = wrap("<p>Beste " + H(g.beslist_naam) + ",</p>" + (ok ? "<p>Bedankt voor je akkoord op <b>" + H(g.titel) + "</b>. Dit is je bevestiging; hieronder staat wat je hebt goedgekeurd.</p>" : "<p>We hebben je reactie op <b>" + H(g.titel) + "</b> goed ontvangen en nemen contact met je op.</p><p style=\"padding:10px 14px;border-left:3px solid #C6C3B9;background:#ECEAE3\">“" + (g.opmerking || "").replace(/</g, "&lt;") + "”</p>") + tabel + "<p style=\"color:#767D78;font-size:13px\">Vastgelegd op " + wanneer + " door " + H(g.beslist_naam) + " (" + H(g.beslist_email) + ").</p><p>BROS</p>");
       portaalMail(g.beslist_email, (ok ? "Bevestiging van je akkoord: " : "Je reactie op: ") + g.titel, (ok ? "Bedankt voor je akkoord op " : "We ontvingen je reactie op ") + g.titel + " (" + eur(g.totaal_incl) + " incl. btw).\n\nBROS", bevestiging); naar.push(g.beslist_email);
     }
   }
@@ -412,10 +442,10 @@ function notitieMail(body) {
   const namen = {}; (pbAdmin("/rest/v1/profiles?select=id,name", "get") || []).forEach(u => namen[u.id] = u.name);
   const SOORT = { vergadering: "Vergadering", werfverslag: "Werfverslag", bespreking: "Bespreking", feedback: "Feedback", notitie: "Notitie" };
   const datum = String(n.datum || "").split("-").reverse().join("/");
-  const punten = taken.length ? "<h3 style=\"font-size:15px;margin:18px 0 6px\">Actiepunten</h3><ul style=\"padding-left:18px;margin:0\">" + taken.map(t => "<li>" + (t.status === "done" ? "✅ " : "") + String(t.titel).replace(/</g, "&lt;") + (t.assignee && namen[t.assignee] ? " <span style=\"color:#767D78\">· " + namen[t.assignee] + "</span>" : "") + (t.eind ? " <span style=\"color:#767D78\">· " + String(t.eind).split("-").reverse().join("/") + "</span>" : "") + "</li>").join("") + "</ul>" : "";
-  const html = "<div style=\"font-family:Helvetica,Arial,sans-serif;font-size:15px;line-height:1.5;color:#1B1E1C;max-width:720px\"><p>Beste,</p><p>Hierbij het verslag <b>" + String(n.titel || SOORT[n.soort]).replace(/</g, "&lt;") + "</b> (" + (SOORT[n.soort] || n.soort) + " van " + datum + ") voor " + (p.klant || "") + (p.naam && p.naam !== p.klant ? " · " + p.naam : "") + "." + (n.deelnemers ? "<br><span style=\"color:#767D78\">Aanwezig: " + String(n.deelnemers).replace(/</g, "&lt;") + "</span>" : "") + "</p>"
+  const punten = taken.length ? "<h3 style=\"font-size:15px;margin:18px 0 6px\">Actiepunten</h3><ul style=\"padding-left:18px;margin:0\">" + taken.map(t => "<li>" + (t.status === "done" ? "✅ " : "") + String(t.titel).replace(/</g, "&lt;") + (t.assignee && namen[t.assignee] ? " <span style=\"color:#767D78\">· " + H(namen[t.assignee]) + "</span>" : "") + (t.eind ? " <span style=\"color:#767D78\">· " + String(t.eind).split("-").reverse().join("/") + "</span>" : "") + "</li>").join("") + "</ul>" : "";
+  const html = "<div style=\"font-family:Helvetica,Arial,sans-serif;font-size:15px;line-height:1.5;color:#1B1E1C;max-width:720px\"><p>Beste,</p><p>Hierbij het verslag <b>" + String(n.titel || SOORT[n.soort]).replace(/</g, "&lt;") + "</b> (" + (SOORT[n.soort] || n.soort) + " van " + datum + ") voor " + H(p.klant || "") + (p.naam && p.naam !== p.klant ? " · " + H(p.naam) : "") + "." + (n.deelnemers ? "<br><span style=\"color:#767D78\">Aanwezig: " + String(n.deelnemers).replace(/</g, "&lt;") + "</span>" : "") + "</p>"
     + "<div style=\"white-space:pre-line;padding:14px 16px;border:1px solid #DAD8D0;border-radius:10px;background:#F5F4F0\">" + String(n.inhoud || "").replace(/</g, "&lt;") + "</div>" + punten
-    + "<p style=\"margin-top:20px\">Je vindt dit verslag ook terug in je klantenportaal: <a href=\"" + PORTAAL.URL + "\">" + PORTAAL.URL + "</a></p><p>" + wie.name + " — BROS</p></div>";
+    + "<p style=\"margin-top:20px\">Je vindt dit verslag ook terug in je klantenportaal: <a href=\"" + PORTAAL.URL + "\">" + PORTAAL.URL + "</a></p><p>" + H(wie.name) + " — BROS</p></div>";
   const tekst = "Beste,\n\nHierbij het verslag " + (n.titel || "") + " (" + datum + ").\n\n" + (n.inhoud || "") + (taken.length ? "\n\nActiepunten:\n" + taken.map(t => "- " + t.titel + (t.assignee && namen[t.assignee] ? " (" + namen[t.assignee] + ")" : "")).join("\n") : "") + "\n\nOok in je portaal: " + PORTAAL.URL + "\n\n" + wie.name + " — BROS";
   const naar = []; klanten.forEach(c => { portaalMail(c.email, "Verslag: " + (n.titel || SOORT[n.soort]) + " · " + datum, tekst.replace("Beste,", "Beste " + c.naam + ","), html.replace("Beste,", "Beste " + String(c.naam).replace(/</g, "&lt;") + ",")); naar.push(c.email); });
   return { ok: true, naar: naar };
@@ -426,6 +456,7 @@ function werfverslagMail(body) {
   const w = (pbAdmin("/rest/v1/werfverslagen?id=eq." + encodeURIComponent(String(body.id || "")) + "&select=*", "get") || [])[0];
   if (!w) return { ok: false, error: "Werfverslag niet gevonden." };
   const p = (pbAdmin("/rest/v1/projecten?id=eq." + w.project_id + "&select=nummer,klant,naam,adres,gemeente", "get") || [])[0] || {};
+  if (String(w.pdf_url || "").indexOf(YUKI.PLANBORD_URL + "/storage/v1/object/public/werf/") !== 0) return { ok: false, error: "Pdf staat niet in de werf-opslag." };
   const r = UrlFetchApp.fetch(w.pdf_url, { muteHttpExceptions: true }); if (r.getResponseCode() >= 300) throw new Error("Pdf niet gevonden (" + r.getResponseCode() + ").");
   const naam = "Werfverslag " + w.nr + " - " + (p.klant || "") + " - " + String(w.datum || "").split("-").reverse().join("-") + ".pdf";
   const pdf = r.getBlob().setName(naam).setContentType("application/pdf");
@@ -433,10 +464,10 @@ function werfverslagMail(body) {
   const aan = (body.aan || []).map(e => String(e).trim()).filter(e => /^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(e));
   const bericht = String(w.bericht || "").trim();
   const html = "<div style=\"font-family:Helvetica,Arial,sans-serif;font-size:15px;line-height:1.5;color:#1B1E1C;max-width:720px\"><p>Beste,</p>"
-    + (bericht ? "<p style=\"white-space:pre-line\">" + bericht.replace(/</g, "&lt;") + "</p>" : "<p>In bijlage het werfverslag " + w.nr + " van " + datum + " voor <b>" + proj.replace(/</g, "&lt;") + "</b>" + (p.adres ? " (" + p.adres + (p.gemeente ? ", " + p.gemeente : "") + ")" : "") + ".</p>")
+    + (bericht ? "<p style=\"white-space:pre-line\">" + bericht.replace(/</g, "&lt;") + "</p>" : "<p>In bijlage het werfverslag " + w.nr + " van " + datum + " voor <b>" + proj.replace(/</g, "&lt;") + "</b>" + (p.adres ? " (" + H(p.adres) + (p.gemeente ? ", " + H(p.gemeente) : "") + ")" : "") + ".</p>")
     + "<p>Het verslag bevat " + w.punten + " vaststelling" + (w.punten === 1 ? "" : "en") + " met foto's, verantwoordelijke en uiterste datum, en de plannen met de locatie van elk punt. Gelieve de open punten die aan jou toegewezen zijn tegen de vermelde datum in orde te brengen en ons te verwittigen zodra dat gebeurd is.</p>"
     + (w.klant_zichtbaar ? "<p>Als klant vind je dit verslag ook terug in je portaal: <a href=\"" + PORTAAL.URL + "\">" + PORTAAL.URL + "</a></p>" : "")
-    + "<p>" + wie.name + " — BROS</p></div>";
+    + "<p>" + H(wie.name) + " — BROS</p></div>";
   const tekst = "Beste,\n\n" + (bericht || "In bijlage het werfverslag " + w.nr + " van " + datum + " voor " + proj + ".") + "\n\nHet verslag bevat " + w.punten + " vaststellingen met foto's, verantwoordelijke en uiterste datum, en de plannen met de locatie van elk punt.\n\n" + wie.name + " — BROS";
   const naar = [];
   aan.forEach(e => { const opt = { htmlBody: html, name: PORTAAL.AFZENDER, attachments: [pdf] }; if (PORTAAL.VAN) { const al = GmailApp.getAliases(); if (al.indexOf(PORTAAL.VAN) >= 0) opt.from = PORTAAL.VAN; else opt.replyTo = PORTAAL.VAN; } GmailApp.sendEmail(e, "Werfverslag " + w.nr + " · " + proj + " · " + datum, tekst, opt); naar.push(e); });
@@ -455,12 +486,13 @@ function assistentMail(body) {
 /** Vraag of melding van een aannemer uit zijn portaal (script 025): de aannemer stuurt zijn token mee; het voorstel moet van hem zijn. */
 function voorstelMailAannemer(body) {
   const wie = callerAny(body.token); if (wie.role !== "aannemer") return { ok: false, error: "Geen toegang." };
-  const v = (pbAdmin("/rest/v1/taak_voorstellen?id=eq." + encodeURIComponent(String(body.id || "")) + "&bron=eq.aannemer&select=*", "get") || [])[0];
+  if (!quotum("vm-user:" + wie.id, 10, 3600)) return { ok: true };
+  const v = (pbAdmin("/rest/v1/taak_voorstellen?id=eq." + uuid(body.id) + "&bron=eq.aannemer&select=*", "get") || [])[0];
   if (!v) return { ok: false, error: "Voorstel niet gevonden." };
   const c = (pbAdmin("/rest/v1/contacten?id=eq." + v.contact_id + "&select=id,naam,bedrijf,email,user_id", "get") || [])[0];
   if (!c || c.user_id !== wie.id) return { ok: false, error: "Geen toegang." };
-  const cache = CacheService.getScriptCache(); if (cache.get("vm:" + v.id)) return { ok: true }; cache.put("vm:" + v.id, "1", 3600);
-  return voorstelMail(v, c);
+  if (!eenmalig("vm:" + v.id, 3600)) return { ok: true };
+  const r = voorstelMail(v, c); return { ok: !!(r && r.ok) };
 }
 function voorstelMail(v, aannemer) {
   const p = (pbAdmin("/rest/v1/projecten?id=eq." + v.project_id + "&select=nummer,klant,naam", "get") || [])[0] || {};
@@ -471,7 +503,7 @@ function voorstelMail(v, aannemer) {
   const cc = beheer.map(x => x.email).filter(e => e && e !== to).join(",");
   const proj = (p.klant || "") + (p.naam && p.naam !== p.klant ? " · " + p.naam : "");
   const link = PORTAAL.URL.replace(/klant\/?$/, "") + "#voorstellen";
-  const esc = (t) => String(t || "").replace(/</g, "&lt;");
+  const esc = H;
   const wieTxt = aannemer ? "De aannemer <b>" + esc(aannemer.naam) + "</b>" + (aannemer.bedrijf && aannemer.bedrijf !== aannemer.naam ? " (" + esc(aannemer.bedrijf) + ")" : "") + " stelt via het aannemersportaal een vraag of melding" : "De assistent in het klantenportaal stelt een taak voor";
   const html = "<div style=\"font-family:Helvetica,Arial,sans-serif;font-size:15px;line-height:1.5;color:#1B1E1C;max-width:720px\"><p>Dag " + esc(naar ? naar.name : "team") + ",</p>"
     + "<p>" + wieTxt + " bij <b>" + esc(proj) + "</b>" + (v.urgentie === "hoog" ? " <span style=\"color:#B93A34;font-weight:700\">(hoge urgentie)</span>" : "") + ":</p>"
@@ -489,7 +521,12 @@ function voorstelMail(v, aannemer) {
 /** Prijsaanvragen (script 025): 'nieuw'/'herinnering' (team → aannemer, met uitnodiging als hij nog geen login heeft), 'ingediend' (aannemer → BROS), 'gekozen' (team → aannemer). */
 function prijsaanvraagMail(body) {
   const soort = String(body.soort || "nieuw");
-  const a = (pbAdmin("/rest/v1/prijsaanvragen?id=eq." + encodeURIComponent(String(body.id || "")) + "&select=*", "get") || [])[0];
+  if (["nieuw", "herinnering", "gekozen", "ingediend"].indexOf(soort) < 0) return { ok: false, error: "Onbekende soort." };
+  // eerst wie er belt (vóór we iets opzoeken): aannemer voor 'ingediend', anders een teamlid (of de automatische herinnering)
+  const beller = soort === "ingediend" ? callerAny(body.token) : null;
+  if (beller && beller.role !== "aannemer") return { ok: false, error: "Geen toegang." };
+  const team = soort !== "ingediend" ? (AUTO_WIE || caller(body.token, false)) : null;
+  const a = (pbAdmin("/rest/v1/prijsaanvragen?id=eq." + uuid(body.id) + "&select=*", "get") || [])[0];
   if (!a) return { ok: false, error: "Prijsaanvraag niet gevonden." };
   const c = (pbAdmin("/rest/v1/contacten?id=eq." + a.contact_id + "&select=id,naam,bedrijf,contactpersoon,email,user_id", "get") || [])[0];
   if (!c) return { ok: false, error: "Contact niet gevonden." };
@@ -497,12 +534,13 @@ function prijsaanvraagMail(body) {
   const proj = (p.klant || "") + (p.naam && p.naam !== p.klant ? " · " + p.naam : "");
   const loten = pbAdmin("/rest/v1/loten?nr=in.(" + (a.loten || []).join(",") + ")&select=nr,naam", "get") || [];
   const lotTxt = (a.loten || []).map(n => { const l = loten.find(x => x.nr === n); return l ? n + ". " + l.naam : String(n); }).join(", ");
-  const esc = (t) => String(t || "").replace(/</g, "&lt;");
+  const esc = H;
   const wrap = (inner) => "<div style=\"font-family:Helvetica,Arial,sans-serif;font-size:15px;line-height:1.5;color:#1B1E1C;max-width:720px\">" + inner + "</div>";
   const knop = (url, txt) => "<p style=\"margin:24px 0\"><a href=\"" + url + "\" style=\"background:#1B1E1C;color:#fff;text-decoration:none;padding:12px 20px;border-radius:8px;font-weight:600;display:inline-block\">" + txt + "</a></p>";
   const dl = a.deadline ? String(a.deadline).split("-").reverse().join("/") : "";
   if (soort === "ingediend") {
-    const wie = callerAny(body.token); if (wie.role !== "aannemer" || c.user_id !== wie.id) return { ok: false, error: "Geen toegang." };
+    const wie = beller; if (c.user_id !== wie.id) return { ok: false, error: "Geen toegang." };
+    if (!eenmalig("pai:" + a.id + ":" + (a.ingediend_op || ""), 3600)) return { ok: true };
     const profs = pbAdmin("/rest/v1/profiles?select=id,name,email,role,active&active=eq.true", "get") || [];
     const maker = profs.find(x => x.id === a.created_by) || profs.find(x => x.id === p.lead); const beheer = profs.filter(x => x.role === "beheer" && x.email);
     const to = maker && maker.email ? maker.email : (beheer[0] ? beheer[0].email : ""); if (!to) return { ok: false, error: "Geen ontvanger." };
@@ -512,9 +550,9 @@ function prijsaanvraagMail(body) {
     const html = wrap("<p>Dag " + esc(maker ? maker.name : "team") + ",</p><p><b>" + esc(c.naam) + "</b>" + (c.bedrijf && c.bedrijf !== c.naam ? " (" + esc(c.bedrijf) + ")" : "") + " heeft zijn prijsopgave ingediend voor <b>" + esc(proj) + "</b> — " + esc(a.titel || "prijsaanvraag") + " (" + esc(lotTxt) + "): " + regels.length + " posten met prijs.</p>" + (a.opmerking ? "<p style=\"padding:10px 14px;border-left:3px solid #DAD8D0;white-space:pre-line\">" + esc(a.opmerking) + "</p>" : "") + knop(link, "Vergelijken in het Planbord") + "<p style=\"color:#767D78;font-size:13px\">Projectfiche › Meetstaat › Prijsaanvragen › Vergelijken, en daarna 'Overnemen' om de prijzen als kostprijs te zetten.</p>");
     const opt = { htmlBody: html, name: PORTAAL.AFZENDER }; if (cc) opt.cc = cc; if (c.email) opt.replyTo = c.email;
     GmailApp.sendEmail(to, "Prijsopgave ingediend · " + proj + " · " + c.naam, c.naam + " diende zijn prijzen in voor " + proj + " (" + lotTxt + "). Bekijken: " + link, opt);
-    return { ok: true, naar: to };
+    return { ok: true };
   }
-  const wie = AUTO_WIE || caller(body.token, false);
+  const wie = team;
   if (!c.email) return { ok: false, error: "Dit contact heeft geen e-mailadres." };
   const naam = c.contactpersoon || c.naam; const aanhef = "Beste " + naam;
   const verstreken = !!(a.deadline && a.deadline < Utilities.formatDate(new Date(), Session.getScriptTimeZone(), "yyyy-MM-dd"));
@@ -527,13 +565,13 @@ function prijsaanvraagMail(body) {
   let onderwerp, html, tekst;
   if (soort === "gekozen") {
     onderwerp = "Je prijzen zijn weerhouden · " + proj;
-    html = wrap("<p>" + aanhef + ",</p><p>Goed nieuws: BROS heeft je prijsopgave voor <b>" + esc(proj) + "</b> (" + esc(lotTxt) + ") weerhouden. " + esc(wie.name) + " neemt contact met je op over de verdere afspraken en de planning.</p>" + knop(PORTAAL.URL_AANNEMER, "Naar het aannemersportaal") + "<p>Met vriendelijke groeten,<br>" + esc(wie.name) + " — BROS</p>");
+    html = wrap("<p>" + H(aanhef) + ",</p><p>Goed nieuws: BROS heeft je prijsopgave voor <b>" + esc(proj) + "</b> (" + esc(lotTxt) + ") weerhouden. " + esc(wie.name) + " neemt contact met je op over de verdere afspraken en de planning.</p>" + knop(PORTAAL.URL_AANNEMER, "Naar het aannemersportaal") + "<p>Met vriendelijke groeten,<br>" + esc(wie.name) + " — BROS</p>");
     tekst = aanhef + ",\n\nBROS heeft je prijsopgave voor " + proj + " (" + lotTxt + ") weerhouden. " + wie.name + " neemt contact met je op.\n\n" + wie.name + " — BROS";
   } else {
     const her = soort === "herinnering";
     onderwerp = (her ? "Herinnering: prijsaanvraag" : "Prijsaanvraag") + " · " + proj + (dl ? (her && verstreken ? " · gevraagd tegen " : " · vóór ") + dl : "");
     const herTxt = her ? (verstreken ? "We wachten nog op je prijsopgave voor <b>" + esc(proj) + "</b> (" + esc(lotTxt) + "). De gevraagde datum, <b>" + dl + "</b>, is intussen verstreken — laat ons weten wanneer we je prijzen mogen verwachten, of dat je deze keer niet meedoet, dan plannen wij verder." : "Een korte herinnering: we wachten nog op je prijsopgave voor <b>" + esc(proj) + "</b> (" + esc(lotTxt) + ")" + (dl ? ", graag vóór <b>" + dl + "</b>" : "") + ".") : "";
-    html = wrap("<p>" + aanhef + ",</p>" + (her ? "<p>" + herTxt + "</p>" : "<p>BROS vraagt je een prijsopgave voor <b>" + esc(proj) + "</b>" + (p.adres ? " (" + esc(p.adres) + (p.gemeente ? ", " + esc(p.gemeente) : "") + ")" : "") + ": <b>" + esc(lotTxt) + "</b>." + (dl ? " Graag je prijzen vóór <b>" + dl + "</b>." : "") + "</p>")
+    html = wrap("<p>" + H(aanhef) + ",</p>" + (her ? "<p>" + herTxt + "</p>" : "<p>BROS vraagt je een prijsopgave voor <b>" + esc(proj) + "</b>" + (p.adres ? " (" + esc(p.adres) + (p.gemeente ? ", " + esc(p.gemeente) : "") + ")" : "") + ": <b>" + esc(lotTxt) + "</b>." + (dl ? " Graag je prijzen vóór <b>" + dl + "</b>." : "") + "</p>")
       + (a.bericht ? "<p style=\"padding:10px 14px;border-left:3px solid #DAD8D0;white-space:pre-line\">" + esc(a.bericht) + "</p>" : "")
       + "<p>In het aannemersportaal zie je de posten met hoeveelheden en eenheden; je vult per post je eenheidsprijs (excl. btw) in, met eventueel een opmerking, en dient in als alles klopt.</p>" + linkHtml
       + "<p>Met vriendelijke groeten,<br>" + esc(wie.name) + " — BROS</p>");
@@ -550,7 +588,7 @@ function prijsaanvraagMail(body) {
    ===================================================================== */
 function koppelMail(body) {
   const wie = caller(body.token, false);
-  const pc = (pbAdmin("/rest/v1/project_contacten?id=eq." + encodeURIComponent(String(body.id || "")) + "&select=id,project_id,contact_id,rol,loten,notitie", "get") || [])[0];
+  const pc = (pbAdmin("/rest/v1/project_contacten?id=eq." + uuid(body.id) + "&select=id,project_id,contact_id,rol,loten,notitie", "get") || [])[0];
   if (!pc) return { ok: false, error: "Koppeling niet gevonden." };
   if (pc.rol === "bouwheer" || pc.rol === "contactpersoon") return { ok: false, error: "Voor de klant gebruik je 'Portaal-toegang geven'." };
   const c = (pbAdmin("/rest/v1/contacten?id=eq." + pc.contact_id + "&select=id,naam,bedrijf,contactpersoon,email,user_id,soort", "get") || [])[0];
@@ -561,7 +599,7 @@ function koppelMail(body) {
   const proj = (p.klant || "") + (p.naam && p.naam !== p.klant ? " · " + p.naam : "");
   const loten = (pc.loten || []).length ? (pbAdmin("/rest/v1/loten?nr=in.(" + pc.loten.join(",") + ")&select=nr,naam", "get") || []) : [];
   const lotTxt = (pc.loten || []).map(n => { const l = loten.find(x => x.nr === n); return l ? n + ". " + l.naam : String(n); }).join(", ");
-  const esc = (t) => String(t || "").replace(/</g, "&lt;");
+  const esc = H;
   const knop = (url, txt) => "<p style=\"margin:24px 0\"><a href=\"" + url + "\" style=\"background:#1B1E1C;color:#fff;text-decoration:none;padding:12px 20px;border-radius:8px;font-weight:600;display:inline-block\">" + txt + "</a></p>";
   const naam = c.contactpersoon || c.naam; const aanhef = "Beste " + naam;
   const waar = p.adres ? " (" + esc(p.adres) + (p.gemeente ? ", " + esc(p.gemeente) : "") + ")" : "";
@@ -571,11 +609,11 @@ function koppelMail(body) {
   let uitgenodigd = false, html, tekst;
   if (!c.user_id) {
     const r = portaalLink(String(c.email).trim().toLowerCase(), naam, c.id, "aannemer"); uitgenodigd = !r.bestaand;
-    html = "<p>" + aanhef + ",</p>" + intro + "<p>Kies eerst je wachtwoord:</p>" + knop(r.link, "Kies je wachtwoord")
+    html = "<p>" + H(aanhef) + ",</p>" + intro + "<p>Kies eerst je wachtwoord:</p>" + knop(r.link, "Kies je wachtwoord")
       + "<p style=\"color:#767D78;font-size:13px\">Daarna log je altijd in op <a href=\"" + PORTAAL.URL_AANNEMER + "\">" + PORTAAL.URL_AANNEMER + "</a> met je e-mailadres en wachtwoord. Op de werf gebruik je dezelfde login in de werfmodus (" + PORTAAL.URL_AANNEMER.replace(/aannemer\/?$/, "werf/") + "). De link is beperkt geldig; vervallen? Klik op het portaal op \"Wachtwoord vergeten\".</p>";
     tekst = aanhef + ",\n\nBROS werkt met je samen op het project " + proj + (lotTxt ? " voor " + lotTxt : "") + ". In het aannemersportaal vind je de werfpunten, verslagen, documenten, planning en prijsaanvragen van je projecten.\n\nKies eerst je wachtwoord via " + r.link + " en log daarna in op " + PORTAAL.URL_AANNEMER;
   } else {
-    html = "<p>" + aanhef + ",</p>" + intro + knop(PORTAAL.URL_AANNEMER, "Naar het aannemersportaal") + "<p style=\"color:#767D78;font-size:13px\">Je logt in met je bestaande e-mailadres en wachtwoord; het project staat in je lijst.</p>";
+    html = "<p>" + H(aanhef) + ",</p>" + intro + knop(PORTAAL.URL_AANNEMER, "Naar het aannemersportaal") + "<p style=\"color:#767D78;font-size:13px\">Je logt in met je bestaande e-mailadres en wachtwoord; het project staat in je lijst.</p>";
     tekst = aanhef + ",\n\nBROS werkt met je samen op het project " + proj + (lotTxt ? " voor " + lotTxt : "") + ". Het staat vanaf nu in je aannemersportaal: " + PORTAAL.URL_AANNEMER;
   }
   html = "<div style=\"font-family:Helvetica,Arial,sans-serif;font-size:15px;line-height:1.5;color:#1B1E1C;max-width:720px\">" + html + "<p>Met vriendelijke groeten,<br>" + esc(wie.name) + " — BROS</p></div>";
@@ -640,7 +678,7 @@ function documentenDigest() {
   const cIds = [...new Set(pcs.map(x => x.contact_id))];
   const contacten = cIds.length ? (pbAdmin("/rest/v1/contacten?id=in.(" + cIds.join(",") + ")&user_id=not.is.null&actief=eq.true&select=id,naam,contactpersoon,email,user_id", "get") || []) : [];
   const profs = pbAdmin("/rest/v1/profiles?select=id,name,email&active=eq.true", "get") || [];
-  const esc = (t) => String(t || "").replace(/</g, "&lt;");
+  const esc = H;
   projecten.forEach(p => {
     const proj = (p.klant || "") + (p.naam && p.naam !== p.klant ? " · " + p.naam : ""); const lead = profs.find(x => x.id === p.lead);
     [["klant", "gemeld_klant", "gedeeld", "gedeeld_op", PORTAAL.URL, (x) => x.rol === "bouwheer" || x.rol === "contactpersoon", "je BROS-klantenportaal"],
@@ -668,12 +706,50 @@ function documentenDigest() {
   });
   Logger.log(mails + " mail(s) verstuurd.");
 }
+/** Pdf-dossier in het portaal: één gedeeld document ophalen (pdf, afbeelding als jpg ≤2000 px, Google-document als pdf).
+ *  Enkel voor een actieve klant/aannemer, enkel documenten die hij via zijn eigen view (klant_documenten / aan_documenten)
+ *  mag zien, max. 25 MB, max. 150 per uur per login. */
+function portaalBestand(body) {
+  const wie = callerAny(body.token);
+  if (wie.role !== "klant" && wie.role !== "aannemer") return { ok: false, error: "Geen toegang." };
+  if (!quotum("bestand:" + wie.id, 150, 3600)) return { ok: false, error: "Even geduld: te veel bestanden in korte tijd." };
+  const docId = uuid(body.id);
+  const view = wie.role === "klant" ? "klant_documenten" : "aan_documenten";
+  const zicht = (pbReq("/rest/v1/" + view + "?id=eq." + docId + "&select=id,naam", "get", null, body.token) || [])[0];
+  if (!zicht) return { ok: false, error: "Geen toegang tot dit document." };
+  const d = (pbAdmin("/rest/v1/documenten?id=eq." + docId + "&select=drive_id,naam", "get") || [])[0];
+  if (!d || !d.drive_id) return { ok: false, error: "Document niet gevonden." };
+  onderProjecten(d.drive_id);
+  const token = ScriptApp.getOAuthToken(); const hdr = { Authorization: "Bearer " + token };
+  const base = "https://www.googleapis.com/drive/v3/files/" + encodeURIComponent(d.drive_id);
+  const meta = JSON.parse(UrlFetchApp.fetch(base + "?supportsAllDrives=true&fields=mimeType,size,thumbnailLink", { headers: hdr, muteHttpExceptions: true }).getContentText() || "{}");
+  const mt = String(meta.mimeType || ""); let r;
+  if (mt === "application/pdf") {
+    if (Number(meta.size) > 25e6) return { ok: false, error: "Te groot voor een dossier (max. 25 MB): " + d.naam };
+    r = UrlFetchApp.fetch(base + "?alt=media&supportsAllDrives=true", { headers: hdr, muteHttpExceptions: true });
+  } else if (/^image\//.test(mt)) {
+    if (meta.thumbnailLink) r = UrlFetchApp.fetch(String(meta.thumbnailLink).replace(/=s\d+(-[a-z]+)?$/, "=s2000"), { headers: hdr, muteHttpExceptions: true });
+    if ((!r || r.getResponseCode() >= 300) && /^image\/(jpeg|png)$/.test(mt) && Number(meta.size) <= 15e6) r = UrlFetchApp.fetch(base + "?alt=media&supportsAllDrives=true", { headers: hdr, muteHttpExceptions: true });
+  } else if (/^application\/vnd\.google-apps\.(document|presentation|spreadsheet|drawing)$/.test(mt)) {
+    r = UrlFetchApp.fetch(base + "/export?mimeType=application%2Fpdf", { headers: hdr, muteHttpExceptions: true });
+  } else return { ok: false, overslaan: true, error: "Dit bestandstype kan niet in een pdf: " + d.naam };
+  if (!r || r.getResponseCode() >= 300) return { ok: false, error: "Bestand kon niet gelezen worden: " + d.naam };
+  const blob = r.getBlob(); const bytes = blob.getBytes();
+  if (bytes.length > 25e6) return { ok: false, error: "Te groot voor een dossier (max. 25 MB): " + d.naam };
+  let mime = String(blob.getContentType() || "").split(";")[0];
+  if (mt === "application/pdf" || /google-apps/.test(mt)) mime = "application/pdf";
+  else if ((bytes[0] & 0xff) === 0x89 && (bytes[1] & 0xff) === 0x50) mime = "image/png"; else mime = "image/jpeg";
+  return { ok: true, naam: d.naam, mime: mime, b64: Utilities.base64Encode(bytes) };
+}
 /** Bestand delen met de klant: "iedereen met de link mag lezen" aan- of uitzetten. */
 function portaalShare(body) {
   caller(body.token, false);
-  const id = String(body.fileId || ""); if (!id) return { ok: false, error: "Geen bestand." };
+  const id = String(body.fileId || ""); if (!/^[A-Za-z0-9_-]{10,}$/.test(id)) return { ok: false, error: "Geen bestand." };
+  if (id === CONFIG.PROJECTEN_FOLDER_ID || id === CONFIG.SJABLOON_FOLDER_ID) return { ok: false, error: "Een map kan je niet delen." };
   onderProjecten(id);
   const token = ScriptApp.getOAuthToken(); const base = "https://www.googleapis.com/drive/v3/files/" + id;
+  const meta = JSON.parse(UrlFetchApp.fetch(base + "?supportsAllDrives=true&fields=mimeType", { headers: { Authorization: "Bearer " + token }, muteHttpExceptions: true }).getContentText() || "{}");
+  if (!meta.mimeType || meta.mimeType === "application/vnd.google-apps.folder") return { ok: false, error: "Een map kan je niet delen, enkel losse bestanden." };
   if (body.on) {
     const r = UrlFetchApp.fetch(base + "/permissions?supportsAllDrives=true", { method: "post", contentType: "application/json", payload: JSON.stringify({ role: "reader", type: "anyone" }), headers: { Authorization: "Bearer " + token }, muteHttpExceptions: true });
     if (r.getResponseCode() >= 300) throw new Error("Drive: " + r.getContentText().slice(0, 200));
@@ -726,7 +802,9 @@ function yukiSync() {
   if (!threads.length) return Logger.log("Geen nieuwe Yuki-facturen.");
   const facturen = [];
   threads.forEach(t => t.getMessages().forEach(m => {
-    if (m.getFrom().indexOf("yukiworks") < 0 && m.getReplyTo().indexOf("yukiworks") < 0 && m.getSubject().indexOf("Factuur van BROS") < 0) return;
+    // enkel mails die echt via Yuki verstuurd zijn (afzender, antwoordadres, Sender of Return-Path bij yukiworks); het onderwerp alleen volstaat niet
+    const kop = [m.getFrom(), m.getReplyTo(), m.getHeader("Sender"), m.getHeader("Return-Path")].join(" ");
+    if (!/yukiworks\./i.test(kop) || m.getSubject().indexOf("Factuur van BROS") < 0) { Logger.log("Overgeslagen (niet van Yuki): " + m.getFrom() + " · " + m.getSubject()); return; }
     const f = yukiParse(m); if (f) { f.thread = t; facturen.push(f); }
   }));
   if (!facturen.length) return Logger.log("Geen facturen herkend in " + threads.length + " mails.");
@@ -817,8 +895,8 @@ function yukiKoppel(facturen) {
     const exact = kandV.filter(x => Math.abs(calc[x.id].incl - incl) <= TOL);
     if (exact.length === 1) v = exact[0];
     else if (!exact.length && f.excl != null) { const e2 = kandV.filter(x => Math.abs(calc[x.id].excl - f.excl) <= TOL); if (e2.length === 1) v = e2[0]; }
-    if (!v && proj && kandV.length === 1) { v = kandV[0]; opm = "verschil: berekend " + calc[v.id].incl.toFixed(2) + " incl. vs factuur " + incl.toFixed(2); }
-    if (!v) { out.resultaat = "niet gevonden"; out.project = proj ? proj.klant : null; out.reden = proj ? "geen openstaande vordering met dit bedrag" : "project niet herkend"; rapport.push(out); return; }
+    // geen automatische koppeling meer bij een afwijkend bedrag (veiligheid: een vervalste mail kan zo niets wijzigen) — wel melden
+    if (!v) { out.resultaat = "niet gevonden"; out.project = proj ? proj.klant : null; out.reden = proj ? (kandV.length === 1 ? "bedrag wijkt af van de openstaande vordering (berekend " + calc[kandV[0].id].incl.toFixed(2) + " incl.) — koppel ze zelf in het Planbord" : "geen openstaande vordering met dit bedrag") : "project niet herkend"; rapport.push(out); return; }
     const c = calc[v.id];
     const bedrag = f.excl != null ? f.excl : (Math.abs(c.incl - incl) <= TOL ? c.excl : Math.round(incl / (1 + (c.excl ? c.btw / c.excl : 0.06)) * 100) / 100);
     const patch = { factuurnummer: nr, datum: f.datum || v.datum, bedrag_excl: bedrag, status: "verzonden" };

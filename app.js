@@ -2,7 +2,8 @@
    BROS Planbord — app v1.0
    Statische webapp op Supabase (login, live-synchronisatie, rechten)
    ===================================================================== */
-const APP_VERSION = "1.29.0";
+if (window.top !== window.self) { try { window.top.location.replace(window.location.href); } catch (e) { document.documentElement.innerHTML = ""; } }   // niet in een vreemd frame (clickjacking)
+const APP_VERSION = "1.31.0";
 const PROJ_STATUS = { offerte: "In offerte", lopend: "Lopend", on_hold: "On hold", afgerond: "Afgerond", verloren: "Verloren" };
 const KLANTTYPE = { particulier: "Particulier", zakelijk: "Zakelijk" };
 const KLANTCODE = { particulier: "PAR", zakelijk: "ZAK" };
@@ -88,6 +89,9 @@ const wieNaam = (t) => t.contact_id && S.contacten[t.contact_id] ? S.contacten[t
 /* keuzelijst "toegewezen aan": team + contacten van het project (waarde "c:<id>" voor een contact) */
 const wieOpts = (pid, t) => { const cur = t.contact_id ? "c:" + t.contact_id : (t.assignee ?? S.me.id); const pcs = pid ? contactsOf(pid) : []; return `<option value="">— niemand —</option><optgroup label="Team">${opts(users().map(u => [u.id, u.name]), cur)}</optgroup>${pcs.length ? `<optgroup label="Klant en contacten van dit project">${opts(pcs.map(x => ["c:" + x.c.id, x.c.naam + " · " + (CONTACT_ROL[x.rol] || x.rol)]), cur)}</optgroup>` : ""}`; };
 const wieSplit = (v) => v && v.startsWith("c:") ? { assignee: null, contact_id: v.slice(2) } : { assignee: v || null, contact_id: null };
+/* links en afbeeldingen uit de database: enkel https (en blob:/data:image voor lokale voorbeelden) — nooit javascript: */
+const safeUrl = (u) => /^(https:|blob:)/i.test(String(u || "")) ? String(u) : "#";
+const safeSrc = (u) => /^(https:|blob:|data:image\/)/i.test(String(u || "")) ? String(u) : "";
 const safeColor = (c) => /^#[0-9a-fA-F]{3,8}$/.test(String(c || "")) ? c : "#6B6B7B";
 const avatar = (id) => { const u = userById(id); return `<span class="avatar" style="background:${safeColor(u.color)}" title="${esc(u.name)}">${esc(u.initials)}</span>`; };
 const vsTag = (t) => t.vaststelling_id && S.vaststellingen[t.vaststelling_id] ? ` <span class="pill kl" data-vs="${t.vaststelling_id}" title="Uit een vaststelling op de werf — klik om ze te openen" style="cursor:pointer">📍 ${vsNr(S.vaststellingen[t.vaststelling_id])}</span>` : "";
@@ -208,8 +212,14 @@ const driveCfg = () => (S.instellingen.drive && S.instellingen.drive.value) || {
 const schemaV = () => Number(S.instellingen.app?.value?.versie_schema) || 0;   // welk databasescript is al uitgevoerd
 const SCHEMA_HINT = (n) => `<div class="empty" style="padding:10px 12px;margin-bottom:12px"><b>Databasescript ${String(n).padStart(3, "0")} nog niet uitgevoerd</b>Voer <code>sql/${String(n).padStart(3, "0")}_*.sql</code> uit in Supabase om deze functie te activeren.</div>`;
 const driveReady = () => !!(driveCfg().url && driveCfg().secret);
+/* na uitloggen niets van de vorige gebruiker laten rondslingeren (gedeelde computer) */
+function opruimenNaUitloggen() {
+  try { Object.keys(localStorage).filter(k => /^bros\.(zoek|fx\.ring)/.test(k)).forEach(k => localStorage.removeItem(k)); } catch (e) { }
+  try { Object.keys(sessionStorage).filter(k => /^pb-/.test(k)).forEach(k => sessionStorage.removeItem(k)); } catch (e) { }
+}
 async function driveCall(action, payload) {
   const c = driveCfg(); if (!c.url) throw new Error("Drive-koppeling niet ingesteld (Instellingen → Drive).");
+  if (!/^https:\/\/script\.google\.com\/macros\/s\/[A-Za-z0-9_-]+\/exec$/.test(c.url)) throw new Error("De Drive-URL in Instellingen is geen geldige Apps Script-webapp (https://script.google.com/macros/s/…/exec).");
   /* tijdslimiet: een hangend Drive-script mag het Planbord niet eindeloos laten wachten (laadbalk op 92 %) */
   const limiet = ["list", "create", "link", "put", "template"].includes(action) ? 90000 : 45000;
   const ac = new AbortController(); const tm = setTimeout(() => ac.abort(), limiet);
@@ -910,7 +920,7 @@ const vsActief = (v) => v.status === "open" || v.status === "opgelost";
 const vsWie = (v) => v.contact_id && S.contacten[v.contact_id] ? S.contacten[v.contact_id].naam : v.assignee ? userById(v.assignee).name : "";
 const vsWieCell = (v) => v.contact_id || v.assignee ? wieCell(v) : `<span class="muted">niet toegewezen</span>`;
 const vsPill = (v) => vsLate(v) ? `<span class="pill late">Te laat</span>` : `<span class="pill vs-${v.status}">${VS_STATUS[v.status] || esc(v.status)}</span>`;
-const vsThumb = (f, cls = "") => `<img class="vs-thumb ${cls}" src="${esc(f.url)}" alt="" loading="lazy" data-foto="${esc(f.url)}">`;
+const vsThumb = (f, cls = "") => `<img class="vs-thumb ${cls}" src="${esc(safeSrc(f.url))}" alt="" loading="lazy" data-foto="${esc(safeUrl(f.url))}">`;
 const werfUrl = (pid) => new URL("werf/" + (pid ? "?p=" + pid : ""), location.href).href;
 /* keuzelijst "verantwoordelijke": aannemers en andere contacten van het project, daarna het team */
 const vsWieOpts = (pid, v) => { const cur = v.contact_id ? "c:" + v.contact_id : (v.assignee || ""); const pcs = contactsOf(pid); return `<option value="">— nog niet toegewezen —</option>${pcs.length ? `<optgroup label="Klant, aannemers en contacten van dit project">${opts(pcs.map(x => ["c:" + x.c.id, x.c.naam + (x.c.vakgebied ? " · " + x.c.vakgebied : "") + " · " + (CONTACT_ROL[x.rol] || x.rol)]), cur)}</optgroup>` : ""}<optgroup label="Team">${opts(users().map(u => [u.id, u.name]), cur)}</optgroup>`; };
@@ -934,12 +944,12 @@ async function fotoUpload(pid, vid, file) {
 }
 function fotoLightbox(url) {
   let lb = $("#lightbox"); if (!lb) { lb = document.createElement("div"); lb.id = "lightbox"; lb.className = "lightbox"; lb.onclick = () => lb.classList.remove("show"); document.body.appendChild(lb); }
-  lb.innerHTML = `<img src="${esc(url)}" alt=""><a class="btn sm" href="${esc(url)}" target="_blank" rel="noopener" onclick="event.stopPropagation()">Origineel openen</a>`; lb.classList.add("show");
+  lb.innerHTML = `<img src="${esc(safeSrc(url))}" alt=""><a class="btn sm" href="${esc(safeUrl(url))}" target="_blank" rel="noopener" onclick="event.stopPropagation()">Origineel openen</a>`; lb.classList.add("show");
 }
 function vsCard(v, withProject) {
   const fotos = v.fotos || []; const wie = vsWie(v);
   return `<div class="vs ${vsActief(v) ? "" : "vs-dim"}" data-act="vs-open" data-id="${v.id}">
-    ${fotos.length ? `<div class="vs-fotos"><img class="vs-thumb main" src="${esc(fotos[0].url)}" alt="" loading="lazy">${fotos.length > 1 ? `<span class="vs-more">+${fotos.length - 1}</span>` : ""}</div>` : `<div class="vs-fotos vs-nofoto"><span>geen foto</span></div>`}
+    ${fotos.length ? `<div class="vs-fotos"><img class="vs-thumb main" src="${esc(safeSrc(fotos[0].url))}" alt="" loading="lazy">${fotos.length > 1 ? `<span class="vs-more">+${fotos.length - 1}</span>` : ""}</div>` : `<div class="vs-fotos vs-nofoto"><span>geen foto</span></div>`}
     <div class="vs-body">
       <div class="vs-head"><b class="num">${vsNr(v)}</b>${v.prioriteit === "hoog" ? `<span class="pill late" title="Hoge prioriteit">!</span>` : v.prioriteit === "laag" ? `<span class="pill kl">laag</span>` : ""}${vsPill(v)}${v.klant_zichtbaar ? `<span class="pill st-afgerond" title="Zichtbaar voor de klant">klant</span>` : ""}${withProject && S.projecten[v.project_id] ? `<span class="muted">· ${esc(projName(S.projecten[v.project_id]))}</span>` : ""}</div>
       ${v.titel ? `<div class="vs-title">${esc(v.titel)}</div>` : ""}<div class="vs-text ${v.titel ? "muted" : ""}">${esc(v.omschrijving || (v.titel ? "" : "—"))}</div>
@@ -1023,7 +1033,7 @@ function vsForm(v = {}, pid, bezoekId) {
       else await dbUpdate("vaststellingen", v.id, { ...row, fotos: alle });
       toast(isNew ? `${vsNr(S.vaststellingen[saved.id] || saved)} bewaard${geupload.length ? ` · ${geupload.length} foto${geupload.length === 1 ? "" : "'s"}` : ""}` : "Vaststelling bewaard");
     },
-    onDelete: isNew ? null : async () => { const paths = [...(v.fotos || []), ...(v.opgelost_fotos || [])].map(f => f.path).filter(Boolean); await dbDelete("vaststellingen", v.id); if (paths.length) sb.storage.from("werf").remove(paths).catch(() => { }); toast("Vaststelling verwijderd"); },
+    onDelete: isNew ? null : async () => { const paths = [...(v.fotos || []), ...(v.opgelost_fotos || [])].map(f => f.path).filter(x => x && x.startsWith(`${v.project_id}/${v.id}/`) && !x.includes("..")); await dbDelete("vaststellingen", v.id); if (paths.length) sb.storage.from("werf").remove(paths).catch(() => { }); toast("Vaststelling verwijderd"); },
   });
   const box = $("#vs_fotos");
   const draw = () => { box.innerHTML = fotos.map((f, i) => `<span class="vs-foto-item">${vsThumb(f)}<button type="button" class="vs-foto-x" data-rm="${i}" title="Verwijderen">✕</button></span>`).join("") + nieuw.map((f, i) => `<span class="vs-foto-item"><img class="vs-thumb" src="${URL.createObjectURL(f)}" alt=""><button type="button" class="vs-foto-x" data-rmn="${i}" title="Verwijderen">✕</button><span class="vs-new">nieuw</span></span>`).join("") || `<span class="muted" style="font-size:12px">Nog geen foto's.</span>`;
@@ -1035,7 +1045,7 @@ function vsForm(v = {}, pid, bezoekId) {
     const box = $("#vs_planbox");
     const drawPlan = () => { const pl = S.werfplannen[planSel.value]; if (!pl) { box.innerHTML = ""; return; }
       const others = vsOf(projectId).filter(x => x.plan_id === pl.id && x.id !== v.id && x.plan_x != null && vsActief(x));
-      box.innerHTML = `<div class="muted" style="font-size:12px;margin-bottom:6px">Klik op het plan om de locatie aan te duiden${pin ? ` · <button type="button" class="btn ghost sm" data-pin-clear>Pin wissen</button>` : ""}</div><div class="plan-wrap" data-pinnable><img src="${esc(pl.url)}" alt="">${others.map(x => planPin(x, true).replace(' data-act="vs-open"', "")).join("")}${pin ? `<span class="pin mine" style="left:${pin.x * 100}%;top:${pin.y * 100}%">${v.nr || "●"}</span>` : ""}</div>`;
+      box.innerHTML = `<div class="muted" style="font-size:12px;margin-bottom:6px">Klik op het plan om de locatie aan te duiden${pin ? ` · <button type="button" class="btn ghost sm" data-pin-clear>Pin wissen</button>` : ""}</div><div class="plan-wrap" data-pinnable><img src="${esc(safeSrc(pl.url))}" alt="">${others.map(x => planPin(x, true).replace(' data-act="vs-open"', "")).join("")}${pin ? `<span class="pin mine" style="left:${pin.x * 100}%;top:${pin.y * 100}%">${v.nr || "●"}</span>` : ""}</div>`;
       box.querySelector("[data-pinnable]").onclick = (e) => { if (e.target.closest(".pin") && !e.target.classList.contains("mine")) return; const img = box.querySelector("img"); const r = img.getBoundingClientRect(); pin = { x: Math.min(1, Math.max(0, (e.clientX - r.left) / r.width)), y: Math.min(1, Math.max(0, (e.clientY - r.top) / r.height)) }; drawPlan(); };
       const cl = box.querySelector("[data-pin-clear]"); if (cl) cl.onclick = () => { pin = null; drawPlan(); }; };
     planSel.addEventListener("change", () => { pin = null; drawPlan(); }); drawPlan();
@@ -1053,7 +1063,7 @@ async function loadPdfJs() {
 /* pdf → één jpeg per pagina (max. 10 pagina's, langste zijde 2600 px); afbeelding → verkleind */
 async function planToImages(file, max = 2600) {
   if (/pdf$/i.test(file.type) || /\.pdf$/i.test(file.name)) {
-    const pdfjs = await loadPdfJs(); const doc = await pdfjs.getDocument({ data: await file.arrayBuffer() }).promise; const out = [];
+    const pdfjs = await loadPdfJs(); const doc = await pdfjs.getDocument({ data: await file.arrayBuffer(), isEvalSupported: false }).promise; const out = [];
     for (let i = 1; i <= Math.min(doc.numPages, 10); i++) {
       const page = await doc.getPage(i); const v1 = page.getViewport({ scale: 1 }); const scale = max / Math.max(v1.width, v1.height); const vp = page.getViewport({ scale });
       const c = document.createElement("canvas"); c.width = Math.round(vp.width); c.height = Math.round(vp.height); const ctx = c.getContext("2d"); ctx.fillStyle = "#fff"; ctx.fillRect(0, 0, c.width, c.height);
@@ -1092,16 +1102,16 @@ function vPlannen(p) {
   if (schemaV() < 20) return "";
   const pls = plansOf(p.id); const all = vsOf(p.id);
   return `<div class="panel" style="margin-bottom:16px"><div class="panel-head"><div><h3>Plannen</h3><div class="muted" style="font-size:12px;margin-top:2px">Duid per vaststelling de locatie aan op een plan; klik op een plan voor het overzicht van de punten.</div></div><div class="actions"><button class="btn sm" data-act="plan-new" data-pid="${p.id}">+ Plan</button></div></div>
-    ${pls.length ? `<div class="plan-grid">${pls.map(pl => { const n = all.filter(v => v.plan_id === pl.id && v.plan_x != null && v.status === "open").length; return `<div class="plan-card" data-act="plan-view" data-id="${pl.id}"><img src="${esc(pl.url)}" alt="" loading="lazy"><div class="plan-name"><span>${esc(pl.naam)}</span>${n ? `<span class="pill vs-open">${n} open</span>` : ""}</div></div>`; }).join("")}</div>` : `<div class="empty" style="padding:16px">Nog geen plannen. Voeg een pdf (grondplan per verdieping) of afbeelding toe.</div>`}</div>`;
+    ${pls.length ? `<div class="plan-grid">${pls.map(pl => { const n = all.filter(v => v.plan_id === pl.id && v.plan_x != null && v.status === "open").length; return `<div class="plan-card" data-act="plan-view" data-id="${pl.id}"><img src="${esc(safeSrc(pl.url))}" alt="" loading="lazy"><div class="plan-name"><span>${esc(pl.naam)}</span>${n ? `<span class="pill vs-open">${n} open</span>` : ""}</div></div>`; }).join("")}</div>` : `<div class="empty" style="padding:16px">Nog geen plannen. Voeg een pdf (grondplan per verdieping) of afbeelding toe.</div>`}</div>`;
 }
 function planView(id) {
   const pl = S.werfplannen[id]; if (!pl) return; const p = S.projecten[pl.project_id];
   const f = S.werfF || { status: "actief" };
   const pts = vsOf(pl.project_id).filter(v => v.plan_id === id && v.plan_x != null).filter(v => f.status === "actief" ? vsActief(v) : f.status === "alle" ? true : v.status === f.status);
   openModal(`${pl.naam} — ${p ? p.klant : ""}`, `<div class="muted" style="font-size:12px;margin-bottom:8px">${pts.length} punt${pts.length === 1 ? "" : "en"} op dit plan (filter van het tabblad Werf) · klik op een pin om de vaststelling te openen</div>
-    <div class="plan-wrap big"><img src="${esc(pl.url)}" alt="">${pts.map(v => planPin(v)).join("")}</div>
+    <div class="plan-wrap big"><img src="${esc(safeSrc(pl.url))}" alt="">${pts.map(v => planPin(v)).join("")}</div>
     ${pts.length ? `<div class="tw" style="margin-top:10px"><table class="t"><tbody>${pts.sort((a, b) => (a.nr || 0) - (b.nr || 0)).map(v => `<tr class="click" data-act="vs-open" data-id="${v.id}"><td class="num" style="width:60px">${vsNr(v)}</td><td>${esc(v.titel || noteExcerpt(v.omschrijving, 80))}<small class="muted" style="display:block">${esc(v.ruimte || "")}</small></td><td>${esc(vsWie(v) || "—")}</td><td>${vsPill(v)}</td></tr>`).join("")}</tbody></table></div>` : ""}
-    <div style="margin-top:12px;display:flex;gap:8px;align-items:center"><input class="inline" data-plan-naam value="${esc(pl.naam)}" style="max-width:260px" title="Naam van het plan"><a class="btn sm" href="${esc(pl.url)}" target="_blank" rel="noopener">Origineel openen</a></div>`, {
+    <div style="margin-top:12px;display:flex;gap:8px;align-items:center"><input class="inline" data-plan-naam value="${esc(pl.naam)}" style="max-width:260px" title="Naam van het plan"><a class="btn sm" href="${esc(safeUrl(pl.url))}" target="_blank" rel="noopener">Origineel openen</a></div>`, {
     wide: true, saveLabel: "Sluiten",
     onSave: async () => { const naam = $("[data-plan-naam]").value.trim(); if (naam && naam !== pl.naam) await dbUpdate("werfplannen", id, { naam }); },
     onDelete: async () => { const n = vsOf(pl.project_id).filter(v => v.plan_id === id).length; if (n && !confirm(`${n} vaststelling${n === 1 ? " verwijst" : "en verwijzen"} naar dit plan; die pins gaan verloren. Toch verwijderen?`)) throw new Error("geannuleerd"); await dbDelete("werfplannen", id); if (pl.path) sb.storage.from("werf").remove([pl.path]).catch(() => { }); Object.values(S.vaststellingen).forEach(v => { if (v.plan_id === id) { v.plan_id = null; } }); toast("Plan verwijderd"); },
@@ -1248,12 +1258,12 @@ function wvForm(pid, bezoekId) {
       try {
         const blob = await wvBuildPdf(p, { nr, datum, bezoek: b, bericht: (d.bericht || "").trim(), punten: pts, groep: d.groep }, (m) => { btn.textContent = m; });
         btn.textContent = "Pdf bewaren…";
-        const path = `${pid}/verslagen/werfverslag-${String(nr).padStart(2, "0")}-${datum}.pdf`;
+        const path = `${pid}/verslagen/werfverslag-${String(nr).padStart(2, "0")}-${datum}-${(crypto.randomUUID ? crypto.randomUUID() : Math.random().toString(36).slice(2)).replace(/-/g, "").slice(0, 16)}.pdf`;
         const { error } = await sb.storage.from("werf").upload(path, blob, { contentType: "application/pdf", upsert: true }); if (error) throw error;
         const url = sb.storage.from("werf").getPublicUrl(path).data.publicUrl;
         const titel = `Werfverslag ${nr} · ${fmtLong(datum)}`;
         const row = await dbInsert("werfverslagen", { project_id: pid, bezoek_id: bid, nr, datum, titel, pdf_path: path, pdf_url: url, punten: pts.length, aan, bericht: (d.bericht || "").trim(), klant_zichtbaar: d.klant_zichtbaar === "on", created_by: S.me.id });
-        window.open(url, "_blank");
+        window.open(url, "_blank", "noopener");
         if (aan.length || d.drive === "on") {
           if (!driveReady()) toast("Pdf gemaakt; niet gemaild (Drive-script niet ingesteld).", 6000);
           else { btn.textContent = "Versturen…"; try { const j = await driveCall("werfverslagmail", { id: row.id, aan, drive: d.drive === "on", folderId: p.drive_folder_id || "", token: S.session?.access_token || "" }); toast(`Werfverslag ${nr} gemaakt${(j.naar || []).length ? " en gemaild naar " + j.naar.join(", ") : ""}${j.drive_url ? " · in Drive" : ""}`, 7000); } catch (e) { toast("Pdf gemaakt, maar mailen mislukte: " + e.message, 8000); } }
@@ -1274,7 +1284,7 @@ function vWerfverslagen(p) {
   if (schemaV() < 21) return "";
   const ws = wvOf(p.id);
   return `<div class="panel" style="margin-bottom:16px"><div class="panel-head"><div><h3>Werfverslagen</h3><div class="muted" style="font-size:12px;margin-top:2px">Pdf met de vaststellingen (foto's, verantwoordelijke, deadline) en de plannen met pins; gemaild naar aannemers en klant.</div></div><div class="actions"><button class="btn sm primary" data-act="wv-new" data-pid="${p.id}">Werfverslag maken</button></div></div>
-    ${ws.length ? `<div class="tw"><table class="t"><thead><tr><th>Nr</th><th>Datum</th><th>Bezoek</th><th class="r">Punten</th><th>Verstuurd naar</th><th></th></tr></thead><tbody>${ws.map(w => `<tr><td class="num">${w.nr}</td><td class="num">${fmtLong(w.datum)}</td><td>${w.bezoek_id && S.werfbezoeken[w.bezoek_id] ? `Bezoek ${S.werfbezoeken[w.bezoek_id].nr}` : "—"}</td><td class="r num">${w.punten}</td><td>${(w.aan || []).length ? esc((w.aan || []).join(", ")) : `<span class="muted">niet gemaild</span>`}${w.klant_zichtbaar ? ` <span class="pill st-afgerond">klant</span>` : ""}${w.aannemer_zichtbaar ? ` <span class="pill st-afgerond">aannemers</span>` : ""}${w.drive_url ? ` <a class="muted" href="${esc(w.drive_url)}" target="_blank" rel="noopener">Drive</a>` : ""}</td><td class="r" style="white-space:nowrap"><a class="btn ghost sm" href="${esc(w.pdf_url)}" target="_blank" rel="noopener">Pdf</a><button class="btn ghost sm" data-act="wv-share" data-id="${w.id}" title="${w.klant_zichtbaar ? "Niet meer tonen in het klantenportaal" : "Tonen in het klantenportaal"}">${w.klant_zichtbaar ? "Klant ✓" : "Klant"}</button>${schemaV() >= 25 ? `<button class="btn ghost sm" data-act="wv-share-a" data-id="${w.id}" title="${w.aannemer_zichtbaar ? "Niet meer tonen aan alle aannemers van dit project (wie het per mail kreeg, ziet het wel)" : "Tonen aan alle aannemers van dit project in hun portaal (wie het per mail kreeg, ziet het sowieso)"}">${w.aannemer_zichtbaar ? "Aannemers ✓" : "Aannemers"}</button>` : ""}<button class="btn ghost sm danger" data-act="wv-del" data-id="${w.id}">✕</button></td></tr>`).join("")}</tbody></table></div>` : `<div class="empty" style="padding:16px">Nog geen werfverslagen.</div>`}</div>`;
+    ${ws.length ? `<div class="tw"><table class="t"><thead><tr><th>Nr</th><th>Datum</th><th>Bezoek</th><th class="r">Punten</th><th>Verstuurd naar</th><th></th></tr></thead><tbody>${ws.map(w => `<tr><td class="num">${w.nr}</td><td class="num">${fmtLong(w.datum)}</td><td>${w.bezoek_id && S.werfbezoeken[w.bezoek_id] ? `Bezoek ${S.werfbezoeken[w.bezoek_id].nr}` : "—"}</td><td class="r num">${w.punten}</td><td>${(w.aan || []).length ? esc((w.aan || []).join(", ")) : `<span class="muted">niet gemaild</span>`}${w.klant_zichtbaar ? ` <span class="pill st-afgerond">klant</span>` : ""}${w.aannemer_zichtbaar ? ` <span class="pill st-afgerond">aannemers</span>` : ""}${w.drive_url ? ` <a class="muted" href="${esc(safeUrl(w.drive_url))}" target="_blank" rel="noopener">Drive</a>` : ""}</td><td class="r" style="white-space:nowrap"><a class="btn ghost sm" href="${esc(safeUrl(w.pdf_url))}" target="_blank" rel="noopener">Pdf</a><button class="btn ghost sm" data-act="wv-share" data-id="${w.id}" title="${w.klant_zichtbaar ? "Niet meer tonen in het klantenportaal" : "Tonen in het klantenportaal"}">${w.klant_zichtbaar ? "Klant ✓" : "Klant"}</button>${schemaV() >= 25 ? `<button class="btn ghost sm" data-act="wv-share-a" data-id="${w.id}" title="${w.aannemer_zichtbaar ? "Niet meer tonen aan alle aannemers van dit project (wie het per mail kreeg, ziet het wel)" : "Tonen aan alle aannemers van dit project in hun portaal (wie het per mail kreeg, ziet het sowieso)"}">${w.aannemer_zichtbaar ? "Aannemers ✓" : "Aannemers"}</button>` : ""}<button class="btn ghost sm danger" data-act="wv-del" data-id="${w.id}">✕</button></td></tr>`).join("")}</tbody></table></div>` : `<div class="empty" style="padding:16px">Nog geen werfverslagen.</div>`}</div>`;
 }
 /* ---------- AI-assistent (script 023): gesprekken uit het klantenportaal en taakvoorstellen die BROS beoordeelt ---------- */
 const ONDERWERP = { planning: "Planning", facturatie: "Facturatie", ontwerp: "Ontwerp", documenten: "Documenten", klacht: "Klacht", overig: "Overig" };
@@ -1923,7 +1933,7 @@ function renderLogin() {
       const { error } = await sb.auth.signInWithPassword({ email, password: $("#password").value });
       if (error) { m.className = "msg err"; m.textContent = /invalid/i.test(error.message) ? "E-mailadres of wachtwoord klopt niet." : "Dat lukte niet: " + error.message; btn.disabled = false; }
     } else {
-      const { error } = await sb.auth.signInWithOtp({ email, options: { emailRedirectTo: location.origin + location.pathname } });
+      const { error } = await sb.auth.signInWithOtp({ email, options: { emailRedirectTo: location.origin + location.pathname, shouldCreateUser: false } });
       if (error) { m.className = "msg err"; m.textContent = "Dat lukte niet: " + error.message + (/signup/i.test(error.message) ? " — dit adres is nog niet uitgenodigd of nog niet bevestigd." : ""); btn.disabled = false; }
       else { m.textContent = "Link verstuurd naar " + email + ". Kijk in je mailbox (ook bij spam) en klik op de link."; }
     }
@@ -2016,7 +2026,7 @@ function vProjecten() {
   <div class="panel tw"><table class="t"><thead><tr>${th("nummer", "Nr")}${th("klant", "Klant · project")}${th("status", "Status")}${th("fase", "Fase")}${th("lead", "Lead")}${th("timing", "Timing")}${beheer ? th("forfait", "Forfait", "r") : ""}${th("taken", "Taken", "r")}<th class="sortable ${key === "uren" ? "on" : ""}" data-sort="uren" style="min-width:140px">Uren<span class="arrow">${key === "uren" ? (dir === "asc" ? "↑" : "↓") : ""}</span></th></tr></thead><tbody>
   ${ps.map(({ p, ts, pl, dn, st, en }) => `<tr class="click" data-open="${p.id}">
     <td class="num muted">${esc(p.nummer || "")}</td>
-    <td><div class="row-title">${esc(p.klant)}${p.drive_url ? ` <a class="drive-ico" href="${esc(p.drive_url)}" target="_blank" rel="noopener" title="Projectmap openen in Google Drive">📁</a>` : ""}<small>${KLANTCODE[p.klanttype] || ""}${p.naam && p.naam !== p.klant ? " · " + esc(p.naam) : ""}${p.gemeente ? " · " + esc(p.gemeente) : ""}</small></div></td>
+    <td><div class="row-title">${esc(p.klant)}${p.drive_url ? ` <a class="drive-ico" href="${esc(safeUrl(p.drive_url))}" target="_blank" rel="noopener" title="Projectmap openen in Google Drive">📁</a>` : ""}<small>${KLANTCODE[p.klanttype] || ""}${p.naam && p.naam !== p.klant ? " · " + esc(p.naam) : ""}${p.gemeente ? " · " + esc(p.gemeente) : ""}</small></div></td>
     <td><span class="pill st-${p.status}">${PROJ_STATUS[p.status] || p.status}</span></td>
     <td><span class="pill phase">${esc(faseName(p.fase_nr) || "—")}</span></td>
     <td>${p.lead ? avatar(p.lead) : "—"}</td>
@@ -2078,8 +2088,8 @@ function vProjectDetail(p) {
     const map = p.drive_map || ("PROJECTEN/" + (p.klant || ""));
     const docs = docsOf(p.id); const groups = [...new Set(docs.map(d => d.pad || ""))];
     body = vProjectContacten(p) + `<div class="panel" style="margin-bottom:16px"><div class="panel-head"><div><h3>Projectmap op Google Drive</h3><div class="muted" style="font-size:12px;margin-top:2px"><span class="drive-path">${esc(map)}</span></div></div>
-      <div class="actions">${p.drive_url ? `<a class="btn" href="${esc(p.drive_url)}" target="_blank" rel="noopener">Open map in Drive ↗</a><button class="btn sm" data-act="drive-list" data-pid="${p.id}">Vernieuwen</button>` : driveReady() ? `<button class="btn sm" data-act="drive-link" data-pid="${p.id}">Bestaande map koppelen</button><button class="btn sm primary" data-act="drive-create" data-pid="${p.id}">Map aanmaken uit sjabloon</button>` : `<span class="pill st-offerte">Drive-koppeling nog niet ingesteld</span>`}</div></div>
-      ${docs.length ? `<div class="panel-body">${schemaV() >= 11 ? `<p class="muted" style="font-size:12px;margin:0 0 10px">Schakelaars bij een bestand: <b>klant</b> = zichtbaar in het klantenportaal${schemaV() >= 25 ? `, <b>aannemers</b> = zichtbaar voor de aannemers van dit project in hun portaal` : ""} (het bestand wordt dan leesbaar via de link). ${docs.filter(d => d.gedeeld).length} met de klant${schemaV() >= 25 ? `, ${docs.filter(d => d.gedeeld_aannemers).length} met aannemers` : ""} gedeeld.</p>` : ""}<div class="docs">${groups.map(g => `${g ? `<div style="grid-column:1/-1" class="eyebrow">${esc(g)}</div>` : ""}${docs.filter(d => (d.pad || "") === g).map(d => `<div class="doc-wrap ${d.gedeeld ? "shared" : ""}"><a class="doc" href="${esc(d.url)}" target="_blank" rel="noopener" style="text-decoration:none;color:inherit"><div class="ico ${docIcon(d.mime, d.naam)}">${docIcon(d.mime, d.naam) === "map" ? "DOC" : docIcon(d.mime, d.naam).toUpperCase()}</div><div style="min-width:0"><div class="n" style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(d.naam)}</div><div class="s">${d.gewijzigd ? "gewijzigd " + fmtLong(d.gewijzigd.slice(0, 10)) : ""}${d.gedeeld ? ` · <span style="color:var(--ok)">klant</span>` : ""}${d.gedeeld_aannemers ? ` · <span style="color:var(--ok)">aannemers</span>` : ""}</div></div></a>${schemaV() >= 11 ? `<label class="sw-lbl" title="${d.gedeeld ? "Gedeeld met de klant" : "Delen met de klant"}"><input type="checkbox" class="sw" data-dshare="${d.id}" ${d.gedeeld ? "checked" : ""} ${DOC_BUSY.has(d.id) ? "disabled" : ""} aria-label="Delen met de klant"><small>klant</small></label>` : ""}${schemaV() >= 25 ? `<label class="sw-lbl" title="${d.gedeeld_aannemers ? "Gedeeld met de aannemers van dit project" : "Delen met de aannemers van dit project"}"><input type="checkbox" class="sw" data-dshare-a="${d.id}" ${d.gedeeld_aannemers ? "checked" : ""} ${DOC_BUSY.has(d.id) ? "disabled" : ""} aria-label="Delen met aannemers"><small>aannemers</small></label>` : ""}</div>`).join("")}`).join("")}</div>
+      <div class="actions">${p.drive_url ? `<a class="btn" href="${esc(safeUrl(p.drive_url))}" target="_blank" rel="noopener">Open map in Drive ↗</a><button class="btn sm" data-act="drive-list" data-pid="${p.id}">Vernieuwen</button>` : driveReady() ? `<button class="btn sm" data-act="drive-link" data-pid="${p.id}">Bestaande map koppelen</button><button class="btn sm primary" data-act="drive-create" data-pid="${p.id}">Map aanmaken uit sjabloon</button>` : `<span class="pill st-offerte">Drive-koppeling nog niet ingesteld</span>`}</div></div>
+      ${docs.length ? `<div class="panel-body">${schemaV() >= 11 ? `<p class="muted" style="font-size:12px;margin:0 0 10px">Schakelaars bij een bestand: <b>klant</b> = zichtbaar in het klantenportaal${schemaV() >= 25 ? `, <b>aannemers</b> = zichtbaar voor de aannemers van dit project in hun portaal` : ""} (het bestand wordt dan leesbaar via de link). ${docs.filter(d => d.gedeeld).length} met de klant${schemaV() >= 25 ? `, ${docs.filter(d => d.gedeeld_aannemers).length} met aannemers` : ""} gedeeld.</p>` : ""}<div class="docs">${groups.map(g => `${g ? `<div style="grid-column:1/-1" class="eyebrow">${esc(g)}</div>` : ""}${docs.filter(d => (d.pad || "") === g).map(d => `<div class="doc-wrap ${d.gedeeld ? "shared" : ""}"><a class="doc" href="${esc(safeUrl(d.url))}" target="_blank" rel="noopener" style="text-decoration:none;color:inherit"><div class="ico ${docIcon(d.mime, d.naam)}">${docIcon(d.mime, d.naam) === "map" ? "DOC" : docIcon(d.mime, d.naam).toUpperCase()}</div><div style="min-width:0"><div class="n" style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(d.naam)}</div><div class="s">${d.gewijzigd ? "gewijzigd " + fmtLong(d.gewijzigd.slice(0, 10)) : ""}${d.gedeeld ? ` · <span style="color:var(--ok)">klant</span>` : ""}${d.gedeeld_aannemers ? ` · <span style="color:var(--ok)">aannemers</span>` : ""}</div></div></a>${schemaV() >= 11 ? `<label class="sw-lbl" title="${d.gedeeld ? "Gedeeld met de klant" : "Delen met de klant"}"><input type="checkbox" class="sw" data-dshare="${d.id}" ${d.gedeeld ? "checked" : ""} ${DOC_BUSY.has(d.id) ? "disabled" : ""} aria-label="Delen met de klant"><small>klant</small></label>` : ""}${schemaV() >= 25 ? `<label class="sw-lbl" title="${d.gedeeld_aannemers ? "Gedeeld met de aannemers van dit project" : "Delen met de aannemers van dit project"}"><input type="checkbox" class="sw" data-dshare-a="${d.id}" ${d.gedeeld_aannemers ? "checked" : ""} ${DOC_BUSY.has(d.id) ? "disabled" : ""} aria-label="Delen met aannemers"><small>aannemers</small></label>` : ""}</div>`).join("")}`).join("")}</div>
         <p class="muted" style="font-size:12px;margin:12px 0 0">Laatst gesynchroniseerd ${docs[0].gesynct_op ? fmtLong(docs[0].gesynct_op.slice(0, 10)) + " " + docs[0].gesynct_op.slice(11, 16) : "—"}${S.driveAuto && S.driveAuto[p.id] && Date.now() - S.driveAuto[p.id] < 15000 ? " · wordt vernieuwd…" : ""}. Bij het openen van dit tabblad wordt de lijst automatisch vernieuwd als ze ouder is dan een uur; anders via "Vernieuwen"; foto's en video's worden niet opgesomd (die open je via de map).</p></div>` : `<div class="empty">${p.drive_url ? "Nog geen bestanden gevonden — klik op Vernieuwen." : "Nog geen map gekoppeld. \"Bestaande map koppelen\" zoekt in PROJECTEN naar een map met de naam uit het veld Drive-map (of de klantnaam)."}</div>`}</div>
       <div class="panel"><div class="panel-head"><h3>Gegevens</h3></div>
       <div class="panel-body"><div class="meta">
@@ -2098,7 +2108,7 @@ function vProjectDetail(p) {
   return `
   <div class="crumb"><button data-back="1">Projecten</button><span>›</span><span>${esc(p.klant)}</span></div>
   <div class="page-head"><div>${projCode(p) ? `<div class="eyebrow">${esc(projCode(p))}${p.projecttype ? " · " + esc(p.projecttype) : ""}</div>` : ""}<h1>${esc(projName(p))}</h1><div class="sub">${esc(p.adres || "")}${(p.postcode || p.gemeente) ? (p.adres ? ", " : "") + esc([p.postcode, p.gemeente].filter(Boolean).join(" ")) : ""}</div></div>
-    <div class="actions"><span class="pill st-${p.status}">${PROJ_STATUS[p.status] || p.status}</span>${p.drive_url ? `<a class="btn" href="${esc(p.drive_url)}" target="_blank" rel="noopener" title="Projectmap openen in Google Drive">📁 Drive-map ↗</a>` : (driveReady() ? `<button class="btn" data-act="drive-link" data-pid="${p.id}" title="Bestaande map op Drive koppelen of zoeken">📁 Drive-map koppelen</button>` : "")}${isBeheer() ? `<button class="btn" data-act="edit-project" data-pid="${p.id}">Bewerken</button>` : ""}<button class="btn" data-act="log-hours" data-pid="${p.id}">+ Uren</button>${msReady() ? `<button class="btn" data-act="ms-open" data-pid="${p.id}" title="${msRows(p.id).length ? "Meetstaat openen" : "Meetstaat aanmaken: loten en posten kiezen"}">${msRows(p.id).length ? "Meetstaat" : "+ Meetstaat"}</button>` : ""}<button class="btn primary" data-act="new-task" data-pid="${p.id}">+ Taak</button></div></div>
+    <div class="actions"><span class="pill st-${p.status}">${PROJ_STATUS[p.status] || p.status}</span>${p.drive_url ? `<a class="btn" href="${esc(safeUrl(p.drive_url))}" target="_blank" rel="noopener" title="Projectmap openen in Google Drive">📁 Drive-map ↗</a>` : (driveReady() ? `<button class="btn" data-act="drive-link" data-pid="${p.id}" title="Bestaande map op Drive koppelen of zoeken">📁 Drive-map koppelen</button>` : "")}${isBeheer() ? `<button class="btn" data-act="edit-project" data-pid="${p.id}">Bewerken</button>` : ""}<button class="btn" data-act="log-hours" data-pid="${p.id}">+ Uren</button>${msReady() ? `<button class="btn" data-act="ms-open" data-pid="${p.id}" title="${msRows(p.id).length ? "Meetstaat openen" : "Meetstaat aanmaken: loten en posten kiezen"}">${msRows(p.id).length ? "Meetstaat" : "+ Meetstaat"}</button>` : ""}<button class="btn primary" data-act="new-task" data-pid="${p.id}">+ Taak</button></div></div>
   <div class="panel" style="margin-bottom:16px"><div class="panel-body meta">
     <div><div class="k">Fase</div><div class="v">${esc(faseName(p.fase_nr) || "—")}</div></div>
     <div><div class="k">Lead</div><div class="v"><span class="who-cell">${p.lead ? avatar(p.lead) : ""}${esc(userById(p.lead).name)}</span></div></div>
@@ -2183,7 +2193,7 @@ function ganttHtml(ps, opt = {}) {
   });
   return `<div class="gantt">
     <div class="gantt-tools"><div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap"><h3>${esc(opt.title || "Timing")}</h3><span class="week-nav"><button class="btn sm" data-gnav="-28" aria-label="4 weken terug">‹</button><button class="btn sm" data-gnav="today">Vandaag</button><button class="btn sm" data-gnav="28" aria-label="4 weken verder">›</button></span></div>
-      <div class="legend">${users().map(u => `<span><i style="background:${u.color}"></i>${esc(u.name)}</span>`).join("")}<span><i style="background:var(--today)"></i>vandaag</span></div></div>
+      <div class="legend">${users().map(u => `<span><i style="background:${safeColor(u.color)}"></i>${esc(u.name)}</span>`).join("")}<span><i style="background:var(--today)"></i>vandaag</span></div></div>
     <div class="gantt-scroll"><div class="gantt-in">
       <div class="g-label"><div class="g-head" style="display:flex;align-items:center;padding:0 12px"><span class="eyebrow">${fmt(start)} → ${fmt(end)}</span></div>${rows.map(r => r.label).join("")}</div>
       <div><div class="g-head" style="width:${days * dw}px">${months}${weeks}</div>
@@ -2216,10 +2226,12 @@ function vUren() {
       <div class="panel"><div class="panel-head"><h3>Team deze week</h3></div><div class="tw"><table class="t"><tbody>${allTot.map(x => `<tr><td><span class="who-cell">${avatar(x.u.id)}${esc(x.u.name)}</span></td><td class="r num">${nl(x.d)} u</td></tr>`).join("")}</tbody></table></div></div>
     </div></div>`;
 }
+/* tekst die met = + - @ begint, voert Excel uit als formule: een ' ervoor maakt er gewone tekst van */
+const csvVeilig = (v) => { const t = String(v ?? ""); return /^[=+\-@\t\r]/.test(t) && !/^-?\d+([.,]\d+)?$/.test(t) ? "'" + t : t; };
 function exportHours() {
   const rows = Object.values(S.uren).sort((a, b) => a.datum.localeCompare(b.datum));
   const head = ["Datum", "Week", "Van", "Tot", "Medewerker", "Projectnummer", "Klant", "Project", "Fase", "Taak", "Uren", "Zichtbaar klant", "Notitie"];
-  const lines = [head.join(";")].concat(rows.map(h => { const p = S.projecten[h.project_id] || {}, t = S.taken[h.taak_id] || {}; return [fmtLong(h.datum), weekNr(h.datum), tijd(h.tijd_van), tijd(h.tijd_tot), userById(h.user_id).name, p.nummer || "", p.klant || "", p.naam || "", faseShort(t.fase_nr), t.titel || "", String(h.uren).replace(".", ","), t.uren_klant ? "ja" : "nee", (h.notitie || "").replace(/[;\r\n]/g, " ")].map(v => `"${String(v).replace(/"/g, '""')}"`).join(";"); }));
+  const lines = [head.join(";")].concat(rows.map(h => { const p = S.projecten[h.project_id] || {}, t = S.taken[h.taak_id] || {}; return [fmtLong(h.datum), weekNr(h.datum), tijd(h.tijd_van), tijd(h.tijd_tot), userById(h.user_id).name, p.nummer || "", p.klant || "", p.naam || "", faseShort(t.fase_nr), t.titel || "", String(h.uren).replace(".", ","), t.uren_klant ? "ja" : "nee", (h.notitie || "").replace(/[;\r\n]/g, " ")].map(v => `"${csvVeilig(v).replace(/"/g, '""')}"`).join(";"); }));
   const blob = new Blob(["﻿" + lines.join("\r\n")], { type: "text/csv;charset=utf-8" });
   const a = document.createElement("a"); a.href = URL.createObjectURL(blob); a.download = `bros-uren-${todayIso}.csv`; a.click(); URL.revokeObjectURL(a.href);
 }
@@ -2316,7 +2328,7 @@ function vRapporten() {
 function exportProjects() {
   const fmtLong = (d) => d ? `${d.slice(8, 10)}/${d.slice(5, 7)}/${d.slice(0, 4)}` : "";
   const head = ["Nummer", "Klant", "Type klant", "Bedrijf", "BTW-nummer", "Projectnaam", "Adres", "Postcode", "Gemeente", "Contact", "GSM 1", "GSM 2", "E-mail 1", "Factuur e-mail 1", "E-mail 2", "Factuur e-mail 2", "Status", "Fase", "Lead", "Type project", "Bron", "m²", "BTW-tarief", "Forfait", "Uren gepresteerd", "Uren gepland", "Interne kost", "Externe waarde", "Start", "Geplande oplevering", "Offerte", "Contract", "Opgeleverd", "Reden verloren", "Tags", "Drive-map"];
-  const q = (v) => `"${String(v ?? "").replace(/"/g, '""')}"`; const n = (v) => v == null || v === "" ? "" : String(v).replace(".", ",");
+  const q = (v) => `"${csvVeilig(v).replace(/"/g, '""')}"`; const n = (v) => v == null || v === "" ? "" : String(v).replace(".", ",");
   const lines = [head.join(";")].concat(projects().map(p => [p.nummer, p.klant, KLANTTYPE[p.klanttype], p.bedrijf, p.btw_nummer, p.naam, p.adres, p.postcode, p.gemeente, p.contact, p.gsm1, p.gsm2, p.email1, p.factuur_email1 ? "ja" : "", p.email2, p.factuur_email2 ? "ja" : "", PROJ_STATUS[p.status], faseName(p.fase_nr), userById(p.lead).name, p.projecttype, p.bron, n(p.oppervlakte_m2), n(p.btw_tarief), n(p.forfait), n(projDone(p.id)), n(projPlanned(p.id)), n(Math.round(projKost(p.id, "intern"))), n(Math.round(projKost(p.id, "extern"))), fmtLong(p.start), fmtLong(p.eind), fmtLong(p.offerte_datum), fmtLong(p.contract_datum), fmtLong(p.opgeleverd_op), p.verloren_reden, p.tags, p.drive_map].map(q).join(";")));
   const blob = new Blob(["﻿" + lines.join("\r\n")], { type: "text/csv;charset=utf-8" });
   const a = document.createElement("a"); a.href = URL.createObjectURL(blob); a.download = `bros-projecten-${todayIso}.csv`; a.click(); URL.revokeObjectURL(a.href);
@@ -2356,7 +2368,7 @@ function vPortaalBeheer() {
   const metLogin = Object.values(S.contacten).filter(x => x.user_id).sort((a, b) => a.naam.localeCompare(b.naam));
   const rolVan = (k) => S.profiles[k.user_id]?.role || (k.soort === "klant" ? "klant" : "aannemer");
   const klanten = metLogin.filter(k => rolVan(k) !== "aannemer"), aannemers = metLogin.filter(k => rolVan(k) === "aannemer"); const urlA = c.url_aannemer || url.replace(/klant\/?$/, "aannemer/");
-  return `<div class="panel" style="margin-bottom:16px"><div class="panel-head"><div><h3>Klantenportaal en aannemersportaal</h3><div class="muted" style="font-size:12px;margin-top:2px">Klanten loggen in op <a href="${esc(url)}" target="_blank" rel="noopener">${esc(url)}</a>${schemaV() >= 25 ? `, aannemers op <a href="${esc(urlA)}" target="_blank" rel="noopener">${esc(urlA)}</a>` : ""}. Toegang geef je per project: Dossier → Contacten → knop in de kolom Portaal.</div></div><span class="pill st-afgerond">${klanten.length} klant${klanten.length === 1 ? "" : "en"}${schemaV() >= 25 ? ` · ${aannemers.length} aannemer${aannemers.length === 1 ? "" : "s"}` : ""} met toegang</span></div>
+  return `<div class="panel" style="margin-bottom:16px"><div class="panel-head"><div><h3>Klantenportaal en aannemersportaal</h3><div class="muted" style="font-size:12px;margin-top:2px">Klanten loggen in op <a href="${esc(safeUrl(url))}" target="_blank" rel="noopener">${esc(url)}</a>${schemaV() >= 25 ? `, aannemers op <a href="${esc(safeUrl(urlA))}" target="_blank" rel="noopener">${esc(urlA)}</a>` : ""}. Toegang geef je per project: Dossier → Contacten → knop in de kolom Portaal.</div></div><span class="pill st-afgerond">${klanten.length} klant${klanten.length === 1 ? "" : "en"}${schemaV() >= 25 ? ` · ${aannemers.length} aannemer${aannemers.length === 1 ? "" : "s"}` : ""} met toegang</span></div>
     <div class="panel-body"><div class="form-grid">
       <div class="field span2"><label for="po_welkom">Welkomtekst (bovenaan de startpagina)</label><textarea id="po_welkom" rows="2">${esc(c.welkom || "")}</textarea></div>
       <div class="field span2"><label for="po_werk">Inleiding bij "Zo werkt het bij BROS" (de fasen uit Instellingen staan eronder)</label><textarea id="po_werk" rows="2">${esc(c.werkwijze || "")}</textarea></div>
@@ -2702,7 +2714,7 @@ function userForm(u) {
     <div class="field"><label for="u_color">Kleur</label><select id="u_color" name="color">${opts(PALETTE.map((c, i) => [c, "Kleur " + (i + 1)]), u.color)}</select></div>
     ${schemaV() >= 11 ? `<div class="field span2" style="border-top:1px solid var(--line);padding-top:10px"><label>Klantenportaal — pagina "Wie is wie"</label></div>
     <div class="field"><label for="u_functie">Functie</label><input id="u_functie" name="functie" value="${esc(u.functie || "")}" placeholder="bv. Co-founder · Creative Director"></div>
-    <div class="field"><label for="u_foto">Foto</label><div style="display:flex;gap:10px;align-items:center">${u.foto_url ? `<img src="${esc(u.foto_url)}" alt="" style="width:44px;height:44px;border-radius:50%;object-fit:cover">` : avatar(u.id)}<input id="u_foto" name="foto" type="file" accept="image/*" style="font-size:12px"></div></div>
+    <div class="field"><label for="u_foto">Foto</label><div style="display:flex;gap:10px;align-items:center">${u.foto_url ? `<img src="${esc(safeSrc(u.foto_url))}" alt="" style="width:44px;height:44px;border-radius:50%;object-fit:cover">` : avatar(u.id)}<input id="u_foto" name="foto" type="file" accept="image/*" style="font-size:12px"></div></div>
     <div class="field span2"><label for="u_bio">Korte biografie (2–3 zinnen)</label><textarea id="u_bio" name="bio" rows="3">${esc(u.bio || "")}</textarea></div>
     <div class="field span2"><label class="sw-row"><input type="checkbox" class="sw" name="portaal_zichtbaar" ${u.portaal_zichtbaar !== false ? "checked" : ""}><span>Tonen op de pagina "Wie is wie" in het klantenportaal</span></label></div>` : ""}
     ${isBeheer() ? `<div class="field"><label for="u_role">Rol</label><select id="u_role" name="role">${opts([["medewerker", "Medewerker"], ["beheer", "Beheer"]], u.role)}</select></div>
@@ -2932,7 +2944,7 @@ document.addEventListener("click", (e) => {
   if (d.act === "vord-del") return vordDel(d.id);
   if (d.act === "vord-fit") return vordFit(d.id);
   if (d.act === "post-del") return postDel(d.id);
-  if (d.act === "logout") return sb.auth.signOut().then(() => location.reload());
+  if (d.act === "logout") return sb.auth.signOut().then(() => { opruimenNaUitloggen(); location.reload(); });
   if (d.act === "dagring") { dagForm(); return; }
   if (d.act === "zoek") { zkOpen(); return; }
   if (d.act === "fx-demo") { const r = el.getBoundingClientRect(); const f = $("#mform"); const g = f ? f.querySelector('[name="fx_geluid"]').checked : undefined; FX.burst(r.left + 24, r.top + r.height / 2, true, g); return; }

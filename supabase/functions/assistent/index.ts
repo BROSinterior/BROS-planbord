@@ -56,6 +56,16 @@ Deno.serve(async (req) => {
     const { count: nAlles } = await admin.from("assistent_berichten").select("id", { count: "exact", head: true }).eq("rol", "klant").gte("created_at", maand.toISOString());
     const plafondP = Number(cfg.plafond_project) || 0, plafondG = Number(cfg.plafond_globaal) || 0;
     const overPlafond = (plafondP && (nProj || 0) >= plafondP) || (plafondG && (nAlles || 0) >= plafondG);
+    // per gebruiker: max 5 vragen per minuut en 60 per dag (geen kosten- of mailbom door één login)
+    const minuut = new Date(Date.now() - 60000).toISOString(), dag = new Date(Date.now() - 86400000).toISOString();
+    const { data: mijnG } = await admin.from("assistent_gesprekken").select("id").eq("user_id", u.id);
+    const gIds = (mijnG || []).map((x: any) => x.id);
+    if (gIds.length) {
+      const { count: nMin } = await admin.from("assistent_berichten").select("id", { count: "exact", head: true }).in("gesprek_id", gIds).eq("rol", "klant").gte("created_at", minuut);
+      const { count: nDag } = await admin.from("assistent_berichten").select("id", { count: "exact", head: true }).in("gesprek_id", gIds).eq("rol", "klant").gte("created_at", dag);
+      if ((nMin || 0) >= 5) return json({ error: "Even rustig aan: wacht een minuutje voor je volgende vraag." }, 429);
+      if ((nDag || 0) >= 60) return json({ error: "Je hebt vandaag al veel vragen gesteld. Morgen kan je opnieuw, of neem gewoon contact op met BROS." }, 429);
+    }
 
     // 3. gesprek (één per klant en project)
     let { data: g } = await admin.from("assistent_gesprekken").select("id").eq("project_id", projectId).eq("user_id", u.id).maybeSingle();
@@ -93,7 +103,7 @@ Deno.serve(async (req) => {
       isKlant ? q("klant_taken") : admin.from("taken").select("titel,eind,status").eq("project_id", projectId).not("contact_id", "is", null).then(r => r.data || []),
       isKlant ? q("klant_goedkeuringen") : admin.from("goedkeuringen").select("titel,soort,status,geldig_tot,voorgelegd_op").eq("project_id", projectId).then(r => r.data || []),
       isKlant ? q("klant_werfverslagen") : admin.from("werfverslagen").select("nr,datum,punten").eq("project_id", projectId).eq("klant_zichtbaar", true).then(r => r.data || []),
-      admin.from("profiles").select("id,name,functie").eq("active", true).neq("role", "klant").then(r => r.data || []),
+      admin.from("profiles").select("id,name,functie").eq("active", true).in("role", ["beheer", "medewerker"]).then(r => r.data || []),
       admin.from("loten").select("nr,naam").then(r => r.data || []),
     ]);
     const faseNaam = (nr: number) => { const f = (fasen as any[]).find(x => x.nr === nr); return f ? `${nr}. ${f.naam}` : String(nr || ""); };
@@ -177,7 +187,7 @@ ${dossier}`;
     return json({ antwoord, voorstel, over_plafond: false, resterend: plafondP ? Math.max(0, plafondP - (nProj || 0) - 1) : null });
   } catch (e) {
     console.error(e);
-    return json({ error: String((e as Error).message || e) }, 500);
+    return json({ error: "De assistent kon je vraag nu niet verwerken. Probeer het later opnieuw." }, 500);
   }
 });
 
