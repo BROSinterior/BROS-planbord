@@ -229,8 +229,8 @@ function putFile(body) {
       archived.push({ id: f.getId(), name: newName, url: f.getUrl(), path: String(body.archiveTo), size: f.getSize(), mime: f.getMimeType(), updated: d.toISOString() });
     }
   }
-  let name = String(body.name || "bestand.xlsx"); const base = name.replace(/\.xlsx$/i, ""); let k = 2;
-  while (folder.getFilesByName(name).hasNext()) { name = base + " (" + (k++) + ").xlsx"; }
+  let name = String(body.name || "bestand.xlsx"); const mExt = name.match(/^(.*?)(\.[A-Za-z0-9]{1,5})?$/); const base = mExt[1], ext = mExt[2] || ""; let k = 2;   // extensie behouden (ook .pdf)
+  while (folder.getFilesByName(name).hasNext()) { name = base + " (" + (k++) + ")" + ext; }
   const blob = Utilities.newBlob(Utilities.base64Decode(String(body.base64 || "")), body.mime || "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", name);
   const file = folder.createFile(blob);
   return { ok: true, archived: archived, file: { id: file.getId(), name: file.getName(), url: file.getUrl(), path: String(body.subpath || ""), size: file.getSize(), mime: file.getMimeType(), updated: new Date().toISOString() } };
