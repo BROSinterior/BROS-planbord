@@ -434,7 +434,7 @@ function tkOpen(id) {
     view: null, tool: "selectie", pts: [], mouse: null, snap: null, space: false, drag: null, ol: { status: "laden" }, sharp: null, sharpKey: "", sharpTask: null, pointers: new Map(), meting: null,
     objs: new Map(), sel: new Set(), dirty: new Set(), weg: new Set(), undo: [], redo: [], op: null, orde: null, views: [],
     symCode: SYMBOLEN[P.symCode] ? P.symCode : "stopcontact", symRot: 0, symSpiegel: false, stijl: TK_STIJLEN[P.stijl] ? P.stijl : "kw", diam: P.diam || "", tekstH: P.tekstH || 2, laag: P.laag || "elektro",
-    kring: "", bestaand: false, blad: null, open: { ...(P.open || {}) }, geladen: false };
+    kring: "", bestaand: false, blad: null, open: { ...(P.open || {}) }, geladen: false, verworven: [] };
   const el = document.createElement("div"); el.id = "tk"; el.className = "tk"; el.innerHTML = tkShell(pl); document.body.appendChild(el); document.documentElement.classList.add("tk-open");
   TK.el = el; TK.cv = el.querySelector("canvas"); TK.ctx = TK.cv.getContext("2d");
   tkBindUi(); tkResize(); tkSideRender();
@@ -1014,14 +1014,18 @@ function tkMove(e) {
   if (TK.pinch && TK.pointers.size === 2) { const [a, b] = [...TK.pointers.values()]; const d = Math.hypot(a.x - b.x, a.y - b.y), mx = (a.x + b.x) / 2, my = (a.y + b.y) / 2; const r = TK.cv.getBoundingClientRect();
     TK.view.cx -= (mx - TK.pinch.mx) / TK.view.z; TK.view.cy += (my - TK.pinch.my) / TK.view.z; tkZoomAt(mx - r.left, my - r.top, d / TK.pinch.d); TK.pinch = { d, mx, my }; return; }
   if (TK.drag) { TK.view.cx = TK.drag.cx - (e.clientX - TK.drag.x) / TK.view.z; TK.view.cy = TK.drag.cy + (e.clientY - TK.drag.y) / TK.view.z; tkDraw(); return; }
-  const op = TK.op; const p = tkPunt(e, e.shiftKey && !(op && op.soort === "verplaats") && tkOrtho()); p.shift = e.shiftKey; TK.mouse = p;
-  const xy = TK.el.querySelector("[data-tk-xy]"); if (xy) xy.textContent = `X ${nl(Math.round(p.x))}  ·  Y ${nl(Math.round(p.y))} mm${p.snap ? "  ·  ▪ " + p.snap.soort : ""}`;
+  const op = TK.op; const p = tkPunt(e, e.shiftKey && !(op && op.soort === "verplaats") && tkOrtho()); p.shift = e.shiftKey; TK.mouse = p; if (p.snap) tkVerwerf(p.snap);
+  const xy = TK.el.querySelector("[data-tk-xy]"); if (xy) xy.textContent = `X ${nl(Math.round(p.x))}  ·  Y ${nl(Math.round(p.y))} mm${p.snap ? "  ·  ▪ " + p.snap.soort : p.gids ? "  ·  ┆ uitgelijnd" : ""}`;
   if (op) {
     if (op.soort === "verplaats") {
       let dx = p.x - op.start[0], dy = p.y - op.start[1]; if (e.shiftKey) { if (Math.abs(dx) > Math.abs(dy)) dy = 0; else dx = 0; }
       if (!op.orig) { if (Math.hypot(p.X - TK.down.X, p.Y - TK.down.Y) < 4) return;
         if (op.kopie) { const ids = tkKopieMet(0, 0); op.nieuw = true; op.ids = new Set(ids); TK.undo.pop(); }   // kopie maken, maar als één stap bewaren bij loslaten
-        op.orig = new Map([...op.ids].map(id => [id, tkKopie(TK.objs.get(id))])); }
+        op.orig = new Map([...op.ids].map(id => [id, tkKopie(TK.objs.get(id))])); op.refs = [...op.orig.values()].flatMap(o => tkObjPunten(o)).slice(0, 120); }
+      op.gids = null;
+      if (!p.snap && !(e.metaKey || e.ctrlKey) && op.refs && op.refs.length) {   // slimme hulplijnen: de punten van wat je versleept, lijnen uit op andere grijppunten
+        TK.uitlijnC = null; const vast = e.shiftKey ? (dy === 0 ? { y: true } : { x: true }) : {}; const u = tkUitlijn(op.refs, dx, dy, vast); dx += u.cx; dy += u.cy; op.gids = u.gids.length ? u.gids : null;
+      }
       for (const [id, o] of op.orig) TK.objs.set(id, tkVerschuif(tkKopie(o), dx, dy)); TK.orde = null; op.d = [dx, dy];
     } else if (op.soort === "kader" || op.soort === "zoomkader") op.b = [p.X, p.Y];
     else if (op.soort === "blad") { const b = tkBlad(); if (b) { b.kader = { cx: op.c0[0] + (p.x - op.start[0]), cy: op.c0[1] + (p.y - op.start[1]) }; } }
@@ -1220,7 +1224,7 @@ const tkLaagOpts = (sel, alleen) => opts(TK_LAGEN.filter(l => l[0] !== "onderleg
 function tkSecSelectie() {
   if (!TK.sel.size) return "";
   const os = [...TK.sel].map(id => TK.objs.get(id)).filter(Boolean); if (!os.length) return ""; const een = os.length === 1 ? os[0] : null; const soorten = new Set(os.map(o => o.soort));
-  const knoppen = `<div class="tk-btns"><button class="btn sm" data-tk="r90" title="90° naar links (⌘L)">⟲ 90°</button><button class="btn sm" data-tk="r-90" title="90° naar rechts (⌘⇧R)">⟳ 90°</button><button class="btn sm" data-tk="spiegel" title="Spiegelen (= of ⌘⇧H)">⇋</button><button class="btn sm" data-tk="dupl" title="Dupliceren (⌘D)">⧉</button><button class="btn sm" data-tk="mv" title="Verplaatsen met X/Y in mm (⌘M)">X/Y</button><button class="btn sm danger" data-tk="wis" title="Verwijderen (Backspace)">🗑</button></div>`;
+  const knoppen = `<div class="tk-btns"><button class="btn sm" data-tk="r90" title="90° naar links (⌘L)">⟲ 90°</button><button class="btn sm" data-tk="r-90" title="90° naar rechts (⌘⇧R)">⟳ 90°</button><button class="btn sm" data-tk="spiegel" title="Spiegelen (= of ⌘⇧H)">⇋</button><button class="btn sm" data-tk="dupl" title="Dupliceren (⌘D)">⧉</button><button class="btn sm" data-tk="mv" title="Verplaatsen met X/Y in mm (⌃M — in Safari minimaliseert ⌘M het venster)">X/Y</button><button class="btn sm danger" data-tk="wis" title="Verwijderen (Backspace)">🗑</button></div>`;
   const best = (o) => `<label>Status</label><select data-tk-prop="bestaand">${opts([["0", "nieuw"], ["1", "bestaand (blauw)"]], (o ? o.props?.bestaand : os.every(x => x.props?.bestaand)) ? "1" : "0")}</select>`;
   let f = "";
   if (een && een.soort === "symbool") {
@@ -1563,19 +1567,75 @@ function tkSnap(X, Y) {   // → {x, y, soort} in wereld-mm, of null
   const uitgesloten = TK.op && TK.op.ids ? TK.op.ids : null;
   for (const o of TK.objs.values()) { if (uitgesloten && uitgesloten.has(o.id)) continue; if (!tkZichtbaar(o.laag)) continue; const p = tkObjPunten(o); for (let i = 0; i < p.length; i += 2) { const d = (p[i] - wx) ** 2 + (p[i + 1] - wy) ** 2; if (d < bd) { bd = d; best = { x: p[i], y: p[i + 1], soort: o.soort === "symbool" ? "symbool" : "punt", obj: true }; } } }
   if (best) return best;
+  for (const o of TK.objs.values()) { if (uitgesloten && uitgesloten.has(o.id)) continue; if (!tkZichtbaar(o.laag)) continue; const p = tkObjMiddens(o); for (let i = 0; i < p.length; i += 2) { const d = (p[i] - wx) ** 2 + (p[i + 1] - wy) ** 2; if (d < bd) { bd = d; best = { x: p[i], y: p[i + 1], soort: "midden", obj: true }; } } }
+  if (best) return best;
   if (!TK.grid || !tkZichtbaar("onderlegger")) return null;
   const k = TK.pl.kalibratie || {}; const s = k.s || 1;
   const r = k.rot || 0, c = Math.cos(-r), sn = Math.sin(-r); const dx0 = (wx - (k.tx || 0)) / s, dy0 = (wy - (k.ty || 0)) / s; const u = c * dx0 - sn * dy0, v = sn * dx0 + c * dy0;
   const tol = 10 / (TK.view.z * s); const { g, cell } = TK.grid; let bp = null; let bd2 = tol * tol;
   const n = Math.ceil(tol / cell); const ci = Math.floor(u / cell), cj = Math.floor(v / cell);
   for (let i = ci - n; i <= ci + n; i++) for (let j = cj - n; j <= cj + n; j++) { const a = g.get(i + "," + j); if (!a) continue; for (let q = 0; q < a.length; q += 2) { const d = (a[q] - u) ** 2 + (a[q + 1] - v) ** 2; if (d < bd2) { bd2 = d; bp = [a[q], a[q + 1]]; } } }
-  if (!bp) return null; const w = tkOlToWorld(bp[0], bp[1]); return { x: w[0], y: w[1], soort: "eindpunt" };
+  if (bp) { const w = tkOlToWorld(bp[0], bp[1]); return { x: w[0], y: w[1], soort: "eindpunt" }; }
+  if (TK.segGrid) {   // middelpunt van een muur of lijn van de dxf
+    const sg = TK.segGrid; const m = Math.ceil(tol / sg.cell); const si = Math.floor(u / sg.cell), sj = Math.floor(v / sg.cell); let bm = null; let bdm = tol * tol;
+    for (let i = si - m; i <= si + m; i++) for (let j = sj - m; j <= sj + m; j++) { const a = sg.g.get(i + "," + j); if (!a) continue; for (const q of a) { const mx = (q[0] + q[2]) / 2, my = (q[1] + q[3]) / 2; const d = (mx - u) ** 2 + (my - v) ** 2; if (d < bdm) { bdm = d; bm = [mx, my]; } } }
+    if (bm) { const w = tkOlToWorld(bm[0], bm[1]); return { x: w[0], y: w[1], soort: "midden" }; }
+  }
+  return null;
+}
+function tkObjMiddens(o) {
+  const g = o.geo || {}; const r = [];
+  if (o.soort === "lijn" && g.pts) for (let i = 2; i < g.pts.length; i += 2) r.push((g.pts[i - 2] + g.pts[i]) / 2, (g.pts[i - 1] + g.pts[i + 1]) / 2);
+  if (o.soort === "maat" && g.a && g.b) r.push((g.a[0] + g.b[0]) / 2, (g.a[1] + g.b[1]) / 2);
+  return r;
+}
+/* ---------- slimme hulplijnen (zoals de smart points van Vectorworks) ----------
+   Elk grijppunt waar je over beweegt, wordt "onthouden" (max. 8). Kom je daarna horizontaal of verticaal in lijn met
+   zo'n punt of met een punt van een getekend object op het scherm, dan verschijnt een stippellijn en vangt de cursor
+   (of het object dat je versleept) op die lijn. Op het kruispunt van twee hulplijnen vang je op beide. ⌥ = uit (bij slepen: ⌘). */
+const TK_UITLIJN_PX = 6;
+function tkVerwerf(sn) {
+  if (!sn) return; const v = TK.verworven; const i = v.findIndex(q => Math.abs(q[0] - sn.x) < 1e-6 && Math.abs(q[1] - sn.y) < 1e-6); if (i === 0) return; if (i > 0) v.splice(i, 1);
+  v.unshift([sn.x, sn.y]); if (v.length > 8) v.length = 8;
+}
+function tkUitlijnKandidaten() {
+  const uit = TK.op && TK.op.ids ? TK.op.ids : null; const [x0, y1] = tkS2W(-20, -20), [x1, y0] = tkS2W(TK.W + 20, TK.H + 20); const c = [];
+  const voeg = (x, y) => { if (x >= x0 && x <= x1 && y >= y0 && y <= y1) c.push(x, y); };
+  for (const o of TK.objs.values()) { if (uit && uit.has(o.id)) continue; if (!tkZichtbaar(o.laag)) continue; const p = tkObjPunten(o); for (let i = 0; i < p.length; i += 2) voeg(p[i], p[i + 1]); }
+  if (TK.op && TK.op.soort === "punt" && TK.op.orig) { const p = tkObjPunten(TK.op.orig); for (let i = 0; i < p.length; i += 2) voeg(p[i], p[i + 1]); }   // greep: ook de andere punten van hetzelfde object
+  TK.verworven.forEach(q => voeg(q[0], q[1])); TK.pts.forEach(q => voeg(q[0], q[1]));
+  return c;
+}
+function tkUitlijn(refs, dx, dy, vast = {}) {   // refs = [x, y, …] (wereld); geeft de correctie {cx, cy, gids}
+  const c = TK.uitlijnC || tkUitlijnKandidaten(); const tol = TK_UITLIJN_PX / TK.view.z; let bx = null, by = null;
+  for (let r = 0; r < refs.length && r < 120; r += 2) {
+    const rx = refs[r] + dx, ry = refs[r + 1] + dy;
+    for (let i = 0; i < c.length; i += 2) {
+      if (!vast.x) { const d = c[i] - rx; if (Math.abs(d) < tol && Math.abs(c[i + 1] - ry) > 1e-6 && (!bx || Math.abs(d) < Math.abs(bx.d))) bx = { d, c: [c[i], c[i + 1]], r }; }
+      if (!vast.y) { const d = c[i + 1] - ry; if (Math.abs(d) < tol && Math.abs(c[i] - rx) > 1e-6 && (!by || Math.abs(d) < Math.abs(by.d))) by = { d, c: [c[i], c[i + 1]], r }; }
+    }
+  }
+  const cx = bx ? bx.d : 0, cy = by ? by.d : 0; const gids = [];
+  if (bx) gids.push({ van: bx.c, naar: [refs[bx.r] + dx + cx, refs[bx.r + 1] + dy + cy] });
+  if (by) gids.push({ van: by.c, naar: [refs[by.r] + dx + cx, refs[by.r + 1] + dy + cy] });
+  return { cx, cy, gids };
+}
+const TK_UITLIJN_TOOLS = ["symbool", "tekst", "callout", "lijn", "polylijn", "schakel", "maat", "roteren", "verplaats", "meten"];
+function tkPaintGids(ctx) {
+  const gids = (TK.op && TK.op.gids) || (TK.mouse && TK.mouse.gids); if (!gids || !gids.length) return;
+  ctx.save(); ctx.strokeStyle = "#E0367A"; ctx.lineWidth = 1; ctx.setLineDash([5, 4]);
+  for (const g of gids) { const A = tkW2S(...g.van), B = tkW2S(...g.naar); ctx.beginPath(); ctx.moveTo(A[0], A[1]); ctx.lineTo(B[0], B[1]); ctx.stroke(); }
+  ctx.setLineDash([]); ctx.lineWidth = 1.5;
+  for (const g of gids) { const [X, Y] = tkW2S(...g.van); ctx.beginPath(); ctx.moveTo(X - 4, Y - 4); ctx.lineTo(X + 4, Y + 4); ctx.moveTo(X - 4, Y + 4); ctx.lineTo(X + 4, Y - 4); ctx.stroke(); }
+  ctx.restore();
 }
 function tkPunt(e, shift) {   // wereldpunt onder de muis, met vangen en Shift = recht
   const r = TK.cv.getBoundingClientRect(); const X = e.clientX - r.left, Y = e.clientY - r.top;
-  let sn = e.altKey && TK.tool !== "symbool" ? null : tkSnap(X, Y); let [x, y] = sn ? [sn.x, sn.y] : tkS2W(X, Y);
-  if (shift && TK.pts.length) { const a = TK.pts[TK.pts.length - 1]; if (Math.abs(x - a[0]) > Math.abs(y - a[1])) y = a[1]; else x = a[0]; sn = null; }
-  return { x, y, X, Y, snap: sn, snapObj: !!(sn && sn.obj) };
+  let sn = e.altKey && TK.tool !== "symbool" ? null : tkSnap(X, Y); let [x, y] = sn ? [sn.x, sn.y] : tkS2W(X, Y); let gids = null;
+  const uitlijnen = !sn && !e.altKey && (TK_UITLIJN_TOOLS.includes(TK.tool) || (TK.op && (TK.op.soort === "punt" || TK.op.soort === "label")));
+  if (uitlijnen) { TK.uitlijnC = null; const u = tkUitlijn([x, y], 0, 0); x += u.cx; y += u.cy; gids = u.gids; }
+  if (shift && TK.pts.length) { const a = TK.pts[TK.pts.length - 1]; if (Math.abs(x - a[0]) > Math.abs(y - a[1])) { y = a[1]; if (gids) gids = gids.filter(g => Math.abs(g.van[1] - g.naar[1]) > 1e-6); } else { x = a[0]; if (gids) gids = gids.filter(g => Math.abs(g.van[0] - g.naar[0]) > 1e-6); } sn = null; if (gids) gids.forEach(g => g.naar = [x, y]); }
+  return { x, y, X, Y, snap: sn, snapObj: !!(sn && sn.obj), gids: gids && gids.length ? gids : null };
 }
 
 /* ---------- lagen en bladen bewaren ---------- */
@@ -1610,6 +1670,7 @@ function tkPaint() {
   tkPaintObjecten(ctx);
   tkPaintBlad(ctx);
   tkPaintSelectie(ctx);
+  tkPaintGids(ctx);
   tkPaintPreview(ctx);
   tkPaintMeting(ctx);
   if (TK.mouse && TK.mouse.snap) { const [X, Y] = tkW2S(TK.mouse.snap.x, TK.mouse.snap.y); ctx.strokeStyle = "#0071E3"; ctx.lineWidth = 1.5; ctx.strokeRect(X - 5, Y - 5, 10, 10); }
@@ -1623,10 +1684,10 @@ function tkHulp() {
     ${rij("X", "Selectie (X nog eens = alles deselecteren)")}${rij("H · spatie", "Hand / tijdelijk verschuiven")}${rij("C", "Zoom (⌥-klik = uit, sleep = kader)")}
     ${rij("S", "Symbool plaatsen (klik en sleep = draaien)")}${rij("1", "Tekst")}${rij("⌥1", "Tekst met pijl (callout)")}${rij("2", "Lijn / leiding")}${rij("5", "Polylijn / leiding")}${rij("3", "Schakelverbinding")}${rij("N", "Maatlijn")}
     ${rij("⌥=", "Roteren (middelpunt, begin, eind)")}${rij("⇧M", "Verplaatsen met punten (⌥ = kopie)")}${rij("=", "Spiegelen")}${rij("M · K", "Meten · kalibreren")}
-    ${rij("Tab", "Lengte en hoek intikken tijdens het tekenen")}${rij("Shift", "Recht (0/90°) · roteren per 15°")}${rij("⌥ ingedrukt", "Niet vangen · ⌥-slepen = kopie")}
+    ${rij("Tab", "Lengte en hoek intikken tijdens het tekenen")}${rij("Shift", "Recht (0/90°) · roteren per 15°")}${rij("⌥ ingedrukt", "Niet vangen · ⌥-slepen = kopie")}${rij("hulplijnen", "Beweeg over een grijppunt: daarna vang je horizontaal/verticaal in lijn ermee (roze stippellijn). Bij slepen: ⌘ = uit")}
     ${rij("Enter · dubbelklik", "Polylijn klaar · tekst wijzigen")}${rij("Backspace", "Verwijderen")}${rij("Esc", "Stoppen / deselecteren")}
     ${rij("⌘Z · ⌘Y", "Ongedaan maken · opnieuw")}${rij("⌘C ⌘X ⌘V", "Kopiëren, knippen, plakken (⌘⌥V = op dezelfde plaats)")}${rij("⌘D", "Dupliceren")}${rij("⌘A", "Alles selecteren")}
-    ${rij("⌘M", "Verplaatsen (X/Y in mm)")}${rij("⌘L · ⌘⇧R", "90° links · 90° rechts")}${rij("⌘⇧H · ⌘⇧V", "Horizontaal · verticaal spiegelen")}${rij("⌘F · ⌘B", "Naar voor · naar achter")}
+    ${rij("⌃M (of ⌘M)", "Verplaatsen (X/Y in mm) — in Safari ⌃M, want ⌘M minimaliseert het venster")}${rij("⌘L · ⌘⇧R", "90° links · 90° rechts")}${rij("⌘⇧H · ⌘⇧V", "Horizontaal · verticaal spiegelen")}${rij("⌘F · ⌘B", "Naar voor · naar achter")}
     ${rij("⇧ pijltje", "Duwen 10 mm (⌘⇧ pijltje = 100 mm)")}${rij("pijltjes", "Verschuiven")}${rij("⌘6 · ⌘4 · F", "Passend · blad passend · passend")}${rij("⌘1 · ⌘2", "Inzoomen · uitzoomen")}${rij("⌘⇧,", "Vorige weergave")}
     ${rij("trackpad", "twee vingers = verschuiven, knijpen = zoomen")}</table></div>
     <div class="muted" style="font-size:11px;margin-top:6px">Sommige ⌘-toetsen neemt de browser zelf (bv. ⌘1/⌘2 in Chrome): gebruik dan + en −.</div>
