@@ -105,8 +105,11 @@ async function tkMaakPlannen(pid, f, wp, d, stap) {
     stap("Pdf lezen…");
     const pdfjs = await loadPdfJs(); const buf = await f.arrayBuffer(); const doc = await pdfjs.getDocument({ data: buf.slice(0) }).promise;
     const pages = tkPaginas(d.paginas, Math.min(doc.numPages, 20)); if (!pages.length) throw new Error("Geen geldige pagina gekozen (1–" + doc.numPages + ").");
-    stap("Pdf uploaden…");
-    const pdfPath = `${pid}/tekenen/${ts}-origineel.pdf`; const pdfUrl = await tkUpload(pdfPath, new Blob([buf], { type: "application/pdf" }), "application/pdf");
+    // de bucket 'werf' aanvaardt max. 25 MB per bestand (script 031): een grotere pdf bewaren we niet als origineel;
+    // het plan werkt dan met de basisafbeelding (4800 px), zonder scherpe weergave bij inzoomen
+    let pdfPath = null, pdfUrl = null;
+    if (buf.byteLength <= 24 * 1024 * 1024) { stap("Pdf uploaden…"); pdfPath = `${pid}/tekenen/${ts}-origineel.pdf`; pdfUrl = await tkUpload(pdfPath, new Blob([buf], { type: "application/pdf" }), "application/pdf"); }
+    else toast(`De pdf is ${Math.round(buf.byteLength / 1048576)} MB (max. 24 MB): het plan wordt bewaard zonder origineel — inzoomen blijft wat minder scherp. Tip: exporteer enkel de nodige bladen.`, 8000);
     const N = Number(d.pdf_schaal) || 0;
     for (const nr of pages) {
       stap(`Pagina ${nr} omzetten…`);

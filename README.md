@@ -3,6 +3,9 @@
 Interne projectapp van BROS: projecten, taken, planning (Gantt), urenregistratie en team.
 Statische webapp (geen build-stap) op een Supabase-database.
 
+
+> **Let op bij updates:** app.js en index.html bevatten de koppeling met de tekenmodule (tabblad Plannen, `tekenen.js`, `symbolen.js`, `vendor/dxf-parser.js`, `tk-`-acties). Werk altijd verder op de laatste versie in deze map en laat die regels staan. Kies het volgende vrije nummer voor een nieuw sql-script.
+
 ## Bestanden
 
 | Bestand | Wat |
@@ -123,6 +126,15 @@ De klant stelt in het portaal (tabblad **Vragen**) een vraag over zijn dossier; 
 - **Mail**: Drive-script actie `assistentmail` (aangeroepen door de Edge Function) naar de voorgestelde verantwoordelijke, beheer in kopie, met link naar `…/BROS-planbord/#voorstellen`.
 - **Installatie**: (1) `sql/023_assistent.sql` en `sql/024_assistent_portaal.sql` uitvoeren (024 maakt de instelling 'assistent' leesbaar voor de klant; zonder dat blijft het tabblad Vragen verborgen); (2) API-account op archief@bros.be bij OpenAI (platform.openai.com) met betaallimiet, sleutel aanmaken; (3) Supabase → Edge Functions → *Deploy a new function* → *Via editor*: naam `assistent` (een andere naam mag; zet dan de slug uit de URL bij Instellingen → AI-assistent → Functienaam), inhoud van `supabase/functions/assistent/index.ts` plakken, deployen; daarna bij de functie **Verify JWT with legacy secret uitzetten** (de functie controleert het token zelf) en onder *Secrets* `OPENAI_API_KEY` toevoegen; (4) `drive/Code.ingevuld.gs` opnieuw plakken en deployen; (5) pushen. Test eerst met Phil als klant op een testproject.
 - **Privacy**: er gaan dossiergegevens van de klant naar de modelleverancier (API-gebruik wordt niet voor training gebruikt); vermeld dit in de privacyverklaring van het portaal. Per project uit te zetten.
+
+## Tekenmodule — tabblad Plannen (script 030, v1.31.2)
+
+Vervangt stap voor stap Vectorworks 2D voor de UV-plannen (bouwplan: Claude Doc "Bouwplan BROS Tekenmodule").
+- **Fase 1 (nu):** plan toevoegen met een onderlegger — pdf (elke gekozen pagina wordt een plan; de basisafbeelding is 4800 px, bij inzoomen tekent pdf.js de zichtbare zone scherp uit het origineel), dxf (lijnen, polylijnen met bogen, cirkels, bogen, blokken, teksten, maten) of een afbeelding. Bestanden gaan in de bucket `werf` onder `<project>/tekenen/`.
+- **Schaal:** pdf → `s = breedte_pdf_mm / breedte_px × schaal`; dxf → eenheden uit `$INSUNITS` (of gekozen); afbeelding/scan → kalibreren met twee punten (K). Wereldcoördinaten in mm, y naar boven.
+- **Bediening:** H hand, M meten (Shift = recht), K kalibreren, F passend, +/−, spatie + slepen; trackpad twee vingers = verschuiven, knijpen = zoomen; muiswiel = zoomen.
+- **Tabellen:** `tekenplannen` (onderlegger, kalibratie, lagen), `plan_objecten` (vanaf fase 2), `plan_versies`, `plan_symbolen` (38 symbolen met standaardhoogte; tekening in `symbolen.js`).
+- **Volgende stap (fase 2):** symbolen plaatsen met hoogte/kring, tekst met leader, legende, bladen als laagcombinatie (alles/ELEK/HVAC), pdf-export met titelblok.
 
 ## Aannemersportaal (script 025 + drive/Code.gs, v1.24)
 
