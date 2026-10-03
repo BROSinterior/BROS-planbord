@@ -3,7 +3,7 @@
    Statische webapp op Supabase (login, live-synchronisatie, rechten)
    ===================================================================== */
 if (window.top !== window.self) { try { window.top.location.replace(window.location.href); } catch (e) { document.documentElement.innerHTML = ""; } }   // niet in een vreemd frame (clickjacking)
-const APP_VERSION = "1.31.0";
+const APP_VERSION = "1.31.1";
 const PROJ_STATUS = { offerte: "In offerte", lopend: "Lopend", on_hold: "On hold", afgerond: "Afgerond", verloren: "Verloren" };
 const KLANTTYPE = { particulier: "Particulier", zakelijk: "Zakelijk" };
 const KLANTCODE = { particulier: "PAR", zakelijk: "ZAK" };
@@ -89,6 +89,9 @@ const wieNaam = (t) => t.contact_id && S.contacten[t.contact_id] ? S.contacten[t
 /* keuzelijst "toegewezen aan": team + contacten van het project (waarde "c:<id>" voor een contact) */
 const wieOpts = (pid, t) => { const cur = t.contact_id ? "c:" + t.contact_id : (t.assignee ?? S.me.id); const pcs = pid ? contactsOf(pid) : []; return `<option value="">— niemand —</option><optgroup label="Team">${opts(users().map(u => [u.id, u.name]), cur)}</optgroup>${pcs.length ? `<optgroup label="Klant en contacten van dit project">${opts(pcs.map(x => ["c:" + x.c.id, x.c.naam + " · " + (CONTACT_ROL[x.rol] || x.rol)]), cur)}</optgroup>` : ""}`; };
 const wieSplit = (v) => v && v.startsWith("c:") ? { assignee: null, contact_id: v.slice(2) } : { assignee: v || null, contact_id: null };
+/* getallen zoals een Belg ze typt: 2,5 · 1.234,50 · 12.75 · € 15 — leeg = null, onleesbaar = NaN (nooit stilletjes 0 of 25) */
+const leesGetal = (raw) => { let t = String(raw ?? "").trim().replace(/[\s€%\u00a0]/g, ""); if (!t) return null; if (t.includes(",") && t.includes(".")) { t = t.lastIndexOf(",") > t.lastIndexOf(".") ? t.replace(/\./g, "").replace(",", ".") : t.replace(/,/g, ""); } else t = t.replace(",", "."); const n = Number(t); return Number.isFinite(n) ? n : NaN; };
+const getalVeld = (v) => v == null || v === "" ? "" : String(Number(v)).replace(".", ",");
 /* links en afbeeldingen uit de database: enkel https (en blob:/data:image voor lokale voorbeelden) — nooit javascript: */
 const safeUrl = (u) => /^(https:|blob:)/i.test(String(u || "")) ? String(u) : "#";
 const safeSrc = (u) => /^(https:|blob:|data:image\/)/i.test(String(u || "")) ? String(u) : "";
@@ -617,7 +620,7 @@ function vMeetstaat(p) {
     <div class="panel"><div class="k">Btw</div><div class="v">${eur(t.btw)}</div></div>
     <div class="panel"><div class="k">Totaal incl. btw</div><div class="v">${eur(t.incl)}</div></div></div>`;
   const inp = (r, f, cls = "", attrs = "") => `<input class="inline ${cls}" data-ms="${r.id}" data-f="${f}" value="${esc(r[f] ?? "")}" ${attrs}>`;
-  const num = (r, f, cls = "") => `<input class="inline num ${cls}" data-ms="${r.id}" data-f="${f}" type="number" step="any" inputmode="decimal" value="${r[f] == null || r[f] === "" ? "" : Number(r[f])}">`;
+  const num = (r, f, cls = "") => `<input class="inline num ${cls}" data-ms="${r.id}" data-f="${f}" type="text" inputmode="decimal" autocomplete="off" value="${getalVeld(r[f])}">`;
   const sel = (r, f, options) => `<select class="inline" data-ms="${r.id}" data-f="${f}">${options}</select>`;
   const cols = 9 + (beheer ? 3 : 0);
   const perRuimte = !!S.msRuimte; const ruimteKey = (r) => (r.locatie || "").trim().toLowerCase();
@@ -630,7 +633,7 @@ function vMeetstaat(p) {
         <td style="width:110px">${inp(r, "locatie", "", 'placeholder="locatie"')}</td>
         <td style="width:84px">${num(r, "hoeveelheid")}</td>
         <td style="width:82px">${sel(r, "eenheid", opts(EENHEDEN.map(e => [e, e]), r.eenheid))}</td>
-        ${beheer ? `<td style="width:96px">${num(r, "eenheidsprijs")}</td><td style="width:64px"><input class="inline num" data-ms="${r.id}" data-f="marge" type="number" step="1" inputmode="numeric" placeholder="${Math.round((Number(S.loten[r.lot]?.marge) || 0) * 100)}" value="${r.marge == null || r.marge === "" ? "" : Math.round(Number(r.marge) * 100)}" title="Marge % (leeg = marge van het lot)"></td>` : ""}
+        ${beheer ? `<td style="width:96px">${num(r, "eenheidsprijs")}</td><td style="width:64px"><input class="inline num" data-ms="${r.id}" data-f="marge" type="text" inputmode="decimal" autocomplete="off" placeholder="${Math.round((Number(S.loten[r.lot]?.marge) || 0) * 100)}" value="${r.marge == null || r.marge === "" ? "" : Math.round(Number(r.marge) * 100)}" title="Marge % (leeg = marge van het lot)"></td>` : ""}
         <td class="r num" style="width:96px" title="Eenheidsprijs voor de klant">${eur2(msVerkoopEP(r))}</td>
         <td class="r num" style="width:104px"><b>${eur2(msVerkoop(r))}</b></td>
         ${beheer ? `<td style="width:76px">${sel(r, "btw", opts([[0.06, "6 %"], [0.21, "21 %"], [0, "0 %"]], Number(r.btw)))}</td>` : ""}
@@ -1487,8 +1490,11 @@ function msAddPostForm(pid, lot) {
 async function msEdit(id, f, raw) {
   const r = S.meetstaat_posten[id]; if (!r) return;
   let v = raw;
-  if (["hoeveelheid", "eenheidsprijs", "btw"].includes(f)) v = raw === "" ? 0 : Number(String(raw).replace(",", "."));
-  if (f === "marge") v = raw === "" ? null : Number(String(raw).replace(",", ".")) / 100;
+  if (["hoeveelheid", "eenheidsprijs", "btw", "marge"].includes(f)) {
+    const n = leesGetal(raw);
+    if (Number.isNaN(n)) { toast(`"${raw}" is geen geldig getal — gebruik bv. 2,5 of 1.250,75`, 5000); renderPending = false; document.activeElement?.blur?.(); render(); return; }
+    v = f === "marge" ? (n == null ? null : n / 100) : (n == null ? 0 : n);
+  }
   if (String(r[f] ?? "") === String(v ?? "")) return;
   const active = document.activeElement; const keep = active && active.dataset ? { ms: active.dataset.ms, f: active.dataset.f, sel: active.selectionStart } : null;
   try {
@@ -1588,10 +1594,10 @@ function vFacturatie(p) {
     const L = c.perLot[lot]; const overrides = vordRows(p.id, soort).some(r => r.lot === lot && c.rg.post[r.id]); const lotPct = c.rg.lot[lot] ? Number(c.rg.lot[lot].pct) : null;
     const amt = L ? L.excl : 0; const w = base ? amt / base : 0;
     if (overrides || vordLocked(v) || !beheer) return `<td class="c num">${(L || lotPct != null) ? pctTxt(w) : ""}${overrides ? `<small class="muted" style="display:block">per post</small>` : ""}<small class="muted" style="display:block">${L ? eur2(amt) : ""}</small></td>`;
-    return `<td class="c"><input class="inline num" style="width:58px;text-align:right" data-vr="${v.id}" data-lot="${lot}" type="number" step="any" min="0" max="100" value="${lotPct == null ? "" : pctFmt(lotPct)}" placeholder="0"> <span class="muted">%</span><small class="muted" style="display:block">${L ? eur2(amt) : ""}</small></td>`; };
+    return `<td class="c"><input class="inline num" style="width:58px;text-align:right" data-vr="${v.id}" data-lot="${lot}" type="text" inputmode="decimal" autocomplete="off" value="${getalVeld(lotPct == null ? "" : pctFmt(lotPct))}" placeholder="0"> <span class="muted">%</span><small class="muted" style="display:block">${L ? eur2(amt) : ""}</small></td>`; };
   const postCell = (v, r) => { const c = calcs[v.id]; if ((v.soort === "meerwerk") !== isMw(r)) return `<td class="c muted">·</td>`; const P = c.perPost[r.id]; const own = !!c.rg.post[r.id];
     if (vordLocked(v) || !beheer) return `<td class="c num">${P ? pctTxt(P.pct) : ""}<small class="muted" style="display:block">${P ? eur2(P.excl) : ""}</small></td>`;
-    return `<td class="c"><input class="inline num ${own ? "" : "muted"}" style="width:58px;text-align:right" data-vr="${v.id}" data-lot="${r.lot}" data-vpost="${r.id}" type="number" step="any" min="0" max="100" value="${P ? pctFmt(P.pct) : ""}" placeholder="0" title="${own ? "eigen % voor deze post" : "volgt het lot-%"}"> <span class="muted">%</span><small class="muted" style="display:block">${P ? eur2(P.excl) : ""}</small></td>`; };
+    return `<td class="c"><input class="inline num ${own ? "" : "muted"}" style="width:58px;text-align:right" data-vr="${v.id}" data-lot="${r.lot}" data-vpost="${r.id}" type="text" inputmode="decimal" autocomplete="off" value="${P ? getalVeld(pctFmt(P.pct)) : ""}" placeholder="0" title="${own ? "eigen % voor deze post" : "volgt het lot-%"}"> <span class="muted">%</span><small class="muted" style="display:block">${P ? eur2(P.excl) : ""}</small></td>`; };
   const lotRows = (soort) => lots.filter(l => Math.abs(vordBase(basis, l, soort)) > 0.005).map(l => { const base = vordBase(basis, l, soort); const rows = vordRows(p.id, soort).filter(r => r.lot === l); const inv = vs.reduce((s, v) => s + (calcs[v.id].perLot[l]?.excl || 0) * ((v.soort === "meerwerk") === (soort === "meerwerk") ? 1 : 0), 0); const cum = base ? inv / base : 0; const rest = base - inv; const key = soort + l; const openL = !!S.vordOpen[key];
     return `<tr class="${soort === "meerwerk" ? "ms-mw" : ""}"><td class="sticky"><button class="btn ghost sm" data-vtoggle="${key}" aria-label="Posten tonen" style="padding:0 4px">${openL ? "▾" : "▸"}</button> <b>${esc(lotName(l))}</b>${soort === "meerwerk" ? ` <span class="pill st-offerte" style="font-size:10px">meerwerk</span>` : ""}<small class="muted" style="display:block;margin-left:22px">${rows.length} posten</small></td><td class="r num">${eur2(base)}</td>${vs.map(v => lotCell(v, l, soort)).join("")}<td class="c num" style="white-space:nowrap"><b>${pctTxt(cum)}</b></td><td class="r num ${Math.abs(rest) < 0.005 ? "muted" : ""}">${eur2(rest)}</td></tr>` +
       (openL ? rows.map(r => { const amt = rowSigned(r); const invP = vs.reduce((s, v) => s + (calcs[v.id].perPost[r.id]?.excl || 0), 0); const cumP = amt ? invP / amt : 0;
@@ -1605,7 +1611,7 @@ function vFacturatie(p) {
       <div class="vh-row"><span class="muted">Yuki-nr</span>${beheer ? `<input class="inline num" data-vf="${v.id}" data-f="factuurnummer" value="${esc(v.factuurnummer || "")}" placeholder="—">` : `<span class="num">${esc(v.factuurnummer || "—")}</span>`}</div>
       <div class="vh-row"><span class="muted">Berekend</span><span class="num">${eur2(c.excl)}</span></div>
       <div class="vh-row"><span class="muted">Btw · incl.</span><span class="num">${eur2(c.btw)} · <b>${eur2(c.incl)}</b></span></div>
-      ${beheer ? `<div class="vh-row"><span class="muted" title="Bedrag op de factuur in Yuki (excl. btw) — wordt bevroren zodra de status verzonden of betaald is. Wijkt het af van de berekening, dan kan je de percentages eruit laten afleiden.">Factuur excl.</span><input class="inline num" data-vf="${v.id}" data-f="bedrag_excl" type="number" step="any" value="${v.bedrag_excl == null ? "" : Number(v.bedrag_excl)}" placeholder="${Math.round(c.excl)}"></div>` : ""}
+      ${beheer ? `<div class="vh-row"><span class="muted" title="Bedrag op de factuur in Yuki (excl. btw) — wordt bevroren zodra de status verzonden of betaald is. Wijkt het af van de berekening, dan kan je de percentages eruit laten afleiden.">Factuur excl.</span><input class="inline num" data-vf="${v.id}" data-f="bedrag_excl" type="text" inputmode="decimal" autocomplete="off" value="${getalVeld(v.bedrag_excl)}" placeholder="${Math.round(c.excl)}"></div>` : ""}
       ${frozen && Math.abs(diff) > 0.5 ? `<div class="vh-row" style="color:var(--warn)"><span>Verschil</span><span class="num">${eur2(diff)}</span></div>` : ""}
       ${beheer && v.bedrag_excl != null && v.bedrag_excl !== "" && Math.abs(Number(v.bedrag_excl) - c.excl) > 0.5 ? `<div class="vh-row"><button class="btn ghost sm" data-act="vord-fit" data-id="${v.id}" title="De percentages van deze vordering zo herrekenen dat de berekening precies op het factuurbedrag uitkomt (verschil nu ${eur2(Number(v.bedrag_excl) - c.excl)})${vordLocked(v) ? " — het factuurbedrag verandert niet, enkel de verdeling" : ""}">Percentages herrekenen op ${eur2(Number(v.bedrag_excl))}</button></div>` : ""}
       <div class="vh-row"><span class="muted">Status</span>${beheer ? `<select class="inline" data-vf="${v.id}" data-f="status">${opts(Object.entries(VORD_STATUS), v.status)}</select>` : `<span>${VORD_STATUS[v.status]}</span>`}</div></div></th>`; }).join("");
@@ -1719,7 +1725,8 @@ let ppInc = () => 0, ppBad = () => false;
 /* % wijzigen: op lot-niveau (post_id leeg → post-regels van dat lot worden gewist) of op post-niveau */
 async function vordEditPct(vid, lot, raw, postId) {
   const v = S.vorderingen[vid]; if (!v || vordLocked(v)) return;
-  const pct = raw === "" ? null : Math.min(1, Math.max(0, Number(String(raw).replace(",", ".")) / 100));
+  const n = leesGetal(raw); if (Number.isNaN(n)) { toast(`"${raw}" is geen geldig percentage`, 5000); render(); return; }
+  const pct = n == null ? null : Math.min(1, Math.max(0, n / 100));
   const all = Object.values(S.vordering_regels).filter(r => r.vordering_id === vid && r.lot === lot);
   const cur = all.find(r => (postId ? r.post_id === postId : !r.post_id));
   if (cur && pct != null && Math.abs(Number(cur.pct) - pct) < 1e-6) return;
@@ -1732,7 +1739,7 @@ async function vordEditPct(vid, lot, raw, postId) {
 }
 async function vordEdit(vid, f, raw) {
   const v = S.vorderingen[vid]; if (!v) return; let val = raw;
-  if (f === "bedrag_excl") val = raw === "" ? null : Number(String(raw).replace(",", "."));
+  if (f === "bedrag_excl") { const n = leesGetal(raw); if (Number.isNaN(n)) { toast(`"${raw}" is geen geldig bedrag`, 5000); render(); return; } val = n; }
   if (f === "datum") val = raw || null;
   if (String(v[f] ?? "") === String(val ?? "")) return;
   const patch = { [f]: val };
@@ -2855,6 +2862,9 @@ document.addEventListener("keydown", (e) => {
   if ((e.metaKey || e.ctrlKey) && !e.altKey && (e.key === "k" || e.key === "K")) { if (!S.ready) return; e.preventDefault(); e.stopPropagation(); ZK.open ? zkSluit() : zkOpen(); return; }
   if (e.key === "/" && !ZK.open && !e.metaKey && !e.ctrlKey && !e.altKey) { const t = e.target; if (t && (t.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(t.tagName))) return; if ($("#modalBg")?.classList.contains("show")) return; if (!S.ready) return; e.preventDefault(); zkOpen(); }
 }, true);
+/* komma in een getalveld (type=number): als punt invoegen, ook bij plakken — anders maakt Chrome van 2,5 → 25 en Safari → leeg */
+document.addEventListener("keydown", (e) => { const t = e.target; if ((e.key === "," || e.key === "Decimal") && t && t.matches && t.matches('input[type="number"]')) { e.preventDefault(); if (!String(t.value).includes(".")) document.execCommand("insertText", false, "."); } }, true);
+document.addEventListener("paste", (e) => { const t = e.target; if (!t || !t.matches || !t.matches('input[type="number"]')) return; const n = leesGetal(e.clipboardData && e.clipboardData.getData("text")); if (n == null || Number.isNaN(n)) return; e.preventDefault(); t.value = String(n); t.dispatchEvent(new Event("input", { bubbles: true })); }, true);
 /* ---------- events ---------- */
 document.addEventListener("click", (e) => {
   if (e.target.closest("a[href][target=_blank]")) return; // externe links (bv. Drive-map) gewoon laten openen

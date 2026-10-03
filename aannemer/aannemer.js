@@ -4,7 +4,7 @@
    nooit prijzen van BROS of van andere aannemers. Schrijven gaat via functies (opgelost melden, prijzen, vragen).
    ===================================================================== */
 if (window.top !== window.self) { try { window.top.location.replace(window.location.href); } catch (e) { document.documentElement.innerHTML = ""; } }   // niet in een vreemd frame (clickjacking)
-const PORTAAL_VERSION = "1.31.0";
+const PORTAAL_VERSION = "1.31.1";
 const todayLocal = () => { const n = new Date(); return `${n.getFullYear()}-${String(n.getMonth() + 1).padStart(2, "0")}-${String(n.getDate()).padStart(2, "0")}`; };
 const safeUrl = (u) => /^https?:\/\//i.test(String(u || "")) ? u : "#";
 const cfg = window.PLANBORD_CONFIG || {};
@@ -13,6 +13,8 @@ const $ = (s, r = document) => r.querySelector(s);
 const esc = (s) => String(s ?? "").replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
 const eur = (n, dec = 2) => Number(n || 0).toLocaleString("nl-BE", { style: "currency", currency: "EUR", minimumFractionDigits: dec, maximumFractionDigits: dec });
 const nl = (n, dec = 2) => Number(n || 0).toLocaleString("nl-BE", { minimumFractionDigits: 0, maximumFractionDigits: dec });
+/* bedragen zoals een Belg ze typt: 12,50 · 1.250,75 · 12.5 — leeg = null, onleesbaar = NaN */
+const leesGetal = (raw) => { let t = String(raw ?? "").trim().replace(/[\s€\u00a0]/g, ""); if (!t) return null; if (t.includes(",") && t.includes(".")) { t = t.lastIndexOf(",") > t.lastIndexOf(".") ? t.replace(/\./g, "").replace(",", ".") : t.replace(/,/g, ""); } else t = t.replace(",", "."); const n = Number(t); return Number.isFinite(n) ? n : NaN; };
 const fmt = (s) => { if (!s) return "—"; const [y, m, d] = s.slice(0, 10).split("-"); return `${d}/${m}/${y}`; };
 const MAAND = ["januari", "februari", "maart", "april", "mei", "juni", "juli", "augustus", "september", "oktober", "november", "december"];
 const fmtLang = (s) => { if (!s) return "—"; const d = new Date(s.slice(0, 10) + "T00:00:00"); return `${d.getDate()} ${MAAND[d.getMonth()]} ${d.getFullYear()}`; };
@@ -283,7 +285,7 @@ function vAanvraag(p, a) {
     ${lots.map(lot => { const rs = ps.filter(x => x.lot === lot); let groep = null; const som = rs.reduce((s, x) => s + (x.eenheidsprijs != null ? Number(x.eenheidsprijs) * Number(x.hoeveelheid || 0) : 0), 0);
       return `<div class="panel" style="margin-bottom:16px"><div class="panel-head"><h3>${esc(lotNaam(lot))}</h3><span class="num" style="font-weight:700">${eur(som)}</span></div><div class="tw"><table class="t"><thead><tr><th style="width:60px">Nr</th><th>Omschrijving</th><th class="r">Hoev.</th><th class="r">Eenheidsprijs</th><th class="r">Totaal</th><th>Opmerking</th></tr></thead><tbody>
         ${rs.map(r => { const isGroep = !Number(r.hoeveelheid) && !r.code && (r.groep || r.omschrijving); let g = ""; if (r.groep && r.groep !== groep) { groep = r.groep; g = `<tr class="groep"><td colspan="6">${esc(r.groep)}</td></tr>`; } if (isGroep && !r.groep) return `<tr class="groep"><td colspan="6">${esc(r.omschrijving)}</td></tr>`;
-          return g + `<tr><td class="num muted" style="font-size:12px">${esc(r.code)}</td><td>${esc(r.omschrijving).replace(/\n/g, "<br>")}${r.locatie ? `<div class="muted" style="font-size:12px">${esc(r.locatie)}</div>` : ""}</td><td class="r num">${Number(r.hoeveelheid) ? nl(r.hoeveelheid, 2) + " " + esc(r.eenheid) : esc(r.eenheid || "")}</td><td class="r">${rw ? `<input class="prijs" type="number" step="0.01" min="0" inputmode="decimal" data-pa="${a.id}" data-post="${r.post_id}" data-f="prijs" value="${r.eenheidsprijs == null ? "" : Number(r.eenheidsprijs)}" placeholder="€">` : `<span class="num">${r.eenheidsprijs == null ? "—" : eur(r.eenheidsprijs)}</span>`}</td><td class="r num">${r.eenheidsprijs != null && Number(r.hoeveelheid) ? eur(Number(r.eenheidsprijs) * Number(r.hoeveelheid)) : ""}</td><td>${rw ? `<input class="opm" data-pa="${a.id}" data-post="${r.post_id}" data-f="opm" value="${esc(r.opmerking || "")}" placeholder="bv. andere afmeting, alternatief…">` : esc(r.opmerking || "")}</td></tr>`; }).join("")}
+          return g + `<tr><td class="num muted" style="font-size:12px">${esc(r.code)}</td><td>${esc(r.omschrijving).replace(/\n/g, "<br>")}${r.locatie ? `<div class="muted" style="font-size:12px">${esc(r.locatie)}</div>` : ""}</td><td class="r num">${Number(r.hoeveelheid) ? nl(r.hoeveelheid, 2) + " " + esc(r.eenheid) : esc(r.eenheid || "")}</td><td class="r">${rw ? `<input class="prijs" type="text" inputmode="decimal" autocomplete="off" data-pa="${a.id}" data-post="${r.post_id}" data-f="prijs" value="${r.eenheidsprijs == null ? "" : String(Number(r.eenheidsprijs)).replace(".", ",")}" placeholder="€">` : `<span class="num">${r.eenheidsprijs == null ? "—" : eur(r.eenheidsprijs)}</span>`}</td><td class="r num">${r.eenheidsprijs != null && Number(r.hoeveelheid) ? eur(Number(r.eenheidsprijs) * Number(r.hoeveelheid)) : ""}</td><td>${rw ? `<input class="opm" data-pa="${a.id}" data-post="${r.post_id}" data-f="opm" value="${esc(r.opmerking || "")}" placeholder="bv. andere afmeting, alternatief…">` : esc(r.opmerking || "")}</td></tr>`; }).join("")}
       </tbody></table></div></div>`; }).join("")}
     ${rw ? `<div class="panel" style="border-color:var(--ink)"><div class="panel-body"><h2 style="margin-bottom:8px">${a.status === "ingediend" ? "Opnieuw indienen" : "Indienen bij BROS"}</h2><p class="muted" style="font-size:14px">Prijzen worden bewaard zodra je een veld verlaat. Klaar? Dien in — BROS krijgt dan een melding.</p>
       <div class="field"><label for="pa_opm">Opmerking bij je prijsopgave (levertermijn, voorwaarden, geldigheid…)</label><textarea id="pa_opm" rows="3">${esc(a.opmerking || "")}</textarea></div>
@@ -292,7 +294,7 @@ function vAanvraag(p, a) {
 async function prijsBewaar(inp) {
   const r = D().aanvraagPosten.find(x => x.aanvraag_id === inp.dataset.pa && x.post_id === inp.dataset.post); if (!r) return;
   const row = $(`input.prijs[data-pa="${inp.dataset.pa}"][data-post="${inp.dataset.post}"]`), opm = $(`input.opm[data-pa="${inp.dataset.pa}"][data-post="${inp.dataset.post}"]`);
-  const prijs = row && row.value !== "" ? Number(row.value) : null; const o = opm ? opm.value.trim() : "";
+  const prijs = row ? leesGetal(row.value) : null; const o = opm ? opm.value.trim() : "";
   if (prijs === (r.eenheidsprijs == null ? null : Number(r.eenheidsprijs)) && o === (r.opmerking || "")) return;
   if (prijs != null && (isNaN(prijs) || prijs < 0)) { toast("Geef een geldige prijs."); return; }
   const { error } = await sb.rpc("prijs_invullen", { p_aanvraag: inp.dataset.pa, p_post: inp.dataset.post, p_prijs: prijs, p_opmerking: o });
