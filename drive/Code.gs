@@ -35,6 +35,7 @@ function doPost(e) {
     if (body.action === "prijsaanvraagmail") return json(prijsaanvraagMail(body)); // prijsaanvragen: team (token) → aannemer, of aannemer (token) → BROS
     if (body.action === "koppelmail") return json(koppelMail(body));
     if (body.action === "aanprijsmail") return json(aanPrijsMail(body)); // meetstaat met prijzen (script 032): team (beheer) → aannemer bij delen, aannemer → BROS bij akkoord/tegenvoorstel
+    if (body.action === "klantmelding") return json(klantMelding(body)); // klantenportaal (script 035): keuze gemaakt, meerwerk aangevraagd of werfpunt gemeld → mail aan de projectverantwoordelijke
     if (body.action === "bestand") return json(portaalBestand(body)); // klant/aannemer: een gedeeld document ophalen om er een pdf-dossier van te maken (login + toegang gecontroleerd) // team (token): aannemer verwittigen dat hij aan een project gekoppeld is (met uitnodiging als hij nog geen login heeft)
     if (!body.secret || body.secret !== CONFIG.SECRET) return json({ ok: false, error: "Geen toegang (secret klopt niet)." });
     if (body.action === "ping") return json({ ok: true, info: "Verbinding en secret in orde.", projecten: DriveApp.getFolderById(CONFIG.PROJECTEN_FOLDER_ID).getName(), sjabloon: DriveApp.getFolderById(CONFIG.SJABLOON_FOLDER_ID).getName() });
@@ -391,6 +392,39 @@ function callerAny(token) {
   const prof = pbReq("/rest/v1/profiles?id=eq." + u.id + "&select=role,name,email,active", "get", null, token);
   if (!prof || !prof[0] || prof[0].active === false) throw new Error("Geen actieve login.");
   return { id: u.id, name: prof[0].name, role: prof[0].role, email: prof[0].email || u.email };
+}
+/** Klantenportaal (script 035): melding aan BROS als de klant een keuze maakt, meerwerk aanvraagt of een werfpunt meldt.
+ *  Enkel een actieve klant, enkel records die hij via zijn eigen views ziet; max. 30 per uur per login. */
+function klantMelding(body) {
+  const wie = callerAny(body.token);
+  if (wie.role !== "klant") return { ok: false, error: "Geen toegang." };
+  if (!quotum("klantmelding:" + wie.id, 30, 3600)) return { ok: false, error: "Te veel meldingen in korte tijd." };
+  const id = uuid(body.id); const soort = String(body.soort || "");
+  const view = { keuze: "klant_keuzes", meerwerk: "klant_meerwerk_aanvragen", werfpunt: "klant_vaststellingen" }[soort];
+  if (!view) return { ok: false, error: "Onbekende melding." };
+  const rij = (pbReq("/rest/v1/" + view + "?id=eq." + id + "&select=*", "get", null, body.token) || [])[0];
+  if (!rij) return { ok: false, error: "Niet gevonden." };
+  if ((soort === "keuze" && rij.status !== "gekozen") || (soort === "meerwerk" && rij.status !== "ingediend") || (soort === "werfpunt" && !rij.te_beoordelen)) return { ok: true, overgeslagen: true };
+  if (!eenmalig("klantmelding:" + soort + ":" + id, 21600)) return { ok: true, al: true };   // één mail per record
+  const p = (pbAdmin("/rest/v1/projecten?id=eq." + rij.project_id + "&select=id,nummer,klant,naam,lead", "get") || [])[0] || {};
+  const lead = p.lead ? (pbAdmin("/rest/v1/profiles?id=eq." + p.lead + "&select=name,email", "get") || [])[0] : null;
+  const naar = (lead && lead.email) || YUKI.REPORT_TO; const proj = (p.klant || "") + (p.naam && p.naam !== p.klant ? " · " + p.naam : "");
+  let onderwerp, lijnen = [];
+  if (soort === "keuze") {
+    const o = rij.gekozen_optie ? (pbReq("/rest/v1/klant_keuze_opties?id=eq." + rij.gekozen_optie + "&select=naam,meerprijs", "get", null, body.token) || [])[0] : null;
+    onderwerp = "Keuze gemaakt: " + rij.onderwerp;
+    lijnen = [(rij.ruimte ? rij.ruimte + " · " : "") + rij.onderwerp, "Gekozen: " + (o ? o.naam + (Number(o.meerprijs) ? " (" + (Number(o.meerprijs) > 0 ? "+" : "−") + " € " + Math.abs(Number(o.meerprijs)).toFixed(2).replace(".", ",") + " excl. btw — staat als meer-/minwerk in de meetstaat)" : " (inbegrepen)") : "?"), "Door: " + (rij.gekozen_naam || wie.name)].concat(rij.gekozen_opmerking ? ["Opmerking: " + rij.gekozen_opmerking] : []);
+  } else if (soort === "meerwerk") {
+    onderwerp = "Meerwerk aangevraagd: " + rij.titel;
+    lijnen = [rij.titel + (rij.ruimte ? " (" + rij.ruimte + ")" : ""), rij.omschrijving || "", (rij.fotos || []).length ? (rij.fotos.length + " foto('s) — zie het Planbord › Meetstaat") : ""].filter(Boolean);
+  } else {
+    onderwerp = "Werfpunt gemeld: " + rij.titel;
+    lijnen = ["V-" + ("00" + rij.nr).slice(-3) + " · " + rij.titel + (rij.ruimte ? " (" + rij.ruimte + ")" : ""), rij.omschrijving || "", "Te beoordelen in het Planbord › Werf: goedkeuren en een verantwoordelijke kiezen."].filter(Boolean);
+  }
+  const html = "<div style=\"font-family:Helvetica,Arial,sans-serif;font-size:15px;line-height:1.5;color:#1B1E1C;max-width:640px\"><p><b>" + H(wie.name || "De klant") + "</b> (" + H(proj) + ") via het klantenportaal:</p><ul>" + lijnen.map(l => "<li style=\"white-space:pre-line\">" + H(l) + "</li>").join("") + "</ul>"
+    + ((rij.fotos || []).slice(0, 6).map(f => String(f.url || "").indexOf(YUKI.PLANBORD_URL + "/storage/v1/object/public/werf/") === 0 ? "<a href=\"" + H(f.url) + "\"><img src=\"" + H(f.url) + "\" width=\"120\" style=\"border-radius:6px;margin:2px\"></a>" : "").join("")) + "</div>";
+  GmailApp.sendEmail(naar, "Portaal · " + proj + " · " + onderwerp, wie.name + " (" + proj + ") via het klantenportaal:\n\n- " + lijnen.join("\n- "), { htmlBody: html, name: "BROS Planbord" });
+  return { ok: true };
 }
 /** Goedkeuringsmails: "voorgelegd" (team → klant: er wacht een voorstel) en "beslist" (klant → BROS-melding + bevestiging aan de klant). */
 function goedkeuringMail(body) {

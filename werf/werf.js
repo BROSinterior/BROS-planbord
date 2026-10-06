@@ -4,7 +4,7 @@
    lokale wachtrij (IndexedDB) en worden verzonden zodra er weer verbinding is.
    ===================================================================== */
 if (window.top !== window.self) { try { window.top.location.replace(window.location.href); } catch (e) { document.documentElement.innerHTML = ""; } }   // niet in een vreemd frame (clickjacking)
-const WERF_VERSION = "1.30.0";
+const WERF_VERSION = "1.36.0";
 const cfg = window.PLANBORD_CONFIG || {};
 if (!window.supabase) { document.getElementById("app").innerHTML = '<main><div class="empty"><b>De werfmodus is nog niet volledig geladen.</b><br>Open ze één keer met bereik; daarna werkt ze ook offline.<br><br><button class="btn" onclick="location.reload()">Opnieuw proberen</button></div></main>'; throw new Error("supabase-js niet geladen"); }
 const sb = window.supabase.createClient(cfg.supabaseUrl, cfg.supabaseAnonKey);
@@ -309,6 +309,8 @@ function bindForm() {
     try {
     if (v.id) {
       const st = $("#f_status").value; patch.opmerking = $("#f_opm").value.trim();
+      // punt gemeld door de klant (script 035): een verantwoordelijke kiezen of het afhandelen in de werfmodus = goedkeuren
+      if (v.te_beoordelen && !isAan() && (wieP.contact_id || wieP.assignee || st !== "open")) patch.te_beoordelen = false;
       if (st !== v.status) { patch.status = st; if (st === "opgelost") { patch.opgelost_op = new Date().toISOString(); patch.opgelost_door = S.me?.id || null; } if (st === "open") { patch.opgelost_op = null; patch.opgelost_door = null; } }
       await enqueue({ kind: "vs-update", vid: v.id, pid: v.project_id || S.project, patch, veld: "fotos", fotos: v._nieuw.map(f => ({ blob: f.blob, w: f.w, h: f.h })) });
       S.view = "detail"; S.detail = v.id; toast("Bewaard");

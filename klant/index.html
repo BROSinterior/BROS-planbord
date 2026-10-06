@@ -91,6 +91,7 @@
   .pill.meerwerk { background: var(--blue-soft); color: var(--blue); }
   .pill.minwerk { background: var(--crit-soft); color: var(--crit); }
   .pill.grijs { background: var(--surface-2); color: var(--ink-2); }
+  .pill.open { background: var(--warn-soft); color: var(--warn); }
   .pill.betaald { background: var(--ok-soft); color: var(--ok); }
   .pill.verzonden { background: var(--blue-soft); color: var(--blue); }
   .kpis { display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap: 12px; margin-bottom: 18px; }
@@ -172,6 +173,11 @@
   .field textarea { font: inherit; padding: 10px 12px; border: 1px solid var(--line-2); border-radius: 8px; background: var(--surface); color: var(--ink); resize: vertical; }
   .toast { pointer-events: none; position: fixed; left: 50%; bottom: 24px; transform: translateX(-50%); background: var(--ink); color: var(--ground); padding: 10px 16px; border-radius: 10px; font-size: 14px; z-index: 60; box-shadow: var(--shadow); }
   .loading { display: grid; place-items: center; min-height: 60vh; color: var(--muted); }
+  /* fase 2 (v1.36): formulieren, keuzes */
+  .field textarea, .field select { font: inherit; padding: 11px 13px; border: 1px solid var(--line-2); border-radius: 10px; background: var(--surface); color: var(--ink); resize: vertical; }
+  .field input[type=file] { padding: 8px; }
+  .kz-optie:has(input:checked) { border-color: var(--ink) !important; box-shadow: 0 0 0 3px color-mix(in srgb, var(--ink) 15%, transparent); }
+  .kz-optie.dim { opacity: .55; }
   /* betalen (v1.35) */
   .betaal-in { display: flex; gap: 24px; align-items: flex-start; flex-wrap: wrap; }
   .panel.betaal { scroll-margin-top: 140px; }
@@ -189,6 +195,6 @@
 <div id="fx"><canvas></canvas><div class="wel"><div id="fxTxt">Welkom</div></div></div>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.45.4/dist/umd/supabase.min.js"></script>
 <script src="../config.js?v=1.31.2"></script>
-<script src="portaal.js?v=1.35.0"></script>
+<script src="portaal.js?v=1.36.0"></script>
 </body>
 </html>

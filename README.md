@@ -161,6 +161,15 @@ Activeren (eenmalig):
 
 Gebruik: Dossier › Contacten → bij een aannemer de knop **Aannemersportaal** (beheer) → hij krijgt een mail met een persoonlijke link. Instellingen → Klantenportaal toont wie toegang heeft (klant/aannemer). Een aannemer die op het Planbord of het klantenportaal inlogt, wordt doorgestuurd.
 
+## Klantenportaal fase 2 — keuzes, meerwerk aanvragen, werfpunten (script 035, v1.36)
+
+- **Keuzes en materialen:** tabellen `keuzes` (status concept → open → gekozen → bevestigd, of vervallen) en `keuze_opties` (naam, meerprijs excl. btw, leverancier, referentie, https-link, foto's in `werf/<project>/keuzes/`). Beheer: tabblad **Keuzes** op de projectfiche (`kp-beheer.js`, geladen vóór app.js). De klant kiest via RPC `klant_keuze_maken` (naam verplicht, enkel bij status open): bij een meer-/minprijs maakt de databank een post (groep KEUZES, status meerwerk/minwerk, `akkoord_op` = nu, klantprijs = meerprijs via marge 0) in het lot van de keuze (anders het eerste lot). **Heropenen** verwijdert die post en zet de keuze weer open.
+- **Meerwerk aanvragen:** tabel `meerwerk_aanvragen` (ingediend → in_behandeling → voorstel / geweigerd, of ingetrokken door de klant). Klant: RPC `klant_meerwerk_aanvragen` (max. 15 per dag, max. 10 foto's in `werf/<project>/klant/`), `klant_meerwerk_intrekken`. Planbord: paneel bovenaan **Meetstaat** — status, antwoord (zichtbaar voor de klant) en het gekoppelde voorstel (goedkeuring).
+- **Werfpunten van de klant:** `vaststellingen.gemeld_door_klant` en `te_beoordelen`. RPC `klant_werfpunt_melden` (max. 40 per dag) maakt een open punt, zichtbaar voor de klant, te beoordelen. `aan_vaststellingen` toont het de aannemer pas als `te_beoordelen` uit staat; de taak voor de verantwoordelijke (trigger `vaststelling_taak`) ook pas dan. Planbord: melding op het tabblad Werf, label *te beoordelen*, en in het formulier de schakelaar *Punt van de klant goedkeuren*. View `klant_vaststellingen`: met de klant gedeelde punten + wat hij zelf meldde (zonder interne opmerkingen).
+- **Foto's van de klant:** opslag `werf`, enkel jpg in `<eigen project>/klant/` (policy `werf_insert`), verkleind tot 1600 px in de browser.
+- **Mail aan BROS:** actie `klantmelding` in het Drive-script (keuze / meerwerk / werfpunt) → mail aan de projectverantwoordelijke (anders info@), één keer per record, max. 30 per uur per klant.
+- **Live:** de nieuwe tabellen raken `portaal_pings` aan (script 034) en zitten in de realtime-publicatie voor het Planbord.
+
 ## Klantenportaal fase 1 — betalen, live, app, weekmail (script 034, v1.35)
 
 - **Betalen:** per verzonden factuur toont het portaal bedrag (incl. btw), IBAN, begunstigde, BIC, gestructureerde mededeling en vervaldag, met een **EPC-QR-code** (versie 002, Febelfin: de mededeling `+++123/4567/89012+++` staat op de plaats van de gestructureerde referentie). IBAN/BIC/begunstigde: Instellingen › Klantenportaal (IBAN wordt gecontroleerd). Zonder IBAN geen QR, enkel de factuur-pdf.

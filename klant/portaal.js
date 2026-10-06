@@ -3,7 +3,7 @@
    Leest uitsluitend de klant_*-views (databasescript 011): geen kostprijzen, marges of interne notities.
    ===================================================================== */
 if (window.top !== window.self) { try { window.top.location.replace(window.location.href); } catch (e) { document.documentElement.innerHTML = ""; } }   // niet in een vreemd frame (clickjacking)
-const PORTAAL_VERSION = "1.35.0";
+const PORTAAL_VERSION = "1.36.0";
 const todayLocal = () => { const n = new Date(); return `${n.getFullYear()}-${String(n.getMonth() + 1).padStart(2, "0")}-${String(n.getDate()).padStart(2, "0")}`; };
 const safeUrl = (u) => /^https?:\/\//i.test(String(u || "")) ? u : "#";
 const cfg = window.PLANBORD_CONFIG || {};
@@ -45,7 +45,8 @@ async function loadAll(stil) {
       if (r.error) throw new Error(v + ": " + r.error.message);
       all = all.concat(r.data || []); if (!r.data || r.data.length < PAGE) return all;
     } };
-  const [me, projecten, meetstaat, vorderingen, regels, planning, uren, documenten, team, ik, fasen, loten, inst, goedkeuringen, notities, notitieTaken, mijnTaken, planTaken, werfverslagen, assistent, chat] = await Promise.all([
+  const opt = (v) => q(v).catch(() => []);   // views van recente databasescripts: ontbreken ze nog, dan gewoon leeg
+  const [me, projecten, meetstaat, vorderingen, regels, planning, uren, documenten, team, ik, fasen, loten, inst, goedkeuringen, notities, notitieTaken, mijnTaken, planTaken, werfverslagen, assistent, chat, keuzes, keuzeOpties, mwAanvragen, werfpunten] = await Promise.all([
     sb.from("profiles").select("id,name,email,role").eq("id", S.session.user.id).maybeSingle().then(r => r.data),
     q("klant_project"), q("klant_meetstaat"), q("klant_vorderingen"), q("klant_vordering_regels"), q("klant_planning"), q("klant_uren"),
     q("klant_documenten"), q("klant_team"), q("klant_ik"), q("fasen"), sb.from("loten_v").select("*").then(r => r.error || !(r.data || []).length ? q("loten") : r.data),
@@ -58,9 +59,10 @@ async function loadAll(stil) {
     sb.from("klant_werfverslagen").select("*").then(r => r.error ? [] : (r.data || [])),
     sb.from("instellingen").select("value").eq("key", "assistent").maybeSingle().then(r => r.data?.value || null),
     sb.from("klant_assistent_berichten").select("*").order("created_at").then(r => r.error ? [] : (r.data || [])),
+    opt("klant_keuzes"), opt("klant_keuze_opties"), opt("klant_meerwerk_aanvragen"), opt("klant_vaststellingen"),
   ]);
   S.me = me;
-  S.data = { assistent, chat, werfverslagen, planTaken, projecten: projecten.sort((a, b) => (b.nummer || "").localeCompare(a.nummer || "")), meetstaat, vorderingen, regels, planning, uren, documenten, team, ik, fasen: fasen.filter(f => f.actief !== false).sort((a, b) => a.nr - b.nr), loten: Object.fromEntries(loten.map(l => [l.nr, l])), inst, goedkeuringen: goedkeuringen.sort((a, b) => (b.voorgelegd_op || "").localeCompare(a.voorgelegd_op || "")), notities: notities.sort((a, b) => (b.datum || "").localeCompare(a.datum || "")), notitieTaken, mijnTaken: mijnTaken.sort((a, b) => (a.status === "done") - (b.status === "done") || (a.eind || "9").localeCompare(b.eind || "9")) };
+  S.data = { keuzes, keuzeOpties, mwAanvragen, werfpunten, assistent, chat, werfverslagen, planTaken, projecten: projecten.sort((a, b) => (b.nummer || "").localeCompare(a.nummer || "")), meetstaat, vorderingen, regels, planning, uren, documenten, team, ik, fasen: fasen.filter(f => f.actief !== false).sort((a, b) => a.nr - b.nr), loten: Object.fromEntries(loten.map(l => [l.nr, l])), inst, goedkeuringen: goedkeuringen.sort((a, b) => (b.voorgelegd_op || "").localeCompare(a.voorgelegd_op || "")), notities: notities.sort((a, b) => (b.datum || "").localeCompare(a.datum || "")), notitieTaken, mijnTaken: mijnTaken.sort((a, b) => (a.status === "done") - (b.status === "done") || (a.eind || "9").localeCompare(b.eind || "9")) };
   if (!S.project || !projecten.some(p => p.id === S.project)) S.project = projecten[0]?.id || null;
   S.eersteBezoek = ik.length > 0 && ik.every(x => !x.portaal_login);
   if (!stil) sb.rpc("portaal_bezoek").then(() => { });
@@ -96,11 +98,12 @@ function render(houdScroll) {
   if (!D().projecten.length) { $("#app").innerHTML = `<div class="login"><div class="card"><div class="brand" style="margin-bottom:14px"><span class="mark">BROS</span><span class="name">Klantenportaal</span></div><h1>Nog geen project gekoppeld</h1><p>Je login werkt, maar er is nog geen project aan je gekoppeld. Laat het ons even weten via ${esc(D().inst.contact_email || "info@bros.be")}.</p><p><button class="btn ghost" data-act="logout">Uitloggen</button></p></div></div>`; return; }
   const p = P();
   const openGk = D().goedkeuringen.filter(g => g.project_id === p.id && g.status === "open" && !(g.geldig_tot && g.geldig_tot < todayLocal())).length;
-  const tabs = [["welkom", "Welkom"], ["akkoord", "Akkoord" + (openGk ? ` <span class="badge">${openGk}</span>` : "")], ["meetstaat", "Meetstaat"], ["facturatie", "Facturatie"], ["planning", "Planning"], ["verslagen", "Verslagen" + (D().mijnTaken.filter(t => t.project_id === p.id && t.status !== "done").length ? ` <span class="badge">${D().mijnTaken.filter(t => t.project_id === p.id && t.status !== "done").length}</span>` : "")], ["documenten", "Documenten"], ["team", "Wie is wie"]].concat(assistentAan(p) ? [["vragen", "Vragen"]] : []);
+  const kzOpen = kzVanProject(p).filter(k => k.status === "open").length;
+  const tabs = [["welkom", "Welkom"], ["akkoord", "Akkoord" + (openGk ? ` <span class="badge">${openGk}</span>` : "")]].concat(kzVanProject(p).length ? [["keuzes", "Keuzes" + (kzOpen ? ` <span class="badge">${kzOpen}</span>` : "")]] : []).concat([["meetstaat", "Meetstaat"], ["facturatie", "Facturatie"], ["planning", "Planning"], ...(werfTab(p) ? [["werf", "Werf" + (wpVanProject(p).filter(v => v.door_klant && v.status === "open").length ? ` <span class="badge" style="background:var(--muted)">${wpVanProject(p).filter(v => v.door_klant && v.status === "open").length}</span>` : "")]] : []), ["verslagen", "Verslagen" + (D().mijnTaken.filter(t => t.project_id === p.id && t.status !== "done").length ? ` <span class="badge">${D().mijnTaken.filter(t => t.project_id === p.id && t.status !== "done").length}</span>` : "")], ["documenten", "Documenten"], ["team", "Wie is wie"]]).concat(assistentAan(p) ? [["vragen", "Vragen"]] : []);
   $("#app").innerHTML = `<header class="top"><div class="top-in"><div class="brand"><span class="mark">BROS</span><span class="name">Klantenportaal</span></div>
       <div class="who">${D().projecten.length > 1 ? `<select id="projSel" class="btn sm">${D().projecten.map(x => `<option value="${x.id}" ${x.id === p.id ? "selected" : ""}>${esc(x.nummer ? x.nummer + " · " : "")}${esc(x.naam || x.klant)}</option>`).join("")}</select>` : ""}<span>${esc(S.me?.name || "")}</span><button class="btn ghost sm" data-act="logout">Uitloggen</button></div></div>
     <nav class="tabs">${tabs.map(([k, l]) => `<button class="${S.tab === k ? "on" : ""}" data-tab="${k}">${l}</button>`).join("")}</nav></header>
-    <main>${(({ welkom: vWelkom, akkoord: vAkkoord, meetstaat: vMeetstaat, facturatie: vFacturatie, planning: vPlanning, verslagen: vVerslagen, documenten: vDocumenten, team: vTeam, vragen: vVragen })[S.tab] || vWelkom)(p)}</main>`;
+    <main>${(({ welkom: vWelkom, akkoord: vAkkoord, meetstaat: vMeetstaat, facturatie: vFacturatie, planning: vPlanning, keuzes: vKeuzes, werf: vWerf, verslagen: vVerslagen, documenten: vDocumenten, team: vTeam, vragen: vVragen })[S.tab] || vWelkom)(p)}</main>`;
   if (!houdScroll) window.scrollTo({ top: 0 });
   if (S.betaal) tekenQr(S.betaal);
   liveStart();
@@ -117,6 +120,8 @@ function vWelkom(p) {
     ${(() => { const mt = D().mijnTaken.filter(t => t.project_id === p.id && t.status !== "done"); return mt.length ? `<div class="notice" style="border-color:var(--blue);background:var(--blue-soft)"><div><b>${mt.length === 1 ? "Er staat een actiepunt voor jou open" : `Er staan ${mt.length} actiepunten voor jou open`}</b><div class="muted" style="font-size:13px">${mt.slice(0, 3).map(t => esc(t.titel) + (t.eind ? " · vóór " + fmt(t.eind) : "")).join(" · ")}${mt.length > 3 ? " · …" : ""}</div></div><button class="btn primary" data-tab="verslagen">Bekijken →</button></div>` : ""; })()}
     ${(() => { const tb = teBetalen(p).filter(v => vordCalc(v).incl > 0.005); if (!tb.length) return ""; const vv = tb.filter(vervallen); const tot = tb.reduce((s, v) => s + vordCalc(v).incl, 0);
       return `<div class="notice" style="${vv.length ? "border-color:var(--crit);background:var(--crit-soft)" : "border-color:var(--line-2);background:var(--surface)"}"><div><b>${tb.length === 1 ? "Er staat een factuur open" : `Er staan ${tb.length} facturen open`} · ${eur(tot)}</b><div class="muted" style="font-size:13px">${tb.map(v => esc(v.factuurnummer ? "factuur " + v.factuurnummer : VORD_SOORT[v.soort]) + (v.vervaldag ? (vervallen(v) ? " · vervallen sinds " : " · vóór ") + fmt(v.vervaldag) : "")).join(" · ")}</div></div><button class="btn primary" data-act="betaal" data-id="${tb[0].id}" data-ga="facturatie">Betalen</button></div>`; })()}
+    ${(() => { const kz = kzVanProject(p).filter(k => k.status === "open"); if (!kz.length) return ""; const eerst = kz.filter(k => k.deadline).sort((a, b) => a.deadline.localeCompare(b.deadline))[0];
+      return `<div class="notice" style="border-color:var(--blue);background:var(--blue-soft)"><div><b>${kz.length === 1 ? "Er wacht een keuze op jou" : `Er wachten ${kz.length} keuzes op jou`}</b><div class="muted" style="font-size:13px">${kz.slice(0, 4).map(k => esc(k.onderwerp)).join(" · ")}${eerst ? ` · eerste deadline ${fmt(eerst.deadline)}` : ""}</div></div><button class="btn primary" data-tab="keuzes">Kiezen</button></div>`; })()}
     ${open.length ? `<div class="notice"><div><b>${open.length === 1 ? "Er wacht een voorstel op je akkoord" : `Er wachten ${open.length} voorstellen op je akkoord`}</b><div class="muted" style="font-size:13px">${open.map(g => esc(g.titel) + " · " + eur(g.totaal_incl, 0) + " incl. btw" + (g.geldig_tot ? " · vóór " + fmt(g.geldig_tot) : "")).join(" · ")}</div></div><button class="btn primary" data-tab="akkoord">Bekijken en goedkeuren →</button></div>` : ""}
     <div class="two"><div class="stack">
       <div class="panel"><div class="panel-head"><h2>Waar staat je project?</h2><span class="pill grijs">${PROJ_STATUS[p.status] || esc(p.status)}</span></div><div class="panel-body">
@@ -141,7 +146,8 @@ function gkTabel(g) {
       return h + `<tr><td class="num muted" style="font-size:12px">${esc(x.code)}</td><td>${esc(x.omschrijving).replace(/\n/g, "<br>")}${x.locatie ? `<div class="muted" style="font-size:12px">${esc(x.locatie)}</div>` : ""}${x.status === "minwerk" ? ` <span class="pill minwerk">Minwerk</span>` : ""}</td><td class="r num">${nl(x.hoeveelheid, 2)} ${esc(x.eenheid)}</td><td class="r num">${eur(x.prijs)}</td><td class="r num">${eur(x.totaal)}</td></tr>`; }).join("")}
     <tr class="tot"><td colspan="4">Totaal excl. btw</td><td class="r num">${eur(g.totaal_excl)}</td></tr><tr><td colspan="4">Btw</td><td class="r num">${eur(g.btw)}</td></tr><tr class="tot"><td colspan="4">Totaal incl. btw</td><td class="r num">${eur(g.totaal_incl)}</td></tr></tbody></table></div>`;
 }
-function vAkkoord(p) {
+function vAkkoord(p) { return vAkkoordBasis(p) + vMeerwerk(p); }
+function vAkkoordBasis(p) {
   const today = todayLocal();
   const gs = D().goedkeuringen.filter(g => g.project_id === p.id); const verlopen = (g) => g.status === "open" && g.geldig_tot && g.geldig_tot < today;
   const open = gs.filter(g => g.status === "open" && !verlopen(g)), rest = gs.filter(g => g.status !== "open" || verlopen(g));
@@ -566,6 +572,137 @@ document.addEventListener("change", async (e) => {
     const { error } = await sb.rpc("klant_taak_klaar", { p_id: id, p_klaar: klaar });
     if (error) { toast("Dat lukte niet: " + error.message); e.target.checked = !klaar; e.target.disabled = false; return; }
     D().mijnTaken.forEach(t => { if (t.id === id) t.status = klaar ? "done" : "todo"; }); D().notitieTaken.forEach(t => { if (t.id === id) t.status = klaar ? "done" : "todo"; }); render(); toast(klaar ? "Afgevinkt — bedankt!" : "Weer open gezet"); }
+});
+
+/* ---------- klantenportaal fase 2 (script 035): keuzes, meerwerk aanvragen, werfpunten melden ---------- */
+const kzVanProject = (p) => (D().keuzes || []).filter(k => k.project_id === p.id).sort((a, b) => (a.ruimte || "").localeCompare(b.ruimte || "", "nl") || (a.volgorde || 0) - (b.volgorde || 0));
+const kzOptiesVan = (k) => (D().keuzeOpties || []).filter(o => o.keuze_id === k.id).sort((a, b) => (a.volgorde || 0) - (b.volgorde || 0));
+const mwVanProject = (p) => (D().mwAanvragen || []).filter(a => a.project_id === p.id).sort((a, b) => (b.created_at || "").localeCompare(a.created_at || ""));
+const wpVanProject = (p) => (D().werfpunten || []).filter(v => v.project_id === p.id).sort((a, b) => (b.nr || 0) - (a.nr || 0));
+const werfTab = (p) => p.status === "lopend" || p.status === "afgerond" || wpVanProject(p).length > 0;
+const kzBtw = (p) => (p.btw_tarief == null || p.btw_tarief === "" ? 6 : Number(p.btw_tarief) || 0) / 100;   // 0 % (btw verlegd) blijft 0 %
+const kzMeer = (o, p) => { const m = Number(o.meerprijs) || 0; if (!m) return `<span class="muted">inbegrepen</span>`; return `<b>${m > 0 ? "+ " : "− "}${eur(Math.abs(m))}</b> <span class="muted">excl. btw · ${eur(Math.abs(m) * (1 + kzBtw(p)))} incl.</span>`; };
+const fotoUrl = (u) => { const base = String(cfg.supabaseUrl || "").replace(/\/+$/, ""); return base && String(u || "").startsWith(base + "/storage/v1/object/public/werf/") ? String(u) : ""; };   // enkel foto's uit de eigen opslag
+const fotoStrip = (fotos, h = 56) => (fotos || []).filter(f => fotoUrl(f.url)).length ? `<div style="display:flex;gap:6px;flex-wrap:wrap;margin-top:6px">${fotos.filter(f => fotoUrl(f.url)).map(f => `<a href="${esc(fotoUrl(f.url))}" target="_blank" rel="noopener"><img src="${esc(fotoUrl(f.url))}" alt="" loading="lazy" style="width:${h}px;height:${h}px;object-fit:cover;border-radius:8px;display:block"></a>`).join("")}</div>` : "";
+
+function vKeuzes(p) {
+  const ks = kzVanProject(p); const groepen = {}; ks.forEach(k => (groepen[k.ruimte || ""] = groepen[k.ruimte || ""] || []).push(k));
+  const naam = D().ik[0]?.naam || S.me?.name || ""; const vandaag = todayLocal();
+  const kaart = (k) => { const os = kzOptiesVan(k); const gekozen = os.find(o => o.id === k.gekozen_optie); const open = k.status === "open"; const laat = open && k.deadline && k.deadline < vandaag;
+    return `<div class="panel" style="margin-bottom:16px"><div class="panel-head"><div><h2 style="font-size:18px">${esc(k.onderwerp)}</h2><div class="muted" style="font-size:13px">${open ? (k.deadline ? `<span style="${laat ? "color:var(--crit)" : ""}">Graag kiezen vóór ${fmtLang(k.deadline)}</span>` : "Wacht op je keuze") : k.status === "gekozen" ? `Gekozen op ${fmtLang((k.gekozen_op || "").slice(0, 10))} — BROS bevestigt je keuze` : k.status === "bevestigd" ? `Gekozen op ${fmtLang((k.gekozen_op || "").slice(0, 10))} · bevestigd door BROS` : "Vervallen"}</div></div>
+        <span class="pill ${open ? "open" : k.status === "vervallen" ? "grijs" : "akkoord"}">${open ? "Te kiezen" : k.status === "vervallen" ? "Vervallen" : "Gekozen"}</span></div>
+      ${k.toelichting ? `<div class="panel-body" style="white-space:pre-line;font-size:14px">${esc(k.toelichting)}</div>` : ""}
+      <form class="kz-form panel-body" data-kz="${k.id}" style="${k.toelichting ? "border-top:1px solid var(--line)" : ""}">
+        <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:12px">${os.map(o => { const isG = gekozen && gekozen.id === o.id;
+          return `<label class="kz-optie ${isG ? "gekozen" : ""} ${!open && !isG ? "dim" : ""}" style="display:block;border:2px solid ${isG ? "var(--ok)" : "var(--line)"};border-radius:14px;overflow:hidden;cursor:${open ? "pointer" : "default"};background:var(--surface)">
+            ${(o.fotos || [])[0] && fotoUrl(o.fotos[0].url) ? `<img src="${esc(fotoUrl(o.fotos[0].url))}" alt="" loading="lazy" style="width:100%;height:160px;object-fit:cover;display:block">` : ""}
+            <div style="padding:10px 12px">${open ? `<input type="radio" name="optie" value="${o.id}" style="margin-right:6px">` : isG ? "✓ " : ""}<b>${esc(o.naam)}</b>
+              <div style="font-size:13px;margin-top:2px">${kzMeer(o, p)}</div>
+              ${o.omschrijving ? `<div class="muted" style="font-size:13px;margin-top:4px">${esc(o.omschrijving)}</div>` : ""}
+              ${o.leverancier || o.referentie ? `<div class="muted" style="font-size:12px;margin-top:4px">${esc([o.leverancier, o.referentie].filter(Boolean).join(" · "))}</div>` : ""}
+              ${o.link ? `<div style="font-size:12px;margin-top:4px"><a href="${esc(safeUrl(o.link))}" target="_blank" rel="noopener">Meer info ↗</a></div>` : ""}
+              ${(o.fotos || []).length > 1 ? fotoStrip(o.fotos.slice(1), 44) : ""}</div></label>`; }).join("")}</div>
+        ${open ? `<div class="kp-form" style="margin-top:14px;max-width:560px"><label class="field">Je naam<input name="naam" value="${esc(naam)}" autocomplete="name"></label>
+          <label class="field">Opmerking (optioneel)<input name="opmerking" placeholder="bv. graag in mat zwart als dat kan"></label>
+          <label class="check"><input type="checkbox" name="ok"> <span>Ik kies de aangeduide optie${os.some(o => Number(o.meerprijs)) ? " en ga akkoord met de vermelde meer- of minprijs (die wordt meerwerk in je meetstaat)" : ""}.</span></label>
+          <div class="gk-actions"><button class="btn primary" type="submit">Keuze bevestigen</button></div><div class="msg"></div></div>`
+        : gekozen && k.gekozen_opmerking ? `<p class="muted" style="font-size:13px;margin:10px 0 0">Je opmerking: “${esc(k.gekozen_opmerking)}”</p>` : ""}
+      </form></div>`; };
+  return `<h1 style="margin-bottom:6px">Keuzes</h1><p class="muted" style="margin-bottom:16px">Materialen en afwerkingen die je zelf kiest. Kies per onderwerp één optie en bevestig met je naam. Een meer- of minprijs komt automatisch in je meetstaat. Twijfel je? Stel je vraag aan je aanspreekpunt.</p>
+    ${ks.length ? Object.keys(groepen).sort((a, b) => (a ? 0 : 1) - (b ? 0 : 1) || a.localeCompare(b, "nl")).map(r => `${r ? `<h3 style="margin:18px 0 10px">${esc(r)}</h3>` : ""}${groepen[r].map(kaart).join("")}`).join("") : `<div class="panel"><div class="empty"><b>Geen keuzes</b>Zodra BROS je iets laat kiezen, verschijnt het hier.</div></div>`}`;
+}
+
+function vMeerwerk(p) {
+  const lijst = mwVanProject(p); const st = { ingediend: ["Ontvangen", "open"], in_behandeling: ["In behandeling", "open"], voorstel: ["Voorstel klaar", "akkoord"], geweigerd: ["Niet mogelijk", "grijs"], ingetrokken: ["Ingetrokken", "grijs"] };
+  return `<div class="panel" style="margin-top:16px"><div class="panel-head"><div><h2>Iets extra nodig?</h2><div class="muted" style="font-size:13px">Vraag hier een meerwerk aan: beschrijf wat je wil (eventueel met foto's). BROS maakt er een prijsvoorstel van dat je hierboven goedkeurt.</div></div>${S.mwNieuw ? "" : `<button class="btn primary sm" data-act="mw-nieuw">Meerwerk aanvragen</button>`}</div>
+    ${S.mwNieuw ? `<form id="mwForm" class="panel-body kp-form" style="border-top:1px solid var(--line);max-width:620px">
+      <label class="field">Wat wil je extra? (korte titel)<input name="titel" maxlength="160" required placeholder="bv. Extra stopcontact in de garage"></label>
+      <label class="field">Omschrijving<textarea name="omschrijving" rows="3" maxlength="4000" placeholder="Zo concreet mogelijk: waar, hoeveel, welke uitvoering …"></textarea></label>
+      <label class="field">Ruimte (optioneel)<input name="ruimte" maxlength="120"></label>
+      <label class="field">Foto's (optioneel, max. 6)<input type="file" name="fotos" accept="image/*" multiple></label>
+      <div class="gk-actions"><button class="btn primary" type="submit">Aanvraag versturen</button><button class="btn" type="button" data-act="mw-nieuw">Annuleren</button></div><div class="msg"></div></form>` : ""}
+    ${lijst.length ? `<div class="tw"><table class="t"><tbody>${lijst.map(a => { const [lbl, cls] = st[a.status] || [a.status, "grijs"]; const g = a.goedkeuring_id && D().goedkeuringen.find(x => x.id === a.goedkeuring_id);
+      return `<tr><td><b>${esc(a.titel)}</b>${a.ruimte ? ` <span class="muted">· ${esc(a.ruimte)}</span>` : ""}<div class="muted" style="font-size:12px">aangevraagd op ${fmt(a.created_at)}</div>${a.omschrijving ? `<div style="font-size:13px;white-space:pre-line;margin-top:4px">${esc(a.omschrijving)}</div>` : ""}${fotoStrip(a.fotos, 44)}
+        ${a.antwoord ? `<div style="margin-top:8px;padding:8px 10px;background:var(--surface-2);border-radius:8px;font-size:13px;white-space:pre-line"><b>BROS:</b> ${esc(a.antwoord)}</div>` : ""}</td>
+        <td style="white-space:nowrap"><span class="pill ${cls}">${esc(lbl)}</span>${g ? `<div style="margin-top:6px"><button class="btn sm" data-act="gk-toon" data-id="${g.id}">Voorstel bekijken</button></div>` : ""}${a.status === "ingediend" || a.status === "in_behandeling" ? `<div style="margin-top:6px"><button class="btn ghost sm" data-act="mw-intrek" data-id="${a.id}">Intrekken</button></div>` : ""}</td></tr>`; }).join("")}</tbody></table></div>` : ""}</div>`;
+}
+
+const WP_STATUS = (v) => v.te_beoordelen && v.status === "open" ? ["Ontvangen — BROS bekijkt het", "open"] : ({ open: ["In behandeling", "open"], opgelost: ["Opgelost — wordt nagekeken", "akkoord"], gecontroleerd: ["Afgewerkt", "akkoord"], vervallen: ["Vervallen", "grijs"] })[v.status] || [v.status, "grijs"];
+function vWerf(p) {
+  const ps = wpVanProject(p); const ruimtes = [...new Set(ps.map(v => v.ruimte).filter(Boolean))].sort();
+  const groep = (titel, lijst) => lijst.length ? `<h3 style="margin:18px 0 10px">${titel} <span class="muted" style="font-weight:400">${lijst.length}</span></h3><div class="stack">${lijst.map(v => { const [lbl, cls] = WP_STATUS(v);
+    return `<div class="panel"><div class="panel-body"><div style="display:flex;justify-content:space-between;gap:10px;flex-wrap:wrap"><div><b>${esc(v.titel || "Werfpunt")}</b> <span class="muted num" style="font-size:12px">V-${String(v.nr || 0).padStart(3, "0")}</span>${v.door_klant ? ` <span class="pill grijs" style="font-size:11px">door jou gemeld</span>` : ""}<div class="muted" style="font-size:13px">${esc([v.ruimte, "gemeld " + fmt(v.created_at)].filter(Boolean).join(" · "))}${v.deadline && v.status === "open" && !v.te_beoordelen ? ` · op te lossen tegen ${fmt(v.deadline)}` : ""}</div></div><span class="pill ${cls}">${esc(lbl)}</span></div>
+      ${v.omschrijving ? `<div style="font-size:14px;white-space:pre-line;margin-top:6px">${esc(v.omschrijving)}</div>` : ""}${fotoStrip(v.fotos)}
+      ${(v.opgelost_fotos || []).length ? `<div class="muted" style="font-size:12px;margin-top:8px">Na de herstelling${v.opgelost_op ? " (" + fmt(v.opgelost_op) + ")" : ""}:</div>${fotoStrip(v.opgelost_fotos)}` : ""}</div></div>`; }).join("")}</div>` : "";
+  return `<div style="display:flex;justify-content:space-between;align-items:flex-start;gap:12px;flex-wrap:wrap"><div><h1 style="margin-bottom:6px">Werf</h1><p class="muted" style="margin-bottom:16px">Zie je iets dat niet in orde is, of bij de oplevering iets dat nog moet gebeuren? Meld het hier met een foto: BROS bekijkt het en zorgt dat de juiste vakman het oplost. Je volgt hier de status.</p></div>${S.wpNieuw ? "" : `<button class="btn primary" data-act="wp-nieuw">Punt melden</button>`}</div>
+    ${S.wpNieuw ? `<div class="panel" style="margin-bottom:16px"><div class="panel-head"><h2>Nieuw punt</h2></div><form id="wpForm" class="panel-body kp-form" style="max-width:620px">
+      <label class="field">Wat is er? (korte titel)<input name="titel" maxlength="160" required placeholder="bv. Kras in het parket bij de voordeur"></label>
+      <label class="field">Omschrijving (optioneel)<textarea name="omschrijving" rows="3" maxlength="4000"></textarea></label>
+      <label class="field">Ruimte<input name="ruimte" maxlength="120" list="wp_ruimtes" placeholder="bv. Living"><datalist id="wp_ruimtes">${ruimtes.map(r => `<option value="${esc(r)}">`).join("")}</datalist></label>
+      <label class="field">Foto's (max. 6)<input type="file" name="fotos" accept="image/*" multiple capture="environment"></label>
+      <div class="gk-actions"><button class="btn primary" type="submit">Punt versturen</button><button class="btn" type="button" data-act="wp-nieuw">Annuleren</button></div><div class="msg"></div></form></div>` : ""}
+    ${ps.length ? groep("Ontvangen", ps.filter(v => v.te_beoordelen && v.status === "open")) + groep("In behandeling", ps.filter(v => !v.te_beoordelen && v.status === "open")) + groep("Opgelost", ps.filter(v => v.status === "opgelost")) + groep("Afgewerkt", ps.filter(v => v.status === "gecontroleerd")) + groep("Vervallen", ps.filter(v => v.status === "vervallen"))
+      : `<div class="panel"><div class="empty"><b>Nog niets gemeld</b>Hier volg je de punten die je zelf meldt. De punten die BROS tijdens een werfbezoek noteert, vind je in de werfverslagen onder Verslagen.</div></div>`}`;
+}
+
+/* foto's van de klant: verkleinen in de browser (max. 1600 px, jpeg) en uploaden in <project>/klant/ */
+async function klantFoto(pid, file) {
+  let img = null;
+  if (window.createImageBitmap) img = await createImageBitmap(file, { imageOrientation: "from-image" }).catch(() => null);
+  if (!img) img = await new Promise((res, rej) => { const i = new Image(); i.onload = () => res(i); i.onerror = () => rej(new Error("Deze foto kan niet gelezen worden.")); i.src = URL.createObjectURL(file); });
+  const s = Math.min(1, 1600 / Math.max(img.width, img.height)); const c = document.createElement("canvas"); c.width = Math.max(1, Math.round(img.width * s)); c.height = Math.max(1, Math.round(img.height * s));
+  c.getContext("2d").drawImage(img, 0, 0, c.width, c.height); const blob = await new Promise(r => c.toBlob(r, "image/jpeg", 0.82));
+  const path = `${pid}/klant/${Date.now()}-${Math.random().toString(36).slice(2, 8)}.jpg`;
+  const { error } = await sb.storage.from("werf").upload(path, blob, { contentType: "image/jpeg", upsert: false });
+  if (error) throw new Error("Foto uploaden mislukte: " + error.message);
+  return { path, url: sb.storage.from("werf").getPublicUrl(path).data.publicUrl, w: c.width, h: c.height };
+}
+/* BROS verwittigen (mail naar de projectverantwoordelijke via het Drive-script); mislukt dit, dan ziet BROS het toch in het Planbord */
+function klantMelding(soort, id) { if (!cfg.driveScriptUrl) return; fetch(cfg.driveScriptUrl, { method: "POST", body: JSON.stringify({ action: "klantmelding", soort, id, token: S.session?.access_token || "" }), redirect: "follow" }).catch(() => { }); }
+async function fotosUit(form, p, msg) {
+  const files = [...(form.querySelector('input[type="file"]')?.files || [])].filter(f => /^image\//.test(f.type) || /\.(jpe?g|png|heic|webp)$/i.test(f.name)).slice(0, 6); const out = [];
+  for (let i = 0; i < files.length; i++) { msg.textContent = `Foto ${i + 1}/${files.length} uploaden…`; out.push(await klantFoto(p.id, files[i])); }
+  return out;
+}
+document.addEventListener("submit", async (e) => {
+  const f = e.target; const p = S.ready ? P() : null; if (!p) return;
+  if (f.classList && f.classList.contains("kz-form")) {
+    e.preventDefault(); const m = f.querySelector(".msg"); const k = (D().keuzes || []).find(x => x.id === f.dataset.kz); if (!k || !m) return;
+    const optie = f.querySelector('input[name="optie"]:checked')?.value; const naam = f.querySelector('[name="naam"]').value.trim();
+    if (!optie) { m.className = "msg err"; m.textContent = "Duid eerst een optie aan."; return; }
+    if (naam.length < 2) { m.className = "msg err"; m.textContent = "Vul je naam in."; return; }
+    if (!f.querySelector('[name="ok"]').checked) { m.className = "msg err"; m.textContent = "Vink aan dat je deze optie kiest."; return; }
+    f.querySelectorAll("button").forEach(b => b.disabled = true); m.className = "msg"; m.textContent = "Even geduld…"; S.gkBezig = true;
+    try {
+      const gezien = (D().keuzeOpties || []).find(o => o.id === optie);   // de prijs die de klant zag: wijzigde ze intussen, dan weigert de databank
+      const { error } = await sb.rpc("klant_keuze_maken", { p_keuze: k.id, p_optie: optie, p_naam: naam, p_opmerking: f.querySelector('[name="opmerking"]').value.trim(), p_meerprijs: gezien ? Number(gezien.meerprijs) || 0 : null });
+      if (error) { m.className = "msg err"; m.textContent = "Dat lukte niet: " + error.message; f.querySelectorAll("button").forEach(b => b.disabled = false); if (/prijs/.test(error.message)) { try { await loadAll(true); render(true); } catch (x) { } } return; }
+      klantMelding("keuze", k.id); try { await loadAll(true); } catch (x) { } render(true); toast("Bedankt — je keuze is doorgegeven aan BROS.", 5000);
+    } finally { S.gkBezig = false; }
+    return;
+  }
+  if (f.id === "mwForm" || f.id === "wpForm") {
+    e.preventDefault(); const m = f.querySelector(".msg"); const titel = f.titel.value.trim();
+    if (titel.length < 3) { m.className = "msg err"; m.textContent = "Geef een korte titel (minstens 3 tekens)."; return; }
+    f.querySelectorAll("button").forEach(b => b.disabled = true); m.className = "msg"; m.textContent = "Even geduld…"; S.gkBezig = true;
+    try {
+      const fotos = await fotosUit(f, p, m);
+      const args = { p_project: p.id, p_titel: titel, p_omschrijving: f.omschrijving.value.trim(), p_ruimte: f.ruimte.value.trim(), p_fotos: fotos };
+      const { data, error } = await sb.rpc(f.id === "mwForm" ? "klant_meerwerk_aanvragen" : "klant_werfpunt_melden", args);
+      if (error) throw new Error(error.message);
+      klantMelding(f.id === "mwForm" ? "meerwerk" : "werfpunt", f.id === "mwForm" ? data?.id : data);
+      if (f.id === "mwForm") S.mwNieuw = false; else S.wpNieuw = false;
+      try { await loadAll(true); } catch (x) { } render(true); toast(f.id === "mwForm" ? "Je aanvraag is verstuurd — BROS neemt ze op." : "Je punt is gemeld — BROS bekijkt het.", 5000);
+    } catch (err) { m.className = "msg err"; m.textContent = "Dat lukte niet: " + (err.message || err); f.querySelectorAll("button").forEach(b => b.disabled = false); }
+    finally { S.gkBezig = false; }
+  }
+});
+document.addEventListener("click", async (e) => {
+  const el = e.target.closest("[data-act]"); if (!el || !S.ready) return;
+  if (el.dataset.act === "mw-nieuw") { S.mwNieuw = !S.mwNieuw; render(true); if (S.mwNieuw) setTimeout(() => $("#mwForm input[name=titel]")?.focus(), 30); }
+  if (el.dataset.act === "wp-nieuw") { S.wpNieuw = !S.wpNieuw; render(true); if (S.wpNieuw) setTimeout(() => $("#wpForm input[name=titel]")?.focus(), 30); }
+  if (el.dataset.act === "mw-intrek") { if (!confirm("Deze aanvraag intrekken?")) return; const { error } = await sb.rpc("klant_meerwerk_intrekken", { p_id: el.dataset.id }); if (error) return toast("Dat lukte niet: " + error.message, 5000); await loadAll(true); render(true); toast("Aanvraag ingetrokken"); }
+  if (el.dataset.act === "gk-toon" && S.tab !== "akkoord") { S.tab = "akkoord"; S.gkOpen = el.dataset.id; render(); }
 });
 
 /* ---------- live bijwerken (script 034): bij elke wijziging aan het project herlaadt het portaal stil ---------- */
