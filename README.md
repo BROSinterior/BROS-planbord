@@ -161,6 +161,19 @@ Activeren (eenmalig):
 
 Gebruik: Dossier › Contacten → bij een aannemer de knop **Aannemersportaal** (beheer) → hij krijgt een mail met een persoonlijke link. Instellingen → Klantenportaal toont wie toegang heeft (klant/aannemer). Een aannemer die op het Planbord of het klantenportaal inlogt, wordt doorgestuurd.
 
+## Rekenregels voor prijzen en facturen (script 033, v1.34)
+
+Eén regel overal — Planbord (`msVerkoopEP`/`msVerkoop`/`rowSigned`), pdf, Excel-export, vorderingen, klantenportaal (`klant_meetstaat`), aannemersportaal, Yuki-koppeling (`yukiCalc`) en de databank (`meetstaat_posten_v`, trigger `vordering_bevriezen`):
+
+- **Klant-EP** = kostprijs × (1 + marge), afgerond op de cent (half weg van nul). Marge = eigen marge van de post, anders die van het lot.
+- **Totaal** = hoeveelheid × klant-EP, afgerond op de cent. **Minwerk** is altijd −|totaal| (ook bij een negatieve hoeveelheid); in de Excel-export staat minwerk met een negatieve hoeveelheid, want in het sjabloon is eindsaldo = M + T en telt de tekst WEGGELATEN niet mee.
+- **Marge** per post met 8 decimalen (een herrekende marge houdt de klantprijs op de cent), per lot met 4 decimalen. Toegelaten: −100 % tot +1000 %.
+- **Goedgekeurde posten** (akkoord / meerwerk / minwerk): een nieuwe kostprijs (manueel, prijsaanvraag, akkoord aannemer) behoudt de klantprijs — de marge wordt herrekend. Marge of (na een portaalakkoord) hoeveelheid wijzigen vraagt bevestiging; een lotmarge wijzigen waarschuwt als zulke posten meeveranderen.
+- **Vorderingen:** een verzonden/betaalde factuur telt voor `bedrag_excl` en `btw_bedrag` — de databank vult beide in bij de statuswissel (ook via Yuki). Wijzigt de meetstaat nadien, dan worden de bedragen per lot/post van die factuur herschaald naar het factuurbedrag, zodat cumul, rest en slotfactuur kloppen (Planbord én portaal). Ontwerpfacturen (op te maken) zijn niet zichtbaar voor de klant. Script 033 bevriest ook de btw van de facturen die al verstuurd/betaald waren. Gaat een factuur terug naar 'Op te maken', dan vraagt het Planbord of het bevroren bedrag gewist mag worden.
+- **Getallen:** `leesGetal` leest 2,5 · 1.250,75 · 12.75 · en 1.250 (= 1250, Belgische schrijfwijze); bij hoeveelheden en bedragen vraagt `duizendKeuze` bij zo'n getal of je 1250 of 1,25 bedoelt. Een veld dat je enkel aanklikt (geen invoer), wordt bij het verlaten niet bewaard.
+- **Delen met een aannemer:** `gedeeld_op` komt van de klok van de databank (trigger), zodat 'gewijzigd na delen' bij zijn akkoord betrouwbaar is.
+- **Laden:** alles per 1000 rijen in vaste volgorde, ook in beide portalen en het Drive-script (`pbAll`). Zijn de prijzenviews niet bereikbaar (bv. tijdens een databasescript), dan toont het Planbord geen bedragen maar vraagt het te herladen.
+
 ## Gegevens laden per 1000 rijen (fix v1.33.1)
 
 Supabase geeft max. 1000 rijen per aanvraag; `fetchAllRows` haalt alles op in pagina's. Elke pagina wordt gesorteerd op een unieke kolom (`id`, of `nr`/`key`/`user_id` volgens `ORDER_OF`). Zonder vaste volgorde kan de database bij elke pagina een andere volgorde teruggeven en vallen er rijen weg — zo toonde het Planbord een lager meetstaattotaal dan het klantenportaal. Nieuwe pagina-aanvragen dus altijd met `.order(...)`.

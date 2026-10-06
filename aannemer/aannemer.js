@@ -14,7 +14,9 @@ const esc = (s) => String(s ?? "").replace(/[&<>"']/g, c => ({ "&": "&amp;", "<"
 const eur = (n, dec = 2) => Number(n || 0).toLocaleString("nl-BE", { style: "currency", currency: "EUR", minimumFractionDigits: dec, maximumFractionDigits: dec });
 const nl = (n, dec = 2) => Number(n || 0).toLocaleString("nl-BE", { minimumFractionDigits: 0, maximumFractionDigits: dec });
 /* bedragen zoals een Belg ze typt: 12,50 · 1.250,75 · 12.5 — leeg = null, onleesbaar = NaN */
-const leesGetal = (raw) => { let t = String(raw ?? "").trim().replace(/[\s€\u00a0]/g, ""); if (!t) return null; if (t.includes(",") && t.includes(".")) { t = t.lastIndexOf(",") > t.lastIndexOf(".") ? t.replace(/\./g, "").replace(",", ".") : t.replace(/,/g, ""); } else t = t.replace(",", "."); const n = Number(t); return Number.isFinite(n) ? n : NaN; };
+const leesGetal = (raw) => { let t = String(raw ?? "").trim().replace(/[\s€\u00a0]/g, ""); if (!t) return null; if (t.includes(",") && t.includes(".")) { t = t.lastIndexOf(",") > t.lastIndexOf(".") ? t.replace(/\./g, "").replace(",", ".") : t.replace(/,/g, ""); } else if (/^-?[1-9]\d{0,2}(\.\d{3})+$/.test(t)) t = t.replace(/\./g, ""); /* 1.250 = duizendtal (Belgische schrijfwijze) */ else t = t.replace(",", "."); const n = Number(t); return Number.isFinite(n) ? n : NaN; };
+/* "2.375" kan 2375 (Belgisch duizendtal) of 2,375 zijn: even vragen */
+const duizendKeuze = (raw, n) => { const t = String(raw ?? "").trim().replace(/[\s€\u00a0]/g, ""); if (n == null || Number.isNaN(n) || !/^-?[1-9]\d{0,2}(\.\d{3})+$/.test(t)) return n; const dec = Number(t.replace(/\./g, (m, i) => i === t.indexOf(".") ? "." : "")); return confirm(`Je typte ${t}.\n\nOK = ${n.toLocaleString("nl-BE")} (duizendtal)\nAnnuleren = ${String(dec).replace(".", ",")}`) ? n : dec; };
 const fmt = (s) => { if (!s) return "—"; const [y, m, d] = s.slice(0, 10).split("-"); return `${d}/${m}/${y}`; };
 const MAAND = ["januari", "februari", "maart", "april", "mei", "juni", "juli", "augustus", "september", "oktober", "november", "december"];
 const fmtLang = (s) => { if (!s) return "—"; const d = new Date(s.slice(0, 10) + "T00:00:00"); return `${d.getDate()} ${MAAND[d.getMonth()]} ${d.getFullYear()}`; };
@@ -39,7 +41,14 @@ function toast(msg, ms = 3500) { const t = document.createElement("div"); t.clas
 
 /* ---------- gegevens ---------- */
 async function loadAll() {
-  const q = (v, sel = "*", opt = false) => sb.from(v).select(sel).then(r => { if (r.error) { if (opt) return []; throw new Error(v + ": " + r.error.message); } return r.data || []; });
+  // per 1000 rijen ophalen, altijd in een vaste volgorde (anders vallen er bij grote meetstaten posten weg)
+  const ORDE = { fasen: ["nr"], aan_planning: ["project_id", "fase_nr"], aan_prijsaanvraag_posten: ["aanvraag_id", "post_id"] };
+  const q = async (v, sel = "*", opt = false) => { const PAGE = 1000; let all = [];
+    for (let from = 0; ; from += PAGE) {
+      let r = sb.from(v).select(sel); (ORDE[v] || ["id"]).forEach(c => { r = r.order(c, { ascending: true }); }); r = await r.range(from, from + PAGE - 1);
+      if (r.error) { if (opt) return []; throw new Error(v + ": " + r.error.message); }
+      all = all.concat(r.data || []); if (!r.data || r.data.length < PAGE) return all;
+    } };
   const [me, projecten, vs, plannen, verslagen, documenten, planning, planTaken, taken, aanvragen, aanvraagPosten, vragen, team, ik, meetstaat, prijzenMs, fasen, loten, inst] = await Promise.all([
     sb.from("profiles").select("id,name,email,role").eq("id", S.session.user.id).maybeSingle().then(r => r.data),
     q("aan_project"), q("aan_vaststellingen"), q("aan_werfplannen"), q("aan_werfverslagen"), q("aan_documenten"), q("aan_planning"), q("aan_planning_taken"),
@@ -297,7 +306,7 @@ function vAanvraag(p, a) {
 async function prijsBewaar(inp) {
   const r = D().aanvraagPosten.find(x => x.aanvraag_id === inp.dataset.pa && x.post_id === inp.dataset.post); if (!r) return;
   const row = $(`input.prijs[data-pa="${inp.dataset.pa}"][data-post="${inp.dataset.post}"]`), opm = $(`input.opm[data-pa="${inp.dataset.pa}"][data-post="${inp.dataset.post}"]`);
-  const prijs = row ? leesGetal(row.value) : null; const o = opm ? opm.value.trim() : "";
+  const prijs = row ? duizendKeuze(row.value, leesGetal(row.value)) : null; const o = opm ? opm.value.trim() : "";
   if (prijs === (r.eenheidsprijs == null ? null : Number(r.eenheidsprijs)) && o === (r.opmerking || "")) return;
   if (prijs != null && (isNaN(prijs) || prijs < 0)) { toast("Geef een geldige prijs."); return; }
   const { error } = await sb.rpc("prijs_invullen", { p_aanvraag: inp.dataset.pa, p_post: inp.dataset.post, p_prijs: prijs, p_opmerking: o });
@@ -310,7 +319,10 @@ async function prijsBewaar(inp) {
 /* ---------- Meetstaat met prijzen van BROS: bekijken, opmerkingen/tegenvoorstel, akkoord (script 032) ---------- */
 const MP_STATUS = { gedeeld: "Wacht op je akkoord", tegenvoorstel: "Tegenvoorstel ingediend", akkoord: "Akkoord" };
 const mpOf = (pid) => (D().prijzenMs || []).filter(m => m.project_id === pid);
-const mpTot = (m) => (m.regels || []).reduce((s, r) => s + (Number(r.prijs) || 0) * (Number(r.hoeveelheid) || 0), 0);
+/* bedrag van één regel: op de cent, minwerk (weggelaten) altijd als vermindering */
+const r2 = (n) => { const v = Number(n) || 0; return Math.sign(v) * Math.round(Number((Math.abs(v) * 100).toFixed(6))) / 100; };   // op de cent, half weg van nul (zoals het Planbord)
+const mpLijn = (r) => { const v = r2((Number(r.prijs) || 0) * (Number(r.hoeveelheid) || 0)); return r.status === "minwerk" ? -Math.abs(v) : v; };
+const mpTot = (m) => (m.regels || []).reduce((s, r) => s + mpLijn(r), 0);
 function vPrijzenMs(p) {
   return mpOf(p.id).map(m => {
     const open = m.status === "gedeeld" || m.status === "tegenvoorstel"; const rs = (m.regels || []).slice(); const lots = [...new Set(rs.map(r => r.lot))].sort((a, b) => a - b); const re = m.reactie || {};
@@ -322,11 +334,11 @@ function vPrijzenMs(p) {
           : m.status === "tegenvoorstel" ? `<div class="notice"><div><b>Tegenvoorstel ingediend op ${fmt(m.beslist_op)}</b> door ${esc(m.beslist_naam)}. BROS bekijkt het en deelt een aangepaste versie; je kan intussen nog aanpassen of toch akkoord gaan.</div></div>`
           : `<p class="muted" style="font-size:14px;margin-top:0">Dit zijn de eenheidsprijzen (excl. btw) die BROS voor jouw werk voorstelt. Klopt er iets niet, zet dan bij die post een opmerking of een tegenprijs. Daarna ga je akkoord, of dien je je tegenvoorstel in.</p>`}
       </div>
-      ${lots.map(lot => { const lr = rs.filter(r => r.lot === lot); let groep = null; const som = lr.reduce((s, r) => s + (Number(r.prijs) || 0) * (Number(r.hoeveelheid) || 0), 0);
+      ${lots.map(lot => { const lr = rs.filter(r => r.lot === lot); let groep = null; const som = lr.reduce((s, r) => s + mpLijn(r), 0);
         return `<div class="panel-head" style="border-top:1px solid var(--line)"><h3>${esc(lotNaam(lot))}</h3><span class="num" style="font-weight:700">${eur(som)}</span></div><div class="tw"><table class="t"><thead><tr><th style="width:56px">Nr</th><th>Omschrijving</th><th class="r">Hoev.</th><th class="r">Eenheidsprijs</th><th class="r">Totaal</th><th>${open ? "Opmerking / tegenprijs" : "Opmerking"}</th></tr></thead><tbody>
           ${lr.map(r => { const g = r.groep && r.groep !== groep ? ((groep = r.groep), `<tr class="groep"><td colspan="6">${esc(r.groep)}</td></tr>`) : ""; const x = re[r.post_id] || {}; const h = Number(r.hoeveelheid) || 0;
             return g + `<tr><td class="num muted" style="font-size:12px">${esc(r.code)}</td><td>${esc(r.omschrijving).replace(/\n/g, "<br>")}${r.locatie ? `<div class="muted" style="font-size:12px">${esc(r.locatie)}</div>` : ""}${MS_TAG[r.status] ? ` <span class="pill">${MS_TAG[r.status]}</span>` : ""}</td>
-              <td class="r num" style="white-space:nowrap">${h ? nl(h, 2) + " " + esc(r.eenheid) : esc(r.prijstype && r.prijstype !== "EP" ? r.prijstype : r.eenheid || "")}</td><td class="r num">${eur(r.prijs)}</td><td class="r num"><b>${h ? eur(r.prijs * h) : ""}</b></td>
+              <td class="r num" style="white-space:nowrap">${h ? nl(h, 2) + " " + esc(r.eenheid) : esc(r.prijstype && r.prijstype !== "EP" ? r.prijstype : r.eenheid || "")}</td><td class="r num">${eur(r.prijs)}</td><td class="r num"><b>${h ? eur(mpLijn(r)) : ""}</b></td>
               <td style="min-width:200px">${open ? `<div style="display:flex;gap:6px"><input class="mp-opm" data-mp="${m.id}" data-post="${r.post_id}" value="${esc(x.opmerking || "")}" placeholder="opmerking" style="flex:1;min-width:0"><input class="mp-tp" data-mp="${m.id}" data-post="${r.post_id}" type="text" inputmode="decimal" autocomplete="off" value="${x.tegenprijs != null ? String(x.tegenprijs).replace(".", ",") : ""}" placeholder="tegenprijs" style="width:90px;text-align:right" title="Jouw eenheidsprijs als tegenvoorstel (leeg = akkoord met de prijs van BROS)"></div>` : `${x.opmerking ? esc(x.opmerking) : ""}${x.tegenprijs != null ? ` <span class="muted">(tegenprijs ${eur(x.tegenprijs)})</span>` : ""}`}</td></tr>`; }).join("")}
         </tbody></table></div>`; }).join("")}
       ${open ? `<div class="panel-body" style="border-top:1px solid var(--line)"><h2 style="margin-bottom:8px">Je beslissing</h2>
@@ -339,7 +351,7 @@ function vPrijzenMs(p) {
 function mpReactieUitScherm(id) {   // reactie uit de invulvelden (alle posten van deze meetstaat)
   const o = {}; let fout = null;
   document.querySelectorAll(`input.mp-opm[data-mp="${id}"]`).forEach(inp => { const post = inp.dataset.post; const tpEl = document.querySelector(`input.mp-tp[data-mp="${id}"][data-post="${post}"]`);
-    const opm = inp.value.trim(); const raw = tpEl ? tpEl.value.trim() : ""; const tp = raw ? leesGetal(raw) : null; if (raw && (tp == null || isNaN(tp) || tp < 0)) fout = "Geef een geldige tegenprijs (bv. 125,50)."; 
+    const opm = inp.value.trim(); const raw = tpEl ? tpEl.value.trim() : ""; const tp = raw ? duizendKeuze(raw, leesGetal(raw)) : null; if (raw && (tp == null || isNaN(tp) || tp < 0)) fout = "Geef een geldige tegenprijs (bv. 125,50)."; 
     if (opm || tp != null) o[post] = { opmerking: opm, tegenprijs: tp == null ? null : tp }; });
   return { o, fout };
 }

@@ -599,7 +599,7 @@ function aanPrijsMail(body) {
   if (!c) return { ok: false, error: "Contact niet gevonden." };
   const p = (pbAdmin("/rest/v1/projecten?id=eq." + a.project_id + "&select=nummer,klant,naam,adres,gemeente,lead", "get") || [])[0] || {};
   const proj = (p.klant || "") + (p.naam && p.naam !== p.klant ? " · " + p.naam : "");
-  const regels = a.regels || []; const totaal = regels.reduce((s, r) => s + (Number(r.prijs) || 0) * (Number(r.hoeveelheid) || 0), 0);
+  const regels = a.regels || []; const totaal = regels.reduce((s, r) => { const v = yukiR2((Number(r.prijs) || 0) * (Number(r.hoeveelheid) || 0)); return s + (r.status === "minwerk" ? -Math.abs(v) : v); }, 0);
   const geld = (n) => "€ " + Number(n || 0).toFixed(2).replace(".", ",").replace(/\B(?=(\d{3})+(?!\d))/g, ".");
   const esc = H;
   const wrap = (inner) => "<div style=\"font-family:Helvetica,Arial,sans-serif;font-size:15px;line-height:1.5;color:#1B1E1C;max-width:720px\">" + inner + "</div>";
@@ -918,9 +918,18 @@ function pbReq(path, method, body, token, prefer) {
   if (r.getResponseCode() >= 300) throw new Error("Planbord " + r.getResponseCode() + ": " + t.slice(0, 200));
   return t ? JSON.parse(t) : null;
 }
+/* alles ophalen, per 1000 rijen en in een vaste volgorde (de databank geeft max. 1000 rijen per aanvraag) */
+function pbAll(path, token, orde) {
+  let all = []; const sep = path.indexOf("?") >= 0 ? "&" : "?";
+  for (let off = 0; ; off += 1000) {
+    const d = pbReq(path + sep + "order=" + (orde || "id") + ".asc&limit=1000&offset=" + off, "get", null, token) || [];
+    all = all.concat(d); if (d.length < 1000) return all;
+  }
+}
 function pbLogin() { return pbReq("/auth/v1/token?grant_type=password", "post", { email: YUKI.BOT_EMAIL, password: YUKI.BOT_PASSWORD }).access_token; }
 function yukiNorm(s) { return String(s || "").toLowerCase().normalize("NFKD").replace(/[\u0300-\u036f]/g, "").replace(/\b(bv|bvba|nv|vof|cv|srl|sa|invest|group)\b/g, " ").replace(/[^a-z0-9]+/g, " ").trim(); }
 /* dezelfde rekenregels als app.js (vordCalc) */
+function yukiR2(n) { const v = Number(n) || 0; return (v < 0 ? -1 : 1) * Math.round(Number((Math.abs(v) * 100).toFixed(6))) / 100; }
 function yukiCalc(v, rows, regels, loten) {
   const mw = v.soort === "meerwerk"; const lotRg = {}, postRg = {};
   regels.filter(r => r.vordering_id === v.id).forEach(r => { if (r.post_id) postRg[r.post_id] = Number(r.pct); else lotRg[r.lot] = Number(r.pct); });
@@ -928,20 +937,22 @@ function yukiCalc(v, rows, regels, loten) {
   rows.forEach(r => { if (r.project_id !== v.project_id || r.status === "vervallen") return; if ((r.status === "meerwerk" || r.status === "minwerk") !== mw) return;
     const pct = postRg[r.id] != null ? postRg[r.id] : lotRg[r.lot]; if (pct == null) return;
     // verkoopprijs: sinds script 012 berekend in de view (verkoop_ep); daarvoor kostprijs × (1 + marge)
+    // op de cent afgerond zoals het Planbord en het klantenportaal; minwerk altijd negatief
     const marge = r.marge != null && r.marge !== "" ? Number(r.marge) : Number((loten[r.lot] || {}).marge) || 0;
-    const ep = r.verkoop_ep != null ? Number(r.verkoop_ep) : Number(r.eenheidsprijs || 0) * (1 + marge);
-    const a = pct * Number(r.hoeveelheid || 0) * ep * (r.status === "minwerk" ? -1 : 1);
+    const ep = yukiR2(r.verkoop_ep != null ? Number(r.verkoop_ep) : Number(r.eenheidsprijs || 0) * (1 + marge));
+    const tot = yukiR2(Number(r.hoeveelheid || 0) * ep);
+    const a = pct * (r.status === "minwerk" ? -Math.abs(tot) : tot);
     excl += a; btw += a * (Number(r.btw) || 0); });
   return { excl: Math.round(excl * 100) / 100, btw: Math.round(btw * 100) / 100, incl: Math.round((excl + btw) * 100) / 100 };
 }
 function yukiKoppel(facturen) {
   const token = pbLogin();
-  const projecten = pbReq("/rest/v1/projecten?select=id,nummer,klant,naam,bedrijf,status", "get", null, token);
-  const vorderingen = pbReq("/rest/v1/vorderingen?select=*", "get", null, token);
-  const regels = pbReq("/rest/v1/vordering_regels?select=*", "get", null, token);
+  const projecten = pbAll("/rest/v1/projecten?select=id,nummer,klant,naam,bedrijf,status", token);
+  const vorderingen = pbAll("/rest/v1/vorderingen?select=*", token);
+  const regels = pbAll("/rest/v1/vordering_regels?select=*", token);
   let rows, loten = {};
-  try { rows = pbReq("/rest/v1/meetstaat_posten_v?select=id,project_id,lot,status,hoeveelheid,verkoop_ep,btw", "get", null, token); }
-  catch (e) { rows = pbReq("/rest/v1/meetstaat_posten?select=id,project_id,lot,status,hoeveelheid,eenheidsprijs,marge,btw", "get", null, token); pbReq("/rest/v1/loten?select=nr,marge", "get", null, token).forEach(l => loten[l.nr] = l); }
+  try { rows = pbAll("/rest/v1/meetstaat_posten_v?select=id,project_id,lot,status,hoeveelheid,verkoop_ep,btw", token); }
+  catch (e) { rows = pbAll("/rest/v1/meetstaat_posten?select=id,project_id,lot,status,hoeveelheid,eenheidsprijs,marge,btw", token); pbAll("/rest/v1/loten?select=nr,marge", token, "nr").forEach(l => loten[l.nr] = l); }
   const calc = {}; vorderingen.forEach(v => calc[v.id] = yukiCalc(v, rows, regels, loten));
   const bestaand = {}; vorderingen.forEach(v => { if (v.factuurnummer) bestaand[String(v.factuurnummer).trim()] = v; });
   const TOL = YUKI.TOL; const rapport = [];

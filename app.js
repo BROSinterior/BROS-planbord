@@ -3,7 +3,7 @@
    Statische webapp op Supabase (login, live-synchronisatie, rechten)
    ===================================================================== */
 if (window.top !== window.self) { try { window.top.location.replace(window.location.href); } catch (e) { document.documentElement.innerHTML = ""; } }   // niet in een vreemd frame (clickjacking)
-const APP_VERSION = "1.33.1";
+const APP_VERSION = "1.34.0";
 const PROJ_STATUS = { offerte: "In offerte", lopend: "Lopend", on_hold: "On hold", afgerond: "Afgerond", verloren: "Verloren" };
 const KLANTTYPE = { particulier: "Particulier", zakelijk: "Zakelijk" };
 const KLANTCODE = { particulier: "PAR", zakelijk: "ZAK" };
@@ -90,7 +90,13 @@ const wieNaam = (t) => t.contact_id && S.contacten[t.contact_id] ? S.contacten[t
 const wieOpts = (pid, t) => { const cur = t.contact_id ? "c:" + t.contact_id : (t.assignee ?? S.me.id); const pcs = pid ? contactsOf(pid) : []; return `<option value="">— niemand —</option><optgroup label="Team">${opts(users().map(u => [u.id, u.name]), cur)}</optgroup>${pcs.length ? `<optgroup label="Klant en contacten van dit project">${opts(pcs.map(x => ["c:" + x.c.id, x.c.naam + " · " + (CONTACT_ROL[x.rol] || x.rol)]), cur)}</optgroup>` : ""}`; };
 const wieSplit = (v) => v && v.startsWith("c:") ? { assignee: null, contact_id: v.slice(2) } : { assignee: v || null, contact_id: null };
 /* getallen zoals een Belg ze typt: 2,5 · 1.234,50 · 12.75 · € 15 — leeg = null, onleesbaar = NaN (nooit stilletjes 0 of 25) */
-const leesGetal = (raw) => { let t = String(raw ?? "").trim().replace(/[\s€%\u00a0]/g, ""); if (!t) return null; if (t.includes(",") && t.includes(".")) { t = t.lastIndexOf(",") > t.lastIndexOf(".") ? t.replace(/\./g, "").replace(",", ".") : t.replace(/,/g, ""); } else t = t.replace(",", "."); const n = Number(t); return Number.isFinite(n) ? n : NaN; };
+const leesGetal = (raw) => { let t = String(raw ?? "").trim().replace(/[\s€%\u00a0]/g, ""); if (!t) return null; if (t.includes(",") && t.includes(".")) { t = t.lastIndexOf(",") > t.lastIndexOf(".") ? t.replace(/\./g, "").replace(",", ".") : t.replace(/,/g, ""); } else if (/^-?[1-9]\d{0,2}(\.\d{3})+$/.test(t)) t = t.replace(/\./g, ""); /* 1.250 en 12.500 = duizendtallen (Belgische schrijfwijze); 12.75 en 0.125 blijven decimaal */ else t = t.replace(",", "."); const n = Number(t); return Number.isFinite(n) ? n : NaN; };
+/* afronden op de cent zoals de database (half weg van nul) en zonder zwevendekommafouten: 1,005 → 1,01 */
+const r2 = (n) => { const v = Number(n) || 0; return Math.sign(v) * Math.round(Number((Math.abs(v) * 100).toFixed(6))) / 100; };
+/* marge (fractie) als % in een invoerveld: tot 4 decimalen, nooit afgerond op een geheel getal */
+const pctVeld = (m) => m == null || m === "" ? "" : String(Math.round(Number(m) * 1e6) / 1e4).replace(".", ",");
+/* "2.375" kan 2375 (Belgisch duizendtal) of 2,375 zijn: bij hoeveelheden en bedragen even vragen */
+const duizendKeuze = (raw, n) => { const t = String(raw ?? "").trim().replace(/[\s€\u00a0]/g, ""); if (n == null || Number.isNaN(n) || !/^-?[1-9]\d{0,2}(\.\d{3})+$/.test(t)) return n; const dec = Number(t.replace(/\./g, (m, i) => i === t.indexOf(".") ? "." : "")); return confirm(`Je typte ${t}.\n\nOK = ${nl(n, 0)} (duizendtal)\nAnnuleren = ${String(dec).replace(".", ",")}`) ? n : dec; };
 const getalVeld = (v) => v == null || v === "" ? "" : String(Number(v)).replace(".", ",");
 /* links en afbeeldingen uit de database: enkel https (en blob:/data:image voor lokale voorbeelden) — nooit javascript: */
 const safeUrl = (u) => /^(https:|blob:)/i.test(String(u || "")) ? String(u) : "#";
@@ -139,7 +145,11 @@ async function fetchAllRows(t) {
   const PAGE = 1000; let from = 0, all = []; let src = srcOf(t);
   for (; ;) {
     let { data, error } = await pagina(src, t, from, PAGE);
-    if (error && src !== t && /does not exist|42P01|schema cache/i.test(error.message || "")) { S.viewsOk = false; src = t; ({ data, error } = await pagina(src, t, from, PAGE)); }
+    if (error && src !== t && /does not exist|42P01|schema cache/i.test(error.message || "")) {
+      for (let i = 0; i < 2 && error; i++) { await new Promise(res => setTimeout(res, 1500)); ({ data, error } = await pagina(src, t, from, PAGE)); }   // vlak na een databasescript: even opnieuw
+      if (error && schemaV() >= 12) return { error, prijsFout: true };   // geen prijzen → niets laden i.p.v. bedragen van € 0
+      if (error) { S.viewsOk = false; src = t; ({ data, error } = await pagina(src, t, from, PAGE)); }
+    }
     if (error) return { error };
     all = all.concat(data || []);
     if (!data || data.length < PAGE) return { data: all };
@@ -147,9 +157,13 @@ async function fetchAllRows(t) {
   }
 }
 async function loadAll() {
+  if (schemaV() >= 12) S.viewsOk = undefined;   // opnieuw proberen via de views
+  S.prijsFout = false;
   const res = await Promise.all(Object.keys(TABLES).map(t => fetchAllRows(t)));
-  Object.keys(TABLES).forEach((t, i) => { if (res[i].error) { if (!OPTIONAL_TABLES.includes(t)) throw res[i].error; } else ingest(t, res[i].data || []); });
+  Object.keys(TABLES).forEach((t, i) => { if (res[i].error) { if (res[i].prijsFout) { S.prijsFout = true; return; } if (!OPTIONAL_TABLES.includes(t)) throw res[i].error; } else ingest(t, res[i].data || []); });
   S.me = S.profiles[S.session.user.id] || null;
+  // sinds script 012 staan de prijzen enkel in de views: zonder views kloppen de bedragen niet → duidelijk melden
+  S.prijsFout = S.prijsFout || (S.viewsOk === false && schemaV() >= 12);
 }
 function subscribe() {
   // Eén kanaal per tabel: als één tabel niet in de realtime-publicatie zit, blijven de andere werken.
@@ -158,8 +172,9 @@ function subscribe() {
     ch.on("postgres_changes", { event: "*", schema: "public", table: t }, (payload) => {
       if (S.bulk) return;   // tijdens een bulkactie (import, lot wissen) niet per rij herbouwen; op het einde volgt één refetch
       if (t === "standaardtaken") { refetch(t); return; }
-      if (t === "meetstaat_prijzen") { const pid = (payload.new || payload.old || {}).post_id; if (pid && S.meetstaat_posten[pid]) msRefetch([pid]); return; }
-      if (VIEW_OF[t] && S.viewsOk !== false) { if (payload.eventType === "DELETE") { delete S[t][rowKey(t, payload.old)]; render(); } else rowRefetch(t, rowKey(t, payload.new)); return; }
+      if (t === "meetstaat_prijzen") { const pid = (payload.new || payload.old || {}).post_id; if (pid && S.meetstaat_posten[pid]) rtQueue("meetstaat_posten", pid); return; }
+      if (t === "loten" && schemaV() < 33) rtQueue("meetstaat_posten", "*");   // vóór script 033: lotmarge gewijzigd → alle klantprijzen herladen
+      if (VIEW_OF[t] && S.viewsOk !== false) { if (payload.eventType === "DELETE") { delete S[t][rowKey(t, payload.old)]; render(); } else rtQueue(t, rowKey(t, payload.new)); return; }
       if (payload.eventType === "DELETE") { delete S[t][rowKey(t, payload.old)]; }
       else { S[t][rowKey(t, payload.new)] = payload.new; }
       IDX = null;
@@ -173,6 +188,20 @@ function subscribe() {
   document.addEventListener("visibilitychange", () => { if (document.visibilityState === "visible") refetchAll(); });
 }
 async function refetch(t) { const { data, error } = await fetchAllRows(t); if (!error) { ingest(t, data || []); render(); } }
+/* realtime-meldingen voor views bundelen: per tabel één aanvraag (of alles herladen bij veel rijen) i.p.v. één per rij */
+const rtQ = {}; let rtT = null;
+function rtQueue(t, key) { (rtQ[t] = rtQ[t] || new Set()).add(key); if (!rtT) rtT = setTimeout(rtFlush, 300); }
+async function rtFlush() {
+  rtT = null; const werk = Object.entries(rtQ).map(([t, keys]) => [t, [...keys]]); Object.keys(rtQ).forEach(k => delete rtQ[k]);
+  for (const [t, keys] of werk) {
+    try {
+      if (keys.includes("*") || keys.length > 60) { const { data, error } = await fetchAllRows(t); if (!error) ingest(t, data || []); continue; }
+      const col = t === "loten" ? "nr" : "id"; const { data, error } = await sb.from(srcOf(t)).select("*").in(col, keys);
+      if (!error) (data || []).forEach(r => { S[t][rowKey(t, r)] = r; });
+    } catch (e) { }
+  }
+  IDX = null; render();
+}
 /* één rij opnieuw uit de view halen (na een wijziging: verkoopprijs en beheer-kolommen komen zo mee) */
 async function rowRefetch(t, key) {
   const col = t === "loten" ? "nr" : "id";
@@ -181,8 +210,11 @@ async function rowRefetch(t, key) {
 }
 async function msRefetch(ids) {
   if (!ids.length) return;
-  const { data, error } = await sb.from(srcOf("meetstaat_posten")).select("*").in("id", ids);
-  if (!error) { (data || []).forEach(r => S.meetstaat_posten[r.id] = r); render(); }
+  for (let i = 0; i < ids.length; i += 100) {
+    const { data, error } = await sb.from(srcOf("meetstaat_posten")).select("*").in("id", ids.slice(i, i + 100));
+    if (!error) (data || []).forEach(r => S.meetstaat_posten[r.id] = r);
+  }
+  render();
 }
 async function refetchAll() { try { await loadAll(); render(); } catch (e) { } }
 
@@ -599,20 +631,26 @@ const lotName = (nr) => S.loten[nr] ? `${nr}. ${S.loten[nr].naam}` : String(nr);
 const postenOf = (lot) => Object.values(S.posten).filter(x => x.lot === lot && x.actief !== false).sort((a, b) => a.volgorde - b.volgorde);
 const msRows = (pid) => Object.values(S.meetstaat_posten).filter(r => r.project_id === pid).sort((a, b) => a.lot - b.lot || (a.volgorde ?? 0) - (b.volgorde ?? 0) || (a.code || "").localeCompare(b.code || ""));
 const msMarge = (r) => r.marge != null && r.marge !== "" ? Number(r.marge) : Number(S.loten[r.lot]?.marge) || 0;
-const msKost = (r) => (Number(r.hoeveelheid) || 0) * (Number(r.eenheidsprijs) || 0);
-const msVerkoopEP = (r) => r.verkoop_ep != null ? Number(r.verkoop_ep) : (Number(r.eenheidsprijs) || 0) * (1 + msMarge(r));
-const msVerkoop = (r) => (Number(r.hoeveelheid) || 0) * msVerkoopEP(r);
+/* Eén rekenregel overal (Planbord, pdf, Excel, vorderingen én klantenportaal — zie sql/033):
+   klant-EP = kost × (1 + marge) afgerond op de cent · totaal = hoeveelheid × klant-EP afgerond op de cent */
+const msKost = (r) => r2((Number(r.hoeveelheid) || 0) * (Number(r.eenheidsprijs) || 0));
+const msVerkoopEP = (r) => r2(r.verkoop_ep != null ? Number(r.verkoop_ep) : (Number(r.eenheidsprijs) || 0) * (1 + msMarge(r)));
+const msVerkoop = (r) => r2((Number(r.hoeveelheid) || 0) * msVerkoopEP(r));
+/* bedrag met teken: minwerk is altijd een vermindering, ook als de hoeveelheid al negatief ingevuld is (nooit min × min = plus) */
+const rowSigned = (r) => r.status === "minwerk" ? -Math.abs(msVerkoop(r)) : msVerkoop(r);
+const kostSigned = (r) => r.status === "minwerk" ? -Math.abs(msKost(r)) : msKost(r);
 const msTelt = (r) => r.status !== "vervallen";
 const eur2 = (n) => Number(n || 0).toLocaleString("nl-BE", { style: "currency", currency: "EUR", minimumFractionDigits: 2, maximumFractionDigits: 2 });
 function msTotals(pid) {
   const rows = msRows(pid).filter(msTelt);
   const t = { kost: 0, verkoop: 0, btw: 0, meerwerk: 0, n: rows.length };
-  rows.forEach(r => { const v = msVerkoop(r); t.kost += msKost(r); if (r.status === "meerwerk") t.meerwerk += v; else if (r.status === "minwerk") t.meerwerk -= v; else t.verkoop += v; t.btw += v * (Number(r.btw) || 0) * (r.status === "minwerk" ? -1 : 1); });
+  rows.forEach(r => { const v = rowSigned(r); t.kost += kostSigned(r); if (isMw(r)) t.meerwerk += v; else t.verkoop += v; t.btw += v * (Number(r.btw) || 0); });
   t.marge = t.verkoop + t.meerwerk - t.kost; t.incl = t.verkoop + t.meerwerk + t.btw; return t;
 }
 function vMeetstaat(p) {
   if (!msReady()) return `<div class="panel"><div class="empty"><b>Meetstaat nog niet beschikbaar</b>Voer eerst databasescript <code>sql/007_meetstaat.sql</code> uit in Supabase (SQL Editor). Daarna verschijnen hier de loten en de postenbibliotheek.</div></div>`;
   // klantweergave: kostprijs, marge en btw-kolom verbergen (bv. tijdens een bespreking met de klant) — onthouden per browser
+  if (S.prijsFout) return `<div class="panel"><div class="empty"><b>Prijzen niet correct geladen</b>De prijzen van de meetstaat konden niet opgehaald worden (de databank was even niet bereikbaar of er liep net een databasescript). Herlaad de pagina (⌘⌥R) — tot dan worden er geen bedragen getoond om fouten te vermijden.</div></div>`;
   const rows = msRows(p.id); const beheer = isBeheer() && !S.msKlant; const t = msTotals(p.id);
   const byLot = {}; rows.forEach(r => (byLot[r.lot] = byLot[r.lot] || []).push(r));
   const lots = Object.keys(byLot).map(Number).sort((a, b) => a - b);
@@ -629,22 +667,22 @@ function vMeetstaat(p) {
   const cols = 9 + (beheer ? 3 : 0);
   const perRuimte = !!S.msRuimte; const ruimteKey = (r) => (r.locatie || "").trim().toLowerCase();
   if (perRuimte) lots.forEach(nr => byLot[nr].sort((a, b) => (ruimteKey(a) === "" ? 1 : 0) - (ruimteKey(b) === "" ? 1 : 0) || ruimteKey(a).localeCompare(ruimteKey(b), "nl") || (a.volgorde ?? 0) - (b.volgorde ?? 0) || (a.code || "").localeCompare(b.code || "")));
-  const body = lots.map(nr => { const g = byLot[nr]; const sub = g.filter(msTelt).reduce((s, r) => s + msVerkoop(r), 0); const subk = g.filter(msTelt).reduce((s, r) => s + msKost(r), 0); let lastGroep = null;
+  const body = lots.map(nr => { const g = byLot[nr]; const sub = g.filter(msTelt).reduce((s, r) => s + rowSigned(r), 0); const subk = g.filter(msTelt).reduce((s, r) => s + kostSigned(r), 0); let lastGroep = null;
     return `<tr class="ms-lot"><td colspan="${cols}"><div style="display:flex;justify-content:space-between;align-items:center;gap:8px;flex-wrap:wrap"><span>${esc(lotName(nr))} <span class="muted num" style="font-weight:400">${g.length} posten${beheer ? ` · kost ${eur(subk)}` : ""} · <b>${eur(sub)}</b> excl. btw</span></span><span class="actions"><button class="btn ghost sm" data-act="ms-add-post" data-pid="${p.id}" data-lot="${nr}">+ Post</button><button class="btn ghost sm danger" data-act="ms-del-lot" data-pid="${p.id}" data-lot="${nr}" title="Alle posten van dit lot verwijderen">✕</button></span></div></td></tr>` +
-      g.map((r, i) => { const kop = perRuimte ? ((r.locatie || "").trim() || "Zonder ruimte") : r.groep; const gh = kop && kop !== lastGroep ? `<tr class="ms-groep"><td></td><td colspan="${cols - 1}">${esc(kop)}${perRuimte ? ` <span class="muted" style="font-weight:400;text-transform:none;letter-spacing:0">· ${g.filter(x => (perRuimte ? ((x.locatie || "").trim() || "Zonder ruimte") : x.groep) === kop).length} posten · ${eur(g.filter(x => msTelt(x) && ((x.locatie || "").trim() || "Zonder ruimte") === kop).reduce((s, x) => s + msVerkoop(x), 0))}</span>` : ""}</td></tr>` : ""; lastGroep = kop || lastGroep; const dead = r.status === "vervallen";
+      g.map((r, i) => { const kop = perRuimte ? ((r.locatie || "").trim() || "Zonder ruimte") : r.groep; const gh = kop && kop !== lastGroep ? `<tr class="ms-groep"><td></td><td colspan="${cols - 1}">${esc(kop)}${perRuimte ? ` <span class="muted" style="font-weight:400;text-transform:none;letter-spacing:0">· ${g.filter(x => (perRuimte ? ((x.locatie || "").trim() || "Zonder ruimte") : x.groep) === kop).length} posten · ${eur(g.filter(x => msTelt(x) && ((x.locatie || "").trim() || "Zonder ruimte") === kop).reduce((s, x) => s + rowSigned(x), 0))}</span>` : ""}</td></tr>` : ""; lastGroep = kop || lastGroep; const dead = r.status === "vervallen";
         return gh + `<tr class="${dead ? "ms-dead" : ""}" data-msrow="${r.id}" data-lot="${nr}"><td class="drag" style="width:26px">${perRuimte ? `<span class="muted" title="Volgorde wijzigen kan in de gewone weergave (Per ruimte uit)">·</span>` : `<span class="grip" draggable="true" data-drag="${r.id}" title="Sleep om de volgorde te wijzigen">⋮⋮</span>`}<span class="updown">${perRuimte ? "" : `<button class="btn ghost sm" data-act="ms-move" data-id="${r.id}" data-dir="-1" ${i === 0 ? "disabled" : ""} aria-label="Omhoog">▲</button>`}${perRuimte ? "" : `<button class="btn ghost sm" data-act="ms-move" data-id="${r.id}" data-dir="1" ${i === g.length - 1 ? "disabled" : ""} aria-label="Omlaag">▼</button>`}</span></td><td class="num muted" style="width:52px">${esc(r.code)}</td>
         <td style="min-width:260px">${inp(r, "omschrijving", "wide")}</td>
         <td style="width:110px">${inp(r, "locatie", "", 'placeholder="locatie"')}</td>
         <td style="width:84px">${num(r, "hoeveelheid")}</td>
         <td style="width:82px">${sel(r, "eenheid", opts(EENHEDEN.map(e => [e, e]), r.eenheid))}</td>
-        ${beheer ? `<td style="width:96px">${num(r, "eenheidsprijs")}</td><td style="width:64px"><input class="inline num" data-ms="${r.id}" data-f="marge" type="text" inputmode="decimal" autocomplete="off" placeholder="${Math.round((Number(S.loten[r.lot]?.marge) || 0) * 100)}" value="${r.marge == null || r.marge === "" ? "" : Math.round(Number(r.marge) * 100)}" title="Marge % (leeg = marge van het lot)"></td>` : ""}
+        ${beheer ? `<td style="width:96px">${num(r, "eenheidsprijs")}</td><td style="width:64px"><input class="inline num" data-ms="${r.id}" data-f="marge" type="text" inputmode="decimal" autocomplete="off" placeholder="${pctVeld(Number(S.loten[r.lot]?.marge) || 0)}" value="${pctVeld(r.marge)}" title="Marge % (leeg = marge van het lot)"></td>` : ""}
         <td class="r num" style="width:96px" title="Eenheidsprijs voor de klant">${eur2(msVerkoopEP(r))}</td>
-        <td class="r num" style="width:104px"><b>${eur2(msVerkoop(r))}</b></td>
+        <td class="r num" style="width:104px"><b>${eur2(rowSigned(r))}</b></td>
         ${beheer ? `<td style="width:76px">${sel(r, "btw", opts([[0.06, "6 %"], [0.21, "21 %"], [0, "0 %"]], Number(r.btw)))}</td>` : ""}
         <td style="width:104px">${sel(r, "status", opts(Object.entries(MS_STATUS), r.status))}${r.akkoord_op ? `<small class="muted" style="display:block;color:var(--ok)" title="Goedgekeurd door de klant in het portaal">✓ klant ${fmt(r.akkoord_op.slice(0, 10))}</small>` : ""}</td>
         <td class="r" style="width:36px"><button class="btn ghost sm danger" data-act="ms-del" data-id="${r.id}" aria-label="Verwijderen">✕</button></td></tr>`; }).join(""); }).join("");
   return kpi + vGoedkeuringen(p) + vPrijsaanvragen(p) + vAanMeetstaten(p) + `<div class="panel"><div class="panel-head"><div><h3>Meetstaat</h3><div class="muted" style="font-size:12px;margin-top:2px">${rows.length ? `${rows.length} posten in ${lots.length} loten` : "Nog leeg"} · klik in een veld om het te wijzigen, bewaard bij verlaten van het veld</div></div>
-      <div class="actions">${isBeheer() && rows.length ? `<select class="btn sm" data-act="ms-btw-alles" data-pid="${p.id}" title="Het btw-tarief van alle posten van dit project in één keer zetten"><option value="">Btw alles…</option><option value="0.06">alles op 6 %</option><option value="0.21">alles op 21 %</option><option value="0">alles op 0 %</option></select>` : ""}<button class="btn sm ${S.msRuimte ? "primary" : ""}" data-act="ms-ruimte" title="Posten per lot groeperen per ruimte (alfabetisch), enkel in deze weergave — de nummering en de export veranderen niet">${S.msRuimte ? "Per ruimte ✓" : "Per ruimte"}</button>${isBeheer() ? `<button class="btn sm ${S.msKlant ? "primary" : ""}" data-act="ms-klant" title="Kostprijs, marge en btw-kolom verbergen, bv. als je de meetstaat met de klant overloopt (sneltoets: K)">${S.msKlant ? "👁 Klantweergave aan" : "Klantweergave"}</button>` : ""}${schemaV() >= 13 && rows.some(r => gkKandidaat(r)) ? `<button class="btn sm" data-act="gk-new" data-pid="${p.id}" title="Offerte of meerwerk bevroren ter goedkeuring in het klantenportaal zetten">Ter goedkeuring voorleggen</button>` : ""}<button class="btn sm" data-act="ms-import" data-pid="${p.id}" title="Een bestaande meetstaat (Excel, elk BROS-sjabloon) inlezen als posten">Importeren uit Excel</button>${rows.length ? `<button class="btn sm" data-act="ms-export" data-pid="${p.id}" title="Excel in het BROS-sjabloon aanmaken in Documenten/Meetstaat van de projectmap">Exporteren naar Drive (Excel)</button><button class="btn sm" data-act="ms-pdf" data-pid="${p.id}" title="Meetstaat als pdf: klantversie of interne versie, per lot of per ruimte">Pdf</button>` : ""}<button class="btn sm" data-act="ms-add-post" data-pid="${p.id}">+ Post</button><button class="btn sm primary" data-act="ms-add-lot" data-pid="${p.id}">+ Lot toevoegen</button></div></div>
+      <div class="actions">${isBeheer() && rows.length ? `<select class="btn sm" data-act="ms-btw-alles" data-pid="${p.id}" title="Het btw-tarief van alle posten van dit project in één keer zetten"><option value="">Btw alles…</option><option value="0.06">alles op 6 %</option><option value="0.21">alles op 21 %</option><option value="0">alles op 0 %</option></select>` : ""}<button class="btn sm ${S.msRuimte ? "primary" : ""}" data-act="ms-ruimte" title="Posten per lot groeperen per ruimte (alfabetisch), enkel in deze weergave — de nummering en de export veranderen niet">${S.msRuimte ? "Per ruimte ✓" : "Per ruimte"}</button>${isBeheer() ? `<button class="btn sm ${S.msKlant ? "primary" : ""}" data-act="ms-klant" title="Kostprijs, marge en btw-kolom verbergen, bv. als je de meetstaat met de klant overloopt (sneltoets: K)">${S.msKlant ? "👁 Klantweergave aan" : "Klantweergave"}</button>` : ""}${schemaV() >= 13 && rows.some(r => gkKandidaat(r)) ? `<button class="btn sm" data-act="gk-new" data-pid="${p.id}" title="Offerte of meerwerk bevroren ter goedkeuring in het klantenportaal zetten">Ter goedkeuring voorleggen</button>` : ""}${isBeheer() ? `<button class="btn sm" data-act="ms-import" data-pid="${p.id}" title="Een bestaande meetstaat (Excel, elk BROS-sjabloon) inlezen als posten">Importeren uit Excel</button>` : ""}${rows.length ? `<button class="btn sm" data-act="ms-export" data-pid="${p.id}" title="Excel in het BROS-sjabloon aanmaken in Documenten/Meetstaat van de projectmap">Exporteren naar Drive (Excel)</button><button class="btn sm" data-act="ms-pdf" data-pid="${p.id}" title="Meetstaat als pdf: klantversie of interne versie, per lot of per ruimte">Pdf</button>` : ""}<button class="btn sm" data-act="ms-add-post" data-pid="${p.id}">+ Post</button><button class="btn sm primary" data-act="ms-add-lot" data-pid="${p.id}">+ Lot toevoegen</button></div></div>
     ${rows.length ? `<div class="tw"><table class="t ms"><thead><tr><th></th><th>Nr</th><th>Omschrijving</th><th>Locatie</th><th>Hoev.</th><th>Eenh.</th>${beheer ? `<th title="Kostprijs / aannemersprijs excl. btw">Kost EP</th><th>Marge</th>` : ""}<th class="r">Klant EP</th><th class="r">Totaal excl.</th>${beheer ? `<th>Btw</th>` : ""}<th>Status</th><th></th></tr></thead><tbody>${body}</tbody></table></div>` : `<div class="empty"><b>Nog geen posten</b>Voeg een lot toe (met de standaardposten) of kies losse posten uit de bibliotheek.</div>`}</div>`;
 }
 /* ---------- Meetstaat als pdf (jsPDF): klantversie (verkoopprijzen) of interne versie (kost, marge, verkoop) ---------- */
@@ -659,7 +697,7 @@ async function msBuildPdf(p, o) {
   const rk = (r) => (r.locatie || "").trim();
   // kolommen: [label, breedte, uitlijning, waarde]
   const cols = intern
-    ? [["Nr", 12, "l", r => r.code], ["Omschrijving", 66, "l", r => r.omschrijving], ["Hoev.", 20, "r", q], ["Kost EP", 20, "r", r => Number(r.eenheidsprijs) ? geld(r.eenheidsprijs) : ""], ["Marge", 13, "r", r => Number(r.hoeveelheid) ? nl(msMarge(r) * 100, 0) + " %" : ""], ["Klant EP", 20, "r", r => Number(msVerkoopEP(r)) ? geld(msVerkoopEP(r)) : ""], ["Totaal", 22, "r", r => Number(r.hoeveelheid) ? geld(rowSigned(r)) : ""], ["Status", 9, "l", r => ({ offerte: "OFF", akkoord: "OK", meerwerk: "MW", minwerk: "MIN", vervallen: "X" })[r.status] || ""]]
+    ? [["Nr", 12, "l", r => r.code], ["Omschrijving", 66, "l", r => r.omschrijving], ["Hoev.", 20, "r", q], ["Kost EP", 20, "r", r => Number(r.eenheidsprijs) ? geld(r.eenheidsprijs) : ""], ["Marge", 13, "r", r => Number(r.hoeveelheid) ? nl(msMarge(r) * 100, 1) + " %" : ""], ["Klant EP", 20, "r", r => Number(msVerkoopEP(r)) ? geld(msVerkoopEP(r)) : ""], ["Totaal", 22, "r", r => Number(r.hoeveelheid) ? geld(rowSigned(r)) : ""], ["Status", 9, "l", r => ({ offerte: "OFF", akkoord: "OK", meerwerk: "MW", minwerk: "MIN", vervallen: "X" })[r.status] || ""]]
     : [["Nr", 13, "l", r => r.code], ["Omschrijving", 84, "l", r => r.omschrijving], ["Hoev.", 22, "r", q], ["Eenheidsprijs", 24, "r", r => Number(msVerkoopEP(r)) ? geld(msVerkoopEP(r)) : ""], ["Totaal", 24, "r", r => Number(r.hoeveelheid) ? geld(rowSigned(r)) : ""], ["Status", 15, "l", r => ({ offerte: "Offerte", akkoord: "Akkoord", meerwerk: "Meerwerk", minwerk: "Minwerk", vervallen: "Vervallen" })[r.status] || ""]];
   const xs = []; let x = M; cols.forEach(c => { xs.push(x); x += c[1]; });
   const header = () => { if (logo) doc.addImage(logo, "PNG", M, 10, 26, 7.8); doc.setFont("helvetica", "normal"); doc.setFontSize(8); doc.setTextColor(...muted); doc.text(`${clean(projName(p))} · Meetstaat${intern ? " (intern)" : ""} · ${fmtLong(o.datum)}`, W - M, 15, { align: "right" }); doc.setDrawColor(...line); doc.line(M, 20, W - M, 20); y = 26; };
@@ -685,7 +723,7 @@ async function msBuildPdf(p, o) {
       need(h); doc.setFont("helvetica", "normal"); doc.setFontSize(8.5); doc.setTextColor(...(r.status === "vervallen" ? muted : ink));
       cols.forEach((c, i) => { if (i === 1) doc.text(oms, xs[i] + 1, y + 3.2); else doc.text(clean(c[3](r)), c[2] === "r" ? xs[i] + c[1] - 1 : xs[i] + 1, y + 3.2, { align: c[2] === "r" ? "right" : "left" }); });
       doc.setDrawColor(...line); doc.line(M, y + h, W - M, y + h); y += h;
-      if (msTelt(r)) { const v = rowSigned(r); if (r.status === "meerwerk" || r.status === "minwerk") totMw += v; else totVerkoop += v; totBtw += v * (Number(r.btw) || 0); totKost += msKost(r); }
+      if (msTelt(r)) { const v = rowSigned(r); if (r.status === "meerwerk" || r.status === "minwerk") totMw += v; else totVerkoop += v; totBtw += v * (Number(r.btw) || 0); totKost += kostSigned(r); }
     });
   });
   // totalen
@@ -855,7 +893,7 @@ function amBereken(pid, a, ovs, loten) {   // alle regels + momentopname + total
   const regels = msRows(pid).map(r => amRegel(r, a.marge ?? 0.1, ovs[r.id], loten));
   const zicht = regels.filter(x => x.tonen);
   const snap = zicht.map(x => ({ post_id: x.r.id, lot: x.r.lot, code: x.r.code || "", groep: x.r.groep || "", omschrijving: x.r.omschrijving || "", locatie: x.r.locatie || "", eenheid: x.r.eenheid || "", prijstype: x.r.prijstype || "EP", hoeveelheid: Number(x.r.hoeveelheid) || 0, status: x.r.status, prijs: x.prijs }));
-  const tot = zicht.reduce((s, x) => { const h = Number(x.r.hoeveelheid) || 0; s.klant += x.klant * h; s.aan += x.prijs * h; return s; }, { klant: 0, aan: 0 });
+  const tot = zicht.reduce((s, x) => { const h = Number(x.r.hoeveelheid) || 0; const t = (v) => x.r.status === "minwerk" ? -Math.abs(r2(v * h)) : r2(v * h); s.klant += t(x.klant); s.aan += t(x.prijs); return s; }, { klant: 0, aan: 0 });
   return { regels, snap, tot };
 }
 const amSnapKey = (snap) => JSON.stringify((snap || []).map(x => [x.post_id, Number(x.hoeveelheid) || 0, amRond(x.prijs), x.omschrijving, x.eenheid]).sort((a, b) => a[0].localeCompare(b[0])));
@@ -890,6 +928,7 @@ function amOpen(pid, cid) {
       <div class="field"><label>Status</label><div style="padding-top:6px" id="am_status"></div></div>
       <div class="field span2"><label for="am_bericht">Bericht aan de aannemer (bovenaan in zijn portaal en in de mail)</label><textarea id="am_bericht" rows="2" placeholder="bv. Prijzen excl. btw, inclusief levering en plaatsing. Graag je akkoord tegen vrijdag.">${esc(AM.bericht)}</textarea></div>
       ${reactie && reactie.opmerking ? `<div class="field span2"><div class="notice" style="margin:0"><div><b>Opmerking van ${esc(reactie.beslist_naam || x.c.naam)}:</b> ${esc(reactie.opmerking)}</div></div></div>` : ""}
+      ${a && a.status === "akkoord" && Array.isArray(a.niet_toegepast) && a.niet_toegepast.length ? `<div class="field span2"><div class="notice" style="margin:0;border-color:var(--warn)"><div><b>${a.niet_toegepast.length} post${a.niet_toegepast.length > 1 ? "en" : ""} niet automatisch overgenomen als kostprijs</b> — de prijs of marge werd na het delen nog gewijzigd, of er was geen klantprijs. Controleer en vul de kostprijs zelf in de meetstaat in:<ul style="margin:6px 0 0 18px">${a.niet_toegepast.map(id => { const g = (a.regels || []).find(q => q.post_id === id) || {}; const r = S.meetstaat_posten[id]; return `<li>${esc(g.code || r?.code || "")} ${esc(g.omschrijving || r?.omschrijving || "(verwijderde post)")} — aannemersprijs ${eur2(g.prijs)}${r ? ` · nu kost ${eur2(r.eenheidsprijs)}, klant ${eur2(msVerkoopEP(r))}` : ""}</li>`; }).join("")}</ul></div></div></div>` : ""}
     </div>
     <div id="am_tabel"></div>
     <div class="actions" style="margin-top:12px;justify-content:space-between;flex-wrap:wrap;gap:8px"><span class="muted" style="font-size:12px" id="am_tot"></span>
@@ -950,7 +989,7 @@ function amTekenTabel(focusEl) {
         <td class="r num muted" title="Klantprijs per eenheid">${eur2(x.klant)}</td>
         <td style="width:70px"><input class="inline num" data-am-post="${r.id}" data-f="marge" type="text" inputmode="decimal" autocomplete="off" placeholder="${nl(AM.marge * 100, 2)}" value="${x.eigenMarge ? nl(x.marge * 100, 2) : ""}" ${x.vast ? `disabled title="Vaste prijs ingevuld"` : `title="Marge % voor deze post (leeg = ${nl(AM.marge * 100, 2)} %)"`}></td>
         <td style="width:100px"><input class="inline num" data-am-post="${r.id}" data-f="prijs" type="text" inputmode="decimal" autocomplete="off" placeholder="${amTxt(x.klant * (1 - x.marge))}" value="${x.vast ? amTxt(x.prijs) : ""}" title="Vaste aannemersprijs per eenheid (leeg = klantprijs − marge)"></td>
-        <td class="r num" style="white-space:nowrap"><b>${x.tonen && h ? eur2(x.prijs * h) : ""}</b>${veranderd ? `<small style="display:block;color:var(--crit)" title="Gedeeld: ${eur2(gedeeldPrijs[r.id])}">was ${eur2(gedeeldPrijs[r.id])}</small>` : ""}</td>
+        <td class="r num" style="white-space:nowrap"><b>${x.tonen && h ? eur2(r.status === "minwerk" ? -Math.abs(r2(x.prijs * h)) : r2(x.prijs * h)) : ""}</b>${veranderd ? `<small style="display:block;color:var(--crit)" title="Gedeeld: ${eur2(gedeeldPrijs[r.id])}">was ${eur2(gedeeldPrijs[r.id])}</small>` : ""}</td>
         <td style="min-width:120px;font-size:12px">${re ? `${re.opmerking ? `<span title="${esc(re.opmerking)}">💬 ${esc(re.opmerking.length > 60 ? re.opmerking.slice(0, 58) + "…" : re.opmerking)}</span>` : ""}${re.tegenprijs != null ? `<div style="white-space:nowrap">tegenprijs <b>${eur2(re.tegenprijs)}</b> <button type="button" class="btn ghost sm" data-am-neem="${r.id}" title="Deze prijs overnemen als vaste prijs">Overnemen</button></div>` : ""}` : ""}</td></tr>`;
     }).join("");
   }).join("");
@@ -1647,21 +1686,44 @@ function msAddPostForm(pid, lot) {
   const sync = () => { $("#ap_list").innerHTML = listHtml(Number($("#ap_lot").value), $("#ap_q").value.trim()); };
   $("#ap_lot").addEventListener("change", sync); $("#ap_q").addEventListener("input", sync);
 }
+let MARGE_DEC = 1e4;   // decimalen van de marge per post: 8 sinds script 033 (gezet bij elke bewerking)
 async function msEdit(id, f, raw) {
+  MARGE_DEC = schemaV() >= 33 ? 1e8 : 1e4;
   const r = S.meetstaat_posten[id]; if (!r) return;
+  const terug = (msg) => { toast(msg, 6000); renderPending = false; document.activeElement?.blur?.(); render(); };
   let v = raw;
   if (["hoeveelheid", "eenheidsprijs", "btw", "marge"].includes(f)) {
     const n = leesGetal(raw);
-    if (Number.isNaN(n)) { toast(`"${raw}" is geen geldig getal — gebruik bv. 2,5 of 1.250,75`, 5000); renderPending = false; document.activeElement?.blur?.(); render(); return; }
-    v = f === "marge" ? (n == null ? null : n / 100) : (n == null ? 0 : n);
+    if (Number.isNaN(n)) return terug(`"${raw}" is geen geldig getal — gebruik bv. 2,5 of 1.250,75`);
+    if (f === "marge" && n != null && (n <= -100 || n > 1000)) return terug(`Een marge van ${nl(n, 2)} % kan niet — geef een % tussen -99 en 1000`);
+    if (f === "eenheidsprijs" && n != null && n < 0) return terug("Een negatieve kostprijs kan niet — zet de post op minwerk of gebruik een negatieve hoeveelheid");
+    const m = f === "hoeveelheid" || f === "eenheidsprijs" ? duizendKeuze(raw, n) : n;
+    v = f === "marge" ? (m == null ? null : Math.round(m * MARGE_DEC / 100) / MARGE_DEC) : f === "eenheidsprijs" ? r2(m ?? 0) : (m == null ? 0 : m);
   }
-  if (String(r[f] ?? "") === String(v ?? "")) return;
+  const zelfde = typeof v === "number" ? r[f] != null && r[f] !== "" && Math.abs(Number(r[f]) - v) < 1e-10 : String(r[f] ?? "") === String(v ?? "");
+  if (zelfde) return;
+  // door de klant goedgekeurde posten: de klantprijs mag niet ongemerkt veranderen
+  const goed = ["akkoord", "meerwerk", "minwerk"].includes(r.status); const ep = msVerkoopEP(r); let extra = null;
+  if (goed && f === "eenheidsprijs" && schemaV() >= 12) {
+    // nieuwe kostprijs (bv. een andere aannemer): klantprijs behouden door de marge te herrekenen
+    if (v > 0 && ep > 0) { const m = Math.round((ep / v - 1) * MARGE_DEC) / MARGE_DEC; if (m >= -1 && m <= 10 && r2(v * (1 + m)) === ep) extra = { marge: m }; }
+    if (!extra && !confirm(`${r.code} ${r.omschrijving}\n\nDeze post is goedgekeurd aan ${eur2(ep)} per ${r.eenheid}. Met deze kostprijs kan die klantprijs niet behouden blijven — de klantprijs verandert. Doorgaan?`)) { render(); return; }
+  }
+  if (goed && f === "marge" && !confirm(`${r.code} ${r.omschrijving}\n\nDeze post is goedgekeurd aan ${eur2(ep)} per ${r.eenheid}. Een andere marge verandert die klantprijs. Doorgaan?`)) { render(); return; }
+  if (goed && r.akkoord_op && f === "hoeveelheid" && !confirm(`${r.code} ${r.omschrijving}\n\nDe klant keurde deze post goed met ${nl(r.hoeveelheid, 2)} ${r.eenheid}. De hoeveelheid wijzigen verandert het goedgekeurde bedrag (een wijziging na akkoord hoort meestal als meer- of minwerk). Toch wijzigen naar ${nl(v, 2)}?`)) { render(); return; }
   const active = document.activeElement; const keep = active && active.dataset ? { ms: active.dataset.ms, f: active.dataset.f, sel: active.selectionStart } : null;
   try {
     if (schemaV() >= 12 && (f === "eenheidsprijs" || f === "marge")) {
-      const { error } = await sb.from("meetstaat_prijzen").upsert({ post_id: id, eenheidsprijs: f === "eenheidsprijs" ? v : (Number(r.eenheidsprijs) || 0), marge: f === "marge" ? v : (r.marge == null || r.marge === "" ? null : Number(r.marge)), updated_at: new Date().toISOString() });
-      if (error) { toast("Bewaren mislukt: " + error.message); return; }
-      S.meetstaat_posten[id] = { ...r, [f]: v }; await msRefetch([id]);
+      // enkel de gewijzigde kolom bijwerken: wie tegelijk de andere kolom wijzigt, verliest zijn wijziging niet
+      const patch = { [f]: v, ...(extra || {}) };
+      let { data, error } = await sb.from("meetstaat_prijzen").update({ ...patch, updated_at: new Date().toISOString() }).eq("post_id", id).select("post_id");
+      if (!error && !(data || []).length) {   // nog geen prijsrij voor deze post
+        ({ error } = await sb.from("meetstaat_prijzen").insert({ post_id: id, eenheidsprijs: 0, marge: null, ...patch }));
+        if (error && /duplicate|23505/i.test((error.code || "") + " " + (error.message || ""))) ({ error } = await sb.from("meetstaat_prijzen").update(patch).eq("post_id", id));
+      }
+      if (error) { toast("Bewaren mislukt: " + error.message, 6000); render(); return; }
+      S.meetstaat_posten[id] = { ...r, ...patch }; await msRefetch([id]);
+      if (extra) toast(`Klantprijs blijft ${eur2(ep)} (goedgekeurd) — marge herrekend naar ${nl(extra.marge * 100, 2)} %`, 5000);
     } else await dbUpdate("meetstaat_posten", id, { [f]: v, updated_at: new Date().toISOString() });
   } catch (e) { return; }
   if (keep && keep.ms) { const el = document.querySelector(`[data-ms="${keep.ms}"][data-f="${keep.f}"]`); if (el) { el.focus(); try { if (keep.sel != null) el.setSelectionRange(keep.sel, keep.sel); } catch (e) { } } }
@@ -1679,7 +1741,6 @@ const VORD_STATUS = { opgemaakt: "Op te maken", verzonden: "Verzonden", betaald:
 const vordOf = (pid) => Object.values(S.vorderingen).filter(v => v.project_id === pid).sort((a, b) => a.nr - b.nr || (a.created_at || "").localeCompare(b.created_at || ""));
 const vordLocked = (v) => v.status !== "opgemaakt";
 const isMw = (r) => r.status === "meerwerk" || r.status === "minwerk";
-const rowSigned = (r) => msVerkoop(r) * (r.status === "minwerk" ? -1 : 1);
 /* regels van een vordering: lot-niveau (post_id leeg) en post-niveau */
 function vordRegels(vid) { const lot = {}, post = {}; Object.values(S.vordering_regels).filter(r => r.vordering_id === vid).forEach(r => { if (r.post_id) post[r.post_id] = r; else lot[r.lot] = r; }); return { lot, post }; }
 const vordPct = (rg, r) => rg.post[r.id] ? Number(rg.post[r.id].pct) : rg.lot[r.lot] ? Number(rg.lot[r.lot].pct) : null;
@@ -1694,9 +1755,19 @@ const vordBase = (basis, lot, soort) => soort === "meerwerk" ? (basis[lot]?.meer
 function vordCalc(v) {
   const rg = vordRegels(v.id); const perLot = {}, perPost = {}; let excl = 0, btw = 0;
   vordRows(v.project_id, v.soort).forEach(r => { const pct = vordPct(rg, r); if (pct == null) return; const a = pct * rowSigned(r); perPost[r.id] = { pct, excl: a }; const L = perLot[r.lot] = perLot[r.lot] || { excl: 0 }; L.excl += a; excl += a; btw += a * (Number(r.btw) || 0); });
-  return { excl, btw, incl: excl + btw, perLot, perPost, rg };
+  const calcExcl = excl, calcBtw = btw;
+  // Verzonden of betaald: de factuur is wat telt. Wijzigt de meetstaat nadien, dan worden de bedragen per lot en per post
+  // herschaald naar het factuurbedrag — zo rekenen cumul, rest en slotfactuur met wat echt gefactureerd is (zoals het klantenportaal).
+  const vast = vordLocked(v) && v.bedrag_excl != null && v.bedrag_excl !== "";
+  if (vast) {
+    const B = Number(v.bedrag_excl);
+    if (Math.abs(calcExcl) > 0.005) { const f = B / calcExcl; if (Math.abs(f - 1) > 1e-12) { Object.values(perPost).forEach(P => { P.excl *= f; P.pct *= f; }); Object.values(perLot).forEach(L => { L.excl *= f; }); } btw = calcBtw * f; }
+    excl = B;
+    if (v.btw_bedrag != null && v.btw_bedrag !== "") btw = Number(v.btw_bedrag);
+  }
+  return { excl, btw, incl: excl + btw, calcExcl, calcBtw, vast, perLot, perPost, rg };
 }
-const vordBedrag = (v, c) => v.bedrag_excl != null && v.bedrag_excl !== "" && vordLocked(v) ? Number(v.bedrag_excl) : c.excl;
+const vordBedrag = (v, c) => c.excl;   /* verzonden/betaald = bevroren factuurbedrag (zie vordCalc) */
 /* cumulatief per post over alle vorderingen van dezelfde soort */
 function cumPost(pid, calcs, r) { return vordOf(pid).filter(v => (v.soort === "meerwerk") === isMw(r)).reduce((s, v) => s + (calcs[v.id]?.perPost[r.id]?.pct || 0), 0); }
 /* bedrag → %: de regels van een vordering herschalen zodat de berekende som precies op een bedrag (excl. btw) uitkomt.
@@ -1726,9 +1797,12 @@ async function vordFit(vid) {
     if (g.id) { const { data, error } = await sb.from("vordering_regels").update({ pct: g.pct }).eq("id", g.id).select().single(); if (error) return toast("Mislukt: " + error.message); S.vordering_regels[rowKey("vordering_regels", data)] = data; }
     else { const { data, error } = await sb.from("vordering_regels").insert({ vordering_id: vid, lot: g.lot, post_id: g.post_id || null, pct: g.pct }).select().single(); if (error) return toast("Mislukt: " + error.message); S.vordering_regels[rowKey("vordering_regels", data)] = data; }
   }
+  // verstuurde factuur zonder (geldige) bevroren btw: de databank berekent ze nu opnieuw op de nieuwe verdeling
+  if (vordLocked(v) && schemaV() >= 33 && (v.btw_bedrag == null || (Number(v.btw_bedrag) === 0 && Math.abs(bedrag) > 0.005))) await dbUpdate("vorderingen", vid, { btw_bedrag: null }).catch(() => { });
   render(); toast(Math.abs(fit.tekort) > 0.5 ? `Percentages op het maximum gezet — ${eur(fit.tekort)} meer dan er nog openstaat voor deze loten` : `Percentages afgeleid uit ${eur(bedrag)}`);
 }
 function vFacturatie(p) {
+  if (S.prijsFout) return `<div class="panel"><div class="empty"><b>Prijzen niet correct geladen</b>Herlaad de pagina (⌘⌥R) — tot dan worden er geen bedragen getoond om fouten te vermijden.</div></div>`;
   if (!msReady()) return `<div class="panel"><div class="empty"><b>Facturatie nog niet beschikbaar</b>Voer eerst databasescript <code>sql/007_meetstaat.sql</code> uit.</div></div>`;
   const beheer = isBeheer(); const basis = lotBasis(p.id); const vs = vordOf(p.id); const calcs = {}; vs.forEach(v => calcs[v.id] = vordCalc(v));
   const lots = Object.keys(basis).map(Number).sort((a, b) => a - b);
@@ -1764,16 +1838,16 @@ function vFacturatie(p) {
         return `<tr class="vpost"><td class="sticky" style="padding-left:30px"><span class="muted num" style="font-size:11px">${esc(r.code)}</span> ${esc(r.omschrijving)}${r.locatie ? ` <small class="muted">· ${esc(r.locatie)}</small>` : ""}</td><td class="r num">${eur2(amt)}</td>${vs.map(v => postCell(v, r)).join("")}<td class="c num" style="white-space:nowrap">${pctTxt(cumP)}</td><td class="r num ${Math.abs(amt - invP) < 0.005 ? "muted" : ""}">${eur2(amt - invP)}</td></tr>`; }).join("") : ""); }).join("");
   const totRow = (label, base, f, rest) => `<tr class="tot"><td class="sticky"><b>${label}</b></td><td class="r num"><b>${eur2(base)}</b></td>${vs.map(v => `<td class="c num"><b>${eur2(f(v))}</b></td>`).join("")}<td></td><td class="r num"><b>${eur2(rest)}</b></td></tr>`;
   const sumInv = (soort) => vs.filter(v => (v.soort === "meerwerk") === (soort === "meerwerk")).reduce((s, v) => s + calcs[v.id].excl, 0);
-  const head = vs.map(v => { const c = calcs[v.id]; const frozen = vordLocked(v) && v.bedrag_excl != null && v.bedrag_excl !== ""; const diff = frozen ? Number(v.bedrag_excl) - c.excl : 0;
+  const head = vs.map(v => { const c = calcs[v.id]; const frozen = c.vast; const diff = frozen ? Number(v.bedrag_excl) - c.calcExcl : 0;
     return `<th class="vh"><div class="vh-top"><span class="pill st-${v.status === "betaald" ? "afgerond" : v.status === "verzonden" ? "lopend" : "offerte"}">${v.nr === 0 ? "Voorschot" : "#" + v.nr}${v.soort === "meerwerk" ? " · MW" : ""}</span>${beheer && !vordLocked(v) ? `<button class="btn ghost sm danger" data-act="vord-del" data-id="${v.id}" aria-label="Verwijderen">✕</button>` : ""}</div>
       <div class="vh-body">${beheer ? `<input class="inline" data-vf="${v.id}" data-f="omschrijving" value="${esc(v.omschrijving || "")}" placeholder="${esc(VORD_SOORT[v.soort])}">` : `<div>${esc(v.omschrijving || VORD_SOORT[v.soort])}</div>`}
       <div class="vh-row"><span class="muted">Datum</span>${beheer ? `<input class="inline num" data-vf="${v.id}" data-f="datum" type="date" value="${v.datum || ""}">` : `<span class="num">${fmtLong(v.datum)}</span>`}</div>
       <div class="vh-row"><span class="muted">Yuki-nr</span>${beheer ? `<input class="inline num" data-vf="${v.id}" data-f="factuurnummer" value="${esc(v.factuurnummer || "")}" placeholder="—">` : `<span class="num">${esc(v.factuurnummer || "—")}</span>`}</div>
-      <div class="vh-row"><span class="muted">Berekend</span><span class="num">${eur2(c.excl)}</span></div>
+      <div class="vh-row"><span class="muted">Berekend</span><span class="num">${eur2(c.calcExcl)}</span></div>
       <div class="vh-row"><span class="muted">Btw · incl.</span><span class="num">${eur2(c.btw)} · <b>${eur2(c.incl)}</b></span></div>
-      ${beheer ? `<div class="vh-row"><span class="muted" title="Bedrag op de factuur in Yuki (excl. btw) — wordt bevroren zodra de status verzonden of betaald is. Wijkt het af van de berekening, dan kan je de percentages eruit laten afleiden.">Factuur excl.</span><input class="inline num" data-vf="${v.id}" data-f="bedrag_excl" type="text" inputmode="decimal" autocomplete="off" value="${getalVeld(v.bedrag_excl)}" placeholder="${Math.round(c.excl)}"></div>` : ""}
+      ${beheer ? `<div class="vh-row"><span class="muted" title="Bedrag op de factuur in Yuki (excl. btw) — wordt bevroren zodra de status verzonden of betaald is. Wijkt het af van de berekening, dan kan je de percentages eruit laten afleiden.">Factuur excl.</span><input class="inline num" data-vf="${v.id}" data-f="bedrag_excl" type="text" inputmode="decimal" autocomplete="off" value="${getalVeld(v.bedrag_excl)}" placeholder="${Math.round(c.calcExcl)}"></div>` : ""}
       ${frozen && Math.abs(diff) > 0.5 ? `<div class="vh-row" style="color:var(--warn)"><span>Verschil</span><span class="num">${eur2(diff)}</span></div>` : ""}
-      ${beheer && v.bedrag_excl != null && v.bedrag_excl !== "" && Math.abs(Number(v.bedrag_excl) - c.excl) > 0.5 ? `<div class="vh-row"><button class="btn ghost sm" data-act="vord-fit" data-id="${v.id}" title="De percentages van deze vordering zo herrekenen dat de berekening precies op het factuurbedrag uitkomt (verschil nu ${eur2(Number(v.bedrag_excl) - c.excl)})${vordLocked(v) ? " — het factuurbedrag verandert niet, enkel de verdeling" : ""}">Percentages herrekenen op ${eur2(Number(v.bedrag_excl))}</button></div>` : ""}
+      ${beheer && v.bedrag_excl != null && v.bedrag_excl !== "" && Math.abs(Number(v.bedrag_excl) - c.calcExcl) > 0.5 ? `<div class="vh-row"><button class="btn ghost sm" data-act="vord-fit" data-id="${v.id}" title="De percentages van deze vordering zo herrekenen dat de berekening precies op het factuurbedrag uitkomt (verschil nu ${eur2(Number(v.bedrag_excl) - c.calcExcl)})${vordLocked(v) ? " — het factuurbedrag verandert niet, enkel de verdeling" : ""}">Percentages herrekenen op ${eur2(Number(v.bedrag_excl))}</button></div>` : ""}
       <div class="vh-row"><span class="muted">Status</span>${beheer ? `<select class="inline" data-vf="${v.id}" data-f="status">${opts(Object.entries(VORD_STATUS), v.status)}</select>` : `<span>${VORD_STATUS[v.status]}</span>`}</div></div></th>`; }).join("");
   const grid = `<div class="panel" style="margin-bottom:16px"><div class="panel-head"><div><h3>Vorderingsstaat</h3><div class="muted" style="font-size:12px;margin-top:2px">Per lot het % dat je in elke vordering factureert; klap een lot open (▸) om per post te werken — een post-% overschrijft het lot-%. Het voorschot telt overal mee. Meerwerk staat apart en zit niet in het voorschot.</div></div>
       <div class="actions">${beheer ? `${heeftVoorschot ? "" : `<button class="btn sm" data-act="vord-new" data-pid="${p.id}" data-soort="voorschot">+ Voorschot</button>`}<button class="btn sm primary" data-act="vord-new" data-pid="${p.id}" data-soort="vordering">+ Vordering</button>${meerwerk ? `<button class="btn sm" data-act="vord-new" data-pid="${p.id}" data-soort="meerwerk">+ Meerwerkfactuur</button>` : ""}<button class="btn sm" data-act="vord-new" data-pid="${p.id}" data-soort="slotfactuur" title="Alles wat nog openstaat, per post">+ Slotfactuur</button>` : ""}</div></div>
@@ -1784,7 +1858,7 @@ function vFacturatie(p) {
       <tr class="tot"><td class="sticky"><b>Totaal incl. btw</b></td><td></td>${vs.map(v => `<td class="c num"><b>${eur2(calcs[v.id].incl)}</b></td>`).join("")}<td></td><td></td></tr></tbody></table></div>` : `<div class="empty"><b>Nog geen vorderingen</b>Begin met het voorschot (bv. 30 % op het contract), daarna een vordering per afgewerkt lot of per post.</div>`}</div>`;
   const klant = `<div class="panel"><div class="panel-head"><div><h3>Overzicht voor de klant</h3><div class="muted" style="font-size:12px;margin-top:2px">Zo ziet de klant het in het portaal: de facturen en, per lot en post, welk aandeel in welke factuur zat (cumulatief en rest) — zonder kostprijzen, berekend-versus-factuurverschillen of Yuki-details.</div></div></div>
     <div class="tw"><table class="t"><thead><tr><th>Nr</th><th>Datum</th><th>Omschrijving</th><th>Loten</th><th class="r">Excl. btw</th><th class="r">Btw</th><th class="r">Incl. btw</th><th>Status</th></tr></thead><tbody>
-      ${vs.map(v => { const c = calcs[v.id]; const excl = vordBedrag(v, c); const btw = c.excl ? excl * (c.btw / c.excl) : c.btw; const lotsTxt = v.soort === "voorschot" ? "alle loten" : Object.keys(c.perLot).filter(l => Math.abs(c.perLot[l].excl) > 0.005).map(l => lotName(Number(l))).join(", ");
+      ${vs.map(v => { const c = calcs[v.id]; const excl = c.excl; const btw = c.btw; const lotsTxt = v.soort === "voorschot" ? "alle loten" : Object.keys(c.perLot).filter(l => Math.abs(c.perLot[l].excl) > 0.005).map(l => lotName(Number(l))).join(", ");
         return `<tr><td class="num">${v.nr === 0 ? "V" : v.nr}</td><td class="num">${fmtLong(v.datum)}</td><td>${esc(v.omschrijving || VORD_SOORT[v.soort])}${v.factuurnummer ? `<small class="muted" style="display:block">factuur ${esc(v.factuurnummer)}</small>` : ""}</td><td class="muted" style="font-size:12px;max-width:260px">${esc(lotsTxt)}</td><td class="r num">${eur2(excl)}</td><td class="r num">${eur2(btw)}</td><td class="r num"><b>${eur2(excl + btw)}</b></td><td><span class="pill st-${v.status === "betaald" ? "afgerond" : v.status === "verzonden" ? "lopend" : "offerte"}">${VORD_STATUS[v.status]}</span></td></tr>`; }).join("") || `<tr><td class="muted" colspan="8">Nog geen facturen.</td></tr>`}
       <tr class="tot"><td colspan="4"><b>Nog te factureren (contract + meerwerk − gefactureerd/opgemaakt)</b></td><td class="r num"><b>${eur2(contract + meerwerk - gefact - open)}</b></td><td></td><td></td><td></td></tr></tbody></table></div></div>`;
   return kpi + waarschuwing + grid + klant;
@@ -1886,7 +1960,14 @@ let ppInc = () => 0, ppBad = () => false;
 async function vordEditPct(vid, lot, raw, postId) {
   const v = S.vorderingen[vid]; if (!v || vordLocked(v)) return;
   const n = leesGetal(raw); if (Number.isNaN(n)) { toast(`"${raw}" is geen geldig percentage`, 5000); render(); return; }
-  const pct = n == null ? null : Math.min(1, Math.max(0, n / 100));
+  if (n != null && (n < 0 || n > 100)) { toast("Geef een percentage tussen 0 en 100", 5000); render(); return; }
+  const P = schemaV() >= 33 ? 1e9 : 1e4; const pct = n == null ? null : Math.round(n / 100 * P) / P;
+  if (pct) {   // samen met de andere vorderingen van dezelfde soort nooit ongemerkt meer dan 100 % factureren
+    const calcs = {}; vordOf(v.project_id).filter(x => x.id !== vid).forEach(x => calcs[x.id] = vordCalc(x));
+    const rows = vordRows(v.project_id, v.soort).filter(r => postId ? r.id === postId : r.lot === lot);
+    const over = rows.map(r => ({ r, al: cumPost(v.project_id, calcs, r) })).filter(x => x.al + pct > 1 + 1e-6);
+    if (over.length && !confirm(`Met ${nl(n, 2)} % wordt ${over.length === 1 ? `post ${over[0].r.code}` : `bij ${over.length} posten`} meer dan 100 % gefactureerd (al ${nl(over[0].al * 100, 2)} % in andere vorderingen). Toch bewaren?`)) { render(); return; }
+  }
   const all = Object.values(S.vordering_regels).filter(r => r.vordering_id === vid && r.lot === lot);
   const cur = all.find(r => (postId ? r.post_id === postId : !r.post_id));
   if (cur && pct != null && Math.abs(Number(cur.pct) - pct) < 1e-6) return;
@@ -1899,18 +1980,34 @@ async function vordEditPct(vid, lot, raw, postId) {
 }
 async function vordEdit(vid, f, raw) {
   const v = S.vorderingen[vid]; if (!v) return; let val = raw;
-  if (f === "bedrag_excl") { const n = leesGetal(raw); if (Number.isNaN(n)) { toast(`"${raw}" is geen geldig bedrag`, 5000); render(); return; } val = n; }
+  if (f === "bedrag_excl") { const n = duizendKeuze(raw, leesGetal(raw)); if (Number.isNaN(n)) { toast(`"${raw}" is geen geldig bedrag`, 5000); render(); return; } val = n == null ? null : r2(n); }
   if (f === "datum") val = raw || null;
-  if (String(v[f] ?? "") === String(val ?? "")) return;
-  const patch = { [f]: val };
-  if (f === "status" && val !== "opgemaakt" && (v.bedrag_excl == null || v.bedrag_excl === "")) patch.bedrag_excl = Math.round(vordCalc(v).excl * 100) / 100; // bevriezen op het berekende bedrag
+  const heeftB = v.bedrag_excl != null && v.bedrag_excl !== "";
+  if (f === "bedrag_excl" ? (val == null ? !heeftB : heeftB && Math.abs(Number(v.bedrag_excl) - val) < 0.005) : String(v[f] ?? "") === String(val ?? "")) return;
+  if (S.prijsFout && (f === "status" || f === "bedrag_excl")) { toast("De prijzen zijn niet correct geladen — herlaad de pagina (⌘⌥R) vóór je een factuur verstuurt.", 6000); render(); return; }
+  const patch = { [f]: val }; const btwKol = schemaV() >= 33; const c = vordCalc(v);
+  const btwVoor = (B) => Math.abs(c.calcExcl) > 0.005 ? r2(c.calcBtw * B / c.calcExcl) : Math.abs(B) < 0.005 ? 0 : null;   // btw volgens de tarieven van de posten, op het factuurbedrag (nog geen percentages → later)
+  if (f === "status" && val !== "opgemaakt" && (!vordLocked(v) || (btwKol && v.btw_bedrag == null))) {
+    const B = heeftB ? Number(v.bedrag_excl) : r2(c.calcExcl);
+    if (!heeftB) patch.bedrag_excl = B;   // bevriezen op het berekende bedrag
+    if (btwKol) patch.btw_bedrag = btwVoor(B);   // en de btw mee bevriezen (wijzigt de meetstaat nadien, dan blijft de factuur gelijk)
+  }
+  if (f === "status" && val === "opgemaakt" && vordLocked(v)) {
+    if (btwKol) patch.btw_bedrag = null;
+    if (heeftB && confirm(`De factuur gaat terug naar 'Op te maken'. Het bevroren factuurbedrag (${eur2(v.bedrag_excl)}) ook wissen, zodat het opnieuw uit de percentages berekend wordt?\n\nOK = wissen · Annuleren = bewaren (bv. om de percentages erop af te stemmen)`)) patch.bedrag_excl = null;
+  }
+  if (f === "bedrag_excl" && vordLocked(v)) {
+    if (val == null) { toast("Een verzonden of betaalde factuur moet een bedrag hebben", 5000); render(); return; }
+    if (!confirm(`Deze factuur is al ${VORD_STATUS[v.status].toLowerCase()}. Het factuurbedrag wijzigen van ${eur2(v.bedrag_excl)} naar ${eur2(val)} excl. btw?\n\nDoe dit enkel als het bedrag in Yuki ook zo is. De btw wordt mee herrekend en het klantenportaal toont het nieuwe bedrag.`)) { render(); return; }
+    if (btwKol) patch.btw_bedrag = btwVoor(val);
+  }
   await dbUpdate("vorderingen", vid, patch).catch(() => { });
 }
 /* gegevens voor het tabblad VORDERINGSSTAAT in de Excel-export (klantversie: bevroren bedragen, geen kostprijzen) */
 function vordExportData(p) {
   const vs = vordOf(p.id); if (!vs.length) return null;
   const basis = lotBasis(p.id); const lots = Object.keys(basis).map(Number).sort((a, b) => a - b); const calcs = {}; vs.forEach(v => calcs[v.id] = vordCalc(v));
-  const list = vs.map(v => { const c = calcs[v.id]; const excl = vordBedrag(v, c); const btw = c.excl ? excl * (c.btw / c.excl) : c.btw;
+  const list = vs.map(v => { const c = calcs[v.id]; const excl = c.excl; const btw = c.btw;
     return { nr: v.nr, soort: v.soort, datum: fmtLong(v.datum), omschrijving: v.omschrijving || VORD_SOORT[v.soort], factuurnummer: v.factuurnummer || "", loten: v.soort === "voorschot" ? "alle loten" : Object.keys(c.perLot).filter(l => Math.abs(c.perLot[l].excl) > 0.005).map(l => lotName(Number(l))).join(", "), excl: Math.round(excl * 100) / 100, btw: Math.round(btw * 100) / 100, incl: Math.round((excl + btw) * 100) / 100, status: VORD_STATUS[v.status] || v.status }; });
   const loten = [];
   ["vordering", "meerwerk"].forEach(soort => lots.forEach(l => { const base = vordBase(basis, l, soort); if (Math.abs(base) < 0.005) return;
@@ -1993,7 +2090,7 @@ async function exportMeetstaat(p) {
   loader.start("ms.export", "Sjabloon ophalen…", 9000);
   if (!templateCache) { const j = await driveCall("template", { match: "MEETSTAAT" }); const bin = atob(j.base64); const bytes = new Uint8Array(bin.length); for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i); templateCache = { name: j.name, bytes }; }
   loader.step("Meetstaat opbouwen…");
-  const rows = msRows(p.id).filter(msTelt).map(r => ({ lot: r.lot, groep: r.groep, omschrijving: r.omschrijving, locatie: r.locatie, artikelnr: r.artikelnr, hoeveelheid: Number(r.hoeveelheid) || 0, eenheid: r.eenheid, prijs: Math.round(msVerkoopEP(r) * 100) / 100, btw: Number(r.btw) || 0, status: r.status }));
+  const rows = msRows(p.id).filter(msTelt).map(r => ({ lot: r.lot, groep: r.groep, omschrijving: r.omschrijving, locatie: r.locatie, artikelnr: r.artikelnr, hoeveelheid: r.status === "minwerk" ? -Math.abs(Number(r.hoeveelheid) || 0) : Number(r.hoeveelheid) || 0 /* minwerk negatief: in het sjabloon is eindsaldo = hoeveelheid × prijs + kolom T, de tekst WEGGELATEN telt niet mee */, eenheid: r.eenheid, prijs: msVerkoopEP(r), btw: Number(r.btw) || 0, status: r.status }));
   const { bytes } = await window.MeetstaatExport.build(templateCache.bytes, { project: p, rows, titel: "MEETSTAAT", date: new Date(), vorderingen: vordExportData(p) });
   loader.step("Wegschrijven in Documenten/Meetstaat…");
   let b64 = ""; for (let i = 0; i < bytes.length; i += 0x8000) b64 += String.fromCharCode.apply(null, bytes.subarray(i, i + 0x8000)); b64 = btoa(b64);
@@ -2014,24 +2111,33 @@ function vPostenBeheer() {
   const l = S.loten[S.selLot]; const ps = Object.values(S.posten).filter(x => x.lot === S.selLot).sort((a, b) => a.volgorde - b.volgorde);
   return `<div class="grid two" style="grid-template-columns: 1fr 2fr;margin-bottom:16px">
     <div class="panel"><div class="panel-head"><h3>Loten meetstaat</h3></div>
-      <div class="tw"><table class="t"><thead><tr><th></th><th>Lot</th><th class="r" title="Standaardmarge op de kostprijs">Marge</th><th></th></tr></thead><tbody>${ls.map(x => `<tr class="click ${x.nr === S.selLot ? "sel" : ""}" data-sellot="${x.nr}"><td class="num" style="width:36px;color:var(--muted)">${x.nr}</td><td>${esc(x.naam)}<small class="muted" style="display:block">${postenOf(x.nr).filter(p => p.standaard_aan).length} standaard · ${postenOf(x.nr).length} posten${x.buildwise ? " · BBW " + esc(x.buildwise) : ""}</small></td><td class="r" style="width:90px;white-space:nowrap"><input class="inline num" style="width:52px;text-align:right" data-lot="${x.nr}" data-f="marge" type="number" step="1" value="${Math.round((Number(x.marge) || 0) * 100)}" aria-label="Marge %"> %</td><td style="width:40px"><input type="checkbox" data-lot="${x.nr}" data-f="standaard_aan" ${x.standaard_aan ? "checked" : ""} title="Standaard aan bij nieuw project"></td></tr>`).join("")}</tbody></table></div>
+      <div class="tw"><table class="t"><thead><tr><th></th><th>Lot</th><th class="r" title="Standaardmarge op de kostprijs">Marge</th><th></th></tr></thead><tbody>${ls.map(x => `<tr class="click ${x.nr === S.selLot ? "sel" : ""}" data-sellot="${x.nr}"><td class="num" style="width:36px;color:var(--muted)">${x.nr}</td><td>${esc(x.naam)}<small class="muted" style="display:block">${postenOf(x.nr).filter(p => p.standaard_aan).length} standaard · ${postenOf(x.nr).length} posten${x.buildwise ? " · BBW " + esc(x.buildwise) : ""}</small></td><td class="r" style="width:90px;white-space:nowrap"><input class="inline num" style="width:52px;text-align:right" data-lot="${x.nr}" data-f="marge" type="text" inputmode="decimal" autocomplete="off" value="${pctVeld(Number(x.marge) || 0)}" aria-label="Marge %"> %</td><td style="width:40px"><input type="checkbox" data-lot="${x.nr}" data-f="standaard_aan" ${x.standaard_aan ? "checked" : ""} title="Standaard aan bij nieuw project"></td></tr>`).join("")}</tbody></table></div>
       <div class="panel-body muted" style="font-size:12px;border-top:1px solid var(--line)">Marge = standaardopslag op de kostprijs voor alle posten van het lot (per post te overschrijven in de meetstaat). Vinkje = lot staat standaard aangevinkt bij "+ Lot toevoegen".</div></div>
     <div class="panel"><div class="panel-head"><h3>${l ? esc(lotName(l.nr)) : "Posten"}</h3>${l ? `<button class="btn sm primary" data-act="post-new" data-lot="${l.nr}">+ Post</button>` : ""}</div>
-      ${ps.length ? `<div class="tw"><table class="t"><thead><tr><th title="Standaard aan">Std</th><th>Groep</th><th>Omschrijving</th><th>Eenh.</th><th class="r">Richtprijs</th><th>Btw</th><th title="Actief">Act.</th><th></th></tr></thead><tbody>${ps.map(x => `<tr class="${x.actief === false ? "ms-dead" : ""}"><td style="width:32px"><input type="checkbox" data-post="${x.id}" data-f="standaard_aan" ${x.standaard_aan ? "checked" : ""}></td><td style="width:130px"><input class="inline" data-post="${x.id}" data-f="groep" value="${esc(x.groep || "")}"></td><td><input class="inline wide" data-post="${x.id}" data-f="omschrijving" value="${esc(x.omschrijving)}"></td><td style="width:84px"><select class="inline" data-post="${x.id}" data-f="eenheid">${opts(EENHEDEN.map(e => [e, e]), x.eenheid)}</select></td><td style="width:100px"><input class="inline num" data-post="${x.id}" data-f="richtprijs" type="number" step="any" value="${x.richtprijs == null ? "" : Number(x.richtprijs)}" title="${x.n ? `mediaan uit ${x.n} waarneming(en), ${eur2(x.prijs_min)} – ${eur2(x.prijs_max)}` : "nog geen data"}"></td><td style="width:78px"><select class="inline" data-post="${x.id}" data-f="btw">${opts([[0.06, "6 %"], [0.21, "21 %"], [0, "0 %"]], Number(x.btw))}</select></td><td style="width:32px"><input type="checkbox" data-post="${x.id}" data-f="actief" ${x.actief !== false ? "checked" : ""}></td><td class="r" style="width:36px"><button class="btn ghost sm danger" data-act="post-del" data-id="${x.id}" aria-label="Verwijderen">✕</button></td></tr>`).join("")}</tbody></table></div>` : `<div class="empty"><b>Geen posten in dit lot</b>Voeg er een toe.</div>`}
+      ${ps.length ? `<div class="tw"><table class="t"><thead><tr><th title="Standaard aan">Std</th><th>Groep</th><th>Omschrijving</th><th>Eenh.</th><th class="r">Richtprijs</th><th>Btw</th><th title="Actief">Act.</th><th></th></tr></thead><tbody>${ps.map(x => `<tr class="${x.actief === false ? "ms-dead" : ""}"><td style="width:32px"><input type="checkbox" data-post="${x.id}" data-f="standaard_aan" ${x.standaard_aan ? "checked" : ""}></td><td style="width:130px"><input class="inline" data-post="${x.id}" data-f="groep" value="${esc(x.groep || "")}"></td><td><input class="inline wide" data-post="${x.id}" data-f="omschrijving" value="${esc(x.omschrijving)}"></td><td style="width:84px"><select class="inline" data-post="${x.id}" data-f="eenheid">${opts(EENHEDEN.map(e => [e, e]), x.eenheid)}</select></td><td style="width:100px"><input class="inline num" data-post="${x.id}" data-f="richtprijs" type="text" inputmode="decimal" autocomplete="off" value="${getalVeld(x.richtprijs)}" title="${x.n ? `mediaan uit ${x.n} waarneming(en), ${eur2(x.prijs_min)} – ${eur2(x.prijs_max)}` : "nog geen data"}"></td><td style="width:78px"><select class="inline" data-post="${x.id}" data-f="btw">${opts([[0.06, "6 %"], [0.21, "21 %"], [0, "0 %"]], Number(x.btw))}</select></td><td style="width:32px"><input type="checkbox" data-post="${x.id}" data-f="actief" ${x.actief !== false ? "checked" : ""}></td><td class="r" style="width:36px"><button class="btn ghost sm danger" data-act="post-del" data-id="${x.id}" aria-label="Verwijderen">✕</button></td></tr>`).join("")}</tbody></table></div>` : `<div class="empty"><b>Geen posten in dit lot</b>Voeg er een toe.</div>`}
       <div class="panel-body muted" style="font-size:12px;border-top:1px solid var(--line)">Std = komt standaard mee bij "+ Lot toevoegen". Act. uit = blijft bewaard maar verschijnt niet meer in de keuzelijst. Richtprijs = kostprijs excl. btw die als startwaarde in nieuwe meetstaten komt.</div></div></div>`;
 }
 async function postEdit(id, f, raw, checked) {
   const x = S.posten[id]; if (!x) return; let v = raw;
   if (f === "standaard_aan" || f === "actief") v = !!checked;
-  else if (f === "richtprijs") v = raw === "" ? null : Number(String(raw).replace(",", "."));
+  else if (f === "richtprijs") { const n = duizendKeuze(raw, leesGetal(raw)); if (Number.isNaN(n) || (n != null && n < 0)) { toast(`"${raw}" is geen geldige prijs`, 5000); render(); return; } v = n == null ? null : r2(n); }
   else if (f === "btw") v = Number(raw);
   if (String(x[f] ?? "") === String(v ?? "")) return;
   await dbUpdate("posten", id, { [f]: v, updated_at: new Date().toISOString() }).catch(() => { });
 }
 async function lotEdit(nr, f, raw, checked) {
-  const l = S.loten[nr]; if (!l) return; const v = f === "marge" ? (Number(String(raw).replace(",", ".")) || 0) / 100 : !!checked;
-  if (String(l[f] ?? "") === String(v)) return;
-  await dbUpdate("loten", nr, { [f]: v }).catch(() => { });
+  const l = S.loten[nr]; if (!l) return;
+  if (f !== "marge") { const v = !!checked; if (l[f] === v) return; await dbUpdate("loten", nr, { [f]: v }).catch(() => { }); return; }
+  const n = leesGetal(raw);
+  if (n == null || Number.isNaN(n) || n <= -100 || n > 1000) { toast(n == null ? "Vul een marge in (bv. 15 of 12,5) — leeg laten kan niet bij een lot." : `"${raw}" is geen geldige marge — geef een % tussen -99 en 1000, bv. 15 of 12,5`, 6000); render(); return; }
+  const v = Math.round(n * 100) / 10000;   // % → fractie (de lotmarge heeft 4 decimalen: 12,35 % = 0,1235)
+  if (Math.abs((Number(l.marge) || 0) - v) < 1e-9) return;
+  // posten die de klant al goedkeurde en geen eigen marge hebben, krijgen anders stilletjes een andere klantprijs
+  const geraakt = Object.values(S.meetstaat_posten).filter(r => r.lot === nr && msTelt(r) && (r.marge == null || r.marge === "") && ["akkoord", "meerwerk", "minwerk"].includes(r.status));
+  if (geraakt.length) { const np = new Set(geraakt.map(r => r.project_id)).size;
+    if (!confirm(`Let op: ${geraakt.length} goedgekeurde post${geraakt.length > 1 ? "en" : ""} (akkoord, meer- of minwerk) in ${np} project${np > 1 ? "en" : ""} volg${geraakt.length > 1 ? "en" : "t"} de marge van dit lot. Hun klantprijs verandert dan mee, terwijl de klant een andere prijs goedkeurde.\n\nGeef die posten eerst een eigen marge in de meetstaat als hun prijs moet blijven.\n\nToch de marge van ${lotName(nr)} wijzigen naar ${nl(n, 2)} %?`)) { render(); return; } }
+  try { await dbUpdate("loten", nr, { marge: v }); } catch (e) { return; }
+  await refetch("meetstaat_posten"); toast(`Marge ${lotName(nr)}: ${nl(n, 2)} % — klantprijzen herrekend`);
 }
 async function postAdd(lot) {
   const oms = prompt("Omschrijving van de nieuwe post:"); if (!oms || !oms.trim()) return;
@@ -3079,7 +3185,7 @@ document.addEventListener("click", (e) => {
   if (d.act === "ms-add-post") return msAddPostForm(d.pid, d.lot ? Number(d.lot) : null);
   if (d.act === "ms-del") { const r = S.meetstaat_posten[d.id]; if (r && confirm(`"${r.omschrijving}" verwijderen?`)) dbDelete("meetstaat_posten", d.id).catch(() => { }); return; }
   if (d.act === "ms-del-lot") return msDelLot(d.pid, Number(d.lot));
-  if (d.act === "ms-import") return msImportPick(d.pid);
+  if (d.act === "ms-import") { if (!isBeheer()) return toast("Enkel beheer kan een meetstaat importeren"); return msImportPick(d.pid); }
   if (d.act === "gk-new") return gkForm(d.pid, d.soort || null);
   if (d.act === "note-new") return noteForm({}, d.pid);
   if (d.act === "vs-new") return vsForm({}, d.pid);
@@ -3134,6 +3240,7 @@ document.addEventListener("focusout", (e) => {
   const d = e.target.dataset || {};
   if (d.stTitle) return stRename(d.stTitle, e.target.value);
   if (d.kt && e.target.type !== "date") { const cur = ktOf(d.pid, Number(d.kt)); if ((cur?.[d.f] || "") !== e.target.value) ktSave(d.pid, Number(d.kt), { [d.f]: e.target.value }); return; }
+  if ((d.vr || d.ms || d.post || d.vf || (d.lot && d.f === "marge")) && e.target.tagName === "INPUT" && !["checkbox", "date"].includes(e.target.type) && d.getypt !== "1") return;   // enkel aangeklikt: niets bewaren
   if (d.vr) return vordEditPct(d.vr, Number(d.lot), e.target.value, d.vpost || null);
   if (d.ms && e.target.tagName !== "SELECT") return msEdit(d.ms, d.f, e.target.value);
   if (d.post && e.target.type !== "checkbox" && e.target.tagName !== "SELECT") return postEdit(d.post, d.f, e.target.value);
@@ -3141,6 +3248,7 @@ document.addEventListener("focusout", (e) => {
 
   if (d.vf && e.target.tagName !== "SELECT" && e.target.type !== "date") return vordEdit(d.vf, d.f, e.target.value);
 });
+document.addEventListener("input", (e) => { if (e.target && e.target.tagName === "INPUT" && e.target.dataset) e.target.dataset.getypt = "1"; }, true);   // veld echt gewijzigd (zie focusout)
 document.addEventListener("input", (e) => { if (e.target.dataset && e.target.dataset.werff === "q") { S.werfF.q = e.target.value; const pos = e.target.selectionStart; render(); const el = document.querySelector('[data-werff="q"]'); if (el) { el.focus(); try { el.setSelectionRange(pos, pos); } catch (x) { } } return; }
   if (e.target.dataset && e.target.hasAttribute("data-noteq")) { S.noteQ = e.target.value; const pos = e.target.selectionStart; render(); const el = document.querySelector("[data-noteq]"); if (el) { el.focus(); try { el.setSelectionRange(pos, pos); } catch (x) { } } } });
 document.addEventListener("change", (e) => {

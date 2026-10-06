@@ -37,7 +37,14 @@ function toast(msg, ms = 3500) { const t = document.createElement("div"); t.clas
 
 /* ---------- gegevens ---------- */
 async function loadAll() {
-  const q = (v, sel = "*") => sb.from(v).select(sel).then(r => { if (r.error) throw new Error(v + ": " + r.error.message); return r.data || []; });
+  // per 1000 rijen ophalen, altijd in een vaste volgorde (anders vallen er bij grote meetstaten posten weg en klopt het totaal niet)
+  const ORDE = { fasen: ["nr"], loten: ["nr"], klant_planning: ["project_id", "fase_nr"] };
+  const q = async (v, sel = "*") => { const PAGE = 1000; let all = [];
+    for (let from = 0; ; from += PAGE) {
+      let r = sb.from(v).select(sel); (ORDE[v] || ["id"]).forEach(c => { r = r.order(c, { ascending: true }); }); r = await r.range(from, from + PAGE - 1);
+      if (r.error) throw new Error(v + ": " + r.error.message);
+      all = all.concat(r.data || []); if (!r.data || r.data.length < PAGE) return all;
+    } };
   const [me, projecten, meetstaat, vorderingen, regels, planning, uren, documenten, team, ik, fasen, loten, inst, goedkeuringen, notities, notitieTaken, mijnTaken, planTaken, werfverslagen, assistent, chat] = await Promise.all([
     sb.from("profiles").select("id,name,email,role").eq("id", S.session.user.id).maybeSingle().then(r => r.data),
     q("klant_project"), q("klant_meetstaat"), q("klant_vorderingen"), q("klant_vordering_regels"), q("klant_planning"), q("klant_uren"),
@@ -65,7 +72,8 @@ const lotNaam = (nr) => D().loten[nr] ? `${nr}. ${D().loten[nr].naam}` : String(
 const faseNaam = (nr) => D().fasen.find(f => f.nr === nr)?.naam || "";
 const isMw = (r) => r.status === "meerwerk" || r.status === "minwerk";
 const telt = (r) => r.status !== "vervallen";
-const signed = (r) => Number(r.totaal) * (r.status === "minwerk" ? -1 : 1);
+/* minwerk is altijd een vermindering, ook als de hoeveelheid al negatief ingevuld is (zelfde regel als het Planbord) */
+const signed = (r) => r.status === "minwerk" ? -Math.abs(Number(r.totaal) || 0) : Number(r.totaal) || 0;
 const msRows = () => D().meetstaat.filter(r => r.project_id === S.project && telt(r)).sort((a, b) => a.lot - b.lot || (a.volgorde ?? 0) - (b.volgorde ?? 0) || (a.code || "").localeCompare(b.code || ""));
 
 /* ---------- vorderingen: zelfde rekenregels als het Planbord (post-% overschrijft lot-%) ---------- */
@@ -74,7 +82,8 @@ function vordCalc(v) {
   let excl = 0, btw = 0; const perLot = {};
   msRows().filter(r => isMw(r) === (v.soort === "meerwerk")).forEach(r => { const p = post[r.id] ?? lot[r.lot]; if (p == null) return; const a = p * signed(r); excl += a; btw += a * (Number(r.btw) || 0); perLot[r.lot] = (perLot[r.lot] || 0) + a; });
   const locked = v.status !== "opgemaakt"; const bedrag = locked && v.bedrag_excl != null ? Number(v.bedrag_excl) : excl;
-  const btw2 = excl ? bedrag * (btw / excl) : btw;
+  // verstuurde factuur: de bevroren btw (sinds script 033), anders de btw van de posten op het factuurbedrag
+  const btw2 = locked && v.btw_bedrag != null ? Number(v.btw_bedrag) : Math.abs(excl) > 0.005 ? bedrag * (btw / excl) : btw;
   return { excl: bedrag, btw: btw2, incl: bedrag + btw2, perLot, loten: Object.keys(perLot).filter(l => Math.abs(perLot[l]) > 0.005).map(Number) };
 }
 
@@ -198,7 +207,7 @@ function vordMatrix(p, vs) {
   // dan worden de percentages evenredig geschaald zodat de kolom precies op het factuurbedrag uitkomt — zo kloppen matrix, facturenlijst en 'nog te factureren' met elkaar.
   const rg = {}; vs.forEach(v => { const lot = {}, post = {}; D().regels.filter(r => r.vordering_id === v.id).forEach(r => { if (r.post_id) post[r.post_id] = Number(r.pct); else lot[r.lot] = Number(r.pct); });
     const berekend = rows.filter(r => (v.soort === "meerwerk") === isMw(r)).reduce((s, r) => { const x = post[r.id] ?? lot[r.lot]; return s + (x == null ? 0 : x * signed(r)); }, 0);
-    const vast = v.status !== "opgemaakt" && v.bedrag_excl != null; const f = vast && berekend && Math.abs(Number(v.bedrag_excl) - berekend) > 0.5 ? Number(v.bedrag_excl) / berekend : 1;
+    const vast = v.status !== "opgemaakt" && v.bedrag_excl != null; const f = vast && Math.abs(berekend) > 0.005 ? Number(v.bedrag_excl) / berekend : 1;   // zelfde schaling als het Planbord
     rg[v.id] = { lot, post, f }; });
   const pctVan = (v, r) => { if ((v.soort === "meerwerk") !== isMw(r)) return null; const x = rg[v.id].post[r.id] ?? rg[v.id].lot[r.lot]; return x == null ? null : x * rg[v.id].f; };
   S.vlOpen = S.vlOpen || {};
