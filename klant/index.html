@@ -5,6 +5,11 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>BROS — Klantenportaal</title>
 <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%231B1E1C'/%3E%3Ctext x='16' y='21' font-family='Arial' font-weight='bold' font-size='13' text-anchor='middle' fill='white'%3EB%3C/text%3E%3C/svg%3E">
+<meta name="theme-color" content="#1D1D1F">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="BROS">
+<link rel="manifest" href="manifest.json">
+<link rel="apple-touch-icon" href="icon-192.png">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap">
 <style>
@@ -167,6 +172,16 @@
   .field textarea { font: inherit; padding: 10px 12px; border: 1px solid var(--line-2); border-radius: 8px; background: var(--surface); color: var(--ink); resize: vertical; }
   .toast { pointer-events: none; position: fixed; left: 50%; bottom: 24px; transform: translateX(-50%); background: var(--ink); color: var(--ground); padding: 10px 16px; border-radius: 10px; font-size: 14px; z-index: 60; box-shadow: var(--shadow); }
   .loading { display: grid; place-items: center; min-height: 60vh; color: var(--muted); }
+  /* betalen (v1.35) */
+  .betaal-in { display: flex; gap: 24px; align-items: flex-start; flex-wrap: wrap; }
+  .panel.betaal { scroll-margin-top: 140px; }
+  .qr-box { flex: 0 0 auto; }
+  .qr { width: 200px; height: 200px; background: #fff; border-radius: 12px; padding: 6px; display: flex; align-items: center; justify-content: center; color: #555; font-size: 12px; }
+  .qr svg { width: 100%; height: 100%; }
+  .b-lijst { flex: 1 1 260px; min-width: 0; }
+  .b-row { display: flex; justify-content: space-between; align-items: center; gap: 12px; padding: 8px 0; border-bottom: 1px solid var(--line); flex-wrap: wrap; }
+  .b-row .num { overflow-wrap: anywhere; }
+  @media (max-width: 560px) { .qr-box { margin: 0 auto; } }
 </style>
 </head>
 <body>
@@ -174,6 +189,6 @@
 <div id="fx"><canvas></canvas><div class="wel"><div id="fxTxt">Welkom</div></div></div>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.45.4/dist/umd/supabase.min.js"></script>
 <script src="../config.js?v=1.31.2"></script>
-<script src="portaal.js?v=1.34.0"></script>
+<script src="portaal.js?v=1.35.0"></script>
 </body>
 </html>

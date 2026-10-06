@@ -3,7 +3,7 @@
    Statische webapp op Supabase (login, live-synchronisatie, rechten)
    ===================================================================== */
 if (window.top !== window.self) { try { window.top.location.replace(window.location.href); } catch (e) { document.documentElement.innerHTML = ""; } }   // niet in een vreemd frame (clickjacking)
-const APP_VERSION = "1.34.0";
+const APP_VERSION = "1.35.0";
 const PROJ_STATUS = { offerte: "In offerte", lopend: "Lopend", on_hold: "On hold", afgerond: "Afgerond", verloren: "Verloren" };
 const KLANTTYPE = { particulier: "Particulier", zakelijk: "Zakelijk" };
 const KLANTCODE = { particulier: "PAR", zakelijk: "ZAK" };
@@ -1843,6 +1843,9 @@ function vFacturatie(p) {
       <div class="vh-body">${beheer ? `<input class="inline" data-vf="${v.id}" data-f="omschrijving" value="${esc(v.omschrijving || "")}" placeholder="${esc(VORD_SOORT[v.soort])}">` : `<div>${esc(v.omschrijving || VORD_SOORT[v.soort])}</div>`}
       <div class="vh-row"><span class="muted">Datum</span>${beheer ? `<input class="inline num" data-vf="${v.id}" data-f="datum" type="date" value="${v.datum || ""}">` : `<span class="num">${fmtLong(v.datum)}</span>`}</div>
       <div class="vh-row"><span class="muted">Yuki-nr</span>${beheer ? `<input class="inline num" data-vf="${v.id}" data-f="factuurnummer" value="${esc(v.factuurnummer || "")}" placeholder="—">` : `<span class="num">${esc(v.factuurnummer || "—")}</span>`}</div>
+      ${schemaV() >= 34 && beheer ? `<div class="vh-row"><span class="muted" title="Gestructureerde mededeling voor de betaling (komt normaal uit de Yuki-mail)">Mededeling</span><input class="inline num" data-vf="${v.id}" data-f="mededeling" value="${esc(v.mededeling || "")}" placeholder="+++…+++" style="width:150px"></div>
+      <div class="vh-row"><span class="muted">Vervaldag</span><input class="inline num" data-vf="${v.id}" data-f="vervaldag" type="date" value="${v.vervaldag || ""}"></div>
+      <div class="vh-row"><span class="muted" title="De factuur als pdf voor de klant (een gedeeld document van dit project)">Factuur-pdf</span><select class="inline" data-vf="${v.id}" data-f="factuur_document" style="max-width:150px"><option value="">—</option>${opts(Object.values(S.documenten).filter(d => d.project_id === p.id && /pdf/i.test(d.mime || d.naam || "")).sort((a, b) => (b.gewijzigd || "").localeCompare(a.gewijzigd || "")).map(d => [d.id, d.naam]), v.factuur_document || "")}</select></div>` : ""}
       <div class="vh-row"><span class="muted">Berekend</span><span class="num">${eur2(c.calcExcl)}</span></div>
       <div class="vh-row"><span class="muted">Btw · incl.</span><span class="num">${eur2(c.btw)} · <b>${eur2(c.incl)}</b></span></div>
       ${beheer ? `<div class="vh-row"><span class="muted" title="Bedrag op de factuur in Yuki (excl. btw) — wordt bevroren zodra de status verzonden of betaald is. Wijkt het af van de berekening, dan kan je de percentages eruit laten afleiden.">Factuur excl.</span><input class="inline num" data-vf="${v.id}" data-f="bedrag_excl" type="text" inputmode="decimal" autocomplete="off" value="${getalVeld(v.bedrag_excl)}" placeholder="${Math.round(c.calcExcl)}"></div>` : ""}
@@ -1981,7 +1984,9 @@ async function vordEditPct(vid, lot, raw, postId) {
 async function vordEdit(vid, f, raw) {
   const v = S.vorderingen[vid]; if (!v) return; let val = raw;
   if (f === "bedrag_excl") { const n = duizendKeuze(raw, leesGetal(raw)); if (Number.isNaN(n)) { toast(`"${raw}" is geen geldig bedrag`, 5000); render(); return; } val = n == null ? null : r2(n); }
-  if (f === "datum") val = raw || null;
+  if (f === "datum" || f === "vervaldag" || f === "factuur_document") val = raw || null;
+  if (f === "mededeling") { const o = ogmLees(raw); if (Number.isNaN(o)) { toast(`"${raw}" is geen geldige gestructureerde mededeling (12 cijfers met een kloppend controlegetal)`, 6000); render(); return; } val = o; }
+  if (f === "factuur_document" && val) { const d = S.documenten[val]; if (d && !d.gedeeld && !confirm(`"${d.naam}" is nog niet gedeeld met de klant. Nu delen, zodat de klant de factuur in het portaal kan openen?`)) { render(); return; } if (d && !d.gedeeld) await docShare(d.id, true).catch(() => { }); }
   const heeftB = v.bedrag_excl != null && v.bedrag_excl !== "";
   if (f === "bedrag_excl" ? (val == null ? !heeftB : heeftB && Math.abs(Number(v.bedrag_excl) - val) < 0.005) : String(v[f] ?? "") === String(val ?? "")) return;
   if (S.prijsFout && (f === "status" || f === "bedrag_excl")) { toast("De prijzen zijn niet correct geladen — herlaad de pagina (⌘⌥R) vóór je een factuur verstuurt.", 6000); render(); return; }
@@ -2635,6 +2640,12 @@ function vInstellingen() {
       <div class="panel-body muted" style="font-size:12px;border-top:1px solid var(--line)">Klik in een titel om ze te wijzigen; de wijziging wordt bewaard zodra je het veld verlaat.</div></div>
   </div>`;
 }
+/* Betaalgegevens (script 034): IBAN-controle (ISO 13616, modulo 97) en Belgische gestructureerde mededeling */
+const ibanNorm = (x) => String(x || "").replace(/\s+/g, "").toUpperCase();
+const ibanOk = (x) => { const v = ibanNorm(x); if (!/^[A-Z]{2}\d{2}[A-Z0-9]{8,30}$/.test(v)) return false; const r = (v.slice(4) + v.slice(0, 4)).replace(/[A-Z]/g, c => String(c.charCodeAt(0) - 55)); let m = 0; for (const ch of r) m = (m * 10 + Number(ch)) % 97; return m === 1; };
+const ibanFmt = (x) => ibanNorm(x).replace(/(.{4})/g, "$1 ").trim();
+/* "123456789002", "+++123/4567/89002+++" of "***123/4567/89002***" → +++123/4567/89002+++ (null = leeg, NaN = ongeldig) */
+const ogmLees = (raw) => { const d = String(raw || "").replace(/[^0-9]/g, ""); if (!String(raw || "").trim()) return null; if (d.length !== 12) return NaN; const ok = (Number(d.slice(0, 10)) % 97 || 97) === Number(d.slice(10)); return ok ? `+++${d.slice(0, 3)}/${d.slice(3, 7)}/${d.slice(7)}+++` : NaN; };
 /* Klantenportaal: teksten en overzicht van wie toegang heeft */
 const portaalCfg = () => (S.instellingen.portaal && S.instellingen.portaal.value) || {};
 function vPortaalBeheer() {
@@ -2648,11 +2659,22 @@ function vPortaalBeheer() {
       <div class="field span2"><label for="po_welkom">Welkomtekst (bovenaan de startpagina)</label><textarea id="po_welkom" rows="2">${esc(c.welkom || "")}</textarea></div>
       <div class="field span2"><label for="po_werk">Inleiding bij "Zo werkt het bij BROS" (de fasen uit Instellingen staan eronder)</label><textarea id="po_werk" rows="2">${esc(c.werkwijze || "")}</textarea></div>
       <div class="field span2"><label for="po_contact">Contactblok ("Vragen?")</label><textarea id="po_contact" rows="2">${esc(c.contact || "")}</textarea></div>
+      ${schemaV() >= 34 ? `<div class="field span2" style="border-top:1px solid var(--line);padding-top:10px"><label>Betalen in het portaal</label><div class="muted" style="font-size:12px">Bij een factuur die nog te betalen is, toont het portaal het rekeningnummer, het bedrag, de gestructureerde mededeling en een QR-code die de klant met zijn bankapp scant. Mededeling, vervaldag en pdf komen uit de Yuki-mail (of vul je in bij Facturatie).</div></div>
+      <div class="field"><label for="po_iban">IBAN</label><input id="po_iban" autocomplete="off" spellcheck="false" placeholder="BE.. .... .... ...." value="${esc(c.iban ? ibanFmt(c.iban) : "")}"></div>
+      <div class="field"><label for="po_bic">BIC (optioneel)</label><input id="po_bic" autocomplete="off" spellcheck="false" value="${esc(c.bic || "")}"></div>
+      <div class="field"><label for="po_begunstigde">Begunstigde (naam op de rekening)</label><input id="po_begunstigde" autocomplete="off" value="${esc(c.begunstigde || "")}" placeholder="bv. BROS BV"></div>` : ""}
       <div class="field span2"><div class="actions"><button class="btn primary" data-act="portaal-save">Bewaren</button><span class="muted" style="font-size:12px">Teamfoto's, functie en biografie voor "Wie is wie": Team → Bewerken.</span></div></div>
     </div>${metLogin.length ? `<div class="tw" style="margin-top:12px"><table class="t"><thead><tr><th>Wie</th><th>Portaal</th><th>E-mail</th><th>Projecten</th><th>Uitgenodigd</th><th>Laatste bezoek</th></tr></thead><tbody>${metLogin.map(k => { const aan = rolVan(k) === "aannemer"; return `<tr class="click" data-contact="${k.id}"><td>${esc(k.naam)}</td><td><span class="pill ${aan ? "st-on_hold" : "st-lopend"}">${aan ? "aannemer" : "klant"}</span></td><td class="muted" style="font-size:12px">${esc(k.email)}</td><td class="muted" style="font-size:12px">${projectsOfContact(k.id).filter(x => aan ? !KLANT_ROLLEN.includes(x.rol) : KLANT_ROLLEN.includes(x.rol)).map(x => esc(x.p.klant)).join(", ") || "—"}</td><td class="num">${k.portaal_sinds ? fmtLong(k.portaal_sinds.slice(0, 10)) : "—"}</td><td class="num">${k.portaal_login ? fmtLong(k.portaal_login.slice(0, 10)) : "nog niet"}</td></tr>`; }).join("")}</tbody></table></div>` : ""}</div></div>`;
 }
 async function portaalSaveSettings() {
   const value = { ...portaalCfg(), welkom: $("#po_welkom").value.trim(), werkwijze: $("#po_werk").value.trim(), contact: $("#po_contact").value.trim() };
+  if ($("#po_iban")) {   // betaalgegevens: enkel geldige waarden bewaren
+    const iban = ibanNorm($("#po_iban").value), bic = $("#po_bic").value.replace(/\s+/g, "").toUpperCase(), ben = $("#po_begunstigde").value.trim();
+    if (iban && !ibanOk(iban)) { toast("Dit IBAN klopt niet (controlegetal) — kijk het even na.", 6000); return; }
+    if (bic && !/^[A-Z]{6}[A-Z0-9]{2}([A-Z0-9]{3})?$/.test(bic)) { toast("Deze BIC klopt niet (8 of 11 tekens, bv. GEBABEBB).", 6000); return; }
+    if (iban && !ben) { toast("Vul ook de begunstigde in (de naam op de rekening).", 6000); return; }
+    Object.assign(value, { iban, bic, begunstigde: ben.slice(0, 70) });
+  }
   const { data, error } = await sb.from("instellingen").upsert({ key: "portaal", value, updated_at: new Date().toISOString() }).select().single();
   if (error) { toast("Bewaren mislukt: " + error.message); return; } S.instellingen.portaal = data; render(); toast("Portaalteksten bewaard");
 }

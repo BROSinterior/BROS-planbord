@@ -3,7 +3,7 @@
    Leest uitsluitend de klant_*-views (databasescript 011): geen kostprijzen, marges of interne notities.
    ===================================================================== */
 if (window.top !== window.self) { try { window.top.location.replace(window.location.href); } catch (e) { document.documentElement.innerHTML = ""; } }   // niet in een vreemd frame (clickjacking)
-const PORTAAL_VERSION = "1.31.2";
+const PORTAAL_VERSION = "1.35.0";
 const todayLocal = () => { const n = new Date(); return `${n.getFullYear()}-${String(n.getMonth() + 1).padStart(2, "0")}-${String(n.getDate()).padStart(2, "0")}`; };
 const safeUrl = (u) => /^https?:\/\//i.test(String(u || "")) ? u : "#";
 const cfg = window.PLANBORD_CONFIG || {};
@@ -36,7 +36,7 @@ let loginNotice = URL_AUTH.error ? (/expired|invalid|otp/i.test(URL_AUTH.error) 
 function toast(msg, ms = 3500) { const t = document.createElement("div"); t.className = "toast"; t.textContent = msg; document.body.appendChild(t); setTimeout(() => t.remove(), ms); }
 
 /* ---------- gegevens ---------- */
-async function loadAll() {
+async function loadAll(stil) {
   // per 1000 rijen ophalen, altijd in een vaste volgorde (anders vallen er bij grote meetstaten posten weg en klopt het totaal niet)
   const ORDE = { fasen: ["nr"], loten: ["nr"], klant_planning: ["project_id", "fase_nr"] };
   const q = async (v, sel = "*") => { const PAGE = 1000; let all = [];
@@ -63,7 +63,7 @@ async function loadAll() {
   S.data = { assistent, chat, werfverslagen, planTaken, projecten: projecten.sort((a, b) => (b.nummer || "").localeCompare(a.nummer || "")), meetstaat, vorderingen, regels, planning, uren, documenten, team, ik, fasen: fasen.filter(f => f.actief !== false).sort((a, b) => a.nr - b.nr), loten: Object.fromEntries(loten.map(l => [l.nr, l])), inst, goedkeuringen: goedkeuringen.sort((a, b) => (b.voorgelegd_op || "").localeCompare(a.voorgelegd_op || "")), notities: notities.sort((a, b) => (b.datum || "").localeCompare(a.datum || "")), notitieTaken, mijnTaken: mijnTaken.sort((a, b) => (a.status === "done") - (b.status === "done") || (a.eind || "9").localeCompare(b.eind || "9")) };
   if (!S.project || !projecten.some(p => p.id === S.project)) S.project = projecten[0]?.id || null;
   S.eersteBezoek = ik.length > 0 && ik.every(x => !x.portaal_login);
-  sb.rpc("portaal_bezoek").then(() => { });
+  if (!stil) sb.rpc("portaal_bezoek").then(() => { });
 }
 const D = () => S.data;
 const P = () => D().projecten.find(p => p.id === S.project);
@@ -88,7 +88,7 @@ function vordCalc(v) {
 }
 
 /* ---------- weergave ---------- */
-function render() {
+function render(houdScroll) {
   if (!S.session) return renderLogin();
   if (S.setPassword) return renderSetPassword();
   if (!S.ready) { $("#app").innerHTML = S.loadError ? `<div class="login"><div class="card"><h1>Even geen verbinding</h1><p>${esc(S.loadError)}</p><button class="btn primary" onclick="location.reload()">Opnieuw proberen</button></div></div>` : `<div class="loading">Je portaal wordt geladen…</div>`; return; }
@@ -101,7 +101,9 @@ function render() {
       <div class="who">${D().projecten.length > 1 ? `<select id="projSel" class="btn sm">${D().projecten.map(x => `<option value="${x.id}" ${x.id === p.id ? "selected" : ""}>${esc(x.nummer ? x.nummer + " · " : "")}${esc(x.naam || x.klant)}</option>`).join("")}</select>` : ""}<span>${esc(S.me?.name || "")}</span><button class="btn ghost sm" data-act="logout">Uitloggen</button></div></div>
     <nav class="tabs">${tabs.map(([k, l]) => `<button class="${S.tab === k ? "on" : ""}" data-tab="${k}">${l}</button>`).join("")}</nav></header>
     <main>${(({ welkom: vWelkom, akkoord: vAkkoord, meetstaat: vMeetstaat, facturatie: vFacturatie, planning: vPlanning, verslagen: vVerslagen, documenten: vDocumenten, team: vTeam, vragen: vVragen })[S.tab] || vWelkom)(p)}</main>`;
-  window.scrollTo({ top: 0 });
+  if (!houdScroll) window.scrollTo({ top: 0 });
+  if (S.betaal) tekenQr(S.betaal);
+  liveStart();
 }
 
 function vWelkom(p) {
@@ -113,6 +115,8 @@ function vWelkom(p) {
   return `<div class="hero"><div class="eyebrow">${esc(p.nummer || "")} · ${esc(p.naam || "")}</div><h1>Welkom, ${esc(voornaam())}</h1>
       <p class="lead">${esc(inst.welkom || "")}</p></div>
     ${(() => { const mt = D().mijnTaken.filter(t => t.project_id === p.id && t.status !== "done"); return mt.length ? `<div class="notice" style="border-color:var(--blue);background:var(--blue-soft)"><div><b>${mt.length === 1 ? "Er staat een actiepunt voor jou open" : `Er staan ${mt.length} actiepunten voor jou open`}</b><div class="muted" style="font-size:13px">${mt.slice(0, 3).map(t => esc(t.titel) + (t.eind ? " · vóór " + fmt(t.eind) : "")).join(" · ")}${mt.length > 3 ? " · …" : ""}</div></div><button class="btn primary" data-tab="verslagen">Bekijken →</button></div>` : ""; })()}
+    ${(() => { const tb = teBetalen(p).filter(v => vordCalc(v).incl > 0.005); if (!tb.length) return ""; const vv = tb.filter(vervallen); const tot = tb.reduce((s, v) => s + vordCalc(v).incl, 0);
+      return `<div class="notice" style="${vv.length ? "border-color:var(--crit);background:var(--crit-soft)" : "border-color:var(--line-2);background:var(--surface)"}"><div><b>${tb.length === 1 ? "Er staat een factuur open" : `Er staan ${tb.length} facturen open`} · ${eur(tot)}</b><div class="muted" style="font-size:13px">${tb.map(v => esc(v.factuurnummer ? "factuur " + v.factuurnummer : VORD_SOORT[v.soort]) + (v.vervaldag ? (vervallen(v) ? " · vervallen sinds " : " · vóór ") + fmt(v.vervaldag) : "")).join(" · ")}</div></div><button class="btn primary" data-act="betaal" data-id="${tb[0].id}" data-ga="facturatie">Betalen</button></div>`; })()}
     ${open.length ? `<div class="notice"><div><b>${open.length === 1 ? "Er wacht een voorstel op je akkoord" : `Er wachten ${open.length} voorstellen op je akkoord`}</b><div class="muted" style="font-size:13px">${open.map(g => esc(g.titel) + " · " + eur(g.totaal_incl, 0) + " incl. btw" + (g.geldig_tot ? " · vóór " + fmt(g.geldig_tot) : "")).join(" · ")}</div></div><button class="btn primary" data-tab="akkoord">Bekijken en goedkeuren →</button></div>` : ""}
     <div class="two"><div class="stack">
       <div class="panel"><div class="panel-head"><h2>Waar staat je project?</h2><span class="pill grijs">${PROJ_STATUS[p.status] || esc(p.status)}</span></div><div class="panel-body">
@@ -126,6 +130,7 @@ function vWelkom(p) {
       ${lead ? `<div class="panel"><div class="panel-head"><h2>Je aanspreekpunt</h2></div><div class="panel-body"><div class="person">${avatar(lead, 56)}<div><b>${esc(lead.name)}</b><div class="muted" style="font-size:13px">${esc(lead.functie || "BROS")}</div>${lead.bio ? `<p style="font-size:13px;color:var(--ink-2);margin-top:6px;white-space:pre-line">${esc(lead.bio.slice(0, 220))}${lead.bio.length > 220 ? "…" : ""}</p>` : ""}</div></div></div></div>` : ""}
       <div class="panel"><div class="panel-head"><h2>Vragen?</h2></div><div class="panel-body"><p style="white-space:pre-line">${esc(inst.contact || "")}</p></div></div>
       <div class="panel"><div class="panel-head"><h2>Snel naar</h2></div><div class="panel-body" style="display:flex;flex-wrap:wrap;gap:8px">${[["meetstaat", "Meetstaat"], ["facturatie", "Facturatie"], ["planning", "Planning"], ["documenten", "Documenten"]].map(([k, l]) => `<button class="btn" data-tab="${k}">${l} →</button>`).join("")}</div></div>
+      ${D().ik.length && D().ik.some(x => x.weekmail !== undefined) ? `<div class="panel"><div class="panel-head"><h2>Op de hoogte blijven</h2></div><div class="panel-body"><label style="display:flex;gap:10px;align-items:flex-start;cursor:pointer"><input type="checkbox" id="weekmail" ${D().ik.some(x => x.weekmail !== false) ? "checked" : ""} style="margin-top:3px"><span>Elke maandag een korte samenvatting per mail<div class="muted" style="font-size:13px">Nieuwe verslagen, documenten en facturen, en wat op je wacht. Enkel als er iets nieuws is.</div></span></label><p class="muted" style="font-size:12px;margin:10px 0 0">Tip: zet dit portaal op het beginscherm van je gsm (deelknop › "Zet op beginscherm") — dan open je het als een app.</p></div></div>` : ""}
     </div></div>`;
 }
 const GK_STATUS = { open: "Wacht op je akkoord", akkoord: "Goedgekeurd", geweigerd: "Niet akkoord", ingetrokken: "Ingetrokken door BROS" };
@@ -156,10 +161,13 @@ function vAkkoord(p) {
 }
 async function gkBeslis(id, akkoord, naam, opmerking, form) {
   const m = form.querySelector(".msg"); m.className = "msg"; m.textContent = "Even geduld…"; form.querySelectorAll("button").forEach(b => b.disabled = true);
+  S.gkBezig = true; try { return await gkBeslisIn(id, akkoord, naam, opmerking, form, m); } finally { S.gkBezig = false; }
+}
+async function gkBeslisIn(id, akkoord, naam, opmerking, form, m) {
   const { data, error } = await sb.rpc("goedkeuring_beslis", { p_id: id, p_akkoord: akkoord, p_naam: naam, p_opmerking: opmerking || "" });
   if (error) { m.className = "msg err"; m.textContent = "Dat lukte niet: " + error.message; form.querySelectorAll("button").forEach(b => b.disabled = false); return; }
   if (cfg.driveScriptUrl) { try { const r = await fetch(cfg.driveScriptUrl, { method: "POST", body: JSON.stringify({ action: "gkmail", id, soort: "beslist", token: S.session?.access_token || "" }), redirect: "follow" }); await r.json(); } catch (e) { } }
-  try { await loadAll(); } catch (e) { console.warn(e); }
+  try { await loadAll(true); } catch (e) { console.warn(e); }
   render();
   toast(akkoord ? "Bedankt — je akkoord is vastgelegd. Je krijgt een bevestiging per mail." : "Verstuurd — BROS neemt contact met je op.", 6000);
   if (akkoord) vuurwerk(null, "Bedankt!");
@@ -186,6 +194,46 @@ function vMeetstaat(p) {
     <div class="stack">${lots.map(lotBlok).join("")}</div>`;
 }
 
+/* ---------- betalen (script 034): rekeningnummer, mededeling, vervaldag, QR-code voor de bankapp, factuur-pdf ---------- */
+const teBetalen = (p) => D().vorderingen.filter(v => v.project_id === p.id && v.status === "verzonden").sort((a, b) => (a.vervaldag || "9999").localeCompare(b.vervaldag || "9999") || a.nr - b.nr);
+const vervallen = (v) => !!(v.vervaldag && v.vervaldag < todayLocal());
+const factuurDoc = (v) => v.factuur_document ? D().documenten.find(d => d.id === v.factuur_document) : null;
+const ibanFmt = (x) => String(x || "").replace(/\s+/g, "").toUpperCase().replace(/(.{4})/g, "$1 ").trim();
+const kanQr = () => !!(D().inst.iban && D().inst.begunstigde);
+/* EPC-QR (versie 002, Febelfin): de Belgische gestructureerde mededeling op de plaats van de gestructureerde referentie */
+function epcPayload(v, bedrag) {
+  const i = D().inst;
+  return ["BCD", "002", "1", "SCT", String(i.bic || "").replace(/\s+/g, ""), String(i.begunstigde || "").slice(0, 70), String(i.iban || "").replace(/\s+/g, "").toUpperCase(), "EUR" + bedrag.toFixed(2), "",
+    v.mededeling || "", v.mededeling ? "" : ("Factuur " + (v.factuurnummer || v.nr)).slice(0, 140)]
+    .join("\n").replace(/\n+$/, "");   // niets na het laatste ingevulde veld (EPC069-12)
+}
+const laadQr = () => laadScript("https://cdn.jsdelivr.net/npm/qrcode-generator@1.4.4/qrcode.js", "qrcode");
+async function tekenQr(id) {
+  const box = document.getElementById("qr_" + id); const v = D().vorderingen.find(x => x.id === id); if (!box || !v || !kanQr()) return;
+  const bedrag = Math.round(vordCalc(v).incl * 100) / 100; if (!(bedrag > 0)) { box.innerHTML = ""; return; }
+  try {
+    const qrcode = await laadQr(); qrcode.stringToBytes = qrcode.stringToBytesFuncs["UTF-8"];
+    const qr = qrcode(0, "M"); qr.addData(epcPayload(v, bedrag), "Byte"); qr.make();
+    box.innerHTML = qr.createSvgTag({ cellSize: 4, margin: 3, scalable: true });
+  } catch (e) { box.innerHTML = `<div class="muted" style="font-size:12px">De QR-code kon niet geladen worden. Gebruik de gegevens hiernaast.</div>`; }
+}
+function vBetalen(v) {
+  const c = vordCalc(v); const i = D().inst; const bedrag = Math.round(c.incl * 100) / 100; const doc = factuurDoc(v);
+  const lijn = (k, waarde, kopie) => `<div class="b-row"><span class="muted">${k}</span><span class="num"><b>${waarde}</b>${kopie ? ` <button class="btn ghost sm" data-act="kopieer" data-v="${esc(kopie)}" title="Kopiëren">Kopieer</button>` : ""}</span></div>`;
+  return `<div class="panel betaal" id="betaal_${v.id}" style="margin-bottom:16px"><div class="panel-head"><h2>Factuur ${esc(v.factuurnummer || (v.nr === 0 ? "voorschot" : "#" + v.nr))} betalen</h2><button class="btn ghost sm" data-act="betaal" data-id="${v.id}">Sluiten</button></div>
+    <div class="panel-body betaal-in">${kanQr() && bedrag > 0 ? `<div class="qr-box"><div id="qr_${v.id}" class="qr">QR-code laden…</div><div class="muted" style="font-size:12px;text-align:center;margin-top:6px">Scan met de app van je bank</div></div>` : ""}
+      <div class="b-lijst">
+        ${lijn("Bedrag", eur(bedrag), bedrag.toFixed(2).replace(".", ","))}
+        ${i.iban ? lijn("Rekening", esc(ibanFmt(i.iban)), ibanFmt(i.iban)) : ""}
+        ${i.begunstigde ? lijn("Begunstigde", esc(i.begunstigde)) : ""}
+        ${i.bic ? lijn("BIC", esc(i.bic)) : ""}
+        ${v.mededeling ? lijn("Mededeling", esc(v.mededeling), v.mededeling) : lijn("Vermeld", "Factuur " + esc(v.factuurnummer || v.nr), "Factuur " + (v.factuurnummer || v.nr))}
+        ${v.vervaldag ? `<div class="b-row"><span class="muted">Te betalen vóór</span><span class="num" style="${vervallen(v) ? "color:var(--crit)" : ""}"><b>${fmtLang(v.vervaldag)}</b>${vervallen(v) ? " · vervallen" : ""}</span></div>` : ""}
+        ${doc ? `<p style="margin:12px 0 0"><a class="btn sm" href="${esc(safeUrl(doc.url))}" target="_blank" rel="noopener">Factuur openen (pdf)</a></p>` : ""}
+        ${!i.iban ? `<p class="muted" style="font-size:13px;margin-top:10px">Je vindt de betaalgegevens op de factuur${doc ? "" : " die we je mailden"}.</p>` : `<p class="muted" style="font-size:12px;margin-top:10px">${v.mededeling ? "Gebruik zeker de gestructureerde mededeling: zo wordt je betaling automatisch aan deze factuur gekoppeld." : "Vermeld het factuurnummer bij je betaling."} Al betaald? Dan verschijnt de factuur hier als betaald zodra we je betaling ontvangen hebben.</p>`}
+      </div></div></div>`;
+}
+
 function vFacturatie(p) {
   const rows = msRows(); const contract = rows.filter(r => !isMw(r)).reduce((s, r) => s + Number(r.totaal), 0), mw = rows.filter(isMw).reduce((s, r) => s + signed(r), 0);
   const vs = D().vorderingen.filter(v => v.project_id === p.id && v.status !== "opgemaakt").sort((a, b) => a.nr - b.nr);
@@ -194,8 +242,9 @@ function vFacturatie(p) {
   return `<h1 style="margin-bottom:6px">Facturatie</h1><p class="muted" style="margin-bottom:16px">Je facturen en wat er nog volgt. We factureren een voorschot bij ondertekening en daarna per afgewerkt onderdeel; meerwerk factureren we apart.</p>
     <div class="kpis"><div class="kpi"><div class="k">Contract + meerwerk</div><div class="v num">${eur(contract + mw, 0)}</div><div class="muted" style="font-size:12px">excl. btw</div></div><div class="kpi"><div class="k">Gefactureerd</div><div class="v num">${eur(gefact, 0)}</div><div class="muted" style="font-size:12px">${contract + mw ? pct(gefact / (contract + mw)) : "—"} excl. btw</div></div><div class="kpi"><div class="k">Nog te factureren</div><div class="v num">${eur(contract + mw - gefact, 0)}</div><div class="muted" style="font-size:12px">excl. btw</div></div><div class="kpi"><div class="k">Open te betalen</div><div class="v num" style="${open > 0.5 ? "color:var(--warn)" : ""}">${open > 0.5 ? eur(open, 0) : "—"}</div><div class="muted" style="font-size:12px">betaald ${eur(betaald, 0)} incl. btw</div></div></div>
     <div class="panel" style="margin-bottom:16px"><div class="panel-head"><h2>Facturen</h2></div>${vs.length ? `<div class="tw"><table class="t"><thead><tr><th>Nr</th><th>Datum</th><th>Omschrijving</th><th>Onderdelen</th><th class="r">Excl. btw</th><th class="r">Btw</th><th class="r">Incl. btw</th><th>Status</th></tr></thead><tbody>
-      ${calcs.map(({ v, c }) => `<tr><td class="num">${v.nr === 0 ? "V" : v.nr}</td><td class="num">${fmt(v.datum)}</td><td><b>${esc(v.omschrijving || VORD_SOORT[v.soort])}</b>${v.factuurnummer ? `<div class="muted" style="font-size:12px">factuur ${esc(v.factuurnummer)}</div>` : ""}</td><td class="muted" style="font-size:12px;max-width:260px">${v.soort === "voorschot" ? "alle onderdelen" : esc(c.loten.map(lotNaam).join(", "))}</td><td class="r num">${eur(c.excl)}</td><td class="r num">${eur(c.btw)}</td><td class="r num"><b>${eur(c.incl)}</b></td><td><span class="pill ${v.status}">${VORD_STATUS[v.status] || esc(v.status)}</span></td></tr>`).join("")}
+      ${calcs.map(({ v, c }) => `<tr><td class="num">${v.nr === 0 ? "V" : v.nr}</td><td class="num">${fmt(v.datum)}</td><td><b>${esc(v.omschrijving || VORD_SOORT[v.soort])}</b>${v.factuurnummer ? `<div class="muted" style="font-size:12px">factuur ${esc(v.factuurnummer)}${factuurDoc(v) ? ` · <a href="${esc(safeUrl(factuurDoc(v).url))}" target="_blank" rel="noopener">pdf</a>` : ""}</div>` : ""}</td><td class="muted" style="font-size:12px;max-width:260px">${v.soort === "voorschot" ? "alle onderdelen" : esc(c.loten.map(lotNaam).join(", "))}</td><td class="r num">${eur(c.excl)}</td><td class="r num">${eur(c.btw)}</td><td class="r num"><b>${eur(c.incl)}</b></td><td><span class="pill ${v.status}">${VORD_STATUS[v.status] || esc(v.status)}</span>${v.status === "verzonden" ? `${v.vervaldag ? `<div class="muted" style="font-size:12px;${vervallen(v) ? "color:var(--crit)" : ""}">${vervallen(v) ? "vervallen sinds" : "vóór"} ${fmt(v.vervaldag)}</div>` : ""}${c.incl > 0.005 ? `<div><button class="btn sm ${S.betaal === v.id ? "" : "primary"}" style="margin-top:4px" data-act="betaal" data-id="${v.id}">Betalen</button></div>` : ""}` : ""}</td></tr>`).join("")}
       <tr class="tot"><td colspan="4">Totaal gefactureerd</td><td class="r num">${eur(gefact)}</td><td class="r num">${eur(calcs.reduce((s, x) => s + x.c.btw, 0))}</td><td class="r num">${eur(calcs.reduce((s, x) => s + x.c.incl, 0))}</td><td></td></tr></tbody></table></div>` : `<div class="empty"><b>Nog geen facturen</b>Zodra we een factuur versturen, vind je ze hier terug.</div>`}</div>
+    ${S.betaal && vs.some(v => v.id === S.betaal && v.status === "verzonden") ? vBetalen(vs.find(v => v.id === S.betaal)) : ""}
     ${vs.length ? vordMatrix(p, vs) : ""}`;
 }
 /* vorderingsstaat per onderdeel: welk deel van elk lot (en elke post) in welke factuur zat, wat cumulatief gefactureerd is en wat nog rest */
@@ -479,6 +528,8 @@ document.addEventListener("click", (e) => {
   const el = e.target.closest("[data-tab],[data-act]"); if (!el) return;
   if (el.dataset.tab) { S.tab = el.dataset.tab; S.dossier = null; render(); }
   if (el.dataset.act === "logout") sb.auth.signOut().then(() => location.reload());
+  if (el.dataset.act === "betaal") { const zelfde = S.betaal === el.dataset.id && !el.dataset.ga; S.betaal = zelfde ? null : el.dataset.id; if (el.dataset.ga) S.tab = el.dataset.ga; render(!el.dataset.ga); if (S.betaal) setTimeout(() => document.getElementById("betaal_" + S.betaal)?.scrollIntoView({ behavior: "smooth", block: "start" }), 50); return; }
+  if (el.dataset.act === "kopieer") { const t = el.dataset.v || ""; (navigator.clipboard ? navigator.clipboard.writeText(t) : Promise.reject()).then(() => toast("Gekopieerd: " + t)).catch(() => toast(t, 6000)); return; }
   if (el.dataset.act === "gk-nee") { const box = $("#gk_nee_" + el.dataset.id); box.hidden = !box.hidden; if (!box.hidden) box.querySelector("textarea").focus(); }
   if (el.dataset.act === "gk-toon") { S.gkOpen = S.gkOpen === el.dataset.id ? null : el.dataset.id; render(); }
   if (el.dataset.act === "note-toggle") { S.noteOpen = S.noteOpen === el.dataset.id ? null : el.dataset.id; render(); }
@@ -508,12 +559,42 @@ document.addEventListener("change", async (e) => {
     const n = K.sel.size + K.wv.size + (K.ms ? 1 : 0); const b = document.querySelector('[data-act="dos-maak"]'); if (b) { b.textContent = `Pdf downloaden (${n})`; b.disabled = !n; }
     return;
   }
-  if (e.target.id === "projSel") { S.project = e.target.value; S.dossier = null; render(); }
+  if (e.target.id === "projSel") { S.project = e.target.value; S.dossier = null; S.betaal = null; render(); }
+  if (e.target.id === "weekmail") { const aan = e.target.checked; e.target.disabled = true; const { error } = await sb.rpc("klant_weekmail", { p_aan: aan });
+    e.target.disabled = false; if (error) { e.target.checked = !aan; toast("Dat lukte niet: " + error.message); return; } D().ik.forEach(x => x.weekmail = aan); toast(aan ? "Je krijgt elke maandag een korte samenvatting." : "Je krijgt geen wekelijkse samenvatting meer."); }
   if (e.target.dataset.mijntaak) { const id = e.target.dataset.mijntaak, klaar = e.target.checked; e.target.disabled = true;
     const { error } = await sb.rpc("klant_taak_klaar", { p_id: id, p_klaar: klaar });
     if (error) { toast("Dat lukte niet: " + error.message); e.target.checked = !klaar; e.target.disabled = false; return; }
     D().mijnTaken.forEach(t => { if (t.id === id) t.status = klaar ? "done" : "todo"; }); D().notitieTaken.forEach(t => { if (t.id === id) t.status = klaar ? "done" : "todo"; }); render(); toast(klaar ? "Afgevinkt — bedankt!" : "Weer open gezet"); }
 });
+
+/* ---------- live bijwerken (script 034): bij elke wijziging aan het project herlaadt het portaal stil ---------- */
+let liveKanaal = null, liveT = null, liveLaatst = Date.now();
+function liveStart() {
+  if (liveKanaal || !S.ready || !S.session) return;
+  liveKanaal = sb.channel("portaal-live").on("postgres_changes", { event: "*", schema: "public", table: "portaal_pings" }, (payload) => {
+    if (payload.eventType === "DELETE") return; liveHerlaad(1200);   // de databank stuurt enkel meldingen van eigen projecten (ook een net gekoppeld project)
+  }).subscribe();
+}
+/* niet herladen terwijl de klant iets invult, een dossier samenstelt of een vraag stelt: even later opnieuw proberen */
+const liveBezig = () => {
+  const a = document.activeElement; if (S.dossier || S.chatBezig || S.gkBezig) return true;
+  if (a && a.closest && a.closest("#app") && /^(INPUT|TEXTAREA|SELECT)$/.test(a.tagName) && a.id !== "weekmail") return true;
+  // half ingevuld akkoordformulier, reden of chatvraag: niet wegvegen
+  return [...document.querySelectorAll("#app form input, #app form textarea")].some(el => el.type === "checkbox" || el.type === "radio" ? el.checked !== el.defaultChecked : el.type !== "hidden" && String(el.value || "").trim() !== "" && el.defaultValue !== el.value);
+};
+function liveHerlaad(ms) {
+  clearTimeout(liveT);
+  liveT = setTimeout(async () => {
+    if (!S.ready) return; if (liveBezig()) return liveHerlaad(5000);
+    try { const y = window.scrollY; await loadAll(true); liveLaatst = Date.now(); if (liveBezig()) return liveHerlaad(5000); render(true); window.scrollTo({ top: y }); } catch (e) { }
+  }, ms);
+}
+// vangnet: terug naar het tabblad na meer dan 2 minuten, of elke 10 minuten zolang het portaal open staat
+document.addEventListener("visibilitychange", () => { if (document.visibilityState === "visible" && S.ready && Date.now() - liveLaatst > 120000) liveHerlaad(200); });
+setInterval(() => { if (document.visibilityState === "visible" && S.ready && Date.now() - liveLaatst > 600000) liveHerlaad(0); }, 60000);
+// als app op het beginscherm (service worker): de app-schil blijft zo ook bij een zwak signaal snel beschikbaar
+if ("serviceWorker" in navigator && location.protocol === "https:") navigator.serviceWorker.register("sw.js").catch(() => { });
 
 async function start() {
   S.ready = false; render();

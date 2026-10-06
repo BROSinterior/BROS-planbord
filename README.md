@@ -161,6 +161,14 @@ Activeren (eenmalig):
 
 Gebruik: Dossier › Contacten → bij een aannemer de knop **Aannemersportaal** (beheer) → hij krijgt een mail met een persoonlijke link. Instellingen → Klantenportaal toont wie toegang heeft (klant/aannemer). Een aannemer die op het Planbord of het klantenportaal inlogt, wordt doorgestuurd.
 
+## Klantenportaal fase 1 — betalen, live, app, weekmail (script 034, v1.35)
+
+- **Betalen:** per verzonden factuur toont het portaal bedrag (incl. btw), IBAN, begunstigde, BIC, gestructureerde mededeling en vervaldag, met een **EPC-QR-code** (versie 002, Febelfin: de mededeling `+++123/4567/89012+++` staat op de plaats van de gestructureerde referentie). IBAN/BIC/begunstigde: Instellingen › Klantenportaal (IBAN wordt gecontroleerd). Zonder IBAN geen QR, enkel de factuur-pdf.
+- **Uit Yuki:** `yukiSync` leest nu ook de mededeling (enkel met kloppend controlegetal) en de vervaldag uit mail en pdf, bewaart de pdf als `Factuur <nr>.pdf` in `<projectmap>/Documenten/Facturen` (link leesbaar, gedeeld met de klant, zonder extra documentmail) en koppelt ze aan de vordering (`factuur_document`). Dat gebeurt los van de koppeling zelf: zonder script 034 lukt de koppeling nog altijd. Voor facturen die al gekoppeld waren: éénmaal `yukiBetaalgegevensAanvullen()` uitvoeren. Manueel: vorderingsstaat › Mededeling / Vervaldag / Factuur-pdf.
+- **Live:** tabel `portaal_pings` (één rij per project). Triggers op vorderingen, vordering_regels, meetstaat_posten (dus ook prijzen en lotmarges via script 033), goedkeuringen, notities, documenten, werfverslagen, werfplannen, taken, uren, klant_timing, vaststellingen, project_contacten en projecten raken ze aan, max. één keer per transactie. Het portaal luistert via realtime en herlaadt stil (niet terwijl de klant iets invult); vangnet: bij terugkeer na 2 min en elke 10 min.
+- **App:** `klant/manifest.json`, `klant/sw.js` (enkel de eigen app-schil, netwerk eerst; Supabase, Drive en CDN's nooit uit de cache), iconen zoals de werfmodus.
+- **Weekmail:** `weekoverzicht()` in het Drive-script, elke maandag 8–9 u (éénmaal `weekoverzichtInstall()` uitvoeren; voorbeeld naar info@: `weekoverzichtProef()`). Per klant met portaallogin en `contacten.weekmail` aan, per lopend project: nieuwe verslagen, werfverslagen, documenten en facturen sinds de vorige mail, plus openstaande akkoorden, facturen (vervallen in het vet) en actiepunten. Niets → geen mail. De klant zet ze uit op Welkom (RPC `klant_weekmail`).
+
 ## Rekenregels voor prijzen en facturen (script 033, v1.34)
 
 Eén regel overal — Planbord (`msVerkoopEP`/`msVerkoop`/`rowSigned`), pdf, Excel-export, vorderingen, klantenportaal (`klant_meetstaat`), aannemersportaal, Yuki-koppeling (`yukiCalc`) en de databank (`meetstaat_posten_v`, trigger `vordering_bevriezen`):
