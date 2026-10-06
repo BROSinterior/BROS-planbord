@@ -34,6 +34,7 @@ function doPost(e) {
     if (body.action === "voorstelmail") return json(voorstelMailAannemer(body)); // aannemersportaal: melding van een vraag/opmerking (token-gecontroleerd, aannemer)
     if (body.action === "prijsaanvraagmail") return json(prijsaanvraagMail(body)); // prijsaanvragen: team (token) → aannemer, of aannemer (token) → BROS
     if (body.action === "koppelmail") return json(koppelMail(body));
+    if (body.action === "aanprijsmail") return json(aanPrijsMail(body)); // meetstaat met prijzen (script 032): team (beheer) → aannemer bij delen, aannemer → BROS bij akkoord/tegenvoorstel
     if (body.action === "bestand") return json(portaalBestand(body)); // klant/aannemer: een gedeeld document ophalen om er een pdf-dossier van te maken (login + toegang gecontroleerd) // team (token): aannemer verwittigen dat hij aan een project gekoppeld is (met uitnodiging als hij nog geen login heeft)
     if (!body.secret || body.secret !== CONFIG.SECRET) return json({ ok: false, error: "Geen toegang (secret klopt niet)." });
     if (body.action === "ping") return json({ ok: true, info: "Verbinding en secret in orde.", projecten: DriveApp.getFolderById(CONFIG.PROJECTEN_FOLDER_ID).getName(), sjabloon: DriveApp.getFolderById(CONFIG.SJABLOON_FOLDER_ID).getName() });
@@ -579,6 +580,68 @@ function prijsaanvraagMail(body) {
   }
   portaalMail(String(c.email).trim(), onderwerp, tekst, html);
   if (soort === "herinnering") { try { pbAdmin("/rest/v1/prijsaanvragen?id=eq." + a.id, "patch", { herinnerd_op: new Date().toISOString(), herinneringen: (Number(a.herinneringen) || 0) + 1 }); } catch (e) { } }
+  return { ok: true, naar: c.email, uitgenodigd: uitgenodigd };
+}
+/* =====================================================================
+   Meetstaat met prijzen voor de aannemer (script 032)
+   'gedeeld' (beheer → aannemer; met uitnodiging voor het portaal als hij nog geen login heeft),
+   'akkoord' / 'tegenvoorstel' (aannemer → wie deelde, beheer in kopie). Identiteit en rol via het login-token.
+   ===================================================================== */
+function aanPrijsMail(body) {
+  const soort = String(body.soort || "");
+  if (["gedeeld", "akkoord", "tegenvoorstel"].indexOf(soort) < 0) return { ok: false, error: "Onbekende soort." };
+  const aannemerKant = soort !== "gedeeld";
+  const beller = aannemerKant ? callerAny(body.token) : caller(body.token, true);
+  if (aannemerKant && beller.role !== "aannemer") return { ok: false, error: "Geen toegang." };
+  const a = (pbAdmin("/rest/v1/aannemer_meetstaten?id=eq." + uuid(body.id) + "&select=*", "get") || [])[0];
+  if (!a) return { ok: false, error: "Meetstaat niet gevonden." };
+  const c = (pbAdmin("/rest/v1/contacten?id=eq." + a.contact_id + "&select=id,naam,bedrijf,contactpersoon,email,user_id", "get") || [])[0];
+  if (!c) return { ok: false, error: "Contact niet gevonden." };
+  const p = (pbAdmin("/rest/v1/projecten?id=eq." + a.project_id + "&select=nummer,klant,naam,adres,gemeente,lead", "get") || [])[0] || {};
+  const proj = (p.klant || "") + (p.naam && p.naam !== p.klant ? " · " + p.naam : "");
+  const regels = a.regels || []; const totaal = regels.reduce((s, r) => s + (Number(r.prijs) || 0) * (Number(r.hoeveelheid) || 0), 0);
+  const geld = (n) => "€ " + Number(n || 0).toFixed(2).replace(".", ",").replace(/\B(?=(\d{3})+(?!\d))/g, ".");
+  const esc = H;
+  const wrap = (inner) => "<div style=\"font-family:Helvetica,Arial,sans-serif;font-size:15px;line-height:1.5;color:#1B1E1C;max-width:720px\">" + inner + "</div>";
+  const knop = (url, txt) => "<p style=\"margin:24px 0\"><a href=\"" + url + "\" style=\"background:#1B1E1C;color:#fff;text-decoration:none;padding:12px 20px;border-radius:8px;font-weight:600;display:inline-block\">" + txt + "</a></p>";
+  if (aannemerKant) {
+    if (c.user_id !== beller.id) return { ok: false, error: "Geen toegang." };
+    if (a.status !== soort) return { ok: false, error: "De status klopt niet." };
+    if (!eenmalig("apm:" + a.id + ":" + a.versie + ":" + soort, 3600)) return { ok: true };
+    const profs = pbAdmin("/rest/v1/profiles?select=id,name,email,role,active&active=eq.true", "get") || [];
+    const deler = profs.find(x => x.id === a.gedeeld_door) || profs.find(x => x.id === p.lead); const beheer = profs.filter(x => x.role === "beheer" && x.email);
+    const to = deler && deler.email ? deler.email : (beheer[0] ? beheer[0].email : ""); if (!to) return { ok: false, error: "Geen ontvanger." };
+    const cc = beheer.map(x => x.email).filter(e => e !== to).join(",");
+    const reacties = Object.keys(a.reactie || {}).length;
+    const link = PORTAAL.URL.replace(/klant\/?$/, "");
+    const wat = soort === "akkoord"
+      ? "is <b>akkoord</b> met de meetstaat met prijzen (versie " + a.versie + ", totaal " + geld(totaal) + " excl. btw). De prijzen staan nu als kostprijs in de meetstaat; de klantprijzen zijn ongewijzigd."
+      : "dient een <b>tegenvoorstel</b> in op de meetstaat met prijzen (versie " + a.versie + "): " + reacties + " post" + (reacties === 1 ? "" : "en") + " met een opmerking of tegenprijs.";
+    const html = wrap("<p>Dag " + esc(deler ? deler.name : "team") + ",</p><p><b>" + esc(c.naam) + "</b>" + (c.bedrijf && c.bedrijf !== c.naam ? " (" + esc(c.bedrijf) + ")" : "") + " " + wat + "</p><p>Project: <b>" + esc(proj) + "</b> · beslist door " + esc(a.beslist_naam || c.naam) + "</p>"
+      + (a.opmerking ? "<p style=\"padding:10px 14px;border-left:3px solid #DAD8D0;white-space:pre-line\">" + esc(a.opmerking) + "</p>" : "")
+      + knop(link, "Bekijken in het Planbord") + "<p style=\"color:#767D78;font-size:13px\">Planbord › project › Meetstaat › Meetstaat voor aannemers.</p>");
+    const opt = { htmlBody: html, name: PORTAAL.AFZENDER }; if (cc) opt.cc = cc; if (c.email) opt.replyTo = c.email;
+    GmailApp.sendEmail(to, (soort === "akkoord" ? "Akkoord meetstaat · " : "Tegenvoorstel meetstaat · ") + proj + " · " + c.naam, c.naam + (soort === "akkoord" ? " is akkoord met de meetstaat met prijzen voor " : " dient een tegenvoorstel in voor ") + proj + ". Bekijken: " + link, opt);
+    return { ok: true, naar: to };
+  }
+  // gedeeld: team → aannemer
+  if (!a.gedeeld || a.status !== "gedeeld") return { ok: false, error: "Deze meetstaat is niet gedeeld." };
+  if (!c.email) return { ok: false, error: "Dit contact heeft geen e-mailadres." };
+  if (!eenmalig("apm:" + a.id + ":" + a.versie + ":gedeeld", 600)) return { ok: true, naar: c.email };
+  const naam = c.contactpersoon || c.naam; const aanhef = "Beste " + naam;
+  let uitgenodigd = false, linkHtml, linkTxt;
+  if (!c.user_id) {
+    const r = portaalLink(String(c.email).trim().toLowerCase(), naam, c.id, "aannemer"); uitgenodigd = !r.bestaand;
+    linkHtml = "<p>Je hebt nog geen login voor het aannemersportaal van BROS. Kies eerst je wachtwoord:</p>" + knop(r.link, "Kies je wachtwoord") + "<p style=\"color:#767D78;font-size:13px\">Daarna log je in op <a href=\"" + PORTAAL.URL_AANNEMER + "\">" + PORTAAL.URL_AANNEMER + "</a> met je e-mailadres en wachtwoord.</p>";
+    linkTxt = "\n\nJe hebt nog geen login: kies eerst je wachtwoord via " + r.link + " en log daarna in op " + PORTAAL.URL_AANNEMER;
+  } else { linkHtml = knop(PORTAAL.URL_AANNEMER, "Meetstaat bekijken en goedkeuren"); linkTxt = "\n\nBekijken en goedkeuren: " + PORTAAL.URL_AANNEMER; }
+  const nieuw = a.versie > 1 ? "een aangepaste versie (versie " + a.versie + ") van " : "";
+  const html = wrap("<p>" + H(aanhef) + ",</p><p>BROS deelt " + nieuw + "de meetstaat met prijzen voor <b>" + esc(proj) + "</b>" + (p.adres ? " (" + esc(p.adres) + (p.gemeente ? ", " + esc(p.gemeente) : "") + ")" : "") + ": " + regels.length + " posten, samen <b>" + geld(totaal) + "</b> excl. btw.</p>"
+    + (a.bericht ? "<p style=\"padding:10px 14px;border-left:3px solid #DAD8D0;white-space:pre-line\">" + esc(a.bericht) + "</p>" : "")
+    + "<p>In het aannemersportaal (tabblad Meetstaat) zie je per post de hoeveelheid en jouw eenheidsprijs. Je kan per post een opmerking of tegenvoorstel zetten, en daarna akkoord gaan of je tegenvoorstel indienen.</p>" + linkHtml
+    + "<p>Met vriendelijke groeten,<br>" + esc(beller.name) + " — BROS</p>");
+  const tekst = aanhef + ",\n\nBROS deelt " + nieuw + "de meetstaat met prijzen voor " + proj + ": " + regels.length + " posten, samen " + geld(totaal) + " excl. btw. Bekijk en keur goed in het aannemersportaal (tabblad Meetstaat)." + linkTxt + "\n\n" + beller.name + " — BROS";
+  portaalMail(String(c.email).trim(), (a.versie > 1 ? "Aangepaste meetstaat" : "Meetstaat") + " met prijzen ter goedkeuring · " + proj, tekst, html);
   return { ok: true, naar: c.email, uitgenodigd: uitgenodigd };
 }
 /* =====================================================================

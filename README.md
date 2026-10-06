@@ -161,6 +161,18 @@ Activeren (eenmalig):
 
 Gebruik: Dossier › Contacten → bij een aannemer de knop **Aannemersportaal** (beheer) → hij krijgt een mail met een persoonlijke link. Instellingen → Klantenportaal toont wie toegang heeft (klant/aannemer). Een aannemer die op het Planbord of het klantenportaal inlogt, wordt doorgestuurd.
 
+## Meetstaat voor aannemers — met prijzen, ter goedkeuring (script 032, v1.33)
+
+- **Planbord › project › Meetstaat › Meetstaat voor aannemers** (enkel beheer): per gekoppelde aannemer *Prijzen opmaken* / *Openen*.
+- **Welke posten:** de loten die in Dossier › Contacten aan de aannemer gekoppeld zijn, zonder **binnenschrijnwerk** (lot met die naam) en zonder vervallen posten. Per post of per lot vink je aan of uit — ook binnenschrijnwerk of posten uit andere loten ("toch tonen").
+- **Prijs:** aannemersprijs = klantprijs × (1 − marge). Standaardmarge 10 % per aannemer; per post een eigen marge of een vaste prijs. Onderaan: totaal klant, totaal aannemer, marge BROS (€ en %) en het aantal posten zonder prijs.
+- **Delen:** *Bewaren en delen* zet een vaste momentopname (`aannemer_meetstaten.regels`, met enkel zijn eenheidsprijzen) in zijn portaal en mailt hem (met uitnodiging als hij nog geen login heeft). Opnieuw delen = nieuwe versie; zijn vorige akkoord of reactie vervalt. Wijzig je daarna de meetstaat of de prijzen, dan staat er "gewijzigd sinds delen". *Niet meer delen* haalt het uit zijn portaal.
+- **Aannemersportaal › Meetstaat:** bovenaan de meetstaat met zijn prijzen (per lot, met totalen). Per post een opmerking en/of tegenprijs (bewaard bij het verlaten van een veld), een algemene opmerking, zijn naam, en dan **Akkoord met deze prijzen** of **Tegenvoorstel indienen**. Met een tegenprijs kan hij niet akkoord gaan (eerst indienen of leegmaken). BROS krijgt een mail (wie deelde, beheer in kopie).
+- **Bij akkoord** (`aannemer_mp_beslis`): zijn prijzen worden de **kostprijs** in de meetstaat; de **klantprijs blijft gelijk** doordat de marge van die posten herrekend wordt (op 4 decimalen; afwijking hooguit enkele cent). Posten zonder prijs blijven ongemoeid.
+- **Tegenvoorstel:** in de editor zie je per post zijn opmerking en tegenprijs met een knop *Overnemen* (wordt de vaste prijs); daarna opnieuw delen.
+- **Beveiliging:** de tabellen `aannemer_meetstaten` en `aannemer_meetstaat_posten` zijn enkel voor beheer; de aannemer leest alleen de view `aan_meetstaat_prijzen` (zijn eigen gedeelde versie, zonder klantprijs of marge) en schrijft enkel via `aannemer_mp_reactie` en `aannemer_mp_beslis` (controle op zijn contact, het project, de versie en de status).
+- **In gebruik nemen:** voer `sql/032_aannemer_prijzen.sql` uit, en deploy het nieuwe `drive/Code.gs` (actie `aanprijsmail`) voor de mails.
+
 ## Meetstaat in het aannemersportaal (script 029, v1.28)
 - De aannemer ziet onder **Meetstaat** de posten van de loten waaraan hij in dat project gekoppeld is (Dossier › Contacten › loten bij de koppeling): nummer, omschrijving, ruimte, hoeveelheid en eenheid, nooit prijzen. Zonder gekoppelde loten verschijnt het tabblad niet.
 - **Pdf downloaden**: loten kiezen, lege kolommen voor eenheidsprijs en totaal (met velden firma, naam, datum, handtekening), per ruimte groeperen, klantnaam en adres al dan niet vermelden (standaard enkel projectnummer en gemeente), eigen bericht bovenaan. Zo kan hij de meetstaat zelf doorsturen naar zijn onderaannemers.

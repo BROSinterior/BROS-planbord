@@ -3,7 +3,7 @@
    Statische webapp op Supabase (login, live-synchronisatie, rechten)
    ===================================================================== */
 if (window.top !== window.self) { try { window.top.location.replace(window.location.href); } catch (e) { document.documentElement.innerHTML = ""; } }   // niet in een vreemd frame (clickjacking)
-const APP_VERSION = "1.32.1";
+const APP_VERSION = "1.33.0";
 const PROJ_STATUS = { offerte: "In offerte", lopend: "Lopend", on_hold: "On hold", afgerond: "Afgerond", verloren: "Verloren" };
 const KLANTTYPE = { particulier: "Particulier", zakelijk: "Zakelijk" };
 const KLANTCODE = { particulier: "PAR", zakelijk: "ZAK" };
@@ -35,7 +35,7 @@ const workdays = (a, b) => { let n = 0; for (let s = a; s <= b; s = addDays(s, 1
 /* ---------- state ---------- */
 const S = {
   session: null, me: null, setPassword: false, passwordForced: false,
-  profiles: {}, tarieven: {}, fasen: {}, standaardtaken: [], projecten: {}, taken: {}, uren: {}, documenten: {}, instellingen: {}, loten: {}, posten: {}, meetstaat_posten: {}, vorderingen: {}, vordering_regels: {}, contacten: {}, project_contacten: {}, goedkeuringen: {}, notities: {}, werfbezoeken: {}, vaststellingen: {}, klant_timing: {}, werfplannen: {}, werfverslagen: {}, tekenplannen: {}, taak_voorstellen: {}, assistent_berichten: {},
+  profiles: {}, tarieven: {}, fasen: {}, standaardtaken: [], projecten: {}, taken: {}, uren: {}, documenten: {}, instellingen: {}, loten: {}, posten: {}, meetstaat_posten: {}, vorderingen: {}, vordering_regels: {}, contacten: {}, project_contacten: {}, goedkeuringen: {}, notities: {}, werfbezoeken: {}, vaststellingen: {}, klant_timing: {}, werfplannen: {}, werfverslagen: {}, tekenplannen: {}, aannemer_meetstaten: {}, aannemer_meetstaat_posten: {}, taak_voorstellen: {}, assistent_berichten: {},
   view: "overzicht", project: null, ptab: "taken",
   filters: { user: "", status: "", project: "", q: "" }, cfilters: { soort: "", q: "" },
   ganttStart: addDays(mondayOf(todayIso), -14), ganttDays: 112, ganttOpen: {},
@@ -119,8 +119,8 @@ function telFmt(s) {
 let toastT; function toast(msg, ms = 2800) { const t = $("#toast"); t.textContent = msg; t.classList.add("show"); clearTimeout(toastT); toastT = setTimeout(() => t.classList.remove("show"), Math.max(2800, ms)); }
 
 /* ---------- data laden en live houden ---------- */
-const TABLES = { profiles: "profiles", tarieven: "tarieven", fasen: "fasen", standaardtaken: "standaardtaken", projecten: "projecten", taken: "taken", uren: "uren", documenten: "documenten", instellingen: "instellingen", loten: "loten", posten: "posten", meetstaat_posten: "meetstaat_posten", vorderingen: "vorderingen", vordering_regels: "vordering_regels", contacten: "contacten", project_contacten: "project_contacten", goedkeuringen: "goedkeuringen", notities: "notities", werfbezoeken: "werfbezoeken", vaststellingen: "vaststellingen", klant_timing: "klant_timing", werfplannen: "werfplannen", werfverslagen: "werfverslagen", taak_voorstellen: "taak_voorstellen", assistent_berichten: "assistent_berichten", prijsaanvragen: "prijsaanvragen", prijsaanvraag_regels: "prijsaanvraag_regels", tekenplannen: "tekenplannen" };
-const OPTIONAL_TABLES = ["tarieven", "documenten", "instellingen", "loten", "posten", "meetstaat_posten", "vorderingen", "vordering_regels", "contacten", "project_contacten", "goedkeuringen", "notities", "werfbezoeken", "vaststellingen", "klant_timing", "werfplannen", "werfverslagen", "taak_voorstellen", "assistent_berichten", "prijsaanvragen", "prijsaanvraag_regels", "tekenplannen"]; // ontbreken zolang het bijbehorende sql-script niet is uitgevoerd
+const TABLES = { profiles: "profiles", tarieven: "tarieven", fasen: "fasen", standaardtaken: "standaardtaken", projecten: "projecten", taken: "taken", uren: "uren", documenten: "documenten", instellingen: "instellingen", loten: "loten", posten: "posten", meetstaat_posten: "meetstaat_posten", vorderingen: "vorderingen", vordering_regels: "vordering_regels", contacten: "contacten", project_contacten: "project_contacten", goedkeuringen: "goedkeuringen", notities: "notities", werfbezoeken: "werfbezoeken", vaststellingen: "vaststellingen", klant_timing: "klant_timing", werfplannen: "werfplannen", werfverslagen: "werfverslagen", taak_voorstellen: "taak_voorstellen", assistent_berichten: "assistent_berichten", prijsaanvragen: "prijsaanvragen", prijsaanvraag_regels: "prijsaanvraag_regels", tekenplannen: "tekenplannen", aannemer_meetstaten: "aannemer_meetstaten", aannemer_meetstaat_posten: "aannemer_meetstaat_posten" };
+const OPTIONAL_TABLES = ["tarieven", "documenten", "instellingen", "loten", "posten", "meetstaat_posten", "vorderingen", "vordering_regels", "contacten", "project_contacten", "goedkeuringen", "notities", "werfbezoeken", "vaststellingen", "klant_timing", "werfplannen", "werfverslagen", "taak_voorstellen", "assistent_berichten", "prijsaanvragen", "prijsaanvraag_regels", "tekenplannen", "aannemer_meetstaten", "aannemer_meetstaat_posten"]; // ontbreken zolang het bijbehorende sql-script niet is uitgevoerd
 const rowKey = (t, r) => t === "fasen" || t === "loten" ? r.nr : t === "klant_timing" ? r.project_id + "|" + r.fase_nr : t === "tarieven" ? r.user_id : t === "instellingen" ? r.key : t === "vordering_regels" ? (r.id || r.vordering_id + "|" + r.lot + "|" + (r.post_id || "")) : r.id;
 function ingest(table, rows) {
   if (table === "standaardtaken") { S.standaardtaken = rows.sort((a, b) => a.fase_nr - b.fase_nr || a.volgorde - b.volgorde); return; }
@@ -149,7 +149,7 @@ async function loadAll() {
 }
 function subscribe() {
   // Eén kanaal per tabel: als één tabel niet in de realtime-publicatie zit, blijven de andere werken.
-  ["profiles", "tarieven", "fasen", "standaardtaken", "projecten", "taken", "uren", "documenten", "loten", "posten", "meetstaat_posten", "meetstaat_prijzen", "vorderingen", "vordering_regels", "contacten", "project_contacten", "goedkeuringen", "notities", "werfbezoeken", "vaststellingen", "klant_timing", "werfplannen", "werfverslagen", "taak_voorstellen", "assistent_berichten", "prijsaanvragen", "prijsaanvraag_regels", "tekenplannen"].forEach(t => {
+  ["profiles", "tarieven", "fasen", "standaardtaken", "projecten", "taken", "uren", "documenten", "loten", "posten", "meetstaat_posten", "meetstaat_prijzen", "vorderingen", "vordering_regels", "contacten", "project_contacten", "goedkeuringen", "notities", "werfbezoeken", "vaststellingen", "klant_timing", "werfplannen", "werfverslagen", "taak_voorstellen", "assistent_berichten", "prijsaanvragen", "prijsaanvraag_regels", "tekenplannen", "aannemer_meetstaten"].forEach(t => {
     const ch = sb.channel("pb-" + t);
     ch.on("postgres_changes", { event: "*", schema: "public", table: t }, (payload) => {
       if (S.bulk) return;   // tijdens een bulkactie (import, lot wissen) niet per rij herbouwen; op het einde volgt één refetch
@@ -563,7 +563,7 @@ function portaalInviteForm(cid, pid, rol = "klant") {
     <div class="field span2"><p style="margin:0">${opnieuw ? `<b>${esc(c.naam)}</b> heeft al toegang. We sturen een nieuwe mail met een link om een (nieuw) wachtwoord te kiezen.` : `<b>${esc(c.naam)}</b> krijgt een e-mail van BROS (archief@bros.be) met een persoonlijke link naar het ${aan ? "aannemersportaal" : "klantenportaal"}. Daar kiest hij/zij een wachtwoord en ziet daarna het project <b>${esc(p.klant)}${p.naam && p.naam !== p.klant ? " · " + esc(p.naam) : ""}</b>${nProj > 1 ? ` (en de andere projecten waar dit contact aan gekoppeld is${aan ? "" : " als bouwheer of contactpersoon"})` : ""}.`}</p></div>
     <div class="field"><label for="pi_email">E-mailadres</label><input id="pi_email" name="email" type="email" required value="${esc(c.email)}"></div>
     <div class="field"><label for="pi_naam">Aanspreking in de mail</label><input id="pi_naam" name="naam" value="${esc(c.contactpersoon || c.naam)}"></div>
-    <div class="field span2"><p class="muted" style="margin:0;font-size:12px">${aan ? "Wat de aannemer ziet: enkel zijn eigen projecten en loten — de vaststellingen die aan hem toegewezen zijn (opgelost melden met bewijsfoto), de werfplannen, de verslagen die hij ontving, documenten met de schakelaar 'aannemers', de gedeelde planning en de prijsaanvragen die jullie hem sturen. Nooit kostprijzen, marges, klantprijzen of prijzen van andere aannemers. Vragen die hij stelt komen als voorstel in de wachtrij." : "Wat de klant ziet: meetstaat met verkoopprijzen, facturen, planning, gedeelde documenten en het team. Geen kostprijzen, marges, forfait of interne notities. De uren van een taak zijn enkel zichtbaar als de schakelaar Klant bij die taak aanstaat."}</p></div>
+    <div class="field span2"><p class="muted" style="margin:0;font-size:12px">${aan ? "Wat de aannemer ziet: enkel zijn eigen projecten en loten — de vaststellingen die aan hem toegewezen zijn (opgelost melden met bewijsfoto), de werfplannen, de verslagen die hij ontving, documenten met de schakelaar 'aannemers', de gedeelde planning, de prijsaanvragen die jullie hem sturen en — als jullie die delen — de meetstaat met zijn eigen prijzen ter goedkeuring. Nooit kostprijzen, marges, klantprijzen of prijzen van andere aannemers. Vragen die hij stelt komen als voorstel in de wachtrij." : "Wat de klant ziet: meetstaat met verkoopprijzen, facturen, planning, gedeelde documenten en het team. Geen kostprijzen, marges, forfait of interne notities. De uren van een taak zijn enkel zichtbaar als de schakelaar Klant bij die taak aanstaat."}</p></div>
   </div>`, {
     saveLabel: opnieuw ? "Link sturen" : "Uitnodigen", onSave: async (d) => {
       loader.start("portaal.invite", "Uitnodiging versturen…", 6000);
@@ -639,7 +639,7 @@ function vMeetstaat(p) {
         ${beheer ? `<td style="width:76px">${sel(r, "btw", opts([[0.06, "6 %"], [0.21, "21 %"], [0, "0 %"]], Number(r.btw)))}</td>` : ""}
         <td style="width:104px">${sel(r, "status", opts(Object.entries(MS_STATUS), r.status))}${r.akkoord_op ? `<small class="muted" style="display:block;color:var(--ok)" title="Goedgekeurd door de klant in het portaal">✓ klant ${fmt(r.akkoord_op.slice(0, 10))}</small>` : ""}</td>
         <td class="r" style="width:36px"><button class="btn ghost sm danger" data-act="ms-del" data-id="${r.id}" aria-label="Verwijderen">✕</button></td></tr>`; }).join(""); }).join("");
-  return kpi + vGoedkeuringen(p) + vPrijsaanvragen(p) + `<div class="panel"><div class="panel-head"><div><h3>Meetstaat</h3><div class="muted" style="font-size:12px;margin-top:2px">${rows.length ? `${rows.length} posten in ${lots.length} loten` : "Nog leeg"} · klik in een veld om het te wijzigen, bewaard bij verlaten van het veld</div></div>
+  return kpi + vGoedkeuringen(p) + vPrijsaanvragen(p) + vAanMeetstaten(p) + `<div class="panel"><div class="panel-head"><div><h3>Meetstaat</h3><div class="muted" style="font-size:12px;margin-top:2px">${rows.length ? `${rows.length} posten in ${lots.length} loten` : "Nog leeg"} · klik in een veld om het te wijzigen, bewaard bij verlaten van het veld</div></div>
       <div class="actions">${isBeheer() && rows.length ? `<select class="btn sm" data-act="ms-btw-alles" data-pid="${p.id}" title="Het btw-tarief van alle posten van dit project in één keer zetten"><option value="">Btw alles…</option><option value="0.06">alles op 6 %</option><option value="0.21">alles op 21 %</option><option value="0">alles op 0 %</option></select>` : ""}<button class="btn sm ${S.msRuimte ? "primary" : ""}" data-act="ms-ruimte" title="Posten per lot groeperen per ruimte (alfabetisch), enkel in deze weergave — de nummering en de export veranderen niet">${S.msRuimte ? "Per ruimte ✓" : "Per ruimte"}</button>${isBeheer() ? `<button class="btn sm ${S.msKlant ? "primary" : ""}" data-act="ms-klant" title="Kostprijs, marge en btw-kolom verbergen, bv. als je de meetstaat met de klant overloopt (sneltoets: K)">${S.msKlant ? "👁 Klantweergave aan" : "Klantweergave"}</button>` : ""}${schemaV() >= 13 && rows.some(r => gkKandidaat(r)) ? `<button class="btn sm" data-act="gk-new" data-pid="${p.id}" title="Offerte of meerwerk bevroren ter goedkeuring in het klantenportaal zetten">Ter goedkeuring voorleggen</button>` : ""}<button class="btn sm" data-act="ms-import" data-pid="${p.id}" title="Een bestaande meetstaat (Excel, elk BROS-sjabloon) inlezen als posten">Importeren uit Excel</button>${rows.length ? `<button class="btn sm" data-act="ms-export" data-pid="${p.id}" title="Excel in het BROS-sjabloon aanmaken in Documenten/Meetstaat van de projectmap">Exporteren naar Drive (Excel)</button><button class="btn sm" data-act="ms-pdf" data-pid="${p.id}" title="Meetstaat als pdf: klantversie of interne versie, per lot of per ruimte">Pdf</button>` : ""}<button class="btn sm" data-act="ms-add-post" data-pid="${p.id}">+ Post</button><button class="btn sm primary" data-act="ms-add-lot" data-pid="${p.id}">+ Lot toevoegen</button></div></div>
     ${rows.length ? `<div class="tw"><table class="t ms"><thead><tr><th></th><th>Nr</th><th>Omschrijving</th><th>Locatie</th><th>Hoev.</th><th>Eenh.</th>${beheer ? `<th title="Kostprijs / aannemersprijs excl. btw">Kost EP</th><th>Marge</th>` : ""}<th class="r">Klant EP</th><th class="r">Totaal excl.</th>${beheer ? `<th>Btw</th>` : ""}<th>Status</th><th></th></tr></thead><tbody>${body}</tbody></table></div>` : `<div class="empty"><b>Nog geen posten</b>Voeg een lot toe (met de standaardposten) of kies losse posten uit de bibliotheek.</div>`}</div>`;
 }
@@ -824,6 +824,162 @@ async function paOvernemen(id) {
   if (error) { toast("Overnemen mislukt: " + error.message, 6000); return; }
   await msRefetch(paPosten(a).map(r => r.id)); await refetch("prijsaanvragen"); toast(`${data} kostprijzen overgenomen`);
   if (driveReady()) driveCall("prijsaanvraagmail", { id, soort: "gekozen", token: S.session?.access_token || "" }).catch(() => { });
+}
+/* ---------- Meetstaat voor aannemers: met prijzen, ter goedkeuring (script 032, alleen beheer) ----------
+   Per aannemer: zijn loten (zonder binnenschrijnwerk, tenzij aangevinkt), aannemersprijs = klantprijs × (1 − marge),
+   standaardmarge 10 %, per post aan te passen of een vaste prijs. Delen = een vaste momentopname in zijn portaal;
+   bij akkoord worden zijn prijzen de kostprijs (klantprijs blijft gelijk, de marge wordt herrekend). */
+const AM_STATUS = { concept: "Concept", gedeeld: "Gedeeld — wacht op akkoord", akkoord: "Akkoord", tegenvoorstel: "Tegenvoorstel", ingetrokken: "Niet meer gedeeld" };
+const AM_PILL = { concept: "st-offerte", gedeeld: "vs-open", akkoord: "done", tegenvoorstel: "late", ingetrokken: "" };
+const amReady = () => schemaV() >= 32 && isBeheer();
+const amOf = (pid) => Object.values(S.aannemer_meetstaten || {}).filter(a => a.project_id === pid);
+const amPostRows = (amId) => Object.values(S.aannemer_meetstaat_posten || {}).filter(r => r.am_id === amId);
+const amBinnen = (lot) => /binnenschrijnwerk/i.test(S.loten[lot]?.naam || "");
+const amAannemers = (pid) => contactsOf(pid).filter(x => !KLANT_ROLLEN.includes(x.rol) && x.c.soort !== "klant");
+const amLoten = (x) => ((x.loten || []).length ? x.loten : (x.c.loten || [])).map(Number);
+const amRond = (n) => Math.round((Number(n) || 0) * 100) / 100;
+const amTxt = (n) => amRond(n).toFixed(2).replace(".", ",");
+function amRegel(r, marge, ov, loten) {   // berekende regel voor één meetstaatpost
+  const std = loten.includes(r.lot) && !amBinnen(r.lot) && r.status !== "vervallen";
+  const tonen = r.status === "vervallen" ? false : (ov && ov.tonen != null ? !!ov.tonen : std);
+  const m = ov && ov.marge != null && ov.marge !== "" ? Number(ov.marge) : Number(marge);
+  const klant = msVerkoopEP(r); const vast = ov && ov.prijs != null && ov.prijs !== "";
+  const prijs = vast ? amRond(ov.prijs) : amRond(klant * (1 - m));
+  return { r, std, tonen, marge: m, eigenMarge: !!(ov && ov.marge != null && ov.marge !== ""), klant, prijs, vast };
+}
+function amBereken(pid, a, ovs, loten) {   // alle regels + momentopname + totalen
+  const regels = msRows(pid).map(r => amRegel(r, a.marge ?? 0.1, ovs[r.id], loten));
+  const zicht = regels.filter(x => x.tonen);
+  const snap = zicht.map(x => ({ post_id: x.r.id, lot: x.r.lot, code: x.r.code || "", groep: x.r.groep || "", omschrijving: x.r.omschrijving || "", locatie: x.r.locatie || "", eenheid: x.r.eenheid || "", prijstype: x.r.prijstype || "EP", hoeveelheid: Number(x.r.hoeveelheid) || 0, status: x.r.status, prijs: x.prijs }));
+  const tot = zicht.reduce((s, x) => { const h = Number(x.r.hoeveelheid) || 0; s.klant += x.klant * h; s.aan += x.prijs * h; return s; }, { klant: 0, aan: 0 });
+  return { regels, snap, tot };
+}
+const amSnapKey = (snap) => JSON.stringify((snap || []).map(x => [x.post_id, Number(x.hoeveelheid) || 0, amRond(x.prijs), x.omschrijving, x.eenheid]).sort((a, b) => a[0].localeCompare(b[0])));
+function amOvsVan(a) { const o = {}; if (a && a.id) amPostRows(a.id).forEach(r => o[r.post_id] = { id: r.id, tonen: r.tonen, marge: r.marge, prijs: r.prijs }); return o; }
+function vAanMeetstaten(p) {
+  if (!amReady() || S.msKlant || !msRows(p.id).length) return "";
+  const lijst = amAannemers(p.id);
+  const rij = (x) => {
+    const a = amOf(p.id).find(m => m.contact_id === x.c.id); const loten = amLoten(x);
+    const { snap, tot } = amBereken(p.id, a || { marge: 0.1 }, amOvsVan(a), loten);
+    const gewijzigd = a && a.gedeeld && ["gedeeld", "akkoord", "tegenvoorstel"].includes(a.status) && amSnapKey(snap) !== amSnapKey(a.regels);
+    const st = a ? a.status : "";
+    return `<tr><td><a href="#" data-contact="${x.c.id}">${esc(x.c.naam)}</a>${x.c.user_id ? "" : ` <span class="pill st-offerte" title="Nog geen login voor het aannemersportaal; bij delen krijgt hij een uitnodiging">geen login</span>`}<small class="muted" style="display:block">${esc(CONTACT_ROL[x.rol] || x.rol || "")}</small></td>
+      <td>${loten.length ? loten.map(l => esc(lotName(l))).join(", ") : `<span class="muted">geen loten gekoppeld</span>`}</td>
+      <td class="r num">${snap.length}</td><td class="r num">${eur(tot.aan)}</td><td class="r num">${tot.klant ? nl((1 - tot.aan / tot.klant) * 100, 1) + " %" : "—"}</td>
+      <td>${st ? `<span class="pill ${AM_PILL[st] || ""}">${esc(AM_STATUS[st] || st)}${a.versie ? " · v" + a.versie : ""}</span>` : `<span class="muted">—</span>`}${a && a.beslist_op && ["akkoord", "tegenvoorstel"].includes(st) ? `<small class="muted" style="display:block">${esc(a.beslist_naam || "")} · ${fmtLong(a.beslist_op.slice(0, 10))}</small>` : ""}${gewijzigd ? `<small style="display:block;color:var(--crit)">gewijzigd sinds delen</small>` : ""}</td>
+      <td class="r"><button class="btn sm ${st === "tegenvoorstel" || gewijzigd ? "primary" : ""}" data-act="am-open" data-pid="${p.id}" data-cid="${x.c.id}">${a ? "Openen" : "Prijzen opmaken"}</button></td></tr>`;
+  };
+  return `<div class="panel" style="margin-bottom:16px"><div class="panel-head"><div><h3>Meetstaat voor aannemers</h3><div class="muted" style="font-size:12px;margin-top:2px">Per aannemer zijn posten met zijn prijs: klantprijs min marge (standaard 10 %, per post aan te passen of een vaste prijs). Binnenschrijnwerk staat er niet in, tenzij je het aanvinkt. Na delen keurt hij goed in zijn portaal; bij akkoord worden zijn prijzen de kostprijs en blijft de klantprijs gelijk.</div></div></div>
+    ${lijst.length ? `<div class="tw"><table class="t"><thead><tr><th>Aannemer</th><th>Loten</th><th class="r">Posten</th><th class="r">Totaal aannemer</th><th class="r">Marge</th><th>Status</th><th></th></tr></thead><tbody>${lijst.map(rij).join("")}</tbody></table></div>`
+      : `<div class="empty"><b>Nog geen aannemers gekoppeld</b>Koppel een aannemer met zijn loten in Dossier › Contacten.</div>`}</div>`;
+}
+let AM = null;
+function amOpen(pid, cid) {
+  const p = S.projecten[pid]; const x = amAannemers(pid).find(y => y.c.id === cid); if (!p || !x) return;
+  const a = amOf(pid).find(m => m.contact_id === cid) || null;
+  AM = { pid, cid, x, a, marge: a ? Number(a.marge) : 0.1, bericht: a ? a.bericht || "" : "", ovs: amOvsVan(a), loten: amLoten(x), open: {} };
+  const reactie = a && ["gedeeld", "tegenvoorstel", "akkoord"].includes(a.status) ? a : null;
+  openModal(`Meetstaat met prijzen — ${x.c.naam}`, `
+    <div class="form-grid">
+      <div class="field"><label for="am_marge">Marge BROS (% van de klantprijs)</label><input id="am_marge" type="text" inputmode="decimal" autocomplete="off" value="${nl(AM.marge * 100, 2)}"><small class="muted">Aannemersprijs = klantprijs × (1 − marge). Per post kan je een eigen marge of een vaste prijs zetten.</small></div>
+      <div class="field"><label>Status</label><div style="padding-top:6px" id="am_status"></div></div>
+      <div class="field span2"><label for="am_bericht">Bericht aan de aannemer (bovenaan in zijn portaal en in de mail)</label><textarea id="am_bericht" rows="2" placeholder="bv. Prijzen excl. btw, inclusief levering en plaatsing. Graag je akkoord tegen vrijdag.">${esc(AM.bericht)}</textarea></div>
+      ${reactie && reactie.opmerking ? `<div class="field span2"><div class="notice" style="margin:0"><div><b>Opmerking van ${esc(reactie.beslist_naam || x.c.naam)}:</b> ${esc(reactie.opmerking)}</div></div></div>` : ""}
+    </div>
+    <div id="am_tabel"></div>
+    <div class="actions" style="margin-top:12px;justify-content:space-between;flex-wrap:wrap;gap:8px"><span class="muted" style="font-size:12px" id="am_tot"></span>
+      <span style="display:flex;gap:8px;flex-wrap:wrap">${a && a.gedeeld ? `<button type="button" class="btn sm ghost danger" data-am="intrekken">Niet meer delen</button>` : ""}<button type="button" class="btn sm" data-am="delen">${a && a.gedeeld ? "Bewaren en opnieuw delen" : "Bewaren en delen met aannemer"}</button></span></div>`,
+    { wide: true, saveLabel: "Bewaren", onSave: async () => { try { await amBewaar(false); toast("Bewaard"); } catch (e) { if (!e.__toasted) toast("Bewaren mislukt: " + (e.message || e), 6000); return false; } } });
+  $("#modal").style.width = "min(1180px, 100%)";
+  amTekenTabel();
+  const m = $("#mform");   // het formulier wordt bij elke modal opnieuw gemaakt: geen dubbele luisteraars
+  m.addEventListener("change", (e) => {
+    const t = e.target;
+    if (t.id === "am_marge") { const v = leesGetal(t.value); if (v == null || v < 0 || v >= 100) { toast("Geef een marge tussen 0 en 100 %."); t.value = nl(AM.marge * 100, 2); return; } AM.marge = v / 100; return setTimeout(() => amTekenTabel(), 0); }
+    if (t.id === "am_bericht") { AM.bericht = t.value; return; }
+    const post = t.dataset.amPost; if (!post) { if (t.dataset.amLot) { const lot = Number(t.dataset.amLot); msRows(pid).filter(r => r.lot === lot && r.status !== "vervallen").forEach(r => { const o = AM.ovs[r.id] = AM.ovs[r.id] || {}; const std = AM.loten.includes(r.lot) && !amBinnen(r.lot); o.tonen = t.checked === std ? null : t.checked; }); amTekenTabel(); } return; }
+    const o = AM.ovs[post] = AM.ovs[post] || {}; const r = S.meetstaat_posten[post];
+    if (t.dataset.f === "tonen") { const std = AM.loten.includes(r.lot) && !amBinnen(r.lot); o.tonen = t.checked === std ? null : t.checked; }
+    else if (t.dataset.f === "marge") { const v = t.value.trim() === "" ? null : leesGetal(t.value); if (v != null && (v < -100 || v >= 100)) { toast("Geef een marge tussen −100 en 100 %."); } else o.marge = v == null ? null : v / 100; }
+    else if (t.dataset.f === "prijs") { const v = t.value.trim() === "" ? null : leesGetal(t.value); if (v != null && v < 0) toast("Geef een positieve prijs."); else o.prijs = v == null ? null : amRond(v); }
+    setTimeout(() => amTekenTabel(), 0);   // na het verplaatsen van de focus (Tab), zodat die bewaard blijft
+  });
+  m.addEventListener("click", async (e) => {
+    const b = e.target.closest("[data-am],[data-am-neem],[data-am-open]"); if (!b) return;
+    if (b.dataset.amOpen) { AM.open[b.dataset.amOpen] = !AM.open[b.dataset.amOpen]; return amTekenTabel(); }
+    if (b.dataset.amNeem) { const post = b.dataset.amNeem; const tp = AM.a?.reactie?.[post]?.tegenprijs; if (tp == null) return; const o = AM.ovs[post] = AM.ovs[post] || {}; o.prijs = amRond(tp); return amTekenTabel(); }
+    const act = b.dataset.am; b.disabled = true;
+    try {
+      if (act === "delen") {
+        const { snap } = amBereken(pid, { marge: AM.marge }, AM.ovs, AM.loten); if (!snap.length) { toast("Er staat geen enkele post aangevinkt."); return; }
+        if (!x.c.email) { toast("Deze aannemer heeft geen e-mailadres (Dossier › Contacten)."); }
+        if (!confirm(`${snap.length} posten delen met ${x.c.naam}${AM.a && AM.a.gedeeld ? ` als versie ${(AM.a.versie || 0) + 1} (zijn vorige akkoord of reactie vervalt)` : ""}? Hij ziet enkel zijn eigen prijzen, nooit de klantprijs of jullie marge.`)) return;
+        await amBewaar(true); MODAL.dirty = false; closeModal();
+      } else if (act === "intrekken") {
+        if (!confirm(`De meetstaat niet meer delen met ${x.c.naam}? Hij ziet ze dan niet meer in zijn portaal.`)) return;
+        await dbUpdate("aannemer_meetstaten", AM.a.id, { gedeeld: false, status: "ingetrokken" }); MODAL.dirty = false; closeModal(); toast("Niet meer gedeeld");
+      }
+    } catch (er) { if (!er.__toasted) toast("Mislukt: " + (er.message || er), 6000); } finally { b.disabled = false; }
+  });
+}
+function amTekenTabel(focusEl) {
+  if (!AM) return; const box = $("#am_tabel"); if (!box) return; const pid = AM.pid; const a = AM.a;
+  const act = document.activeElement; const ak = act && act.dataset && act.dataset.amPost ? [act.dataset.amPost, act.dataset.f] : null;
+  const { regels, snap, tot } = amBereken(pid, { marge: AM.marge }, AM.ovs, AM.loten);
+  const reactie = a && ["gedeeld", "tegenvoorstel", "akkoord"].includes(a.status) ? (a.reactie || {}) : {};
+  const gedeeldPrijs = Object.fromEntries((a && a.gedeeld ? a.regels || [] : []).map(x => [x.post_id, x.prijs]));
+  const lots = [...new Set(regels.map(x => x.r.lot))].sort((p, q) => (AM.loten.includes(q) - AM.loten.includes(p)) || p - q);
+  const body = lots.map(lot => {
+    const rs = regels.filter(x => x.r.lot === lot); const zijn = AM.loten.includes(lot); const binnen = amBinnen(lot); const aan = rs.filter(x => x.tonen).length;
+    const open = AM.open[lot] ?? ((zijn && !binnen) || aan > 0); const levend = rs.filter(x => x.r.status !== "vervallen");
+    const kop = `<tr class="ms-lot"><td style="width:30px"><input type="checkbox" data-am-lot="${lot}" ${levend.length && levend.every(x => x.tonen) ? "checked" : ""} title="Alle posten van dit lot tonen of verbergen"></td><td colspan="8"><div style="display:flex;justify-content:space-between;gap:8px;flex-wrap:wrap;align-items:center"><span>${esc(lotName(lot))} ${zijn ? `<span class="pill done" style="font-weight:500">zijn lot</span>` : `<span class="pill" style="font-weight:500">ander lot</span>`}${binnen ? ` <span class="pill st-offerte" style="font-weight:500">binnenschrijnwerk — standaard niet</span>` : ""} <span class="muted num" style="font-weight:400">${aan} / ${rs.length} getoond</span></span><button type="button" class="btn ghost sm" data-am-open="${lot}">${open ? "Verbergen ▴" : "Posten tonen ▾"}</button></div></td></tr>`;
+    if (!open) return kop;
+    let groep = null;
+    return kop + rs.map(x => {
+      const r = x.r; const ov = AM.ovs[r.id] || {}; const h = Number(r.hoeveelheid) || 0; const re = reactie[r.id]; const dood = r.status === "vervallen";
+      const gh = r.groep && r.groep !== groep ? ((groep = r.groep), `<tr class="ms-groep"><td></td><td colspan="8">${esc(r.groep)}</td></tr>`) : "";
+      const veranderd = a && a.gedeeld && x.tonen && gedeeldPrijs[r.id] != null && amRond(gedeeldPrijs[r.id]) !== x.prijs;
+      return gh + `<tr class="${x.tonen ? "" : "ms-dead"}"><td><input type="checkbox" data-am-post="${r.id}" data-f="tonen" ${x.tonen ? "checked" : ""} ${dood ? "disabled" : ""} title="${x.std ? "Standaard getoond" : "Standaard niet getoond"}"></td>
+        <td class="num muted" style="width:48px">${esc(r.code || "")}</td><td style="min-width:200px">${esc(r.omschrijving || "")}${r.locatie ? `<small class="muted" style="display:block">${esc(r.locatie)}</small>` : ""}${dood ? ` <span class="pill">vervallen</span>` : ""}</td>
+        <td class="r num" style="white-space:nowrap">${h ? nl(h, 2) + " " + esc(r.eenheid || "") : esc(r.prijstype && r.prijstype !== "EP" ? r.prijstype : r.eenheid || "")}</td>
+        <td class="r num muted" title="Klantprijs per eenheid">${eur2(x.klant)}</td>
+        <td style="width:70px"><input class="inline num" data-am-post="${r.id}" data-f="marge" type="text" inputmode="decimal" autocomplete="off" placeholder="${nl(AM.marge * 100, 2)}" value="${x.eigenMarge ? nl(x.marge * 100, 2) : ""}" ${x.vast ? `disabled title="Vaste prijs ingevuld"` : `title="Marge % voor deze post (leeg = ${nl(AM.marge * 100, 2)} %)"`}></td>
+        <td style="width:100px"><input class="inline num" data-am-post="${r.id}" data-f="prijs" type="text" inputmode="decimal" autocomplete="off" placeholder="${amTxt(x.klant * (1 - x.marge))}" value="${x.vast ? amTxt(x.prijs) : ""}" title="Vaste aannemersprijs per eenheid (leeg = klantprijs − marge)"></td>
+        <td class="r num" style="white-space:nowrap"><b>${x.tonen && h ? eur2(x.prijs * h) : ""}</b>${veranderd ? `<small style="display:block;color:var(--crit)" title="Gedeeld: ${eur2(gedeeldPrijs[r.id])}">was ${eur2(gedeeldPrijs[r.id])}</small>` : ""}</td>
+        <td style="min-width:120px;font-size:12px">${re ? `${re.opmerking ? `<span title="${esc(re.opmerking)}">💬 ${esc(re.opmerking.length > 60 ? re.opmerking.slice(0, 58) + "…" : re.opmerking)}</span>` : ""}${re.tegenprijs != null ? `<div style="white-space:nowrap">tegenprijs <b>${eur2(re.tegenprijs)}</b> <button type="button" class="btn ghost sm" data-am-neem="${r.id}" title="Deze prijs overnemen als vaste prijs">Overnemen</button></div>` : ""}` : ""}</td></tr>`;
+    }).join("");
+  }).join("");
+  box.innerHTML = `<div class="tw" style="max-height:58vh;overflow:auto;margin-top:10px"><table class="t ms"><thead><tr><th></th><th>Nr</th><th>Omschrijving</th><th class="r">Hoev.</th><th class="r">Klant EP</th><th>Marge %</th><th>Aannemer EP</th><th class="r">Totaal</th><th>Reactie aannemer</th></tr></thead><tbody>${body}</tbody></table></div>`;
+  const st = $("#am_status"); if (st) { const gew = a && a.gedeeld && ["gedeeld", "akkoord", "tegenvoorstel"].includes(a.status) && amSnapKey(snap) !== amSnapKey(a.regels); st.innerHTML = a ? `<span class="pill ${AM_PILL[a.status] || ""}">${esc(AM_STATUS[a.status] || a.status)}${a.versie ? " · versie " + a.versie : ""}</span>${a.gedeeld_op ? ` <small class="muted">gedeeld ${fmtLong(a.gedeeld_op.slice(0, 10))}</small>` : ""}${a.beslist_op ? ` <small class="muted">· ${a.status === "akkoord" ? "akkoord" : "gereageerd"} door ${esc(a.beslist_naam || "")} op ${fmtLong(a.beslist_op.slice(0, 10))}</small>` : ""}${gew ? `<div style="color:var(--crit);font-size:12px;margin-top:4px">Gewijzigd sinds delen — deel opnieuw om zijn akkoord te vragen.</div>` : ""}` : `<span class="muted">Nog niet gedeeld</span>`; }
+  const nul = snap.filter(x => !(Number(x.prijs) > 0) && Number(x.hoeveelheid)).length;
+  const tt = $("#am_tot"); if (tt) tt.innerHTML = `${nul ? `<span style="color:var(--crit)">${nul} post${nul === 1 ? "" : "en"} zonder prijs</span> · ` : ""}<b>${snap.length}</b> posten · klant ${eur(tot.klant)} · aannemer <b>${eur(tot.aan)}</b> · marge BROS <b>${eur(tot.klant - tot.aan)}</b>${tot.klant ? ` (${nl((1 - tot.aan / tot.klant) * 100, 1)} %)` : ""} — excl. btw`;
+  const terug = (k) => k && box.querySelector(`[data-am-post="${k[0]}"][data-f="${k[1]}"]`);
+  const el = terug(ak); if (el) el.focus();
+}
+async function amBewaar(delen) {
+  const pid = AM.pid, cid = AM.cid; let a = AM.a && S.aannemer_meetstaten[AM.a.id] ? S.aannemer_meetstaten[AM.a.id] : AM.a;
+  const bericht = ($("#am_bericht")?.value ?? AM.bericht).trim();
+  const basis = { marge: Math.round(AM.marge * 10000) / 10000, bericht };
+  if (!a) a = await dbInsert("aannemer_meetstaten", { project_id: pid, contact_id: cid, ...basis, created_by: S.me.id });
+  else await dbUpdate("aannemer_meetstaten", a.id, basis);
+  // afwijkingen per post: enkel bewaren wat afwijkt van de standaard
+  const bestaand = amPostRows(a.id); const upsert = [], weg = [];
+  msRows(pid).forEach(r => { const o = AM.ovs[r.id]; const leeg = !o || (o.tonen == null && (o.marge == null || o.marge === "") && (o.prijs == null || o.prijs === "")); const ex = bestaand.find(b => b.post_id === r.id);
+    if (leeg) { if (ex) weg.push(ex.id); return; }
+    upsert.push({ am_id: a.id, post_id: r.id, tonen: o.tonen == null ? null : !!o.tonen, marge: o.marge == null || o.marge === "" ? null : Math.round(Number(o.marge) * 10000) / 10000, prijs: o.prijs == null || o.prijs === "" ? null : amRond(o.prijs) }); });
+  if (upsert.length) { const { error } = await sb.from("aannemer_meetstaat_posten").upsert(upsert, { onConflict: "am_id,post_id" }); if (error) { toast("Bewaren mislukt: " + error.message, 6000); error.__toasted = true; throw error; } }
+  if (weg.length) { const { error } = await sb.from("aannemer_meetstaat_posten").delete().in("id", weg); if (error) { toast("Bewaren mislukt: " + error.message, 6000); error.__toasted = true; throw error; } }
+  await refetch("aannemer_meetstaat_posten");
+  if (delen) {
+    const { snap } = amBereken(pid, { marge: AM.marge }, AM.ovs, AM.loten);
+    const cur = S.aannemer_meetstaten[a.id] || a;
+    a = await dbUpdate("aannemer_meetstaten", a.id, { gedeeld: true, versie: (Number(cur.versie) || 0) + 1, status: "gedeeld", regels: snap, gedeeld_op: new Date().toISOString(), gedeeld_door: S.me.id, reactie: {}, opmerking: "", beslist_op: null, beslist_naam: "", beslist_door: null });
+    const c = S.contacten[cid];
+    if (driveReady() && c && c.email) { try { const j = await driveCall("aanprijsmail", { id: a.id, soort: "gedeeld", token: S.session?.access_token || "" }); toast(`Gedeeld en gemaild naar ${j.naar || c.email}${j.uitgenodigd ? " (met uitnodiging voor het portaal)" : ""}`, 6000); } catch (e) { toast("Gedeeld, maar mailen mislukte: " + e.message + " — de aannemer ziet het wel in zijn portaal.", 8000); } }
+    else toast(`Gedeeld met ${c ? c.naam : "de aannemer"} — zichtbaar in zijn portaal${c && !c.email ? " (geen e-mailadres, dus geen mail)" : ""}`, 6000);
+  }
+  AM.a = S.aannemer_meetstaten[a.id] || a; return AM.a;
 }
 /* ---------- Notities / verslagen per project: vergaderingen, werfverslagen, feedback — met verantwoordelijken en actiepunten (taken) ---------- */
 const NOTE_SOORT = { vergadering: "Vergadering", werfverslag: "Werfverslag", bespreking: "Bespreking", feedback: "Feedback klant", notitie: "Notitie" };
@@ -2925,6 +3081,7 @@ document.addEventListener("click", (e) => {
   if (d.act === "vs-new") return vsForm({}, d.pid);
   if (d.act === "tk-new") return tkPlanForm(d.pid);   // tekenmodule — niet verwijderen
   if (d.act === "tk-open") return tkOpen(d.id);
+  if (d.act === "am-open") return amOpen(d.pid, d.cid);   // meetstaat met prijzen voor de aannemer (script 032)
   if (d.vs) { e.stopPropagation(); if (!closeModal()) return; return vsForm(S.vaststellingen[d.vs]); }
   if (d.act === "kt-fill") { const [a, b] = ktTaskSpan(d.pid, Number(d.nr)); return ktSave(d.pid, Number(d.nr), { start: a, eind: b }); }
   if (d.act === "kt-clear") return ktClear(d.pid, Number(d.nr));
