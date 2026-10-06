@@ -454,7 +454,7 @@ window.addEventListener("beforeunload", (e) => { if (TK && (TK.dirty.size || TK.
 async function tkLaadObjecten() {
   const T = TK; const rows = [];
   for (let from = 0; from < 50000; from += 1000) {
-    const { data, error } = await sb.from("plan_objecten").select("*").eq("plan_id", T.id).range(from, from + 999);
+    const { data, error } = await sb.from("plan_objecten").select("*").eq("plan_id", T.id).order("id", { ascending: true }).range(from, from + 999);   // vaste volgorde: anders vallen rijen tussen pagina's weg
     if (error) { toast("Getekende objecten niet geladen: " + error.message, 6000); break; }
     rows.push(...(data || [])); if (!data || data.length < 1000) break;
   }

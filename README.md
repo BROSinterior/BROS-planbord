@@ -161,6 +161,10 @@ Activeren (eenmalig):
 
 Gebruik: Dossier › Contacten → bij een aannemer de knop **Aannemersportaal** (beheer) → hij krijgt een mail met een persoonlijke link. Instellingen → Klantenportaal toont wie toegang heeft (klant/aannemer). Een aannemer die op het Planbord of het klantenportaal inlogt, wordt doorgestuurd.
 
+## Gegevens laden per 1000 rijen (fix v1.33.1)
+
+Supabase geeft max. 1000 rijen per aanvraag; `fetchAllRows` haalt alles op in pagina's. Elke pagina wordt gesorteerd op een unieke kolom (`id`, of `nr`/`key`/`user_id` volgens `ORDER_OF`). Zonder vaste volgorde kan de database bij elke pagina een andere volgorde teruggeven en vallen er rijen weg — zo toonde het Planbord een lager meetstaattotaal dan het klantenportaal. Nieuwe pagina-aanvragen dus altijd met `.order(...)`.
+
 ## Meetstaat voor aannemers — met prijzen, ter goedkeuring (script 032, v1.33)
 
 - **Planbord › project › Meetstaat › Meetstaat voor aannemers** (enkel beheer): per gekoppelde aannemer *Prijzen opmaken* / *Openen*.

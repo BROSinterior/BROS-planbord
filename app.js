@@ -3,7 +3,7 @@
    Statische webapp op Supabase (login, live-synchronisatie, rechten)
    ===================================================================== */
 if (window.top !== window.self) { try { window.top.location.replace(window.location.href); } catch (e) { document.documentElement.innerHTML = ""; } }   // niet in een vreemd frame (clickjacking)
-const APP_VERSION = "1.33.0";
+const APP_VERSION = "1.33.1";
 const PROJ_STATUS = { offerte: "In offerte", lopend: "Lopend", on_hold: "On hold", afgerond: "Afgerond", verloren: "Verloren" };
 const KLANTTYPE = { particulier: "Particulier", zakelijk: "Zakelijk" };
 const KLANTCODE = { particulier: "PAR", zakelijk: "ZAK" };
@@ -131,11 +131,15 @@ function ingest(table, rows) {
 const VIEW_OF = { meetstaat_posten: "meetstaat_posten_v", loten: "loten_v", posten: "posten_v" };
 const srcOf = (t) => VIEW_OF[t] && S.viewsOk !== false ? VIEW_OF[t] : t;
 // Supabase geeft max. 1000 rijen per aanvraag terug: in pagina's ophalen tot alles binnen is.
+// Altijd sorteren op een unieke kolom: zonder vaste volgorde geeft de database bij elke pagina een andere volgorde terug
+// en vallen er rijen tussen twee pagina's weg (zo misten posten in de meetstaat zodra er > 1000 rijen waren — fix v1.33.1).
+const ORDER_OF = { fasen: ["nr"], loten: ["nr"], tarieven: ["user_id"], instellingen: ["key"], klant_timing: ["project_id", "fase_nr"] };
+const pagina = (src, t, from, PAGE) => { let q = sb.from(src).select("*"); (ORDER_OF[t] || ["id"]).forEach(c => { q = q.order(c, { ascending: true }); }); return q.range(from, from + PAGE - 1); };
 async function fetchAllRows(t) {
   const PAGE = 1000; let from = 0, all = []; let src = srcOf(t);
   for (; ;) {
-    let { data, error } = await sb.from(src).select("*").range(from, from + PAGE - 1);
-    if (error && src !== t && /does not exist|42P01|schema cache/i.test(error.message || "")) { S.viewsOk = false; src = t; ({ data, error } = await sb.from(src).select("*").range(from, from + PAGE - 1)); }
+    let { data, error } = await pagina(src, t, from, PAGE);
+    if (error && src !== t && /does not exist|42P01|schema cache/i.test(error.message || "")) { S.viewsOk = false; src = t; ({ data, error } = await pagina(src, t, from, PAGE)); }
     if (error) return { error };
     all = all.concat(data || []);
     if (!data || data.length < PAGE) return { data: all };
