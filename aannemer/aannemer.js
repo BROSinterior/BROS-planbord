@@ -4,7 +4,7 @@
    nooit prijzen van BROS of van andere aannemers. Schrijven gaat via functies (opgelost melden, prijzen, vragen).
    ===================================================================== */
 if (window.top !== window.self) { try { window.top.location.replace(window.location.href); } catch (e) { document.documentElement.innerHTML = ""; } }   // niet in een vreemd frame (clickjacking)
-const PORTAAL_VERSION = "1.31.2";
+const PORTAAL_VERSION = "1.38.0";
 const todayLocal = () => { const n = new Date(); return `${n.getFullYear()}-${String(n.getMonth() + 1).padStart(2, "0")}-${String(n.getDate()).padStart(2, "0")}`; };
 const safeUrl = (u) => /^https?:\/\//i.test(String(u || "")) ? u : "#";
 const cfg = window.PLANBORD_CONFIG || {};
@@ -22,7 +22,7 @@ const MAAND = ["januari", "februari", "maart", "april", "mei", "juni", "juli", "
 const fmtLang = (s) => { if (!s) return "—"; const d = new Date(s.slice(0, 10) + "T00:00:00"); return `${d.getDate()} ${MAAND[d.getMonth()]} ${d.getFullYear()}`; };
 const PROJ_STATUS = { offerte: "In offerte", lopend: "In uitvoering", on_hold: "Even gepauzeerd", afgerond: "Opgeleverd", verloren: "Niet doorgegaan" };
 const VS_STATUS = { open: "Open", opgelost: "Opgelost — wacht op controle", gecontroleerd: "Gecontroleerd", vervallen: "Vervallen" };
-const PA_STATUS = { open: "In te vullen", ingediend: "Ingediend", gekozen: "Gekozen", afgesloten: "Afgesloten" };
+const PA_STATUS = { open: "In te vullen", ingediend: "Ingediend", gekozen: "Gegund", afgesloten: "Afgesloten", niet_weerhouden: "Niet weerhouden" };
 const VR_STATUS = { open: "In behandeling", bevestigd: "Opgenomen als taak", geweigerd: "Beantwoord / niet weerhouden" };
 const ONDERWERP = { planning: "Planning en uitvoering", documenten: "Plannen en documenten", ontwerp: "Ontwerp en materialen", facturatie: "Facturatie", klacht: "Probleem op de werf", overig: "Iets anders" };
 const ROL = { aannemer: "Aannemer", leverancier: "Leverancier", architect: "Architect", studiebureau: "Studiebureau", andere: "Andere" };
@@ -49,18 +49,20 @@ async function loadAll() {
       if (r.error) { if (opt) return []; throw new Error(v + ": " + r.error.message); }
       all = all.concat(r.data || []); if (!r.data || r.data.length < PAGE) return all;
     } };
-  const [me, projecten, vs, plannen, verslagen, documenten, planning, planTaken, taken, aanvragen, aanvraagPosten, vragen, team, ik, meetstaat, prijzenMs, fasen, loten, inst] = await Promise.all([
+  const [me, projecten, vs, plannen, verslagen, documenten, planning, planTaken, taken, aanvragen, aanvraagPosten, vragen, team, ik, meetstaat, prijzenMs, fasen, loten, inst, pvProj] = await Promise.all([
     sb.from("profiles").select("id,name,email,role").eq("id", S.session.user.id).maybeSingle().then(r => r.data),
     q("aan_project"), q("aan_vaststellingen"), q("aan_werfplannen"), q("aan_werfverslagen"), q("aan_documenten"), q("aan_planning"), q("aan_planning_taken"),
     q("aan_taken"), q("aan_prijsaanvragen"), q("aan_prijsaanvraag_posten"), q("aan_vragen"), q("klant_team", "*", true), q("klant_ik", "*", true), q("aan_meetstaat", "*", true), q("aan_meetstaat_prijzen", "*", true),
     q("fasen"), sb.from("loten_v").select("nr,naam").then(r => r.error ? [] : (r.data || [])),
     sb.from("instellingen").select("value").eq("key", "portaal").maybeSingle().then(r => r.data?.value || {}),
+    q("aan_prijsvraag_projecten", "*", true),   // script 037: projecten waarvoor hij enkel een prijsvraag kreeg
   ]);
+  pvProj.filter(x => !projecten.some(p => p.id === x.id)).forEach(x => projecten.push({ id: x.id, nummer: x.nummer, gemeente: x.gemeente, klant: "", naam: "", kandidaat: true, mijn_loten: [] }));
   S.me = me;
   S.data = { projecten: projecten.sort((a, b) => (b.nummer || "").localeCompare(a.nummer || "")), vs: vs.sort((a, b) => (b.nr || 0) - (a.nr || 0)), plannen: plannen.sort((a, b) => (a.volgorde || 0) - (b.volgorde || 0)),
     verslagen: verslagen.sort((a, b) => (b.nr || 0) - (a.nr || 0)), documenten, planning, planTaken, taken, aanvragen: aanvragen.sort((a, b) => (b.created_at || "").localeCompare(a.created_at || "")), aanvraagPosten, vragen: vragen.sort((a, b) => (b.created_at || "").localeCompare(a.created_at || "")),
     team, ik, meetstaat, prijzenMs, fasen: fasen.filter(f => f.actief !== false).sort((a, b) => a.nr - b.nr), loten: Object.fromEntries(loten.map(l => [l.nr, l])), inst };
-  if (!S.project || !projecten.some(p => p.id === S.project)) S.project = projecten[0]?.id || null;
+  if (!S.project || !projecten.some(p => p.id === S.project)) S.project = (projecten.find(p => !p.kandidaat) || projecten[0])?.id || null;
   sb.rpc("portaal_bezoek").then(() => { });
 }
 const D = () => S.data;
@@ -104,14 +106,15 @@ function render() {
   const p = P(); const vs = vsOf(p.id);
   const nOpen = vs.filter(v => v.status === "open").length, nPa = D().aanvragen.filter(a => a.project_id === p.id && a.status === "open").length, nTk = D().taken.filter(t => t.project_id === p.id && !t.vaststelling_id && t.status !== "done").length;
   const badge = (n) => n ? ` <span class="badge">${n}</span>` : "";
-  const tabs = [["overzicht", "Overzicht"], ["werf", "Werfpunten" + badge(nOpen)], ["prijzen", "Prijsaanvragen" + badge(nPa)], ...(msOf(p.id).length || mpOf(p.id).length ? [["meetstaat", "Meetstaat" + badge(mpOf(p.id).filter(m => m.status === "gedeeld").length)]] : []), ["plannen", "Plannen"], ["documenten", "Documenten"], ["planning", "Planning"], ["vragen", "Vragen" + badge(nTk)], ["team", "Wie is wie"]];
+  if (p.kandidaat) S.tab = "prijzen";
+  const tabs = p.kandidaat ? [["prijzen", "Prijsaanvragen" + badge(nPa)]] : [["overzicht", "Overzicht"], ["werf", "Werfpunten" + badge(nOpen)], ["prijzen", "Prijsaanvragen" + badge(nPa)], ...(msOf(p.id).length || mpOf(p.id).length ? [["meetstaat", "Meetstaat" + badge(mpOf(p.id).filter(m => m.status === "gedeeld").length)]] : []), ["plannen", "Plannen"], ["documenten", "Documenten"], ["planning", "Planning"], ["vragen", "Vragen" + badge(nTk)], ["team", "Wie is wie"]];
   $("#app").innerHTML = `<header class="top"><div class="top-in"><div class="brand"><span class="mark">BROS</span><span class="name">Aannemersportaal</span></div>
-      <div class="who">${D().projecten.length > 1 ? `<select id="projSel" class="btn sm">${D().projecten.map(x => `<option value="${x.id}" ${x.id === p.id ? "selected" : ""}>${esc(x.nummer ? x.nummer + " · " : "")}${esc(x.klant || x.naam)}</option>`).join("")}</select>` : ""}<span>${esc(S.me?.name || "")}</span><button class="btn ghost sm" data-act="logout">Uitloggen</button></div></div>
+      <div class="who">${D().projecten.length > 1 ? `<select id="projSel" class="btn sm">${D().projecten.map(x => `<option value="${x.id}" ${x.id === p.id ? "selected" : ""}>${esc(x.nummer ? x.nummer + " · " : "")}${esc(x.kandidaat ? "prijsvraag" + (x.gemeente ? " · " + x.gemeente : "") : x.klant || x.naam)}</option>`).join("")}</select>` : ""}<span>${esc(S.me?.name || "")}</span><button class="btn ghost sm" data-act="logout">Uitloggen</button></div></div>
     <nav class="tabs">${tabs.map(([k, l]) => `<button class="${S.tab === k ? "on" : ""}" data-tab="${k}">${l}</button>`).join("")}</nav></header>
     <main>${(({ overzicht: vOverzicht, werf: vWerf, prijzen: vPrijzen, meetstaat: vMeetstaat, plannen: vPlannen, documenten: vDocumenten, planning: vPlanning, vragen: vVragen, team: vTeam })[S.tab] || vOverzicht)(p)}</main>`;
   window.scrollTo({ top: 0 });
 }
-const projTitel = (p) => `${esc(p.klant || "")}${p.naam && p.naam !== p.klant ? " · " + esc(p.naam) : ""}`;
+const projTitel = (p) => p.kandidaat ? `Project ${esc(p.nummer || "")}${p.gemeente ? " · " + esc(p.gemeente) : ""}` : `${esc(p.klant || "")}${p.naam && p.naam !== p.klant ? " · " + esc(p.naam) : ""}`;
 function vOverzicht(p) {
   const vs = vsOf(p.id); const open = vs.filter(v => v.status === "open"), late = open.filter(isLate), wacht = vs.filter(v => v.status === "opgelost");
   const pa = D().aanvragen.filter(a => a.project_id === p.id && a.status === "open"); const tk = D().taken.filter(t => t.project_id === p.id && !t.vaststelling_id && t.status !== "done");
@@ -282,39 +285,91 @@ async function msPdf(p) {
 function vPrijzen(p) {
   const as = D().aanvragen.filter(a => a.project_id === p.id);
   if (S.aanvraag) { const a = as.find(x => x.id === S.aanvraag); if (a) return vAanvraag(p, a); S.aanvraag = null; }
-  return `<h1 style="margin-bottom:6px">Prijsaanvragen</h1><p class="muted" style="margin-bottom:16px">BROS vraagt je per lot een eenheidsprijs per post (excl. btw, inclusief levering en plaatsing tenzij anders vermeld). Je vult in, bewaart tussendoor en dient in zodra alles klopt.</p>
-    ${as.length ? `<div class="panel"><table class="t"><thead><tr><th>Aanvraag</th><th>Loten</th><th>Reageren vóór</th><th>Status</th><th></th></tr></thead><tbody>${as.map(a => { const ps = D().aanvraagPosten.filter(x => x.aanvraag_id === a.id); const ing = ps.filter(x => x.eenheidsprijs != null).length; return `<tr><td><b>${esc(a.titel || "Prijsaanvraag")}</b><div class="muted" style="font-size:12px">${fmt(a.created_at)} · ${ing} van ${ps.length} posten ingevuld</div></td><td>${a.loten.map(lotNaam).map(esc).join("<br>")}</td><td class="num ${a.status === "open" && a.deadline && a.deadline < todayLocal() ? "late" : ""}">${a.deadline ? fmt(a.deadline) : "—"}</td><td><span class="pill ${a.status}">${PA_STATUS[a.status]}</span></td><td class="r"><button class="btn sm ${a.status === "open" ? "primary" : ""}" data-act="pa-open" data-id="${a.id}">${a.status === "open" ? "Invullen" : "Bekijken"}</button></td></tr>`; }).join("")}</tbody></table></div>` : `<div class="panel"><div class="empty"><b>Nog geen prijsaanvragen</b>Zodra BROS je een prijsaanvraag stuurt, vul je ze hier in.</div></div>`}`;
+  return `<h1 style="margin-bottom:6px">Prijsaanvragen</h1><p class="muted" style="margin-bottom:16px">BROS vraagt je een eenheidsprijs per post (excl. btw, inclusief levering en plaatsing tenzij anders vermeld). Je vult in, bewaart tussendoor en dient in zodra alles klopt. Je ziet nooit de prijzen van anderen.</p>
+    ${as.length ? `<div class="panel"><table class="t"><thead><tr><th>Aanvraag</th><th>Loten</th><th>Reageren vóór</th><th>Status</th><th></th></tr></thead><tbody>${as.map(a => { const ps = paPosten(a).filter(x => !paKop(x)); const ing = ps.filter(x => x.eenheidsprijs != null || x.niet_aangeboden).length; const open = paOpen(a);
+      return `<tr><td><b>${esc(a.titel || "Prijsaanvraag")}</b><div class="muted" style="font-size:12px">${fmt(a.created_at)} · ${ing} van ${ps.length} posten ingevuld${a.gegund_posten ? ` · ${a.gegund_posten} gegund` : ""}</div></td><td>${(a.loten || []).map(lotNaam).map(esc).join("<br>")}</td><td class="num ${open && a.status === "open" && a.deadline && a.deadline < todayLocal() ? "late" : ""}">${a.deadline ? fmt(a.deadline) : "—"}</td><td><span class="pill ${a.status === "niet_weerhouden" ? "afgesloten" : a.status}">${PA_STATUS[a.status] || esc(a.status)}</span></td><td class="r"><button class="btn sm ${open && a.status === "open" ? "primary" : ""}" data-act="pa-open" data-id="${a.id}">${open && a.status === "open" ? "Invullen" : "Bekijken"}</button></td></tr>`; }).join("")}</tbody></table></div>` : `<div class="panel"><div class="empty"><b>Nog geen prijsaanvragen</b>Zodra BROS je een prijsaanvraag stuurt, vul je ze hier in.</div></div>`}`;
 }
+const paKop = (r) => !Number(r.hoeveelheid) && !r.code && (r.groep || r.omschrijving);
+const paPosten = (a) => D().aanvraagPosten.filter(x => x.aanvraag_id === a.id).sort((x, y) => x.lot - y.lot || (x.volgorde ?? 0) - (y.volgorde ?? 0) || (x.code || "").localeCompare(y.code || ""));
+const paOpen = (a) => (a.status === "open" || a.status === "ingediend") && (a.prijsvraag_status || "open") === "open";
+const paPrijsTxt = (v) => v == null ? "" : String(Number(v)).replace(".", ",");
 function vAanvraag(p, a) {
-  const ps = D().aanvraagPosten.filter(x => x.aanvraag_id === a.id).sort((x, y) => x.lot - y.lot || (x.volgorde ?? 0) - (y.volgorde ?? 0) || (x.code || "").localeCompare(y.code || ""));
-  const rw = a.status === "open" || a.status === "ingediend"; const lots = [...new Set(ps.map(x => x.lot))];
-  const tot = ps.reduce((s, x) => s + (x.eenheidsprijs != null ? Number(x.eenheidsprijs) * Number(x.hoeveelheid || 0) : 0), 0); const ing = ps.filter(x => x.eenheidsprijs != null).length;
+  const ps = paPosten(a); const rw = paOpen(a); const lots = [...new Set(ps.map(x => x.lot))]; const echte = ps.filter(x => !paKop(x));
+  const telt = (x) => x.eenheidsprijs != null && !x.niet_aangeboden;
+  const tot = ps.reduce((s, x) => s + (telt(x) ? Number(x.eenheidsprijs) * Number(x.hoeveelheid || 0) : 0), 0); const ing = echte.filter(x => telt(x) || x.niet_aangeboden).length; const na = echte.filter(x => x.niet_aangeboden).length;
+  const bij = a.bijlagen || [];
   return `<button class="back" data-act="pa-back">‹ Alle prijsaanvragen</button>
-    <div style="display:flex;justify-content:space-between;gap:12px;flex-wrap:wrap;align-items:flex-start;margin-bottom:12px"><div><h1 style="margin-bottom:4px">${esc(a.titel || "Prijsaanvraag")}</h1><div class="muted">${projTitel(p)} · ${a.loten.map(lotNaam).map(esc).join(", ")}${a.deadline ? ` · reageren vóór <b class="${a.status === "open" && a.deadline < todayLocal() ? "late" : ""}">${fmtLang(a.deadline)}</b>` : ""}</div></div><span class="pill ${a.status}" style="font-size:13px">${PA_STATUS[a.status]}</span></div>
+    <div style="display:flex;justify-content:space-between;gap:12px;flex-wrap:wrap;align-items:flex-start;margin-bottom:12px"><div><h1 style="margin-bottom:4px">${esc(a.titel || "Prijsaanvraag")}</h1><div class="muted">${projTitel(p)} · ${(a.loten || []).map(lotNaam).map(esc).join(", ")}${a.deadline ? ` · reageren vóór <b class="${rw && a.status === "open" && a.deadline < todayLocal() ? "late" : ""}">${fmtLang(a.deadline)}</b>` : ""}</div></div><span class="pill ${a.status === "niet_weerhouden" ? "afgesloten" : a.status}" style="font-size:13px">${PA_STATUS[a.status] || esc(a.status)}</span></div>
     ${a.bericht ? `<div class="panel" style="margin-bottom:16px"><div class="panel-body" style="white-space:pre-line">${esc(a.bericht)}</div></div>` : ""}
-    ${a.status === "gekozen" ? `<div class="notice" style="border-color:var(--ok);background:var(--ok-soft)"><div><b>BROS heeft je prijzen weerhouden.</b> Bedankt — je aanspreekpunt neemt contact op over de verdere afspraken.</div></div>` : a.status === "ingediend" ? `<div class="notice" style="border-color:var(--blue);background:var(--blue-soft)"><div><b>Ingediend op ${fmt(a.ingediend_op)}.</b> Je kan je prijzen nog aanpassen tot BROS een keuze maakt; dien dan opnieuw in.</div></div>` : ""}
-    <div class="kpis"><div class="kpi"><div class="k">Ingevuld</div><div class="v num">${ing} / ${ps.length}</div></div><div class="kpi"><div class="k">Totaal van je prijzen</div><div class="v num">${eur(tot, 0)}</div><div class="muted" style="font-size:12px">excl. btw, op basis van de vermoedelijke hoeveelheden</div></div></div>
-    ${lots.map(lot => { const rs = ps.filter(x => x.lot === lot); let groep = null; const som = rs.reduce((s, x) => s + (x.eenheidsprijs != null ? Number(x.eenheidsprijs) * Number(x.hoeveelheid || 0) : 0), 0);
-      return `<div class="panel" style="margin-bottom:16px"><div class="panel-head"><h3>${esc(lotNaam(lot))}</h3><span class="num" style="font-weight:700">${eur(som)}</span></div><div class="tw"><table class="t"><thead><tr><th style="width:60px">Nr</th><th>Omschrijving</th><th class="r">Hoev.</th><th class="r">Eenheidsprijs</th><th class="r">Totaal</th><th>Opmerking</th></tr></thead><tbody>
-        ${rs.map(r => { const isGroep = !Number(r.hoeveelheid) && !r.code && (r.groep || r.omschrijving); let g = ""; if (r.groep && r.groep !== groep) { groep = r.groep; g = `<tr class="groep"><td colspan="6">${esc(r.groep)}</td></tr>`; } if (isGroep && !r.groep) return `<tr class="groep"><td colspan="6">${esc(r.omschrijving)}</td></tr>`;
-          return g + `<tr><td class="num muted" style="font-size:12px">${esc(r.code)}</td><td>${esc(r.omschrijving).replace(/\n/g, "<br>")}${r.locatie ? `<div class="muted" style="font-size:12px">${esc(r.locatie)}</div>` : ""}</td><td class="r num">${Number(r.hoeveelheid) ? nl(r.hoeveelheid, 2) + " " + esc(r.eenheid) : esc(r.eenheid || "")}</td><td class="r">${rw ? `<input class="prijs" type="text" inputmode="decimal" autocomplete="off" data-pa="${a.id}" data-post="${r.post_id}" data-f="prijs" value="${r.eenheidsprijs == null ? "" : String(Number(r.eenheidsprijs)).replace(".", ",")}" placeholder="€">` : `<span class="num">${r.eenheidsprijs == null ? "—" : eur(r.eenheidsprijs)}</span>`}</td><td class="r num">${r.eenheidsprijs != null && Number(r.hoeveelheid) ? eur(Number(r.eenheidsprijs) * Number(r.hoeveelheid)) : ""}</td><td>${rw ? `<input class="opm" data-pa="${a.id}" data-post="${r.post_id}" data-f="opm" value="${esc(r.opmerking || "")}" placeholder="bv. andere afmeting, alternatief…">` : esc(r.opmerking || "")}</td></tr>`; }).join("")}
+    ${a.status === "gekozen" ? `<div class="notice" style="border-color:var(--ok);background:var(--ok-soft)"><div><b>BROS heeft ${a.gegund_posten ? `je prijs voor ${a.gegund_posten} post${a.gegund_posten === 1 ? "" : "en"} weerhouden (✓ hieronder)` : "je prijzen weerhouden"}.</b> Bedankt — je aanspreekpunt neemt contact op over de verdere afspraken.</div></div>`
+      : a.status === "niet_weerhouden" ? `<div class="notice"><div><b>BROS heeft deze keer voor een andere offerte gekozen.</b> Bedankt voor je prijs — we nemen je graag opnieuw mee bij een volgende vraag.</div></div>`
+      : !rw ? `<div class="notice"><div><b>Deze prijsaanvraag is afgesloten.</b> Je kan niets meer invullen of wijzigen.</div></div>`
+      : a.status === "ingediend" ? `<div class="notice" style="border-color:var(--blue);background:var(--blue-soft)"><div><b>Ingediend op ${fmt(a.ingediend_op)}.</b> Je kan je prijzen nog aanpassen tot BROS de prijsvraag afsluit; dien dan opnieuw in.</div></div>`
+      : a.met_richtprijs ? `<div class="notice" style="border-color:var(--blue);background:var(--blue-soft)"><div><b>BROS stelt per post een prijs voor.</b> Kijk ze na en pas aan waar nodig; kan je een post niet aanbieden, vink dan <i>n.a.</i> aan. Daarna dien je in.</div></div>` : ""}
+    <div class="kpis"><div class="kpi"><div class="k">Ingevuld</div><div class="v num">${ing} / ${echte.length}</div>${na ? `<div class="muted" style="font-size:12px">waarvan ${na} niet aangeboden</div>` : ""}</div><div class="kpi"><div class="k">Totaal van je prijzen</div><div class="v num">${eur(tot, 0)}</div><div class="muted" style="font-size:12px">excl. btw, op basis van de vermoedelijke hoeveelheden</div></div></div>
+    ${lots.map(lot => { const rs = ps.filter(x => x.lot === lot); let groep = null; const som = rs.reduce((s, x) => s + (telt(x) ? Number(x.eenheidsprijs) * Number(x.hoeveelheid || 0) : 0), 0);
+      return `<div class="panel" style="margin-bottom:16px"><div class="panel-head"><h3>${esc(lotNaam(lot))}</h3><span class="num" style="font-weight:700">${eur(som)}</span></div><div class="tw"><table class="t"><thead><tr><th style="width:60px">Nr</th><th>Omschrijving</th><th class="r">Hoev.</th><th class="r">Eenheidsprijs</th><th class="c" title="Niet aangeboden">n.a.</th><th class="r">Totaal</th><th>Opmerking</th></tr></thead><tbody>
+        ${rs.map(r => { const isGroep = paKop(r); let g = ""; if (r.groep && r.groep !== groep) { groep = r.groep; g = `<tr class="groep"><td colspan="7">${esc(r.groep)}</td></tr>`; } if (isGroep && !r.groep) return `<tr class="groep"><td colspan="7">${esc(r.omschrijving)}</td></tr>`; if (isGroep) return g;
+          const k = `data-pa="${a.id}" data-post="${r.post_id}"`; const afw = r.richtprijs != null && r.eenheidsprijs != null && Number(r.eenheidsprijs) !== Number(r.richtprijs);
+          return g + `<tr style="${r.niet_aangeboden ? "opacity:.6" : ""}"><td class="num muted" style="font-size:12px">${esc(r.code)}${r.gegund ? ` <span title="Gegund" style="color:var(--ok);font-weight:700">✓</span>` : ""}</td><td>${esc(r.omschrijving).replace(/\n/g, "<br>")}${r.locatie ? `<div class="muted" style="font-size:12px">${esc(r.locatie)}</div>` : ""}</td><td class="r num">${Number(r.hoeveelheid) ? nl(r.hoeveelheid, 2) + " " + esc(r.eenheid) : esc(r.eenheid || "")}</td>
+            <td class="r">${rw ? `<input class="prijs" type="text" inputmode="decimal" autocomplete="off" ${k} data-f="prijs" value="${r.niet_aangeboden ? "" : paPrijsTxt(r.eenheidsprijs)}" placeholder="€" style="width:96px;text-align:right" ${r.niet_aangeboden ? "disabled" : ""}>` : `<span class="num">${telt(r) ? eur(r.eenheidsprijs) : "—"}</span>`}${afw ? `<div class="muted" style="font-size:11px">voorstel BROS ${eur(r.richtprijs)}</div>` : ""}</td>
+            <td class="c">${rw ? `<input class="niet" type="checkbox" ${k} data-f="niet" ${r.niet_aangeboden ? "checked" : ""} title="Niet aangeboden">` : r.niet_aangeboden ? "✓" : ""}</td>
+            <td class="r num">${telt(r) && Number(r.hoeveelheid) ? eur(Number(r.eenheidsprijs) * Number(r.hoeveelheid)) : ""}</td>
+            <td>${rw ? `<input class="opm" type="text" ${k} data-f="opm" value="${esc(r.opmerking || "")}" placeholder="bv. alternatief, voorwaarde…" style="width:100%;min-width:160px">` : esc(r.opmerking || "")}</td></tr>`; }).join("")}
       </tbody></table></div></div>`; }).join("")}
+    <div class="panel" style="margin-bottom:16px"><div class="panel-head"><h3>Je offerte (pdf)</h3><span class="muted" style="font-size:12px">optioneel · max. 5 bestanden van 15 MB</span></div><div class="panel-body">
+      ${bij.length ? bij.map(b => `<div style="display:flex;gap:8px;align-items:center;margin-bottom:6px"><a href="#" data-act="pa-bijlage-open" data-path="${esc(b.path)}">📎 ${esc(b.naam || "offerte.pdf")}</a><span class="muted" style="font-size:12px">${b.grootte ? Math.round(b.grootte / 1024) + " kB" : ""}</span>${rw ? `<button class="btn ghost sm" data-act="pa-bijlage-weg" data-id="${a.id}" data-path="${esc(b.path)}" aria-label="Verwijderen">✕</button>` : ""}</div>`).join("") : `<p class="muted" style="margin:0 0 8px">Nog geen bijlage.</p>`}
+      ${rw && bij.length < 5 ? `<label class="btn sm">Pdf toevoegen<input type="file" accept="application/pdf,.pdf" multiple hidden data-pabijlage="${a.id}"></label>` : ""}</div></div>
     ${rw ? `<div class="panel" style="border-color:var(--ink)"><div class="panel-body"><h2 style="margin-bottom:8px">${a.status === "ingediend" ? "Opnieuw indienen" : "Indienen bij BROS"}</h2><p class="muted" style="font-size:14px">Prijzen worden bewaard zodra je een veld verlaat. Klaar? Dien in — BROS krijgt dan een melding.</p>
       <div class="field"><label for="pa_opm">Opmerking bij je prijsopgave (levertermijn, voorwaarden, geldigheid…)</label><textarea id="pa_opm" rows="3">${esc(a.opmerking || "")}</textarea></div>
       <button class="btn primary" data-act="pa-indienen" data-id="${a.id}" ${S.bezig ? "disabled" : ""}>${S.bezig ? "Bezig…" : a.status === "ingediend" ? "Opnieuw indienen" : "Prijsopgave indienen"}</button><span class="msg" id="pa_msg" style="margin-left:10px"></span></div></div>` : a.opmerking ? `<div class="panel"><div class="panel-body"><b>Je opmerking:</b> ${esc(a.opmerking)}</div></div>` : ""}`;
 }
 async function prijsBewaar(inp) {
   const r = D().aanvraagPosten.find(x => x.aanvraag_id === inp.dataset.pa && x.post_id === inp.dataset.post); if (!r) return;
-  const row = $(`input.prijs[data-pa="${inp.dataset.pa}"][data-post="${inp.dataset.post}"]`), opm = $(`input.opm[data-pa="${inp.dataset.pa}"][data-post="${inp.dataset.post}"]`);
-  const prijs = row ? duizendKeuze(row.value, leesGetal(row.value)) : null; const o = opm ? opm.value.trim() : "";
-  if (prijs === (r.eenheidsprijs == null ? null : Number(r.eenheidsprijs)) && o === (r.opmerking || "")) return;
+  const sel = (c) => $(`input.${c}[data-pa="${inp.dataset.pa}"][data-post="${inp.dataset.post}"]`);
+  const row = sel("prijs"), opm = sel("opm"), niet = sel("niet");
+  const isNiet = niet ? niet.checked : !!r.niet_aangeboden;
+  const p0 = isNiet ? null : row ? duizendKeuze(row.value, leesGetal(row.value)) : null; const prijs = p0 == null || isNaN(p0) ? p0 : r2(p0); const o = opm ? opm.value.trim() : "";
+  if (prijs === (r.eenheidsprijs == null ? null : Number(r.eenheidsprijs)) && o === (r.opmerking || "") && isNiet === !!r.niet_aangeboden) return;
   if (prijs != null && (isNaN(prijs) || prijs < 0)) { toast("Geef een geldige prijs."); return; }
-  const { error } = await sb.rpc("prijs_invullen", { p_aanvraag: inp.dataset.pa, p_post: inp.dataset.post, p_prijs: prijs, p_opmerking: o });
+  const args = { p_aanvraag: inp.dataset.pa, p_post: inp.dataset.post, p_prijs: prijs, p_opmerking: o }; if ("niet_aangeboden" in r) args.p_niet = isNiet;   // vóór script 037 bestaat p_niet niet
+  const { error } = await sb.rpc("prijs_invullen", args);
   if (error) { toast("Niet bewaard: " + error.message, 5000); return; }
-  r.eenheidsprijs = prijs; r.opmerking = o;
+  r.eenheidsprijs = prijs; r.opmerking = o; r.niet_aangeboden = isNiet;
+  const a = D().aanvragen.find(x => x.id === inp.dataset.pa);
+  if (a && a.status === "ingediend" && "prijsvraag_id" in a) { a.status = "open"; a.ingediend_op = null; toast("Gewijzigd na indienen — dien opnieuw in, dan ziet BROS je nieuwe prijzen.", 6000); }
   // totalen verversen zonder de invoer te verstoren
   const focus = document.activeElement; const id = focus && focus.dataset ? focus.dataset.pa + "|" + focus.dataset.post + "|" + focus.dataset.f : null;
   render(); if (id) { const el = document.querySelector(`input[data-pa="${focus.dataset.pa}"][data-post="${focus.dataset.post}"][data-f="${focus.dataset.f}"]`); if (el) { el.focus(); } }
+}
+/* offerte (pdf) bij de prijsaanvraag: private opslag 'offertes' (script 037) */
+async function paBijlagen(aid, files) {
+  const a = D().aanvragen.find(x => x.id === aid); if (!a) return;
+  for (const f of files) {
+    if (!/\.pdf$/i.test(f.name) && f.type !== "application/pdf") { toast(f.name + ": enkel pdf"); continue; }
+    if (f.size > 15 * 1024 * 1024) { toast(f.name + ": groter dan 15 MB"); continue; }
+    if ((a.bijlagen || []).length >= 5) { toast("Maximaal 5 bijlagen."); break; }
+    const id = (crypto.randomUUID ? crypto.randomUUID() : Date.now().toString(36) + Math.random().toString(36).slice(2)).replace(/[^A-Za-z0-9_-]/g, "");
+    const path = `${aid}/${id}.pdf`;
+    const up = await sb.storage.from("offertes").upload(path, f, { contentType: "application/pdf", upsert: false });
+    if (up.error) { toast("Opladen mislukt: " + up.error.message, 6000); continue; }
+    const { data, error } = await sb.rpc("prijsaanvraag_bijlage", { p_id: aid, p_path: path, p_naam: f.name, p_grootte: f.size });
+    if (error) { sb.storage.from("offertes").remove([path]).catch(() => { }); toast("Niet bewaard: " + error.message, 6000); continue; }
+    a.bijlagen = data || []; toast(f.name + " toegevoegd");
+  }
+  render();
+}
+async function paBijlageWeg(aid, path) {
+  const a = D().aanvragen.find(x => x.id === aid); if (!a || !confirm("Deze bijlage verwijderen?")) return;
+  const { data, error } = await sb.rpc("prijsaanvraag_bijlage", { p_id: aid, p_path: path, p_weg: true });
+  if (error) { toast("Dat lukte niet: " + error.message, 5000); return; }
+  sb.storage.from("offertes").remove([path]).catch(() => { }); a.bijlagen = data || []; render();
+}
+async function paBijlageOpen(path) {
+  const w = window.open("", "_blank");
+  const { data, error } = await sb.storage.from("offertes").createSignedUrl(path, 600);
+  if (error || !data) { if (w) w.close(); toast("Niet te openen: " + (error?.message || "onbekend"), 5000); return; }
+  if (w) w.location = data.signedUrl; else location.href = data.signedUrl;
 }
 /* ---------- Meetstaat met prijzen van BROS: bekijken, opmerkingen/tegenvoorstel, akkoord (script 032) ---------- */
 const MP_STATUS = { gedeeld: "Wacht op je akkoord", tegenvoorstel: "Tegenvoorstel ingediend", akkoord: "Akkoord" };
@@ -482,10 +537,12 @@ document.addEventListener("click", async (e) => {
   if (d.act === "mp-akkoord" || d.act === "mp-tegen") { await mpBeslis(d.id, d.act === "mp-akkoord"); return; }
   if (d.act === "pa-open") { S.tab = "prijzen"; S.aanvraag = d.id; render(); }
   if (d.act === "pa-back") { S.aanvraag = null; render(); }
+  if (d.act === "pa-bijlage-open") { e.preventDefault(); await paBijlageOpen(d.path); return; }
+  if (d.act === "pa-bijlage-weg") { await paBijlageWeg(d.id, d.path); return; }
   if (d.act === "pa-indienen") {
     if (S.bezig) return; const a = D().aanvragen.find(x => x.id === d.id); if (!a) return;
-    const ps = D().aanvraagPosten.filter(x => x.aanvraag_id === a.id && Number(x.hoeveelheid)); const leeg = ps.filter(x => x.eenheidsprijs == null).length;
-    if (leeg && !confirm(`${leeg} van ${ps.length} posten hebben nog geen prijs. Toch indienen? (Posten zonder prijs neemt BROS niet mee.)`)) return;
+    const ps = D().aanvraagPosten.filter(x => x.aanvraag_id === a.id && Number(x.hoeveelheid)); const leeg = ps.filter(x => x.eenheidsprijs == null && !x.niet_aangeboden).length;
+    if (leeg && !confirm(`${leeg} van ${ps.length} posten hebben nog geen prijs en staan niet op 'niet aangeboden'. Toch indienen? (Posten zonder prijs neemt BROS niet mee.)`)) return;
     S.bezig = true; render();
     const { error } = await sb.rpc("prijsaanvraag_indienen", { p_id: a.id, p_opmerking: ($("#pa_opm") ? $("#pa_opm").value : a.opmerking || "").trim() });
     if (error) { S.bezig = false; render(); toast("Dat lukte niet: " + error.message, 5000); return; }
@@ -506,6 +563,7 @@ document.addEventListener("change", async (e) => {
     for (const file of [...t.files]) { try { S.nieuw.push(await verklein(file)); } catch (err) { toast("Foto niet bruikbaar"); } }
     t.value = ""; S.opm = $("#f_opm") ? $("#f_opm").value : S.opm; render(); return;
   }
+  if (t.dataset.pabijlage) { const fs = [...t.files]; t.value = ""; await paBijlagen(t.dataset.pabijlage, fs); return; }
   if (t.dataset.pa) { await prijsBewaar(t); return; }
   if (t.dataset.taak) { const id = t.dataset.taak, klaar = t.checked; t.disabled = true;
     const { error } = await sb.rpc("klant_taak_klaar", { p_id: id, p_klaar: klaar });

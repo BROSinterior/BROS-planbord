@@ -556,7 +556,7 @@ function voorstelMail(v, aannemer) {
 /** Prijsaanvragen (script 025): 'nieuw'/'herinnering' (team → aannemer, met uitnodiging als hij nog geen login heeft), 'ingediend' (aannemer → BROS), 'gekozen' (team → aannemer). */
 function prijsaanvraagMail(body) {
   const soort = String(body.soort || "nieuw");
-  if (["nieuw", "herinnering", "gekozen", "ingediend"].indexOf(soort) < 0) return { ok: false, error: "Onbekende soort." };
+  if (["nieuw", "herinnering", "gekozen", "ingediend", "niet_weerhouden"].indexOf(soort) < 0) return { ok: false, error: "Onbekende soort." };
   // eerst wie er belt (vóór we iets opzoeken): aannemer voor 'ingediend', anders een teamlid (of de automatische herinnering)
   const beller = soort === "ingediend" ? callerAny(body.token) : null;
   if (beller && beller.role !== "aannemer") return { ok: false, error: "Geen toegang." };
@@ -566,9 +566,13 @@ function prijsaanvraagMail(body) {
   const c = (pbAdmin("/rest/v1/contacten?id=eq." + a.contact_id + "&select=id,naam,bedrijf,contactpersoon,email,user_id", "get") || [])[0];
   if (!c) return { ok: false, error: "Contact niet gevonden." };
   const p = (pbAdmin("/rest/v1/projecten?id=eq." + a.project_id + "&select=nummer,klant,naam,adres,gemeente,lead", "get") || [])[0] || {};
-  const proj = (p.klant || "") + (p.naam && p.naam !== p.klant ? " · " + p.naam : "");
+  // script 037: een kandidaat (niet aan het project gekoppeld) krijgt geen klantnaam, enkel projectnummer en gemeente
+  const gekoppeld = soort === "ingediend" || (pbAdmin("/rest/v1/project_contacten?project_id=eq." + a.project_id + "&contact_id=eq." + a.contact_id + "&select=id", "get") || []).length > 0;
+  const proj = gekoppeld ? (p.klant || "") + (p.naam && p.naam !== p.klant ? " · " + p.naam : "") : "project " + (p.nummer || "") + (p.gemeente ? " in " + p.gemeente : "");
+  const pv = a.prijsvraag_id ? ((pbAdmin("/rest/v1/prijsvragen?id=eq." + a.prijsvraag_id + "&select=richtprijs_marge,status", "get") || [])[0] || {}) : {};
+  const metPrijzen = pv.richtprijs_marge != null;
   const loten = pbAdmin("/rest/v1/loten?nr=in.(" + (a.loten || []).join(",") + ")&select=nr,naam", "get") || [];
-  const lotTxt = (a.loten || []).map(n => { const l = loten.find(x => x.nr === n); return l ? n + ". " + l.naam : String(n); }).join(", ");
+  const lotTxt = (a.loten || []).map(n => { const l = loten.find(x => x.nr === n); return l ? n + ". " + l.naam : String(n); }).join(", ") + (a.posten && a.posten.length ? " — " + a.posten.length + " post" + (a.posten.length === 1 ? "" : "en") : "");
   const esc = H;
   const wrap = (inner) => "<div style=\"font-family:Helvetica,Arial,sans-serif;font-size:15px;line-height:1.5;color:#1B1E1C;max-width:720px\">" + inner + "</div>";
   const knop = (url, txt) => "<p style=\"margin:24px 0\"><a href=\"" + url + "\" style=\"background:#1B1E1C;color:#fff;text-decoration:none;padding:12px 20px;border-radius:8px;font-weight:600;display:inline-block\">" + txt + "</a></p>";
@@ -582,7 +586,7 @@ function prijsaanvraagMail(body) {
     const cc = beheer.map(x => x.email).filter(e => e !== to).join(",");
     const regels = pbAdmin("/rest/v1/prijsaanvraag_regels?aanvraag_id=eq." + a.id + "&eenheidsprijs=not.is.null&select=post_id", "get") || [];
     const link = PORTAAL.URL.replace(/klant\/?$/, "");
-    const html = wrap("<p>Dag " + esc(maker ? maker.name : "team") + ",</p><p><b>" + esc(c.naam) + "</b>" + (c.bedrijf && c.bedrijf !== c.naam ? " (" + esc(c.bedrijf) + ")" : "") + " heeft zijn prijsopgave ingediend voor <b>" + esc(proj) + "</b> — " + esc(a.titel || "prijsaanvraag") + " (" + esc(lotTxt) + "): " + regels.length + " posten met prijs.</p>" + (a.opmerking ? "<p style=\"padding:10px 14px;border-left:3px solid #DAD8D0;white-space:pre-line\">" + esc(a.opmerking) + "</p>" : "") + knop(link, "Vergelijken in het Planbord") + "<p style=\"color:#767D78;font-size:13px\">Projectfiche › Meetstaat › Prijsaanvragen › Vergelijken, en daarna 'Overnemen' om de prijzen als kostprijs te zetten.</p>");
+    const html = wrap("<p>Dag " + esc(maker ? maker.name : "team") + ",</p><p><b>" + esc(c.naam) + "</b>" + (c.bedrijf && c.bedrijf !== c.naam ? " (" + esc(c.bedrijf) + ")" : "") + " heeft zijn prijsopgave ingediend voor <b>" + esc(proj) + "</b> — " + esc(a.titel || "prijsaanvraag") + " (" + esc(lotTxt) + "): " + regels.length + " posten met prijs.</p>" + (a.opmerking ? "<p style=\"padding:10px 14px;border-left:3px solid #DAD8D0;white-space:pre-line\">" + esc(a.opmerking) + "</p>" : "") + knop(link, "Vergelijken in het Planbord") + "<p style=\"color:#767D78;font-size:13px\">Projectfiche › Meetstaat › Prijsvragen › Vergelijken en gunnen: per post de winnaar kiezen; zijn prijs wordt de kostprijs.</p>");
     const opt = { htmlBody: html, name: PORTAAL.AFZENDER }; if (cc) opt.cc = cc; if (c.email) opt.replyTo = c.email;
     GmailApp.sendEmail(to, "Prijsopgave ingediend · " + proj + " · " + c.naam, c.naam + " diende zijn prijzen in voor " + proj + " (" + lotTxt + "). Bekijken: " + link, opt);
     return { ok: true };
@@ -592,23 +596,33 @@ function prijsaanvraagMail(body) {
   const naam = c.contactpersoon || c.naam; const aanhef = "Beste " + naam;
   const verstreken = !!(a.deadline && a.deadline < Utilities.formatDate(new Date(), Session.getScriptTimeZone(), "yyyy-MM-dd"));
   let uitgenodigd = false, linkHtml = "", linkTxt = "";
-  if (!c.user_id && soort !== "gekozen") {
+  if (!c.user_id && soort !== "gekozen" && soort !== "niet_weerhouden") {
     const r = portaalLink(String(c.email).trim().toLowerCase(), naam, c.id, "aannemer"); uitgenodigd = !r.bestaand;
     linkHtml = "<p>Je hebt nog geen login voor het aannemersportaal van BROS. Kies eerst je wachtwoord:</p>" + knop(r.link, "Kies je wachtwoord") + "<p style=\"color:#767D78;font-size:13px\">Daarna log je in op <a href=\"" + PORTAAL.URL_AANNEMER + "\">" + PORTAAL.URL_AANNEMER + "</a> met je e-mailadres en wachtwoord. Die link is beperkt geldig; vervallen? Klik op het portaal op \"Wachtwoord vergeten\".</p>";
     linkTxt = "\n\nJe hebt nog geen login: kies eerst je wachtwoord via " + r.link + " en log daarna in op " + PORTAAL.URL_AANNEMER;
   } else { linkHtml = knop(PORTAAL.URL_AANNEMER, "Prijzen invullen in het portaal"); linkTxt = "\n\nInvullen: " + PORTAAL.URL_AANNEMER; }
   let onderwerp, html, tekst;
   if (soort === "gekozen") {
+    if (!eenmalig("pag:" + a.id + ":" + Math.floor(Date.now() / 600000), 600)) return { ok: true };
+    const gun = a.prijsvraag_id ? (pbAdmin("/rest/v1/prijsvraag_gunningen?aanvraag_id=eq." + a.id + "&select=post_id", "get") || []).length : 0;
+    const wat = gun ? "je prijs voor " + gun + " post" + (gun === 1 ? "" : "en") + " uit je prijsopgave" : "je prijsopgave";
     onderwerp = "Je prijzen zijn weerhouden · " + proj;
-    html = wrap("<p>" + H(aanhef) + ",</p><p>Goed nieuws: BROS heeft je prijsopgave voor <b>" + esc(proj) + "</b> (" + esc(lotTxt) + ") weerhouden. " + esc(wie.name) + " neemt contact met je op over de verdere afspraken en de planning.</p>" + knop(PORTAAL.URL_AANNEMER, "Naar het aannemersportaal") + "<p>Met vriendelijke groeten,<br>" + esc(wie.name) + " — BROS</p>");
-    tekst = aanhef + ",\n\nBROS heeft je prijsopgave voor " + proj + " (" + lotTxt + ") weerhouden. " + wie.name + " neemt contact met je op.\n\n" + wie.name + " — BROS";
+    html = wrap("<p>" + H(aanhef) + ",</p><p>Goed nieuws: BROS heeft " + esc(wat) + " voor <b>" + esc(proj) + "</b> (" + esc(lotTxt) + ") weerhouden" + (gun ? " — in het portaal staan ze aangeduid met ✓" : "") + ". " + esc(wie.name) + " neemt contact met je op over de verdere afspraken en de planning.</p>" + knop(PORTAAL.URL_AANNEMER, "Naar het aannemersportaal") + "<p>Met vriendelijke groeten,<br>" + esc(wie.name) + " — BROS</p>");
+    tekst = aanhef + ",\n\nBROS heeft " + wat + " voor " + proj + " (" + lotTxt + ") weerhouden. " + wie.name + " neemt contact met je op.\n\n" + wie.name + " — BROS";
+  } else if (soort === "niet_weerhouden") {
+    if (a.status !== "niet_weerhouden") return { ok: false, error: "Deze aanvraag staat niet op 'niet weerhouden'." };
+    if (!eenmalig("panw:" + a.id, 86400)) return { ok: true };
+    onderwerp = "Je prijsopgave · " + proj;
+    html = wrap("<p>" + H(aanhef) + ",</p><p>Bedankt voor je prijsopgave voor <b>" + esc(proj) + "</b> (" + esc(lotTxt) + "). We hebben deze keer voor een andere offerte gekozen. We nemen je graag opnieuw mee bij een volgende prijsvraag.</p><p>Met vriendelijke groeten,<br>" + esc(wie.name) + " — BROS</p>");
+    tekst = aanhef + ",\n\nBedankt voor je prijsopgave voor " + proj + " (" + lotTxt + "). We hebben deze keer voor een andere offerte gekozen. We nemen je graag opnieuw mee bij een volgende prijsvraag.\n\n" + wie.name + " — BROS";
   } else {
     const her = soort === "herinnering";
     onderwerp = (her ? "Herinnering: prijsaanvraag" : "Prijsaanvraag") + " · " + proj + (dl ? (her && verstreken ? " · gevraagd tegen " : " · vóór ") + dl : "");
     const herTxt = her ? (verstreken ? "We wachten nog op je prijsopgave voor <b>" + esc(proj) + "</b> (" + esc(lotTxt) + "). De gevraagde datum, <b>" + dl + "</b>, is intussen verstreken — laat ons weten wanneer we je prijzen mogen verwachten, of dat je deze keer niet meedoet, dan plannen wij verder." : "Een korte herinnering: we wachten nog op je prijsopgave voor <b>" + esc(proj) + "</b> (" + esc(lotTxt) + ")" + (dl ? ", graag vóór <b>" + dl + "</b>" : "") + ".") : "";
     html = wrap("<p>" + H(aanhef) + ",</p>" + (her ? "<p>" + herTxt + "</p>" : "<p>BROS vraagt je een prijsopgave voor <b>" + esc(proj) + "</b>" + (p.adres ? " (" + esc(p.adres) + (p.gemeente ? ", " + esc(p.gemeente) : "") + ")" : "") + ": <b>" + esc(lotTxt) + "</b>." + (dl ? " Graag je prijzen vóór <b>" + dl + "</b>." : "") + "</p>")
       + (a.bericht ? "<p style=\"padding:10px 14px;border-left:3px solid #DAD8D0;white-space:pre-line\">" + esc(a.bericht) + "</p>" : "")
-      + "<p>In het aannemersportaal zie je de posten met hoeveelheden en eenheden; je vult per post je eenheidsprijs (excl. btw) in, met eventueel een opmerking, en dient in als alles klopt.</p>" + linkHtml
+      + (metPrijzen ? "<p>In het aannemersportaal zie je de posten met hoeveelheden, eenheden en <b>de prijs die BROS voorstelt</b>; je past aan waar nodig (of vinkt 'niet aangeboden' aan), voegt eventueel je offerte als pdf toe en dient in als alles klopt.</p>"
+        : "<p>In het aannemersportaal zie je de posten met hoeveelheden en eenheden; je vult per post je eenheidsprijs (excl. btw) in — of vinkt 'niet aangeboden' aan — met eventueel een opmerking, voegt je offerte als pdf toe als je wil, en dient in als alles klopt.</p>") + linkHtml
       + "<p>Met vriendelijke groeten,<br>" + esc(wie.name) + " — BROS</p>");
     tekst = aanhef + ",\n\n" + (her ? "Herinnering: we wachten nog op je prijsopgave voor " + proj + " (" + lotTxt + ")" + (dl ? (verstreken ? " — de gevraagde datum " + dl + " is verstreken; laat ons weten wanneer we je prijzen mogen verwachten" : " (vóór " + dl + ")") : "") : "BROS vraagt je een prijsopgave voor " + proj + ": " + lotTxt + (dl ? " (vóór " + dl + ")" : "")) + ".\n" + (a.bericht ? "\n" + a.bericht + "\n" : "") + linkTxt + "\n\n" + wie.name + " — BROS";
   }
@@ -728,10 +742,23 @@ const HERINNERING = { DAGEN: 7, VAN_UUR: 8, MAX: 4 };
 let AUTO_WIE = null;   // afzender voor automatische mails (geen login-token beschikbaar in een trigger)
 function prijsaanvraagHerinneringen() {
   const nu = new Date(); const dag = nu.getDay(); if (dag === 0 || dag === 6 || nu.getHours() < HERINNERING.VAN_UUR) return 0;
-  const open = pbAdmin("/rest/v1/prijsaanvragen?status=eq.open&select=id,project_id,contact_id,titel,deadline,created_at,herinnerd_op,herinneringen,created_by", "get") || [];
+  let open; try { open = pbAdmin("/rest/v1/prijsaanvragen?status=eq.open&select=id,project_id,contact_id,titel,deadline,created_at,herinnerd_op,herinneringen,created_by,herinnerd_deadline", "get") || []; }
+  catch (e) { open = pbAdmin("/rest/v1/prijsaanvragen?status=eq.open&select=id,project_id,contact_id,titel,deadline,created_at,herinnerd_op,herinneringen,created_by", "get") || []; }   // vóór script 037
+  const vandaagIso = Utilities.formatDate(nu, "Europe/Brussels", "yyyy-MM-dd"); const binnen2 = Utilities.formatDate(new Date(nu.getTime() + 2 * 86400000), "Europe/Brussels", "yyyy-MM-dd");
   const grens = nu.getTime() - HERINNERING.DAGEN * 86400000; let n = 0;
   const profs = open.length ? (pbAdmin("/rest/v1/profiles?select=id,name,email,role&active=eq.true", "get") || []) : [];
   open.forEach(a => {
+    // script 037: één herinnering in de laatste 2 dagen vóór de deadline (niet als de aanvraag pas verstuurd of net herinnerd werd)
+    const kortVoor = "herinnerd_deadline" in a && !a.herinnerd_deadline && a.deadline && a.deadline >= vandaagIso && a.deadline <= binnen2 && (Number(a.herinneringen) || 0) < HERINNERING.MAX
+      && nu.getTime() - new Date(a.herinnerd_op || a.created_at).getTime() > 2 * 86400000;
+    if (kortVoor) {
+      const p0 = (pbAdmin("/rest/v1/projecten?id=eq." + a.project_id + "&select=lead", "get") || [])[0] || {};
+      const lead0 = profs.find(x => x.id === a.created_by) || profs.find(x => x.id === p0.lead) || profs.find(x => x.role === "beheer");
+      AUTO_WIE = { id: lead0 ? lead0.id : null, name: lead0 ? lead0.name : "Het team van BROS", role: "beheer" };
+      try { const r = prijsaanvraagMail({ id: a.id, soort: "herinnering" }); if (r && r.ok) { n++; pbAdmin("/rest/v1/prijsaanvragen?id=eq." + a.id, "patch", { herinnerd_deadline: nu.toISOString() }); } }
+      catch (e) { Logger.log("Herinnering (deadline) mislukt (" + a.id + "): " + e); }
+      AUTO_WIE = null; return;
+    }
     const ref = new Date(a.herinnerd_op || a.created_at).getTime(); if (ref > grens) return;
     const p = (pbAdmin("/rest/v1/projecten?id=eq." + a.project_id + "&select=klant,naam,lead", "get") || [])[0] || {};
     const lead = profs.find(x => x.id === a.created_by) || profs.find(x => x.id === p.lead) || profs.find(x => x.role === "beheer");
