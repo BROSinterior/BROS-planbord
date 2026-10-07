@@ -171,3 +171,111 @@ function kpBeheerAct(d) {
   if (d.act === "kz-post") { S.ptab = "meetstaat"; render(); return; }
   if (d.act === "mwa-alle") { S.mwaAlle = !S.mwaAlle; render(); return; }
 }
+
+/* =====================================================================
+   Klantenportaal fase 3 (script 036): voortgang (werffoto's per week) en woningdossier
+   ===================================================================== */
+const vgReady = () => schemaV() >= 36 && !!S.werf_fotos;
+const maandagVan = (d) => {   // maandag (lokale datum) van de week van een datum of tijdstip
+  const x = !d ? new Date() : /^\d{4}-\d{2}-\d{2}$/.test(d) ? new Date(d + "T12:00:00") : new Date(d); x.setHours(12, 0, 0, 0); x.setDate(x.getDate() - (x.getDay() + 6) % 7);
+  return `${x.getFullYear()}-${String(x.getMonth() + 1).padStart(2, "0")}-${String(x.getDate()).padStart(2, "0")}`;
+};
+const vgFotos = (pid) => Object.values(S.werf_fotos || {}).filter(f => f.project_id === pid).sort((a, b) => (b.genomen_op || "").localeCompare(a.genomen_op || ""));
+const vgUpdate = (pid, week) => Object.values(S.werf_updates || {}).find(u => u.project_id === pid && u.week === week);
+function vVoortgang(p) {
+  if (!vgReady()) return "";
+  const fotos = vgFotos(p.id); const nu = maandagVan();
+  const weken = [...new Set([nu].concat(fotos.map(f => maandagVan(f.genomen_op)), Object.values(S.werf_updates || {}).filter(u => u.project_id === p.id).map(u => u.week)))].sort().reverse().slice(0, S.vgAlle ? 200 : 6);
+  const gedeeld = fotos.filter(f => f.gedeeld_klant).length;
+  const weekLabel = (w) => { const d = new Date(w + "T12:00:00"); const e = new Date(d); e.setDate(e.getDate() + 6); return `Week van ${fmtLong(w)} tot ${fmtLong(e.toISOString().slice(0, 10))}`; };
+  return `<div class="panel" style="margin-bottom:16px"><div class="panel-head"><div><h3>Voortgang voor de klant</h3><div class="muted" style="font-size:12px;margin-top:2px">Werffoto's die je deelt, met per week een korte tekst — de klant ziet ze op het tabblad Werf van zijn portaal. Foto's neem je in de werfmodus (📸 Voortgang) of laad je hier op. ${fotos.length} foto's · ${gedeeld} gedeeld</div></div>
+      <div class="actions"><label class="btn sm primary">📸 Foto's opladen<input type="file" accept="image/*" multiple hidden data-vgfile="${p.id}"></label></div></div>
+    ${weken.map(w => { const fs = fotos.filter(f => maandagVan(f.genomen_op) === w); const u = vgUpdate(p.id, w);
+      return `<div class="panel-body" style="border-top:1px solid var(--line)"><div style="display:flex;justify-content:space-between;align-items:center;gap:8px;flex-wrap:wrap"><b>${weekLabel(w)}${w === nu ? ` <span class="pill vs-open">deze week</span>` : ""}</b>
+          <span class="muted" style="font-size:12px">${fs.filter(f => f.gedeeld_klant).length}/${fs.length} gedeeld${u && u.tekst ? ` · tekst ${u.gedeeld ? "gedeeld" : "niet gedeeld"}` : ""}</span></div>
+        <textarea class="inline" data-vgweek="${w}" data-pid="${p.id}" rows="2" placeholder="Korte tekst voor de klant, bv. Deze week werden de tegels in de badkamer geplaatst." style="width:100%;margin-top:6px">${esc(u ? u.tekst : "")}</textarea>
+        ${fs.length ? `<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(120px,1fr));gap:8px;margin-top:8px">${fs.map(f => `<div style="position:relative;border-radius:8px;overflow:hidden;border:2px solid ${f.gedeeld_klant ? "var(--ok)" : "transparent"}">
+            <img src="${esc(safeSrc(f.url))}" alt="" loading="lazy" style="width:100%;height:96px;object-fit:cover;display:block;cursor:zoom-in" data-foto="${esc(safeUrl(f.url))}">
+            <div style="display:flex;justify-content:space-between;align-items:center;padding:4px 6px;background:var(--surface);font-size:11px"><label style="display:flex;gap:4px;align-items:center;cursor:pointer"><input type="checkbox" data-vgdeel="${f.id}" ${f.gedeeld_klant ? "checked" : ""}> klant</label><button class="btn ghost sm danger" data-act="vg-del" data-id="${f.id}" style="padding:0 4px" aria-label="Foto verwijderen">✕</button></div></div>`).join("")}</div>` : `<div class="muted" style="font-size:12px;margin-top:6px">Nog geen foto's deze week.</div>`}</div>`; }).join("")}
+    <div class="panel-body" style="border-top:1px solid var(--line)"><button class="btn ghost sm" data-act="vg-alle">${S.vgAlle ? "Enkel de laatste weken" : "Alle weken tonen"}</button></div></div>`;
+}
+async function vgOpladen(pid, files) {
+  const lijst = [...files].filter(f => /^image\//.test(f.type) || /\.(jpe?g|png|heic|webp)$/i.test(f.name)); if (!lijst.length) return;
+  const delen = confirm(`${lijst.length} foto${lijst.length === 1 ? "" : "'s"} opladen. Meteen delen met de klant?\n\nOK = delen · Annuleren = enkel intern (later aan te vinken)`);
+  let n = 0, i = 0; const fout = [];
+  for (const file of lijst) {
+    let path = null;
+    try {
+      toast(`Foto ${++i}/${lijst.length} opladen…`, 1500);
+      const id = crypto.randomUUID(); const { blob, w, h } = await fotoVerklein(file, 2000, 0.84);
+      const p = `${pid}/voortgang/${id}.jpg`;
+      const { error } = await sb.storage.from("werf").upload(p, blob, { contentType: "image/jpeg", upsert: false }); if (error) throw error; path = p;
+      const genomen = file.lastModified ? new Date(file.lastModified).toISOString() : new Date().toISOString();
+      await dbInsert("werf_fotos", { id, project_id: pid, path, url: sb.storage.from("werf").getPublicUrl(path).data.publicUrl, w, h, genomen_op: genomen, gedeeld_klant: delen, created_by: S.me.id });
+      n++;
+    } catch (e) { fout.push(file.name + ": " + (e.message || e)); if (path) sb.storage.from("werf").remove([path]).catch(() => { }); }   // geen los bestand achterlaten
+  }
+  if (fout.length) toast(`${n} van ${lijst.length} foto's opgeladen — niet gelukt: ${fout.join(" · ")}`, 9000);
+  else toast(`${n} foto${n === 1 ? "" : "'s"} opgeladen${delen ? " en gedeeld met de klant" : ""}`);
+}
+const vgBezig = {};   // per project+week één bewaring tegelijk (anders botst een tweede invoeging op unique(project_id, week))
+function vgTekst(pid, week, tekst) {
+  const k = pid + "|" + week; const vorige = vgBezig[k] || Promise.resolve();
+  const nu = vorige.then(() => vgTekstBewaar(pid, week, tekst)).catch(() => { }); vgBezig[k] = nu; return nu;
+}
+async function vgTekstBewaar(pid, week, tekst) {
+  const u = vgUpdate(pid, week); const t = String(tekst || "").trim().slice(0, 4000);
+  if (u) { if ((u.tekst || "") === t) return; await dbUpdate("werf_updates", u.id, { tekst: t }).catch(() => { }); }
+  else if (t) await dbInsert("werf_updates", { project_id: pid, week, tekst: t, gedeeld: true, created_by: S.me.id }).catch(() => { });
+}
+async function vgDelete(id) {
+  const f = S.werf_fotos[id]; if (!f || !confirm("Deze foto verwijderen?")) return;
+  try { await dbDelete("werf_fotos", id); } catch (e) { return; }
+  if (f.path && f.path.startsWith(f.project_id + "/voortgang/") && !f.path.includes("..")) sb.storage.from("werf").remove([f.path]).catch(() => { });
+}
+
+/* ---------- woningdossier (tabblad Dossier) ---------- */
+const wdOf = (pid) => Object.values(S.woningdossier || {}).filter(r => r.project_id === pid).sort((a, b) => (a.ruimte || "").localeCompare(b.ruimte || "", "nl") || (a.volgorde || 0) - (b.volgorde || 0) || (a.created_at || "").localeCompare(b.created_at || ""));
+const WD_VELDEN = [["ruimte", "Ruimte", 110], ["onderdeel", "Onderdeel", 120], ["materiaal", "Materiaal / product", 170], ["kleur", "Kleur / afwerking", 130], ["leverancier", "Leverancier", 120], ["referentie", "Referentie", 110]];
+function vWoningdossier(p) {
+  if (!vgReady() || !S.woningdossier) return "";
+  const rows = wdOf(p.id); const docs = Object.values(S.documenten).filter(d => d.project_id === p.id).sort((a, b) => (a.naam || "").localeCompare(b.naam || ""));
+  const kz = kzReady() ? kzOf(p.id).filter(k => (k.status === "gekozen" || k.status === "bevestigd") && !rows.some(r => r.keuze_id === k.id)) : [];
+  return `<div class="panel" style="margin-bottom:16px"><div class="panel-head"><div><h3>Woningdossier</h3><div class="muted" style="font-size:12px;margin-top:2px">Wat er in de woning zit: materialen, kleuren, leveranciers, garanties en onderhoud, met handleidingen als document. Handig voor de klant na de oplevering — en voor jullie bij een vraag jaren later.</div></div>
+      <div class="actions"><label class="sw-row" style="margin:0;font-size:13px"><input type="checkbox" class="sw" data-act="wd-klant" data-pid="${p.id}" ${p.dossier_klant ? "checked" : ""}><span>Zichtbaar voor de klant</span></label>${kz.length ? `<button class="btn sm" data-act="wd-keuzes" data-pid="${p.id}" title="De gekozen opties van het tabblad Keuzes toevoegen">Overnemen uit keuzes (${kz.length})</button>` : ""}<button class="btn sm primary" data-act="wd-new" data-pid="${p.id}">+ Rij</button></div></div>
+    ${rows.length ? `<div class="tw"><table class="t"><thead><tr>${WD_VELDEN.map(([, l]) => `<th>${l}</th>`).join("")}<th>Garantie tot</th><th>Onderhoud</th><th>Document</th><th></th></tr></thead><tbody>${rows.map(r => `<tr>
+        ${WD_VELDEN.map(([f, , w]) => `<td style="min-width:${w}px"><input class="inline" data-wd="${r.id}" data-f="${f}" value="${esc(r[f] || "")}"></td>`).join("")}
+        <td style="width:130px"><input class="inline num" type="date" data-wd="${r.id}" data-f="garantie_tot" value="${esc(r.garantie_tot || "")}"></td>
+        <td style="min-width:180px"><input class="inline" data-wd="${r.id}" data-f="onderhoud" value="${esc(r.onderhoud || "")}" placeholder="bv. 1×/jaar ontkalken"></td>
+        <td style="width:170px"><select class="inline" data-wd="${r.id}" data-f="document_id"><option value="">—</option>${opts(docs.map(d => [d.id, (d.gedeeld ? "" : "🔒 ") + d.naam]), r.document_id || "")}</select></td>
+        <td class="r" style="width:36px"><button class="btn ghost sm danger" data-act="wd-del" data-id="${r.id}" aria-label="Verwijderen">✕</button></td></tr>`).join("")}</tbody></table></div>
+      <div class="panel-body muted" style="font-size:12px;border-top:1px solid var(--line)">🔒 = document nog niet gedeeld met de klant: de klant ziet het pas als je het deelt (schakelaar klant hieronder bij de bestanden).</div>`
+      : `<div class="empty"><b>Nog leeg</b>Voeg rijen toe of neem de gekozen opties over uit het tabblad Keuzes.</div>`}</div>`;
+}
+async function wdEdit(id, f, val) {
+  const r = S.woningdossier[id]; if (!r) return; const v = f === "garantie_tot" || f === "document_id" ? (val || null) : String(val || "").trim().slice(0, f === "onderhoud" ? 2000 : 300);
+  if (String(r[f] ?? "") === String(v ?? "")) return;
+  await dbUpdate("woningdossier", id, { [f]: v }).catch(() => { });
+}
+let wdBezig = false;
+async function wdKeuzes(pid) {
+  if (wdBezig) return; wdBezig = true;
+  try { await wdKeuzesDoe(pid); } finally { wdBezig = false; }
+}
+async function wdKeuzesDoe(pid) {
+  const rows = wdOf(pid); const kz = kzOf(pid).filter(k => (k.status === "gekozen" || k.status === "bevestigd") && !rows.some(r => r.keuze_id === k.id)); let n = 0;
+  for (const k of kz) { const o = S.keuze_opties[k.gekozen_optie]; if (!o) continue;
+    await dbInsert("woningdossier", { project_id: pid, ruimte: k.ruimte || "", onderdeel: k.onderwerp, materiaal: o.naam, leverancier: o.leverancier || "", referentie: o.referentie || "", keuze_id: k.id, volgorde: n, created_by: S.me.id }).then(() => n++).catch(() => { }); }
+  toast(`${n} rij${n === 1 ? "" : "en"} overgenomen uit de keuzes`);
+}
+function kpFase3Act(d, el) {
+  if (d.act === "vg-alle") { S.vgAlle = !S.vgAlle; render(); return true; }
+  if (d.act === "vg-del") { vgDelete(d.id); return true; }
+  if (d.act === "wd-new") { dbInsert("woningdossier", { project_id: d.pid, volgorde: wdOf(d.pid).length, created_by: S.me.id }).catch(() => { }); return true; }
+  if (d.act === "wd-del") { if (confirm("Deze rij verwijderen?")) dbDelete("woningdossier", d.id).catch(() => { }); return true; }
+  if (d.act === "wd-keuzes") { wdKeuzes(d.pid); return true; }
+  if (d.act === "wd-klant") { const p = S.projecten[d.pid]; if (!p) return true; const aan = !!el.checked;
+    if (aan && !confirm("Het woningdossier zichtbaar maken in het klantenportaal?")) { el.checked = false; return true; }
+    dbUpdate("projecten", p.id, { dossier_klant: aan }).then(() => toast(aan ? "Woningdossier zichtbaar voor de klant" : "Woningdossier niet meer zichtbaar voor de klant")).catch(() => { }); return true; }
+  return false;
+}

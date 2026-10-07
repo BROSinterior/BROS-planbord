@@ -4,7 +4,7 @@
    lokale wachtrij (IndexedDB) en worden verzonden zodra er weer verbinding is.
    ===================================================================== */
 if (window.top !== window.self) { try { window.top.location.replace(window.location.href); } catch (e) { document.documentElement.innerHTML = ""; } }   // niet in een vreemd frame (clickjacking)
-const WERF_VERSION = "1.36.0";
+const WERF_VERSION = "1.37.0";
 const cfg = window.PLANBORD_CONFIG || {};
 if (!window.supabase) { document.getElementById("app").innerHTML = '<main><div class="empty"><b>De werfmodus is nog niet volledig geladen.</b><br>Open ze één keer met bereik; daarna werkt ze ook offline.<br><br><button class="btn" onclick="location.reload()">Opnieuw proberen</button></div></main>'; throw new Error("supabase-js niet geladen"); }
 const sb = window.supabase.createClient(cfg.supabaseUrl, cfg.supabaseAnonKey);
@@ -110,14 +110,16 @@ async function loadProject(pid) {
     (wp.data || []).forEach(pl => { try { fetch(pl.url).catch(() => { }); } catch (e) { } });
     store.set("cache." + pid, S.data); return;
   }
-  const [vs, wb, pc, lp, wp] = await Promise.all([
+  const [vs, wb, pc, lp, wp, vg] = await Promise.all([
     sb.from("vaststellingen").select("*").eq("project_id", pid).order("nr", { ascending: false }),
     sb.from("werfbezoeken").select("*").eq("project_id", pid).order("datum", { ascending: false }),
     sb.from("project_contacten").select("id,rol,contact_id").eq("project_id", pid),
     sb.from("meetstaat_posten_v").select("lot").eq("project_id", pid).then(r => r.error ? sb.from("meetstaat_posten").select("lot").eq("project_id", pid) : r),
     sb.from("werfplannen").select("*").eq("project_id", pid).order("volgorde").then(r => r.error ? { data: [] } : r),
+    sb.from("werf_fotos").select("id,genomen_op,gedeeld_klant").eq("project_id", pid).gte("genomen_op", (() => { const d = new Date(); d.setHours(0, 0, 0, 0); d.setDate(d.getDate() - (d.getDay() + 6) % 7); return d.toISOString(); })()).then(r => r.error ? { error: r.error, data: [] } : r),
   ]);
   if (vs.error) throw vs.error;
+  S.vgOk = !vg.error; S.vgWeek = (vg.data || []).length;   // voortgangsfoto's (script 036) — deze week
   let contacten = [];
   if ((pc.data || []).length) { const ids = pc.data.map(x => x.contact_id); const { data } = await sb.from("contacten").select("id,naam,soort,vakgebied,email,gsm").in("id", ids); contacten = pc.data.map(x => ({ rol: x.rol, c: (data || []).find(c => c.id === x.contact_id) })).filter(x => x.c); }
   const lots = [...new Set((lp.data || []).map(x => x.lot).filter(Boolean))].sort((a, b) => a - b);
@@ -168,6 +170,12 @@ async function sync() {
       if ((q.tries || 0) >= 5) { fouten++; continue; }   // blijft staan, maar blokkeert de rest niet
       try {
         if (q.kind === "wb-new") { const { error } = await sb.from("werfbezoeken").upsert(q.row, { onConflict: "id" }); if (error) throw error; }
+        else if (q.kind === "vg-new") {
+          const path = `${q.row.project_id}/voortgang/${q.row.id}.jpg`; const f = q.fotos[0];
+          if (f && !q.done) { const { error } = await sb.storage.from("werf").upload(path, f.blob, { contentType: "image/jpeg", upsert: true }); if (error) throw error; q.done = [{ path, url: sb.storage.from("werf").getPublicUrl(path).data.publicUrl, w: f.w, h: f.h }]; await idb.put(q); }
+          const d0 = (q.done || [])[0]; if (!d0) throw new Error("Foto ontbreekt");
+          const { error } = await sb.from("werf_fotos").upsert({ ...q.row, path: d0.path, url: d0.url, w: d0.w, h: d0.h }, { onConflict: "id" }); if (error) throw error;
+        }
         else if (q.kind === "vs-new") {
           const { error } = await sb.from("vaststellingen").upsert({ ...q.row, fotos: q.done || [] }, { onConflict: "id" }); if (error) throw error;
           while (q.fotos.length) { const f = await upload(q.row.project_id, q.row.id, q.fotos[0]); q.done = [...(q.done || []), f]; q.fotos.shift(); await idb.put(q); }
@@ -239,6 +247,7 @@ function vList() {
   if (perLot) { const g = {}; list.forEach(v => (g[v.lot || 0] = g[v.lot || 0] || []).push(v)); body = Object.keys(g).map(Number).sort((a, b) => (a ? 0 : 1) - (b ? 0 : 1) || a - b).map(nr => `<h2 style="margin:14px 0 8px;font-size:15px">${nr ? esc(lotName(nr)) : "Zonder lot"} <span class="cnt">${g[nr].length}</span></h2>` + g[nr].map(card).join("")).join(""); }
   else body = list.map(card).join("");
   return `${isAan() ? "" : b ? `<div class="bezoek"><div><b>Werfbezoek ${b.nr || "(nieuw)"} · ${b.datum === todayIso ? "vandaag" : fmtLong(b.datum)}</b><small>${esc(b.aanwezigen || "nieuwe vaststellingen hangen aan dit bezoek")}</small></div><button class="btn" style="width:auto;padding:8px 12px;font-size:13px" data-act="bezoek-stop">Afsluiten</button></div>` : `<div class="bezoek"><div><b>Geen werfbezoek gestart</b><small>Start er een om vaststellingen te groeperen per bezoek</small></div><button class="btn" style="width:auto;padding:8px 12px;font-size:13px" data-act="bezoek">Bezoek starten</button></div>`}
+    ${!isAan() && S.vgOk ? `<div class="bezoek" style="align-items:center"><div><b>📸 Voortgang voor de klant</b><small>${S.vgWeek ? S.vgWeek + " foto" + (S.vgWeek === 1 ? "" : "'s") + " deze week" : "foto's van de werken, per week in het portaal"}${S.queue.filter(q => q.kind === "vg-new").length ? " · " + S.queue.filter(q => q.kind === "vg-new").length + " in de wachtrij" : ""}</small><label style="display:flex;gap:6px;align-items:center;font-size:13px;margin-top:6px"><input type="checkbox" id="vg_deel" ${store.get("vgdeel", false) ? "checked" : ""}> meteen delen met de klant</label></div><label class="btn" style="width:auto;padding:8px 12px;font-size:14px">Foto's<input type="file" accept="image/*" capture="environment" multiple hidden data-vgfile="1"></label></div>` : ""}
     <div class="chips">${[["open", `Open ${n("open")}`], ["opgelost", `Opgelost ${n("opgelost")}`], ["alle", `Alles ${n("alle")}`]].map(([k, l]) => `<button class="chip" data-act="filter" data-f="${k}" aria-current="${f === k}">${l}</button>`).join("")}${all.some(v => v.lot) ? `<button class="chip" data-act="perlot" aria-current="${!!S.perLot}">Per lot</button>` : ""}</div>
     ${body || `<div class="empty">${all.length ? "Niets in deze lijst." : isAan() ? "Nog geen punten aan jou toegewezen." : "Nog geen vaststellingen. Tik op 📷 Vaststelling."}</div>`}`;
 }
@@ -368,6 +377,13 @@ document.addEventListener("click", async (e) => {
 });
 document.addEventListener("change", async (e) => {
   const t = e.target;
+  if (t.id === "vg_deel") { store.set("vgdeel", t.checked); return; }
+  if (t.dataset.vgfile) {   // voortgangsfoto's (script 036): ook zonder bereik, via de wachtrij
+    const deel = !!($("#vg_deel") && $("#vg_deel").checked); let n = 0;
+    for (const file of [...t.files]) { try { const r = await verklein(file, 2000, 0.84); await enqueue({ kind: "vg-new", row: { id: uuid(), project_id: S.project, genomen_op: new Date(file.lastModified || Date.now()).toISOString(), gedeeld_klant: deel, created_by: S.me?.id || null }, fotos: [{ blob: r.blob, w: r.w, h: r.h }] }); n++; } catch (err) { toast("Foto niet bruikbaar"); } }
+    t.value = ""; if (n) { S.vgWeek = (S.vgWeek || 0) + n; toast(n + " foto" + (n === 1 ? "" : "'s") + (deel ? " voor de klant" : " (intern)") + (S.online ? " verzonden" : " bewaard — verzonden zodra er bereik is")); }
+    render(); return;
+  }
   if (t.dataset.oplos || t.dataset.addfoto) {
     const id = t.dataset.oplos || t.dataset.addfoto; const fotos = [];
     for (const file of [...t.files]) { try { const r = await verklein(file); fotos.push({ blob: r.blob, w: r.w, h: r.h }); } catch (err) { toast("Foto niet bruikbaar"); } }

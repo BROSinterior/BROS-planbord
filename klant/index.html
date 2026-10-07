@@ -178,6 +178,10 @@
   .field input[type=file] { padding: 8px; }
   .kz-optie:has(input:checked) { border-color: var(--ink) !important; box-shadow: 0 0 0 3px color-mix(in srgb, var(--ink) 15%, transparent); }
   .kz-optie.dim { opacity: .55; }
+  /* fase 3 (v1.37): voortgang, woningdossier */
+  .vg-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 8px; }
+  .vg-grid img { width: 100%; height: 130px; object-fit: cover; border-radius: 10px; display: block; }
+  @media print { header.top, nav.tabs, [data-act="wd-print"], .toast { display: none !important; } body { background: #fff; } .panel { box-shadow: none; border: 1px solid #ccc; break-inside: avoid; } }
   /* betalen (v1.35) */
   .betaal-in { display: flex; gap: 24px; align-items: flex-start; flex-wrap: wrap; }
   .panel.betaal { scroll-margin-top: 140px; }
@@ -195,6 +199,7 @@
 <div id="fx"><canvas></canvas><div class="wel"><div id="fxTxt">Welkom</div></div></div>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.45.4/dist/umd/supabase.min.js"></script>
 <script src="../config.js?v=1.31.2"></script>
-<script src="portaal.js?v=1.36.0"></script>
+<script src="i18n-en.js?v=1.37.0"></script>
+<script src="portaal.js?v=1.37.0"></script>
 </body>
 </html>

@@ -819,7 +819,8 @@ function weekoverzichtInstall() {
 function weekoverzichtProef() { weekoverzicht(true); }
 function weekoverzicht(proef) {
   const nu = Date.now(), DAG = 86400000; const iso = (t) => encodeURIComponent(new Date(t).toISOString());
-  const contacten = pbAdmin("/rest/v1/contacten?weekmail=eq.true&actief=eq.true&user_id=not.is.null&email=not.is.null&select=id,naam,contactpersoon,email,user_id,weekmail_laatst", "get") || [];
+  let contacten; try { contacten = pbAdmin("/rest/v1/contacten?weekmail=eq.true&actief=eq.true&user_id=not.is.null&email=not.is.null&select=id,naam,contactpersoon,email,user_id,weekmail_laatst,taal", "get") || []; }
+  catch (e) { contacten = pbAdmin("/rest/v1/contacten?weekmail=eq.true&actief=eq.true&user_id=not.is.null&email=not.is.null&select=id,naam,contactpersoon,email,user_id,weekmail_laatst", "get") || []; }   // vóór script 036 (geen kolom taal)
   if (!contacten.length) return Logger.log("Geen klanten met de weekmail aan.");
   const klantIds = (pbAdmin("/rest/v1/profiles?role=eq.klant&active=eq.true&id=in.(" + contacten.map(c => c.user_id).join(",") + ")&select=id", "get") || []).map(x => x.id);
   const klanten = contacten.filter(c => klantIds.indexOf(c.user_id) >= 0 && (proef || !c.weekmail_laatst || nu - new Date(c.weekmail_laatst).getTime() > 5 * DAG));
@@ -837,39 +838,47 @@ function weekoverzicht(proef) {
   const vords = pbAdmin("/rest/v1/vorderingen?project_id=in.(" + ids + ")&status=neq.opgemaakt&select=project_id,nr,soort,omschrijving,datum,factuurnummer,bedrag_excl,btw_bedrag,status,vervaldag", "get") || [];
   const gks = pbAdmin("/rest/v1/goedkeuringen?project_id=in.(" + ids + ")&status=eq.open&select=project_id,titel,totaal_incl,geldig_tot", "get") || [];
   const taken = pbAdmin("/rest/v1/taken?project_id=in.(" + ids + ")&contact_id=in.(" + klanten.map(c => c.id).join(",") + ")&status=neq.done&select=project_id,contact_id,titel,eind", "get") || [];
+  let wfotos = []; try { wfotos = pbAdmin("/rest/v1/werf_fotos?project_id=in.(" + ids + ")&gedeeld_klant=eq.true&gedeeld_op=gt." + iso(vanaf) + "&select=project_id,gedeeld_op", "get") || []; } catch (e) { }   // script 036 (gedeeld_op = moment van delen met de klant)
+  let kzOpen = []; try { kzOpen = pbAdmin("/rest/v1/keuzes?project_id=in.(" + ids + ")&status=eq.open&select=project_id,onderwerp,deadline", "get") || []; } catch (e) { }   // script 035
   const vandaag = Utilities.formatDate(new Date(), "Europe/Brussels", "yyyy-MM-dd");
   const d = (s) => s ? String(s).slice(8, 10) + "/" + String(s).slice(5, 7) + "/" + String(s).slice(0, 4) : "";
   const eu = (n) => "€ " + Number(n || 0).toFixed(2).replace(".", ",").replace(/\B(?=(\d{3})+(?!\d))/g, ".");
   const na = (t, since) => t && new Date(t).getTime() > since;
+  const FASE_EN = { "Ondertekenen contract": "Contract signing", "Opmeting": "Survey", "Ontwerpfase": "Design phase", "Bespreking voorontwerp": "Preliminary design review", "Definitief ontwerp": "Final design", "Ruwbouw": "Structural works", "Buitenschrijnwerk": "Exterior joinery", "Technieken": "Building services", "Bezetting": "Plastering", "Vloeren": "Flooring", "Opmeting maatwerk": "Custom joinery survey", "Installatie maatwerk": "Custom joinery installation", "Afwerking": "Finishing", "Kennismaking": "Introduction", "Voorontwerp": "Preliminary design", "Meetstaat en offerte": "Bill of quantities and quotation", "Uitvoering": "Execution", "Oplevering": "Handover" };   // fasenamen in de Engelse mail (zelfde als klant/i18n-en.js)
+  const TXT = {
+    nl: { beste: "Beste", week: "Je week bij BROS voor", stap: "je project zit in stap", nieuw: "Nieuw sinds de vorige keer", wacht: "Wat op je wacht", knop: "Naar je klantenportaal", voet: "Je krijgt deze samenvatting elke maandag als er iets nieuws is. Liever niet? Zet ze uit in je portaal onder Welkom › Op de hoogte blijven.", onderwerp: "Je week bij BROS", verslag: "Verslag", werfverslag: "Werfverslag", doc1: "Nieuw document", docs: "nieuwe documenten", factuur: "Factuur", incl: "incl. btw", excl: "excl. btw", akkoord: "Wacht op je akkoord", voor: "graag vóór", open: "staat open", vervallen: "vervallen sinds", tebetalen: "te betalen vóór", actie1: "Jouw actiepunt", acties: "actiepunten voor jou", tegen: "tegen", fotos: "nieuwe foto's van de werf", foto1: "nieuwe foto van de werf", keuze: "Wacht op je keuze", team: "Het team", portaal: "Portaal" },
+    en: { beste: "Dear", week: "Your week with BROS for", stap: "your project is in step", nieuw: "New since last time", wacht: "Waiting for you", knop: "Go to your client portal", voet: "You receive this summary every Monday when there is something new. Prefer not to? Turn it off in your portal under Welcome › Stay informed.", onderwerp: "Your week with BROS", verslag: "Report", werfverslag: "Site report", doc1: "New document", docs: "new documents", factuur: "Invoice", incl: "incl. VAT", excl: "excl. VAT", akkoord: "Awaiting your approval", voor: "please before", open: "is open", vervallen: "overdue since", tebetalen: "due by", actie1: "Your action item", acties: "action items for you", tegen: "by", fotos: "new photos from the site", foto1: "new photo from the site", keuze: "Awaiting your choice", team: "The team", portaal: "Portal" } };
   let mails = 0; const gemaild = {};   // één mail per e-mailadres en project (ook bij twee rollen of twee contactfiches)
   klanten.forEach(c => { try {
-    const since = Math.max(nu - 14 * DAG, c.weekmail_laatst ? new Date(c.weekmail_laatst).getTime() : nu - 7 * DAG);
+    const since = Math.max(nu - 14 * DAG, c.weekmail_laatst ? new Date(c.weekmail_laatst).getTime() : nu - 7 * DAG); const T = TXT[c.taal === "en" ? "en" : "nl"];
     let verstuurd = false;
     [...new Set(pcs.filter(x => x.contact_id === c.id).map(x => x.project_id))].forEach(pid => {
       const p = projecten.find(y => y.id === pid); if (!p) return;
       const sleutel = String(c.email).trim().toLowerCase() + "|" + p.id; if (gemaild[sleutel]) return;
       const nieuw = [], wacht = [];
-      notities.filter(n => n.project_id === p.id && na(n.gedeeld_op, since)).forEach(n => nieuw.push("Verslag: " + H(n.titel || "verslag") + (n.datum ? " (" + d(n.datum) + ")" : "")));
-      wvs.filter(w => w.project_id === p.id && na(w.verzonden_op, since)).forEach(w => nieuw.push("Werfverslag " + H(w.nr || "") + (w.titel ? ": " + H(w.titel) : "") + (w.datum ? " (" + d(w.datum) + ")" : "")));
-      const nd = docs.filter(x2 => x2.project_id === p.id && na(x2.gedeeld_op, since)); if (nd.length) nieuw.push(nd.length === 1 ? "Nieuw document: " + H(nd[0].naam) : nd.length + " nieuwe documenten (" + nd.slice(0, 3).map(x2 => H(x2.naam)).join(", ") + (nd.length > 3 ? ", …" : "") + ")");
-      const bedrag = (v) => v.btw_bedrag != null && v.bedrag_excl != null ? eu(Number(v.bedrag_excl) + Number(v.btw_bedrag)) + " incl. btw" : v.bedrag_excl != null ? eu(v.bedrag_excl) + " excl. btw" : "";
-      vords.filter(v => v.project_id === p.id && v.datum && new Date(v.datum + "T23:59:59Z").getTime() > since).forEach(v => nieuw.push("Factuur " + H(v.factuurnummer || v.nr) + " · " + bedrag(v)));
-      gks.filter(g => g.project_id === p.id && !(g.geldig_tot && g.geldig_tot < vandaag)).forEach(g => wacht.push("Wacht op je akkoord: " + H(g.titel) + " · " + eu(g.totaal_incl) + " incl. btw" + (g.geldig_tot ? " — graag vóór " + d(g.geldig_tot) : "")));
-      vords.filter(v => v.project_id === p.id && v.status === "verzonden").forEach(v => wacht.push("Factuur " + H(v.factuurnummer || v.nr) + " staat open · " + bedrag(v) + (v.vervaldag ? (v.vervaldag < vandaag ? " — <b>vervallen sinds " + d(v.vervaldag) + "</b>" : " — te betalen vóór " + d(v.vervaldag)) : "")));
-      const mt = taken.filter(t => t.project_id === p.id && t.contact_id === c.id); if (mt.length) wacht.push((mt.length === 1 ? "Jouw actiepunt: " : mt.length + " actiepunten voor jou: ") + mt.slice(0, 4).map(t => H(t.titel) + (t.eind ? " (tegen " + d(t.eind) + ")" : "")).join(", "));
+      notities.filter(n => n.project_id === p.id && na(n.gedeeld_op, since)).forEach(n => nieuw.push(T.verslag + ": " + H(n.titel || T.verslag.toLowerCase()) + (n.datum ? " (" + d(n.datum) + ")" : "")));
+      wvs.filter(w => w.project_id === p.id && na(w.verzonden_op, since)).forEach(w => nieuw.push(T.werfverslag + " " + H(w.nr || "") + (w.titel ? ": " + H(w.titel) : "") + (w.datum ? " (" + d(w.datum) + ")" : "")));
+      const nd = docs.filter(x2 => x2.project_id === p.id && na(x2.gedeeld_op, since)); if (nd.length) nieuw.push(nd.length === 1 ? T.doc1 + ": " + H(nd[0].naam) : nd.length + " " + T.docs + " (" + nd.slice(0, 3).map(x2 => H(x2.naam)).join(", ") + (nd.length > 3 ? ", …" : "") + ")");
+      const nf = wfotos.filter(x2 => x2.project_id === p.id && na(x2.gedeeld_op, since)).length; if (nf) nieuw.push(nf + " " + (nf === 1 ? T.foto1 : T.fotos));
+      const bedrag = (v) => v.btw_bedrag != null && v.bedrag_excl != null ? eu(Number(v.bedrag_excl) + Number(v.btw_bedrag)) + " " + T.incl : v.bedrag_excl != null ? eu(v.bedrag_excl) + " " + T.excl : "";
+      vords.filter(v => v.project_id === p.id && v.datum && new Date(v.datum + "T23:59:59Z").getTime() > since).forEach(v => nieuw.push(T.factuur + " " + H(v.factuurnummer || v.nr) + " · " + bedrag(v)));
+      gks.filter(g => g.project_id === p.id && !(g.geldig_tot && g.geldig_tot < vandaag)).forEach(g => wacht.push(T.akkoord + ": " + H(g.titel) + " · " + eu(g.totaal_incl) + " " + T.incl + (g.geldig_tot ? " — " + T.voor + " " + d(g.geldig_tot) : "")));
+      kzOpen.filter(k => k.project_id === p.id).forEach(k => wacht.push(T.keuze + ": " + H(k.onderwerp) + (k.deadline ? " — " + T.voor + " " + d(k.deadline) : "")));
+      vords.filter(v => v.project_id === p.id && v.status === "verzonden").forEach(v => wacht.push(T.factuur + " " + H(v.factuurnummer || v.nr) + " " + T.open + " · " + bedrag(v) + (v.vervaldag ? (v.vervaldag < vandaag ? " — <b>" + T.vervallen + " " + d(v.vervaldag) + "</b>" : " — " + T.tebetalen + " " + d(v.vervaldag)) : "")));
+      const mt = taken.filter(t => t.project_id === p.id && t.contact_id === c.id); if (mt.length) wacht.push((mt.length === 1 ? T.actie1 + ": " : mt.length + " " + T.acties + ": ") + mt.slice(0, 4).map(t => H(t.titel) + (t.eind ? " (" + T.tegen + " " + d(t.eind) + ")" : "")).join(", "));
       if (!nieuw.length && !wacht.length) return;
       const proj = (p.klant || "") + (p.naam && p.naam !== p.klant ? " · " + p.naam : ""); const fase = fasen.find(f => f.nr === p.fase_nr); const lead = profs.find(u => u.id === p.lead);
       const naam = c.contactpersoon || c.naam; const lijst = (a) => "<ul style=\"padding-left:18px;margin:6px 0 16px\">" + a.map(t => "<li style=\"margin:4px 0\">" + t + "</li>").join("") + "</ul>";
-      const html = "<div style=\"font-family:Helvetica,Arial,sans-serif;font-size:15px;line-height:1.5;color:#1B1E1C;max-width:640px\"><p>Beste " + H(naam) + ",</p>"
-        + "<p>Je week bij BROS voor <b>" + H(proj) + "</b>" + (fase && p.status === "lopend" ? " — je project zit in stap " + fase.nr + ": " + H(fase.naam) : "") + ".</p>"
-        + (nieuw.length ? "<h3 style=\"font-size:15px;margin:18px 0 0\">Nieuw sinds de vorige keer</h3>" + lijst(nieuw) : "")
-        + (wacht.length ? "<h3 style=\"font-size:15px;margin:18px 0 0\">Wat op je wacht</h3>" + lijst(wacht) : "")
-        + "<p style=\"margin:24px 0\"><a href=\"" + PORTAAL.URL + "\" style=\"background:#1B1E1C;color:#fff;text-decoration:none;padding:12px 20px;border-radius:8px;font-weight:600;display:inline-block\">Naar je klantenportaal</a></p>"
-        + "<p>" + H(lead ? lead.name : "Het team") + " — BROS</p><p style=\"color:#767D78;font-size:12px\">Je krijgt deze samenvatting elke maandag als er iets nieuws is. Liever niet? Zet ze uit in je portaal onder Welkom › Op de hoogte blijven.</p></div>";
-      const tekst = "Beste " + naam + ",\n\nJe week bij BROS voor " + proj + ".\n\n" + (nieuw.length ? "Nieuw:\n- " + nieuw.join("\n- ") + "\n\n" : "") + (wacht.length ? "Wat op je wacht:\n- " + wacht.join("\n- ") + "\n\n" : "") + "Portaal: " + PORTAAL.URL + "\n\nBROS";
+      const html = "<div style=\"font-family:Helvetica,Arial,sans-serif;font-size:15px;line-height:1.5;color:#1B1E1C;max-width:640px\"><p>" + T.beste + " " + H(naam) + ",</p>"
+        + "<p>" + T.week + " <b>" + H(proj) + "</b>" + (fase && p.status === "lopend" ? " — " + T.stap + " " + fase.nr + ": " + H((T === TXT.en && FASE_EN[fase.naam]) || fase.naam) : "") + ".</p>"
+        + (nieuw.length ? "<h3 style=\"font-size:15px;margin:18px 0 0\">" + T.nieuw + "</h3>" + lijst(nieuw) : "")
+        + (wacht.length ? "<h3 style=\"font-size:15px;margin:18px 0 0\">" + T.wacht + "</h3>" + lijst(wacht) : "")
+        + "<p style=\"margin:24px 0\"><a href=\"" + PORTAAL.URL + "\" style=\"background:#1B1E1C;color:#fff;text-decoration:none;padding:12px 20px;border-radius:8px;font-weight:600;display:inline-block\">" + T.knop + "</a></p>"
+        + "<p>" + H(lead ? lead.name : T.team) + " — BROS</p><p style=\"color:#767D78;font-size:12px\">" + T.voet + "</p></div>";
+      const tekst = T.beste + " " + naam + ",\n\n" + T.week + " " + proj + ".\n\n" + (nieuw.length ? T.nieuw + ":\n- " + nieuw.join("\n- ") + "\n\n" : "") + (wacht.length ? T.wacht + ":\n- " + wacht.join("\n- ") + "\n\n" : "") + T.portaal + ": " + PORTAAL.URL + "\n\nBROS";
       const naar = proef ? YUKI.REPORT_TO : String(c.email).trim();
       gemaild[sleutel] = true;
-      portaalMail(naar, (proef ? "[PROEF voor " + c.email + "] " : "") + "Je week bij BROS · " + proj, tekst.replace(/<[^>]+>/g, "").replace(/&lt;/g, "<").replace(/&gt;/g, ">").replace(/&quot;/g, '"').replace(/&#39;/g, "'").replace(/&amp;/g, "&"), html); mails++; verstuurd = true;
+      portaalMail(naar, (proef ? "[PROEF voor " + c.email + "] " : "") + T.onderwerp + " · " + proj, tekst.replace(/<[^>]+>/g, "").replace(/&lt;/g, "<").replace(/&gt;/g, ">").replace(/&quot;/g, '"').replace(/&#39;/g, "'").replace(/&amp;/g, "&"), html); mails++; verstuurd = true;
     });
     } catch (e) { Logger.log("Weekoverzicht " + c.email + ": " + e); }
     if (!proef) { try { pbAdmin("/rest/v1/contacten?id=eq." + c.id, "patch", { weekmail_laatst: new Date().toISOString() }); } catch (e) { Logger.log("weekmail_laatst " + c.email + ": " + e); } }
