@@ -35,7 +35,8 @@ function doPost(e) {
     if (body.action === "prijsaanvraagmail") return json(prijsaanvraagMail(body)); // prijsaanvragen: team (token) → aannemer, of aannemer (token) → BROS
     if (body.action === "koppelmail") return json(koppelMail(body));
     if (body.action === "aanprijsmail") return json(aanPrijsMail(body)); // meetstaat met prijzen (script 032): team (beheer) → aannemer bij delen, aannemer → BROS bij akkoord/tegenvoorstel
-    if (body.action === "klantmelding") return json(klantMelding(body)); // klantenportaal (script 035): keuze gemaakt, meerwerk aangevraagd of werfpunt gemeld → mail aan de projectverantwoordelijke
+    if (body.action === "klantmelding") return json(klantMelding(body));
+    if (body.action === "ovmail") return json(overeenkomstMail(body)); // overeenkomsten (script 039): voorgelegd (team), code en beslist (klant) // klantenportaal (script 035): keuze gemaakt, meerwerk aangevraagd of werfpunt gemeld → mail aan de projectverantwoordelijke
     if (body.action === "bestand") return json(portaalBestand(body)); // klant/aannemer: een gedeeld document ophalen om er een pdf-dossier van te maken (login + toegang gecontroleerd) // team (token): aannemer verwittigen dat hij aan een project gekoppeld is (met uitnodiging als hij nog geen login heeft)
     if (!body.secret || body.secret !== CONFIG.SECRET) return json({ ok: false, error: "Geen toegang (secret klopt niet)." });
     if (body.action === "ping") return json({ ok: true, info: "Verbinding en secret in orde.", projecten: DriveApp.getFolderById(CONFIG.PROJECTEN_FOLDER_ID).getName(), sjabloon: DriveApp.getFolderById(CONFIG.SJABLOON_FOLDER_ID).getName() });
@@ -464,6 +465,74 @@ function goedkeuringMail(body) {
     }
   }
   return { ok: true, naar: naar };
+}
+/* =====================================================================
+   Overeenkomsten goedkeuren in het klantenportaal (script 039)
+   'voorgelegd' (team → iedere tekenaar), 'code' (klant: eenmalige code van 6 cijfers per mail, 15 min geldig),
+   'beslist' (klant: melding aan BROS, bevestiging aan de tekenaar; als iedereen akkoord is ook aan alle tekenaars).
+   ===================================================================== */
+function overeenkomstMail(body) {
+  const soort = String(body.soort || "");
+  if (["voorgelegd", "code", "beslist"].indexOf(soort) < 0) return { ok: false, error: "Onbekende soort." };
+  const wie = callerAny(body.token);
+  if (soort === "voorgelegd" && wie.role !== "beheer" && wie.role !== "medewerker") return { ok: false, error: "Geen toegang." };
+  if (soort !== "voorgelegd" && wie.role !== "klant") return { ok: false, error: "Geen toegang." };
+  const g = (pbAdmin("/rest/v1/goedkeuringen?id=eq." + uuid(body.id) + "&soort=eq.overeenkomst&select=*", "get") || [])[0];
+  if (!g) return { ok: false, error: "Overeenkomst niet gevonden." };
+  const p = (pbAdmin("/rest/v1/projecten?id=eq." + g.project_id + "&select=nummer,klant,naam,lead", "get") || [])[0] || {};
+  const proj = (p.klant || "") + (p.naam && p.naam !== p.klant ? " · " + p.naam : "");
+  const ts = pbAdmin("/rest/v1/goedkeuring_tekenaars?goedkeuring_id=eq." + g.id + "&select=id,contact_id,status,beslist_naam,beslist_email,beslist_op,code_tot,created_at&order=created_at,id", "get") || [];
+  const cs = ts.length ? (pbAdmin("/rest/v1/contacten?id=in.(" + ts.map(t => t.contact_id).join(",") + ")&select=id,naam,contactpersoon,email,user_id,actief", "get") || []) : [];
+  const wrap = (inner) => "<div style=\"font-family:Helvetica,Arial,sans-serif;font-size:15px;line-height:1.5;color:#1B1E1C;max-width:640px\">" + inner + "</div>";
+  const knop = (url, txt) => "<p style=\"margin:24px 0\"><a href=\"" + url + "\" style=\"background:#1B1E1C;color:#fff;text-decoration:none;padding:12px 20px;border-radius:8px;font-weight:600;display:inline-block\">" + txt + "</a></p>";
+  const tot = g.geldig_tot ? String(g.geldig_tot).split("-").reverse().join("/") : "";
+  if (soort === "voorgelegd") {
+    if (!quotum("ovv:" + g.id, 3, 3600)) return { ok: false, error: "Deze overeenkomst werd net al gemaild; probeer het later opnieuw." };
+    const naar = [];
+    ts.filter(t => t.status === "open").forEach(t => { const c = cs.find(x => x.id === t.contact_id); if (!c || !c.email || !c.user_id) return;
+      const naam = c.contactpersoon || c.naam;
+      const html = wrap("<p>Beste " + H(naam) + ",</p><p>In je BROS-klantenportaal staat een overeenkomst klaar om goed te keuren: <b>" + H(g.titel) + "</b>" + (tot ? " (graag vóór <b>" + tot + "</b>)" : "") + ".</p>"
+        + (g.toelichting ? "<p style=\"padding:10px 14px;border-left:3px solid #DAD8D0;white-space:pre-line\">" + H(g.toelichting) + "</p>" : "")
+        + "<p>Je leest de overeenkomst (pdf) in het portaal onder <b>Akkoord</b>. Ga je akkoord, dan bevestig je met je naam en een code die je per mail krijgt." + (ts.length > 1 ? " Iedere bouwheer keurt zelf goed." : "") + "</p>"
+        + knop(PORTAAL.URL, "Overeenkomst bekijken") + "<p>Met vriendelijke groeten,<br>" + H(wie.name) + " — BROS</p>");
+      portaalMail(String(c.email).trim(), "Overeenkomst ter goedkeuring: " + g.titel, "Beste " + naam + ",\n\nIn je BROS-klantenportaal staat een overeenkomst klaar om goed te keuren: " + g.titel + (tot ? " (graag vóór " + tot + ")" : "") + ".\nBekijken: " + PORTAAL.URL + "\n\n" + wie.name + " — BROS", html);
+      naar.push(c.email); });
+    return { ok: true, naar: naar };
+  }
+  const mijn = cs.filter(c => c.user_id === wie.id && c.actief !== false).map(c => c.id);   // zoals overeenkomst_beslis (mijn_contacten: enkel actieve)
+  const t = ts.find(x => mijn.indexOf(x.contact_id) >= 0 && (soort === "code" ? x.status === "open" : true));
+  if (!t) return { ok: false, error: "Je hoeft deze overeenkomst niet (meer) goed te keuren." };
+  if (soort === "code") {
+    if (g.status !== "open") return { ok: false, error: "Over deze overeenkomst is al beslist." };
+    if (!quotum("ovc:" + t.id, 5, 3600)) return { ok: false, error: "Je vroeg al enkele codes aan; wacht even en probeer het dan opnieuw." };
+    if (!wie.email) return { ok: false, error: "Geen e-mailadres bij je login." };
+    let code = ""; while (code.length < 6) { const b = Utilities.getUuid().replace(/\D/g, ""); code += b; } code = code.slice(0, 6);
+    const hash = Utilities.computeDigest(Utilities.DigestAlgorithm.MD5, code + t.id, Utilities.Charset.UTF_8).map(b => ("0" + (b & 0xff).toString(16)).slice(-2)).join("");
+    // de code zelf in goedkeuring_codes (niemand met een login kan die lezen); geldigheid en pogingen bij de tekenaar
+    pbAdmin("/rest/v1/goedkeuring_codes?tekenaar_id=eq." + t.id, "delete");
+    pbAdmin("/rest/v1/goedkeuring_codes", "post", { tekenaar_id: t.id, code_hash: hash });
+    pbAdmin("/rest/v1/goedkeuring_tekenaars?id=eq." + t.id, "patch", { code_tot: new Date(Date.now() + 15 * 60000).toISOString(), code_pogingen: 0, code_email: wie.email });
+    const html = wrap("<p>Je code om de overeenkomst <b>" + H(g.titel) + "</b> goed te keuren:</p><p style=\"font-size:30px;font-weight:700;letter-spacing:6px;margin:18px 0\">" + code.slice(0, 3) + " " + code.slice(3) + "</p><p>De code is 15 minuten geldig. Heb je ze niet zelf aangevraagd? Dan hoef je niets te doen — zonder code gebeurt er niets.</p><p>BROS</p>");
+    portaalMail(wie.email, "Je code voor " + g.titel + ": " + code, "Je code om de overeenkomst " + g.titel + " goed te keuren: " + code + "\nDe code is 15 minuten geldig.\n\nBROS", html);
+    const e = String(wie.email); return { ok: true, naar: e.replace(/^(.).*(@.*)$/, "$1…$2") };
+  }
+  // beslist
+  if (!t.beslist_op || !eenmalig("ovb:" + t.id + ":" + t.status + ":" + t.beslist_op, 21600)) return { ok: true };
+  const ok = t.status === "akkoord"; const wanneer = new Date(t.beslist_op).toLocaleString("nl-BE", { timeZone: "Europe/Brussels" });
+  const profs = pbAdmin("/rest/v1/profiles?select=id,name,email,role&active=eq.true", "get") || [];
+  const lead = profs.find(x => x.id === p.lead); const maker = profs.find(x => x.id === g.voorgelegd_door);
+  const team = [...new Set([YUKI.REPORT_TO, lead && lead.email, maker && maker.email].filter(Boolean))].join(",");
+  const stand = ts.map(x => { const c = cs.find(y => y.id === x.contact_id) || {}; return "<li>" + H(c.naam || "?") + ": " + (x.status === "akkoord" ? "akkoord (" + H(x.beslist_naam) + ")" : x.status === "geweigerd" ? "niet akkoord" : "nog niet") + "</li>"; }).join("");
+  const opm = (pbAdmin("/rest/v1/goedkeuring_tekenaars?id=eq." + t.id + "&select=opmerking", "get") || [])[0] || {};
+  portaalMail(team, (ok ? "✔ Akkoord" : "✖ Niet akkoord") + " — overeenkomst " + g.titel + " — " + proj, (ok ? "Akkoord" : "Niet akkoord") + " van " + t.beslist_naam + " op " + g.titel + " (" + proj + ")." + (opm.opmerking ? "\n\nOpmerking: " + opm.opmerking : ""),
+    wrap("<p>" + (ok ? "<b>Akkoord</b>" : "<b>Niet akkoord</b>") + " op de overeenkomst <b>" + H(g.titel) + "</b> (" + H(proj) + ").</p><p>Door: " + H(t.beslist_naam) + " (" + H(t.beslist_email) + ") op " + H(wanneer) + "</p>" + (opm.opmerking ? "<p style=\"white-space:pre-line\">Opmerking: " + H(opm.opmerking) + "</p>" : "")
+      + "<p>Stand:</p><ul>" + stand + "</ul>" + (g.status === "akkoord" ? "<p>Iedereen is akkoord. Het Planbord maakt de getekende pdf en bewaart die in de projectmap (Documenten/Overeenkomsten) zodra het open staat.</p>" : "")));
+  if (t.beslist_email) portaalMail(t.beslist_email, (ok ? "Bevestiging van je akkoord: " : "Je reactie op: ") + g.titel,
+    (ok ? "Bedankt voor je akkoord op " : "We ontvingen je reactie op ") + g.titel + ".\n\nBROS",
+    wrap("<p>Beste " + H(t.beslist_naam) + ",</p>" + (ok ? "<p>Bedankt voor je akkoord op de overeenkomst <b>" + H(g.titel) + "</b>, vastgelegd op " + H(wanneer) + ".</p><p>Controlecode van het document (SHA-256): <span style=\"font-family:monospace;font-size:12px\">" + H(g.bestand_sha256) + "</span></p>"
+      + (g.status === "akkoord" ? "<p>Iedereen heeft nu goedgekeurd. De getekende versie verschijnt in je portaal onder Documenten.</p>" : "<p>De overeenkomst is goedgekeurd zodra ook de andere bouwheer(en) akkoord gaven.</p>")
+      : "<p>We ontvingen je reactie op <b>" + H(g.titel) + "</b> en nemen contact met je op.</p>") + "<p>BROS</p>"));
+  return { ok: true };
 }
 /** Verslag gedeeld met de klant: mail met het verslag en de actiepunten naar de klanten met portaal-toegang. */
 function notitieMail(body) {
@@ -917,12 +986,15 @@ function weekoverzicht(proef) {
  *  mag zien, max. 25 MB, max. 150 per uur per login. */
 function portaalBestand(body) {
   const wie = callerAny(body.token);
-  if (wie.role !== "klant" && wie.role !== "aannemer") return { ok: false, error: "Geen toegang." };
+  const team = wie.role === "beheer" || wie.role === "medewerker";   // script 039: het team haalt een pdf uit de projectmap om als overeenkomst voor te leggen
+  if (wie.role !== "klant" && wie.role !== "aannemer" && !team) return { ok: false, error: "Geen toegang." };
   if (!quotum("bestand:" + wie.id, 150, 3600)) return { ok: false, error: "Even geduld: te veel bestanden in korte tijd." };
   const docId = uuid(body.id);
-  const view = wie.role === "klant" ? "klant_documenten" : "aan_documenten";
-  const zicht = (pbReq("/rest/v1/" + view + "?id=eq." + docId + "&select=id,naam", "get", null, body.token) || [])[0];
-  if (!zicht) return { ok: false, error: "Geen toegang tot dit document." };
+  if (!team) {
+    const view = wie.role === "klant" ? "klant_documenten" : "aan_documenten";
+    const zicht = (pbReq("/rest/v1/" + view + "?id=eq." + docId + "&select=id,naam", "get", null, body.token) || [])[0];
+    if (!zicht) return { ok: false, error: "Geen toegang tot dit document." };
+  }
   const d = (pbAdmin("/rest/v1/documenten?id=eq." + docId + "&select=drive_id,naam", "get") || [])[0];
   if (!d || !d.drive_id) return { ok: false, error: "Document niet gevonden." };
   onderProjecten(d.drive_id);

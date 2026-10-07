@@ -144,7 +144,7 @@ function vMeerwerkAanvragen(p) {
   if (!kzReady()) return "";
   const lijst = mwaOf(p.id); if (!lijst.length) return "";
   const toon = S.mwaAlle ? lijst : lijst.filter(a => a.status !== "ingetrokken" && a.status !== "geweigerd" && a.status !== "voorstel" || (Date.now() - new Date(a.updated_at || a.created_at).getTime()) < 14 * 864e5);
-  const gks = Object.values(S.goedkeuringen || {}).filter(g => g.project_id === p.id).sort((a, b) => (b.voorgelegd_op || "").localeCompare(a.voorgelegd_op || ""));
+  const gks = Object.values(S.goedkeuringen || {}).filter(g => g.project_id === p.id && g.soort !== "overeenkomst").sort((a, b) => (b.voorgelegd_op || "").localeCompare(a.voorgelegd_op || ""));
   return `<div class="panel" style="margin-bottom:16px;${mwaOpen(p.id).length ? "border-color:var(--warn)" : ""}"><div class="panel-head"><div><h3>Meerwerkaanvragen van de klant ${mwaOpen(p.id).length ? `<span class="cnt" style="background:var(--crit);color:#fff">${mwaOpen(p.id).length}</span>` : ""}</h3><div class="muted" style="font-size:12px;margin-top:2px">Wat de klant extra vraagt in het portaal. Maak de posten op (status meerwerk), leg ze ter goedkeuring voor en koppel het voorstel hier — de klant ziet de status en je antwoord.</div></div>
       <div class="actions"><button class="btn sm ghost" data-act="mwa-alle">${S.mwaAlle ? "Enkel lopende" : "Alles tonen"}</button></div></div>
     <div class="tw"><table class="t"><tbody>${toon.map(a => `<tr><td style="min-width:260px"><b>${esc(a.titel)}</b>${a.ruimte ? ` <span class="muted">· ${esc(a.ruimte)}</span>` : ""}<div class="muted" style="font-size:12px;white-space:pre-line">${esc(a.omschrijving || "")}</div>
@@ -277,5 +277,212 @@ function kpFase3Act(d, el) {
   if (d.act === "wd-klant") { const p = S.projecten[d.pid]; if (!p) return true; const aan = !!el.checked;
     if (aan && !confirm("Het woningdossier zichtbaar maken in het klantenportaal?")) { el.checked = false; return true; }
     dbUpdate("projecten", p.id, { dossier_klant: aan }).then(() => toast(aan ? "Woningdossier zichtbaar voor de klant" : "Woningdossier niet meer zichtbaar voor de klant")).catch(() => { }); return true; }
+  return false;
+}
+
+/* =====================================================================
+   Testmodus (script 038): het klanten- of aannemersportaal bekijken zoals een contact het ziet — alleen lezen.
+   Enkel voor een beheerder bij wie profiles.testmodus aan staat (in te stellen in de SQL-editor).
+   ===================================================================== */
+const tmReady = () => schemaV() >= 38 && isBeheer() && !!(S.me && (S.profiles[S.me.id] || S.me).testmodus);
+function tmKnop() { return tmReady() ? `<button class="btn ghost sm" data-act="tm-open" title="Testmodus: een portaal bekijken zoals een klant of aannemer het ziet">🧪 Testmodus</button>` : ""; }
+function tmContacten(pid, rol) {
+  const kl = ["bouwheer", "contactpersoon"];
+  const pcs = Object.values(S.project_contacten).filter(x => x.project_id === pid && (rol === "klant" ? kl.includes(x.rol) : !kl.includes(x.rol)));
+  const eigen = [...new Map(pcs.map(x => [x.contact_id, x])).values()].map(x => ({ c: S.contacten[x.contact_id], rol: x.rol, loten: x.loten || [] })).filter(x => x.c && x.c.actief !== false);
+  const andere = rol === "aannemer" ? Object.values(S.contacten).filter(c => c.soort !== "klant" && c.actief !== false && !eigen.some(x => x.c.id === c.id)).sort((a, b) => (a.naam || "").localeCompare(b.naam || "", "nl")) : [];
+  return `${eigen.length ? `<optgroup label="Gekoppeld aan dit project">${eigen.map(x => `<option value="${x.c.id}">${esc(contactLabel(x.c))} — ${esc(x.rol)}${x.loten.length ? " · lot " + x.loten.join(", ") : ""}${x.c.user_id ? "" : " · nog geen login"}</option>`).join("")}</optgroup>` : ""}
+    ${andere.length ? `<optgroup label="Andere (ziet enkel zijn prijsvragen)">${andere.map(c => `<option value="${c.id}">${esc(contactLabel(c))}${c.vakgebied ? " · " + esc(c.vakgebied) : ""}</option>`).join("")}</optgroup>` : ""}`;
+}
+function tmForm() {
+  if (!tmReady()) return;
+  const ps = Object.values(S.projecten).sort((a, b) => (b.nummer || "").localeCompare(a.nummer || ""));
+  let pid = S.project && S.projecten[S.project] ? S.project : (ps.find(p => p.status === "lopend") || ps[0])?.id; let rol = "klant";
+  openModal("Testmodus", `<p class="muted" style="margin-top:0;font-size:13px">Opent het portaal in een nieuw tabblad, zoals het gekozen contact het ziet (ook zonder login). <b>Alleen bekijken</b>: niets wordt bewaard of gemaild, ook niet als je op knoppen drukt. Stoppen kan met de oranje balk bovenaan of met Uitloggen in dat portaal; na 12 uur vervalt de testmodus vanzelf.</p>
+    <div class="form-grid">
+      <div class="field"><label>Portaal</label><label class="chk"><input type="radio" name="tmrol" value="klant" checked> <span>Klantenportaal</span></label><label class="chk"><input type="radio" name="tmrol" value="aannemer"> <span>Aannemersportaal</span></label></div>
+      <div class="field"><label for="tm_p">Project</label><select id="tm_p">${ps.map(p => `<option value="${p.id}" ${p.id === pid ? "selected" : ""}>${esc(projName(p))}</option>`).join("")}</select></div>
+      <div class="field span2"><label for="tm_c">Bekijken als</label><select id="tm_c"></select><small class="muted" id="tm_hint"></small></div>
+    </div>`, { saveLabel: "Portaal openen", onSave: async () => {
+      const cid = $("#tm_c").value; if (!cid) { toast("Kies een contact."); return false; }
+      const w = window.open("about:blank", "_blank");
+      const { error } = await sb.rpc("voorbeeld_start", { p_contact: cid, p_rol: rol });
+      if (error) { if (w) w.close(); toast("Testmodus niet gestart: " + error.message, 7000); return false; }
+      const url = (rol === "klant" ? "klant/" : "aannemer/") + "?voorbeeld=" + rol + "&c=" + encodeURIComponent(cid);
+      if (w) w.location = url; else window.open(url, "_blank");
+      toast(`Testmodus: ${rol === "klant" ? "klantenportaal" : "aannemersportaal"} als ${S.contacten[cid]?.naam || "contact"}`);
+    } });
+  const vul = () => { pid = $("#tm_p").value; rol = $("#mform").querySelector('input[name="tmrol"]:checked').value; const html = tmContacten(pid, rol); $("#tm_c").innerHTML = html || `<option value="">— geen contacten —</option>`;
+    $("#tm_hint").textContent = rol === "klant" ? (html ? "De klant ziet al zijn projecten." : "Koppel eerst een bouwheer of contactpersoon bij Dossier › Contacten.") : "Ontbreekt de aannemer? Koppel hem bij Dossier › Contacten (vinkje ‘Verwittigen per mail’ uit) of kies hem bij ‘Andere’."; };
+  $("#tm_p").addEventListener("change", vul); $("#mform").querySelectorAll('input[name="tmrol"]').forEach(i => i.addEventListener("change", vul)); vul();
+}
+
+/* =====================================================================
+   Overeenkomsten (script 039): een pdf uit de projectmap (of opgeladen) laten goedkeuren in het klantenportaal.
+   Iedere gekozen bouwheer keurt zelf goed met naam, vinkje en een code per mail. Na het laatste akkoord maakt het
+   Planbord de getekende pdf (overeenkomst + akkoordpagina) en bewaart die in Documenten/Overeenkomsten (gedeeld met de klant).
+   ===================================================================== */
+const ovReady = () => schemaV() >= 39 && !!S.goedkeuring_tekenaars;
+const ovOf = (pid) => Object.values(S.goedkeuringen || {}).filter(g => g.project_id === pid && g.soort === "overeenkomst").sort((a, b) => (b.voorgelegd_op || "").localeCompare(a.voorgelegd_op || ""));
+const ovTek = (gid) => Object.values(S.goedkeuring_tekenaars || {}).filter(t => t.goedkeuring_id === gid).sort((a, b) => (S.contacten[a.contact_id]?.naam || "").localeCompare(S.contacten[b.contact_id]?.naam || "", "nl"));
+const ovB64 = (bytes) => { let s = ""; for (let i = 0; i < bytes.length; i += 0x8000) s += String.fromCharCode.apply(null, bytes.subarray(i, i + 0x8000)); return btoa(s); };
+const ovSha = async (bytes) => [...new Uint8Array(await crypto.subtle.digest("SHA-256", bytes))].map(b => b.toString(16).padStart(2, "0")).join("");
+function vOvereenkomsten(p) {
+  if (!ovReady()) return "";
+  const os = ovOf(p.id);
+  return `<div class="panel" style="margin-bottom:16px"><div class="panel-head"><div><h3>Overeenkomsten</h3><div class="muted" style="font-size:12px;margin-top:2px">Leg een pdf uit de projectmap voor in het klantenportaal. Iedere gekozen bouwheer keurt zelf goed (naam, vinkje en een code per mail). Daarna komt de getekende pdf met akkoordpagina in Documenten/Overeenkomsten, gedeeld met de klant.</div></div>
+      <div class="actions"><button class="btn sm primary" data-act="ov-new" data-pid="${p.id}">+ Overeenkomst</button></div></div>
+    ${os.length ? `<div class="tw"><table class="t"><thead><tr><th>Overeenkomst</th><th>Voorgelegd</th><th>Bouwheren</th><th>Status</th><th></th></tr></thead><tbody>${os.map(g => { const ts = ovTek(g.id); const doc = g.getekend_document && S.documenten[g.getekend_document]; const docUrl = doc ? doc.url : g.getekend_drive_id ? `https://drive.google.com/file/d/${encodeURIComponent(g.getekend_drive_id)}/view` : ""; const verlopen = g.status === "open" && g.geldig_tot && g.geldig_tot < todayIso;
+      return `<tr><td><b>${esc(g.titel)}</b><small class="muted" style="display:block"><a href="#" data-act="ov-open" data-id="${g.id}">📄 ${esc(g.bestand_naam || "pdf")}</a> · <span title="SHA-256-vingerafdruk van de voorgelegde versie" class="num">${esc((g.bestand_sha256 || "").slice(0, 12))}…</span></small></td>
+        <td class="num">${fmtLong((g.voorgelegd_op || "").slice(0, 10))}${g.geldig_tot ? `<small class="muted ${verlopen ? "late" : ""}" style="display:block">vóór ${fmtLong(g.geldig_tot)}</small>` : ""}</td>
+        <td style="font-size:12px">${ts.map(t => `${esc(S.contacten[t.contact_id]?.naam || "?")}: ${t.status === "akkoord" ? `<b style="color:var(--ok)">akkoord</b> ${fmtLong((t.beslist_op || "").slice(0, 10))}` : t.status === "geweigerd" ? `<b style="color:var(--crit)">niet akkoord</b>${t.opmerking ? ` — “${esc(t.opmerking.slice(0, 80))}”` : ""}` : `<span class="muted">wacht${t.code_tot ? " · code gevraagd" : ""}</span>`}`).join("<br>") || "—"}</td>
+        <td><span class="pill ${g.status === "akkoord" ? "done" : g.status === "open" ? (verlopen ? "late" : "st-offerte") : "kl"}">${verlopen ? "Termijn verstreken" : GK_STATUS[g.status] || esc(g.status)}</span>${docUrl ? `<small style="display:block"><a href="${esc(safeUrl(docUrl))}" target="_blank" rel="noopener">getekende pdf ↗</a></small>` : g.status === "akkoord" ? `<small class="muted" style="display:block">${g.getekend_op ? "getekende pdf wordt gemaakt…" : "getekende pdf nog te maken"}</small>` : ""}</td>
+        <td class="r" style="white-space:nowrap">${g.status === "akkoord" && !docUrl ? `<button class="btn ghost sm" data-act="ov-teken" data-id="${g.id}">Getekende pdf maken</button>` : ""}${g.status === "akkoord" ? `<button class="btn ghost sm" data-act="ov-details" data-id="${g.id}">Details</button>` : ""}${g.status === "open" ? `<button class="btn ghost sm" data-act="ov-mail" data-id="${g.id}" title="De mail opnieuw sturen naar wie nog moet goedkeuren">Opnieuw mailen</button><button class="btn ghost sm danger" data-act="ov-weg" data-id="${g.id}">Intrekken</button>` : ""}</td></tr>`; }).join("")}</tbody></table></div>`
+      : `<div class="empty"><b>Nog geen overeenkomsten</b>Bv. de architectenovereenkomst of de aannemingsovereenkomst — als pdf in de projectmap.</div>`}</div>`;
+}
+function ovForm(pid) {
+  const p = S.projecten[pid]; if (!p) return;
+  const pdfs = Object.values(S.documenten || {}).filter(d => d.project_id === pid && (/pdf/i.test(d.mime || "") || /\.pdf$/i.test(d.naam || ""))).sort((a, b) => (a.pad || "").localeCompare(b.pad || "") || (a.naam || "").localeCompare(b.naam || ""));
+  const bh = Object.values(S.project_contacten).filter(x => x.project_id === pid && ["bouwheer", "contactpersoon"].includes(x.rol)).map(x => ({ x, c: S.contacten[x.contact_id] })).filter(y => y.c && y.c.actief !== false);
+  const uniek = [...new Map(bh.map(y => [y.c.id, y])).values()];
+  openModal("Overeenkomst ter goedkeuring", `<div class="form-grid">
+    <div class="field span2"><label for="ov_t">Titel (ziet de klant)</label><input id="ov_t" name="titel" value="Overeenkomst ${esc(p.klant || "")}" required></div>
+    <div class="field span2"><label for="ov_doc">Pdf uit de projectmap</label><select id="ov_doc" name="doc"><option value="">— kies een pdf —</option>${pdfs.map(d => `<option value="${d.id}">${esc((d.pad ? d.pad + " › " : "") + d.naam)}</option>`).join("")}</select>
+      <small class="muted">${pdfs.length ? "" : "Geen pdf's gevonden in de projectmap (vernieuw eventueel de bestanden bij Dossier). "}Of laad er een op: <input type="file" accept="application/pdf,.pdf" id="ov_file" style="width:auto;padding:2px"></small></div>
+    <div class="field"><label for="ov_tot">Goedkeuren vóór</label><input id="ov_tot" name="geldig_tot" type="date" value="${addDays(todayIso, 14)}"></div>
+    <div class="field"><label>Wie moet goedkeuren?</label>${uniek.length ? uniek.map(y => `<label class="chk"><input type="checkbox" name="tek" value="${y.c.id}" ${y.c.user_id ? (y.x.rol === "bouwheer" ? "checked" : "") : "disabled"}> <span>${esc(y.c.naam)} <small class="muted">${esc(y.x.rol)}${y.c.user_id ? "" : " · nog geen portaaltoegang"}</small></span></label>`).join("") : `<span class="muted">Koppel eerst een bouwheer (Dossier › Contacten) en geef hem portaaltoegang.</span>`}</div>
+    <div class="field span2"><label for="ov_toel">Toelichting voor de klant (optioneel)</label><textarea id="ov_toel" name="toelichting" rows="2" placeholder="bv. Zoals besproken: de architectenovereenkomst voor de verbouwing."></textarea></div>
+    <div class="field span2"><p class="muted" style="font-size:12px;margin:0">Het Planbord bewaart een vaste kopie van de pdf met zijn vingerafdruk (SHA-256): de klant keurt precies die versie goed. Iedere aangevinkte persoon krijgt een mail en keurt zelf goed met naam, vinkje en een code per mail.</p></div>
+  </div>`, { wide: true, saveLabel: "Voorleggen", onSave: async (d) => ovVoorleggen(pid, d) });
+}
+async function ovVoorleggen(pid, d) {
+  const p = S.projecten[pid]; const f = $("#mform"); const tek = [...f.querySelectorAll('input[name="tek"]:checked')].map(i => i.value);
+  const file = $("#ov_file")?.files?.[0]; const docId = d.doc || "";
+  if (!(d.titel || "").trim()) { toast("Geef een titel."); return false; }
+  if (!docId && !file) { toast("Kies een pdf uit de projectmap of laad er een op."); return false; }
+  if (!tek.length) { toast("Vink minstens één bouwheer met portaaltoegang aan."); return false; }
+  const logins = tek.map(c => S.contacten[c]?.user_id).filter(Boolean);
+  if (new Set(logins).size < logins.length) { toast("Twee gekozen bouwheren delen dezelfde login (hetzelfde e-mailadres). Iedere bouwheer heeft een eigen login nodig — vink er één aan of geef de andere een eigen e-mailadres.", 9000); return false; }
+  loader.start("ov.nieuw", "Pdf ophalen…", 12000);
+  try {
+    let bytes, naam;
+    if (file) { if (file.size > 30 * 1024 * 1024) throw new Error("De pdf is groter dan 30 MB."); bytes = new Uint8Array(await file.arrayBuffer()); naam = file.name; }
+    else { const j = await driveCall("bestand", { id: docId, token: S.session?.access_token || "" }); if (!j.ok || !j.b64) throw new Error(j.error || "pdf niet gelezen"); if (j.mime !== "application/pdf") throw new Error("Dit is geen pdf."); const bin = atob(j.b64); bytes = new Uint8Array(bin.length); for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i); naam = j.naam || S.documenten[docId]?.naam || "overeenkomst.pdf"; }
+    if (String.fromCharCode(...bytes.slice(0, 5)) !== "%PDF-") throw new Error("Dit bestand is geen geldige pdf.");
+    if (!/\.pdf$/i.test(naam)) naam += ".pdf";
+    loader.step("Vaste kopie bewaren…");
+    const sha = await ovSha(bytes); const gid = crypto.randomUUID(); const path = `${pid}/${gid}.pdf`;
+    const up = await sb.storage.from("overeenkomsten").upload(path, new Blob([bytes], { type: "application/pdf" }), { contentType: "application/pdf", upsert: false });
+    if (up.error) throw up.error;
+    let g;
+    try {
+    g = await dbInsert("goedkeuringen", { id: gid, project_id: pid, soort: "overeenkomst", titel: d.titel.trim(), toelichting: (d.toelichting || "").trim(), geldig_tot: d.geldig_tot || null, status: "open", posten: [],
+      totaal_excl: 0, btw: 0, totaal_incl: 0, voorgelegd_door: S.me.id, document_id: docId || null, bestand_path: path, bestand_naam: naam, bestand_sha256: sha, bestand_grootte: bytes.length });
+    const { error } = await sb.from("goedkeuring_tekenaars").insert(tek.map(c => ({ goedkeuring_id: g.id, contact_id: c })));
+    if (error) throw error;
+    } catch (e) {   // alles of niets: geen open overeenkomst zonder bouwheren, geen losse kopie in de opslag
+      if (g && g.id) { await sb.from("goedkeuringen").delete().eq("id", g.id); delete S.goedkeuringen[g.id]; }
+      await sb.storage.from("overeenkomsten").remove([path]).catch(() => { });
+      throw e;
+    }
+    await refetch("goedkeuring_tekenaars"); loader.done("ov.nieuw");
+    if (driveReady()) driveCall("ovmail", { id: g.id, soort: "voorgelegd", token: S.session?.access_token || "" }).then(j => toast(`Mail gestuurd naar ${(j.naar || []).join(", ") || "niemand (geen portaaltoegang?)"}`, 6000)).catch(e => toast("Voorgelegd, maar mailen mislukte: " + e.message, 7000));
+    else toast("Voorgelegd (niet gemaild: Drive-script niet ingesteld).");
+  } catch (e) { loader.fail(); toast("Niet voorgelegd: " + (e.message || e), 8000); return false; }
+}
+async function ovOpen(gid) {
+  const g = S.goedkeuringen[gid]; if (!g || !g.bestand_path) return; const w = window.open("", "_blank");
+  const { data, error } = await sb.storage.from("overeenkomsten").createSignedUrl(g.bestand_path, 900);
+  if (error || !data) { if (w) w.close(); toast("Pdf niet te openen: " + (error?.message || "onbekend"), 6000); return; }
+  if (w) w.location = data.signedUrl; else location.href = data.signedUrl;
+}
+function ovDetails(gid) {
+  const g = S.goedkeuringen[gid]; if (!g) return; const ts = ovTek(gid);
+  const wanneer = (x) => x ? new Date(x).toLocaleString("nl-BE", { timeZone: "Europe/Brussels" }) : "—";
+  openModal("Akkoord — " + g.titel, `<p style="margin-top:0">Document: <b>${esc(g.bestand_naam)}</b> (${Math.round((g.bestand_grootte || 0) / 1024)} kB)<br><span class="muted" style="font-size:12px">SHA-256: <span class="num">${esc(g.bestand_sha256)}</span></span></p>
+    <div class="tw"><table class="t"><thead><tr><th>Bouwheer</th><th>Naam (getypt)</th><th>Login</th><th>Tijdstip</th><th>IP-adres</th></tr></thead><tbody>${ts.map(t => `<tr><td>${esc(S.contacten[t.contact_id]?.naam || "?")}</td><td>${esc(t.beslist_naam)}</td><td>${esc(t.beslist_email)}</td><td class="num">${wanneer(t.beslist_op)}</td><td class="num" title="${esc(t.beslist_agent)}">${esc(t.beslist_ip || "—")}</td></tr>`).join("")}</tbody></table></div>
+    <p class="muted" style="font-size:12px">Bevestigd met een eenmalige code per mail naar de login van elke bouwheer.</p>`, { saveLabel: "Sluiten", onSave: async () => { } });
+}
+async function ovIntrekken(gid) {
+  const g = S.goedkeuringen[gid]; if (!g || !confirm(`"${g.titel}" intrekken? De klant kan ze dan niet meer goedkeuren.`)) return;
+  try { await dbUpdate("goedkeuringen", gid, { status: "ingetrokken" }); toast("Ingetrokken"); } catch (e) { }
+}
+/* getekende pdf: de vaste kopie + akkoordpagina → Documenten/Overeenkomsten (gedeeld met de klant) */
+const OV_BEZIG = new Set();
+const ovTxt = (s) => String(s == null ? "" : s).replace(/[‘’]/g, "'").replace(/[“”]/g, '"').replace(/[–—]/g, "-").replace(/…/g, "...").replace(/[^\x20-\x7E\xA0-\xFF€]/g, "?");
+async function ovGetekend(gid, stil) {
+  const g = S.goedkeuringen[gid]; const p = g && S.projecten[g.project_id]; if (!g || !p || g.status !== "akkoord" || g.getekend_drive_id || OV_BEZIG.has(gid)) return;
+  const alle = ovTek(gid); if (!alle.length || alle.some(t => t.status !== "akkoord")) { if (!stil) toast("Nog niet iedere bouwheer gaf zijn akkoord."); return; }
+  if (!p.drive_folder_id || !driveReady()) { if (!stil) toast("Geen projectmap op Drive gekoppeld (of Drive-script niet ingesteld)."); return; }
+  OV_BEZIG.add(gid);
+  // claimen: maar één Planbord maakt de pdf
+  const nu = new Date().toISOString();
+  const claim = await sb.from("goedkeuringen").update({ getekend_op: nu }).eq("id", gid).is("getekend_drive_id", null).or(`getekend_op.is.null,getekend_op.lt.${new Date(Date.now() - 10 * 60000).toISOString()}`).select();
+  if (claim.error || !(claim.data || []).length) { OV_BEZIG.delete(gid); if (!stil) toast("De getekende pdf wordt al gemaakt (door een ander Planbord)."); return; }
+  if (!stil) loader.start("ov.teken", "Getekende pdf maken…", 15000);
+  try {
+    const dl = await sb.storage.from("overeenkomsten").download(g.bestand_path); if (dl.error) throw dl.error;
+    const bytes = new Uint8Array(await dl.data.arrayBuffer());
+    if (await ovSha(bytes) !== g.bestand_sha256) throw new Error("De bewaarde pdf komt niet overeen met de goedgekeurde versie (vingerafdruk).");
+    const PDFLib = typeof tkLaadPdfLib === "function" ? await tkLaadPdfLib() : window.PDFLib; if (!PDFLib) throw new Error("pdf-lib niet geladen");
+    const doc = await PDFLib.PDFDocument.load(bytes, { ignoreEncryption: true });
+    const font = await doc.embedFont(PDFLib.StandardFonts.Helvetica), vet = await doc.embedFont(PDFLib.StandardFonts.HelveticaBold), mono = await doc.embedFont(PDFLib.StandardFonts.Courier);
+    const ts = ovTek(gid).filter(t => t.status === "akkoord").sort((a, b) => (a.beslist_op || "").localeCompare(b.beslist_op || ""));
+    const blz = doc.getPageCount(); let pg = doc.addPage([595.28, 841.89]); let y = 790; const m = 56; const grijs = PDFLib.rgb(0.42, 0.44, 0.43);
+    const regel = (t, o = {}) => { pg.drawText(ovTxt(t), { x: o.x || m, y, size: o.size || 10, font: o.font || font, color: o.color }); y -= o.na || 15; };
+    const wanneer = (x) => x && !isNaN(new Date(x)) ? new Date(x).toLocaleString("nl-BE", { timeZone: "Europe/Brussels", dateStyle: "long", timeStyle: "medium" }) : "onbekend";
+    const maker = S.profiles[g.voorgelegd_door];
+    regel("BROS", { font: vet, size: 16, na: 26 }); regel("Akkoordverklaring", { font: vet, size: 18, na: 28 });
+    regel("Overeenkomst: " + g.titel, { font: vet, size: 11, na: 17 });
+    regel("Project: " + [p.nummer, p.klant, p.naam && p.naam !== p.klant ? p.naam : ""].filter(Boolean).join(" - "));
+    regel("Document: " + g.bestand_naam + " (" + blz + " blz.)");
+    regel("Voorgelegd door " + (maker ? maker.name : "BROS") + (g.voorgelegd_op ? " op " + wanneer(g.voorgelegd_op) : ""), { na: 22 });
+    regel("Controlecode van het goedgekeurde document (SHA-256):", { color: grijs, size: 9, na: 13 });
+    regel(g.bestand_sha256, { font: mono, size: 8.5, na: 28 });
+    ts.forEach((t, i) => {
+      if (y < 135) { pg = doc.addPage([595.28, 841.89]); y = 790; }   // meer bouwheren: verder op een volgende pagina
+      regel((i + 1) + ". " + (S.contacten[t.contact_id]?.naam || ""), { font: vet, size: 11, na: 16 });
+      regel("Naam zoals getypt: " + t.beslist_naam, { x: m + 14 });
+      regel("Login (e-mail): " + t.beslist_email, { x: m + 14 });
+      regel("Akkoord gegeven op: " + wanneer(t.beslist_op), { x: m + 14 });
+      regel("IP-adres: " + (t.beslist_ip || "onbekend"), { x: m + 14 });
+      regel("Browser: " + (t.beslist_agent || "onbekend").slice(0, 95), { x: m + 14, size: 8, color: grijs, na: 13 });
+      regel("Bevestigd met een eenmalige code per mail en het vinkje 'Ik heb de overeenkomst gelezen en ga ermee akkoord'.", { x: m + 14, size: 8.5, color: grijs, na: 22 });
+    });
+    if (y < 50) { pg = doc.addPage([595.28, 841.89]); y = 790; } y = Math.min(y, 120);
+    regel("Elektronisch goedgekeurd in het BROS-klantenportaal. Deze pagina hoort bij het voorgaande document; de controlecode", { size: 8.5, color: grijs, na: 12 });
+    regel("hierboven identificeert de goedgekeurde versie (elke wijziging aan het document geeft een andere code).", { size: 8.5, color: grijs, na: 12 });
+    const uit = await doc.save(); const datum = new Date().toLocaleDateString("nl-BE").replace(/\//g, "-");
+    const naam = `${(g.titel || "Overeenkomst").replace(/[\\/:*?"<>|]/g, "-").slice(0, 120)} - goedgekeurd ${datum}.pdf`;
+    if (!stil) loader.step("Bewaren in Documenten/Overeenkomsten…");
+    const j = await driveCall("put", { folderId: p.drive_folder_id, subpath: "Documenten/Overeenkomsten", name: naam, base64: ovB64(uit), mime: "application/pdf" });
+    const f = j.file; if (!f || !f.id) throw new Error("Drive gaf geen bestand terug.");
+    // meteen als klaar markeren (Drive-id): ook als hierna iets mislukt of dit documentrecord later wegvalt (bestand verplaatst), komt er geen tweede pdf
+    await dbUpdate("goedkeuringen", gid, { getekend_drive_id: f.id, getekend_op: new Date().toISOString() });
+    const { data, error } = await sb.from("documenten").upsert([{ project_id: p.id, drive_id: f.id, naam: f.name, pad: f.path || "Documenten/Overeenkomsten", url: f.url, mime: "application/pdf", grootte: f.size || null, gewijzigd: f.updated || null, gesynct_op: new Date().toISOString() }], { onConflict: "project_id,drive_id" }).select();
+    if (error) throw error; const d = data[0]; S.documenten[d.id] = d;
+    await dbUpdate("goedkeuringen", gid, { getekend_document: d.id });
+    // delen met de klant: zichtbaar in het portaal én de Drive-link leesbaar maken (zoals Documenten › Delen)
+    await dbUpdate("documenten", d.id, { gedeeld: true }).catch(() => { });
+    await driveCall("share", { fileId: f.id, on: true, token: S.session?.access_token || "" }).catch(e => toast("Getekende pdf bewaard, maar de link delen mislukte: " + e.message + " — deel ze via Dossier › Documenten.", 9000));
+    if (!stil) { loader.done("ov.teken"); toast("Getekende pdf bewaard in Documenten/Overeenkomsten en gedeeld met de klant"); }
+  } catch (e) {
+    await sb.from("goedkeuringen").update({ getekend_op: null }).eq("id", gid).is("getekend_drive_id", null);
+    if (!stil) { loader.fail(); toast("Getekende pdf niet gemaakt: " + (e.message || e), 8000); } else console.warn("Getekende pdf", gid, e);
+  } finally { OV_BEZIG.delete(gid); }
+}
+/* automatisch: zodra het Planbord open staat en een overeenkomst volledig goedgekeurd is */
+function ovAuto() {
+  if (!ovReady() || !S.me || !["beheer", "medewerker"].includes(S.me.role) || !driveReady()) return;
+  Object.values(S.goedkeuringen || {}).filter(g => g.soort === "overeenkomst" && g.status === "akkoord" && !g.getekend_drive_id && !(g.getekend_op && Date.now() - new Date(g.getekend_op).getTime() < 10 * 60000))
+    .forEach(g => ovGetekend(g.id, true));
+}
+function ovAct(d, el, e) {
+  if (d.act === "ov-new") { ovForm(d.pid); return true; }
+  if (d.act === "ov-open") { if (e) e.preventDefault(); ovOpen(d.id); return true; }
+  if (d.act === "ov-teken") { ovGetekend(d.id, false); return true; }
+  if (d.act === "ov-details") { ovDetails(d.id); return true; }
+  if (d.act === "ov-weg") { ovIntrekken(d.id); return true; }
+  if (d.act === "ov-mail") { driveCall("ovmail", { id: d.id, soort: "voorgelegd", token: S.session?.access_token || "" }).then(j => toast(`Mail gestuurd naar ${(j.naar || []).join(", ") || "niemand"}`)).catch(err => toast("Mailen mislukt: " + err.message, 6000)); return true; }
   return false;
 }
