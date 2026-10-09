@@ -161,6 +161,13 @@ Activeren (eenmalig):
 
 Gebruik: Dossier › Contacten → bij een aannemer de knop **Aannemersportaal** (beheer) → hij krijgt een mail met een persoonlijke link. Instellingen → Klantenportaal toont wie toegang heeft (klant/aannemer). Een aannemer die op het Planbord of het klantenportaal inlogt, wordt doorgestuurd.
 
+## Standaardverantwoordelijken per fase en standaardtaak (script 040, v1.41)
+
+- **Instellen:** Instellingen › *Fasen en standaardtaken*. Bij een fase: *Standaard verantwoordelijke van deze fase* (Projectlead of een medewerker). Bij elke standaardtaak: *Zoals de fase*, *Projectlead* of een medewerker. Kolommen `fasen.standaard_wie` en `standaardtaken.standaard_wie` (null = projectlead resp. zoals de fase, `'lead'` = projectlead, anders een profiel-id). Enkel beheer kan dit wijzigen (bestaande policies).
+- **Gebruik:** bij een nieuw project en bij *Fase toevoegen* krijgt elke standaardtaak: de keuze bij de taak → anders die van de fase → anders de projectlead. Een medewerker die op inactief staat, valt terug op de projectlead. De taak onthoudt van welke standaardtaak ze komt (`taken.standaard_taak`; script 040 koppelt bestaande taken op fase + titel).
+- **Voorstel invullen…:** vult lege instellingen in op basis van de namen (Phil: offerte, contract, klantafspraken, bespreking voorontwerp, moodboard/functies/materialisatie, meetstaat en offertes opvragen, definitief vastleggen · Thomas: werffasen, planning, opmeting bijwonen, oplevering · Noa: opmeting, ontwerp, plannen, VWX, 3D, renders). Je ziet het eerst in een lijst en past aan vóór je bewaart; wat al ingesteld was, blijft staan.
+- **Toepassen op lopende projecten…:** toont de open taken van projecten in offerte/lopend/on hold die afwijken van de standaard. Aangevinkt zijn enkel taken die nu bij de projectlead (of niemand) staan; met de hand aan iemand anders gegeven taken staan niet aangevinkt. Afgewerkte taken en afgeronde/verloren projecten blijven ongemoeid.
+
 ## Overeenkomsten goedkeuren in het klantenportaal (script 039, v1.40)
 
 - **Voorleggen:** Planbord › project › **Dossier** › *Overeenkomsten* › **+ Overeenkomst**: titel, een pdf uit de projectmap (of opladen van je computer), deadline, toelichting en wie moet goedkeuren (standaard alle bouwheren met portaaltoegang; contactpersonen kan je aanvinken). Het Planbord haalt de pdf op (Drive-actie `bestand`, nu ook voor het team), bewaart een **vaste kopie** in de private opslag `overeenkomsten` (`<project>/<id>.pdf`) met de **SHA-256-vingerafdruk**, en mailt iedere tekenaar (Drive-actie `ovmail`, soort `voorgelegd`). Een voorgelegde overeenkomst kan niet meer van document wisselen (trigger `overeenkomst_vast`): intrekken en opnieuw voorleggen.

@@ -3,7 +3,7 @@
    Statische webapp op Supabase (login, live-synchronisatie, rechten)
    ===================================================================== */
 if (window.top !== window.self) { try { window.top.location.replace(window.location.href); } catch (e) { document.documentElement.innerHTML = ""; } }   // niet in een vreemd frame (clickjacking)
-const APP_VERSION = "1.40.0";
+const APP_VERSION = "1.41.0";
 const PROJ_STATUS = { offerte: "In offerte", lopend: "Lopend", on_hold: "On hold", afgerond: "Afgerond", verloren: "Verloren" };
 const KLANTTYPE = { particulier: "Particulier", zakelijk: "Zakelijk" };
 const KLANTCODE = { particulier: "PAR", zakelijk: "ZAK" };
@@ -2637,12 +2637,13 @@ function vInstellingen() {
   ${vPortaalBeheer()}
   ${vAssistentBeheer()}
   ${vPostenBeheer()}
+  ${vStandaardWie()}
   <div class="grid two" style="grid-template-columns: 1fr 1.4fr">
     <div class="panel"><div class="panel-head"><h3>Fasen</h3><button class="btn sm" data-act="fase-new">+ Fase</button></div>
-      <div class="tw"><table class="t"><tbody>${fs.map(x => `<tr class="click ${x.nr === S.selFase ? "sel" : ""}" data-selfase="${x.nr}"><td class="num" style="width:40px;color:var(--muted)">${x.nr}</td><td><span style="${x.actief === false ? "color:var(--muted);text-decoration:line-through" : ""}">${esc(x.naam)}</span><small class="muted" style="display:block">${S.standaardtaken.filter(t => t.fase_nr === x.nr).length} taken${x.actief === false ? " · verborgen" : ""}</small></td><td class="r"><button class="btn ghost sm" data-act="fase-edit" data-nr="${x.nr}">Bewerken</button></td></tr>`).join("")}</tbody></table></div>
+      <div class="tw"><table class="t"><tbody>${fs.map(x => `<tr class="click ${x.nr === S.selFase ? "sel" : ""}" data-selfase="${x.nr}"><td class="num" style="width:40px;color:var(--muted)">${x.nr}</td><td><span style="${x.actief === false ? "color:var(--muted);text-decoration:line-through" : ""}">${esc(x.naam)}</span><small class="muted" style="display:block">${S.standaardtaken.filter(t => t.fase_nr === x.nr).length} taken${swReady() ? " · " + esc(swNaam(x.standaard_wie)) : ""}${x.actief === false ? " · verborgen" : ""}</small></td><td class="r"><button class="btn ghost sm" data-act="fase-edit" data-nr="${x.nr}">Bewerken</button></td></tr>`).join("")}</tbody></table></div>
       <div class="panel-body muted" style="font-size:12px;border-top:1px solid var(--line)">Het nummer bepaalt de volgorde. Een fase die je niet meer gebruikt zet je op "verborgen" — verwijderen kan alleen als geen enkel project ernaar verwijst.</div></div>
-    <div class="panel"><div class="panel-head"><h3>${f ? `${f.nr} · ${esc(f.naam)}` : "Standaardtaken"}</h3>${f ? `<button class="btn sm primary" data-act="st-new" data-nr="${f.nr}">+ Standaardtaak</button>` : ""}</div>
-      ${ts.length ? `<div class="tw"><table class="t"><tbody>${ts.map((t, i) => `<tr><td class="num" style="width:40px;color:var(--muted)">${t.volgorde}</td><td><input class="inline" data-st-title="${t.id}" value="${esc(t.titel)}" aria-label="Titel"></td><td class="r" style="white-space:nowrap"><button class="btn ghost sm" data-act="st-move" data-id="${t.id}" data-dir="-1" ${i === 0 ? "disabled" : ""} aria-label="Omhoog">↑</button><button class="btn ghost sm" data-act="st-move" data-id="${t.id}" data-dir="1" ${i === ts.length - 1 ? "disabled" : ""} aria-label="Omlaag">↓</button><button class="btn ghost sm danger" data-act="st-del" data-id="${t.id}" aria-label="Verwijderen">✕</button></td></tr>`).join("")}</tbody></table></div>` : `<div class="empty"><b>Geen standaardtaken</b>Voeg er een toe voor deze fase.</div>`}
+    <div class="panel"><div class="panel-head"><div><h3>${f ? `${f.nr} · ${esc(f.naam)}` : "Standaardtaken"}</h3>${f && swReady() ? `<label class="muted" style="font-size:12px;display:flex;gap:6px;align-items:center;margin-top:4px">Standaard verantwoordelijke van deze fase <select class="inline" data-fase-wie="${f.nr}" style="width:auto" aria-label="Standaard verantwoordelijke van de fase">${opts(swKeuzes(false, null, f.standaard_wie), f.standaard_wie || "")}</select></label>` : ""}</div>${f ? `<button class="btn sm primary" data-act="st-new" data-nr="${f.nr}">+ Standaardtaak</button>` : ""}</div>
+      ${ts.length ? `<div class="tw"><table class="t"><tbody>${ts.map((t, i) => `<tr><td class="num" style="width:40px;color:var(--muted)">${t.volgorde}</td><td><input class="inline" data-st-title="${t.id}" value="${esc(t.titel)}" aria-label="Titel"></td>${swReady() ? `<td style="width:190px"><select class="inline" data-st-wie="${t.id}" aria-label="Verantwoordelijke" title="Wie deze taak standaard krijgt">${opts(swKeuzes(true, f && f.standaard_wie, t.standaard_wie), t.standaard_wie || "")}</select></td>` : ""}<td class="r" style="white-space:nowrap"><button class="btn ghost sm" data-act="st-move" data-id="${t.id}" data-dir="-1" ${i === 0 ? "disabled" : ""} aria-label="Omhoog">↑</button><button class="btn ghost sm" data-act="st-move" data-id="${t.id}" data-dir="1" ${i === ts.length - 1 ? "disabled" : ""} aria-label="Omlaag">↓</button><button class="btn ghost sm danger" data-act="st-del" data-id="${t.id}" aria-label="Verwijderen">✕</button></td></tr>`).join("")}</tbody></table></div>` : `<div class="empty"><b>Geen standaardtaken</b>Voeg er een toe voor deze fase.</div>`}
       <div class="panel-body muted" style="font-size:12px;border-top:1px solid var(--line)">Klik in een titel om ze te wijzigen; de wijziging wordt bewaard zodra je het veld verlaat.</div></div>
   </div>`;
 }
@@ -2764,6 +2765,105 @@ async function stDel(id) {
   const t = S.standaardtaken.find(x => x.id === Number(id)); if (!t || !confirm(`"${t.titel}" verwijderen uit de standaardtaken?`)) return;
   const { error } = await sb.from("standaardtaken").delete().eq("id", t.id);
   if (error) { toast("Mislukt: " + error.message); return; } S.standaardtaken = S.standaardtaken.filter(x => x.id !== t.id); render(); toast("Verwijderd");
+}
+
+/* ---------- Standaardverantwoordelijken (script 040): wie krijgt een standaardtaak? taak → fase → projectlead ---------- */
+const swReady = () => schemaV() >= 40;
+const swNaam = (v) => !v || v === "lead" ? "Projectlead" : (S.profiles[v]?.name || "onbekend");
+const swActief = (id) => { const u = S.profiles[id]; return !!u && u.active !== false && !EXTERN.includes(u.role); };
+/* keuzelijst: bij een taak ook "zoals de fase" ("" = volgt de fase, "lead" = projectlead); bij een fase is "" = projectlead */
+const swKeuzes = (taak, faseWie, huidig) => [...(taak ? [["", `Zoals de fase (${swNaam(faseWie)})`], ["lead", "Projectlead"]] : [["", "Projectlead"]]), ...users().map(u => [u.id, u.name]),
+  ...(huidig && huidig !== "lead" && !users().some(u => u.id === huidig) ? [[huidig, `${swNaam(huidig)} (inactief → projectlead)`]] : [])];   // een ingestelde, intussen inactieve medewerker blijft zichtbaar (en wordt niet stil overschreven)
+function standaardWie(st, lead) {
+  if (!swReady()) return lead || null;
+  const v = st.standaard_wie || S.fasen[st.fase_nr]?.standaard_wie || "lead";
+  return v !== "lead" && swActief(v) ? v : (lead || null);   // inactieve medewerker → projectlead
+}
+function stTaakRij(st, pid, lead) {
+  const r = { project_id: pid, titel: st.titel, fase_nr: st.fase_nr, assignee: standaardWie(st, lead), volgorde: st.fase_nr * 100 + st.volgorde, status: "todo", uren_gepland: 0 };
+  if (swReady()) r.standaard_taak = st.id;
+  return r;
+}
+async function swZetFase(nr, v) {
+  const { data, error } = await sb.from("fasen").update({ standaard_wie: v || null }).eq("nr", nr).select().single();
+  if (error) { toast("Mislukt: " + error.message); return render(); }
+  S.fasen[nr] = data; render(); toast(`Fase ${nr}: standaard ${swNaam(v)}`);
+}
+async function swZetTaak(id, v) {
+  const t = S.standaardtaken.find(x => x.id === id); if (!t) return;
+  const { error } = await sb.from("standaardtaken").update({ standaard_wie: v || null }).eq("id", id);
+  if (error) { toast("Mislukt: " + error.message); return render(); }
+  t.standaard_wie = v || null; render(); toast(v ? `"${t.titel}": ${v === "lead" ? "projectlead" : swNaam(v)}` : `"${t.titel}" volgt de fase`);
+}
+function vStandaardWie() {
+  if (!isBeheer()) return "";
+  if (!swReady()) return `<div class="panel" style="margin-bottom:16px"><div class="panel-head"><h3>Standaardverantwoordelijken</h3></div><div class="panel-body">${SCHEMA_HINT(40)}</div></div>`;
+  const tel = {}; S.standaardtaken.filter(st => S.fasen[st.fase_nr]?.actief !== false).forEach(st => { const v = st.standaard_wie || S.fasen[st.fase_nr]?.standaard_wie || "lead"; const k = v !== "lead" && swActief(v) ? swNaam(v) : "Projectlead"; tel[k] = (tel[k] || 0) + 1; });
+  return `<div class="panel" style="margin-bottom:16px"><div class="panel-head"><div><h3>Standaardverantwoordelijken</h3><div class="muted" style="font-size:12px;margin-top:2px">Wie een standaardtaak krijgt bij een nieuw project of een toegevoegde fase: de keuze bij de taak, anders die van de fase, anders de projectlead. Stel het hieronder in per fase en per taak.</div></div>
+    <div class="actions"><button class="btn sm" data-act="sw-voorstel">Voorstel invullen…</button><button class="btn sm" data-act="sw-toepassen">Toepassen op lopende projecten…</button></div></div>
+    <div class="panel-body" style="font-size:13px">${Object.entries(tel).sort((a, b) => b[1] - a[1]).map(([k, n]) => `<span class="pill grijs" style="margin-right:6px">${esc(k)} · ${n} ta${n === 1 ? "ak" : "ken"}</span>`).join("") || `<span class="muted">Nog geen standaardtaken.</span>`}</div></div>`;
+}
+/* voorstel op basis van de namen (Phil = commercieel/ontwerp/klant, Thomas = uitvoering/werf/planning, Noa = tekenwerk) — eerst tonen, dan bewaren */
+const SW_FASE_REGELS = [[/maatwerk|ruwbouw|schrijnwerk|techniek|bezetting|vloer|installatie|afwerking|werf|uitvoering|oplevering/, "thomas"], [/offerte|contract|onderteken|bespreking|voorontwerp/, "phil"], [/opmeting|ontwerp/, "noa"]];
+const SW_TAAK_REGELS = [[/definitief vastleggen|ontdekking|moodboard|materialis|\bfuncties\b|^organigram$|contract|offerte|meetstaat|afspra|afspreken/, "phil"], [/inplannen/, null], [/planning|werf|budget|controle|oplevering|bijwonen/, "thomas"], [/\bplan(nen)?\b|tekening|\bteken|vwx|vectorworks|\b3d\b|render|presentatie|indeling|grondplan|\bmodel\b|naar ontwerp|aanzicht/, "noa"]];
+function swWieVoor(tekst, regels) {
+  const t = String(tekst || "").toLowerCase().trim();
+  for (const [re, wie] of regels) if (re.test(t)) { if (!wie) return null; const u = users().find(x => x.name.toLowerCase().startsWith(wie)); return u ? u.id : null; }
+  return null;
+}
+function swVoorstel() {
+  const fs = fasenList(); const vf = {}, vt = {};
+  fs.forEach(f => { vf[f.nr] = f.standaard_wie || swWieVoor(f.naam, SW_FASE_REGELS) || ""; });
+  S.standaardtaken.filter(st => vf[st.fase_nr] !== undefined).forEach(st => { if (st.standaard_wie) { vt[st.id] = st.standaard_wie; return; } const w = swWieVoor(st.titel, SW_TAAK_REGELS); vt[st.id] = w && w !== vf[st.fase_nr] ? w : ""; });
+  const nieuw = fs.filter(f => !f.standaard_wie && vf[f.nr]).length + S.standaardtaken.filter(st => !st.standaard_wie && vt[st.id]).length;
+  openModal("Voorstel standaardverantwoordelijken", `<p class="muted" style="margin-top:0;font-size:13px">Voorstel op basis van de namen: <b>Phil</b> commercieel, ontwerpkeuzes en klantafspraken · <b>Thomas</b> uitvoering, werf en planning · <b>Noa</b> tekenwerk (plannen, VWX, 3D, renders). Wat al ingesteld was, blijft staan. Pas aan waar nodig en bewaar — je kan het later nog per fase en taak wijzigen.${nieuw ? "" : " <b>Er valt niets nieuws voor te stellen.</b>"}</p>
+    <div class="tw" style="max-height:60vh;overflow:auto"><table class="t"><tbody>${fs.map(f => `<tr style="background:var(--surface-2,rgba(0,0,0,.03))"><td class="num" style="width:36px"><b>${f.nr}</b></td><td><b>${esc(f.naam)}</b></td><td style="width:220px"><select class="inline" name="f_${f.nr}" data-swv-fase="${f.nr}">${opts(swKeuzes(false, null, vf[f.nr]), vf[f.nr])}</select></td></tr>`
+      + S.standaardtaken.filter(st => st.fase_nr === f.nr).map(st => `<tr><td></td><td style="padding-left:18px">${esc(st.titel)}</td><td><select class="inline" name="t_${st.id}" data-swv-fnr="${f.nr}">${opts(swKeuzes(true, vf[f.nr], vt[st.id]), vt[st.id])}</select></td></tr>`).join("")).join("")}</tbody></table></div>`, {
+    wide: true, saveLabel: "Bewaren",
+    onSave: async (d) => {
+      const jobs = [];
+      fs.forEach(f => { const v = d["f_" + f.nr] || null; if ((f.standaard_wie || null) !== v) jobs.push(sb.from("fasen").update({ standaard_wie: v }).eq("nr", f.nr).then(r => { if (r.error) throw r.error; f.standaard_wie = v; })); });
+      S.standaardtaken.forEach(st => { if (!(("t_" + st.id) in d)) return; const v = d["t_" + st.id] || null; if ((st.standaard_wie || null) !== v) jobs.push(sb.from("standaardtaken").update({ standaard_wie: v }).eq("id", st.id).then(r => { if (r.error) throw r.error; st.standaard_wie = v; })); });
+      try { await Promise.all(jobs); } catch (e) { toast("Niet alles bewaard: " + (e.message || e), 7000); await refetch("fasen"); await refetch("standaardtaken"); render(); return false; }
+      render(); toast(jobs.length ? `${jobs.length} instelling${jobs.length === 1 ? "" : "en"} bewaard` : "Niets gewijzigd");
+    },
+  });
+  // fase gewijzigd in het voorstel → het label "Zoals de fase (…)" bij de taken volgt mee
+  $("#mform").querySelectorAll("[data-swv-fase]").forEach(sel => sel.addEventListener("change", () => { $("#mform").querySelectorAll(`[data-swv-fnr="${sel.dataset.swvFase}"]`).forEach(x => { if (x.options[0]) x.options[0].textContent = `Zoals de fase (${swNaam(sel.value)})`; }); }));
+}
+/* de verdeling toepassen op open taken van lopende projecten (offerte, lopend, on hold) — eerst een overzicht om aan te vinken */
+function swToepassen() {
+  const norm = (x) => String(x || "").toLowerCase().trim();
+  const rijen = [];
+  Object.values(S.projecten).filter(p => !["afgerond", "verloren"].includes(p.status)).forEach(p => {
+    Object.values(S.taken).filter(t => t.project_id === p.id && t.status !== "done").forEach(t => {
+      const st = (t.standaard_taak && S.standaardtaken.find(x => x.id === t.standaard_taak)) || S.standaardtaken.find(x => x.fase_nr === t.fase_nr && norm(x.titel) === norm(t.titel));
+      if (!st) return; const wil = standaardWie(st, p.lead);
+      if (!wil || wil === t.assignee) return;
+      rijen.push({ p, t, wil, aan: !t.assignee || t.assignee === p.lead || !swActief(t.assignee) });   // al met de hand aan iemand anders gegeven → standaard niet aangevinkt
+    });
+  });
+  if (!rijen.length) return toast("De open taken van de lopende projecten volgen de standaardverdeling al.");
+  const perP = {}; rijen.forEach(r => (perP[r.p.id] = perP[r.p.id] || []).push(r));
+  const pnaam = (p) => [p.nummer, p.klant].filter(Boolean).join(" · ");
+  openModal("Toepassen op lopende projecten", `<p class="muted" style="margin-top:0;font-size:13px">${rijen.length} open ta${rijen.length === 1 ? "ak" : "ken"} in ${Object.keys(perP).length} project${Object.keys(perP).length === 1 ? "" : "en"} wijken af van de standaardverdeling. Aangevinkt zijn de taken die nu bij de projectlead, niemand of een inactieve medewerker staan; taken die al aan iemand anders gegeven werden, zijn niet aangevinkt. Afgewerkte taken en afgeronde of verloren projecten blijven ongemoeid.</p>
+    <p style="margin:0 0 8px"><button type="button" class="btn ghost sm" data-swt="alle">Alles aanvinken</button> <button type="button" class="btn ghost sm" data-swt="geen">Niets aanvinken</button></p>
+    <div class="tw" style="max-height:60vh;overflow:auto"><table class="t"><tbody>${Object.values(perP).sort((a, b) => pnaam(a[0].p).localeCompare(pnaam(b[0].p))).map(l => `<tr style="background:var(--surface-2,rgba(0,0,0,.03))"><td colspan="3"><b>${esc(pnaam(l[0].p))}</b> <span class="muted" style="font-size:12px">· lead ${esc(swNaam(l[0].p.lead))}</span></td></tr>`
+      + l.sort((a, b) => (a.t.volgorde || 0) - (b.t.volgorde || 0)).map(r => `<tr><td style="width:28px"><input type="checkbox" name="sw" value="${r.t.id}" ${r.aan ? "checked" : ""} aria-label="${esc(r.t.titel)}"></td><td>${esc(r.t.titel)}<small class="muted" style="display:block">fase ${r.t.fase_nr}</small></td><td style="white-space:nowrap;font-size:13px">${esc(r.t.assignee ? swNaam(r.t.assignee) : "niemand")} → <b>${esc(swNaam(r.wil))}</b></td></tr>`).join("")).join("")}</tbody></table></div>`, {
+    wide: true, saveLabel: "Toewijzen",
+    onSave: async () => {
+      const ids = [...$("#mform").querySelectorAll('input[name="sw"]:checked')].map(i => i.value);
+      if (!ids.length) { toast("Niets aangevinkt."); return false; }
+      const perWie = {}; ids.forEach(id => { const r = rijen.find(x => String(x.t.id) === String(id)); if (r) (perWie[r.wil] = perWie[r.wil] || []).push(r.t.id); });
+      try {
+        const jobs = []; Object.entries(perWie).forEach(([wie, l]) => { for (let i = 0; i < l.length; i += 100) { const deel = l.slice(i, i + 100);   // per 100 (lengte van de URL)
+          jobs.push(sb.from("taken").update({ assignee: wie }).in("id", deel).then(r => { if (r.error) throw r.error; deel.forEach(id => { if (S.taken[id]) S.taken[id].assignee = wie; }); })); } });
+        await Promise.all(jobs);
+      } catch (e) { toast("Niet alles toegewezen: " + (e.message || e), 7000); await refetch("taken"); render(); return false; }
+      render(); toast(`${ids.length} ta${ids.length === 1 ? "ak" : "ken"} opnieuw toegewezen`);
+    },
+  });
+  $("#mform").querySelectorAll("[data-swt]").forEach(b => b.addEventListener("click", () => $("#mform").querySelectorAll('input[name="sw"]').forEach(i => i.checked = b.dataset.swt === "alle")));
 }
 
 /* ---------- Timing voor de klant (script 017): handmatige van–tot per fase + taken met gedeelde timing ---------- */
@@ -2892,7 +2992,7 @@ function projectForm(p = {}) {
       if (isNew) {
         row.created_by = S.me.id;
         const created = await dbInsert("projecten", row);
-        const tasks = S.standaardtaken.filter(t => d._fasen.includes(t.fase_nr)).map(t => ({ project_id: created.id, titel: t.titel, fase_nr: t.fase_nr, assignee: row.lead, volgorde: t.fase_nr * 100 + t.volgorde, status: "todo", uren_gepland: 0 }));
+        const tasks = S.standaardtaken.filter(t => d._fasen.includes(t.fase_nr)).map(t => stTaakRij(t, created.id, row.lead));   // verantwoordelijke: taak → fase → projectlead (script 040)
         if (tasks.length) { const { data, error } = await sb.from("taken").insert(tasks).select(); if (error) toast("Standaardtaken niet aangemaakt: " + error.message); else (data || []).forEach(t => S.taken[t.id] = t); }
         // bouwheer koppelen: bestaand contact of nieuw contact uit de klantgegevens
         try { if (Object.keys(S.contacten).length || Object.keys(S.project_contacten).length || d.contact_id) {
@@ -2943,11 +3043,11 @@ function wirePostcode() {
 function addFaseForm(pid) {
   const p = S.projecten[pid]; const present = new Set(tasksOf(pid).map(t => t.fase_nr));
   openModal("Fase toevoegen aan " + p.klant, `<div class="field"><label for="af_fase">Fase</label><select id="af_fase" name="fase_nr">${opts(fasenList().map(f => [f.nr, `${f.nr} · ${f.naam}${present.has(f.nr) ? " (al aanwezig)" : ""} — ${S.standaardtaken.filter(t => t.fase_nr === f.nr).length} taken`]), fasenList().find(f => !present.has(f.nr))?.nr)}</select></div>
-    <p class="muted" style="font-size:13px;margin:10px 0 0">De standaardtaken van deze fase worden toegevoegd, toegewezen aan de projectlead en zonder datum.</p>`, {
+    <p class="muted" style="font-size:13px;margin:10px 0 0">De standaardtaken van deze fase worden toegevoegd zonder datum, toegewezen ${swReady() ? "volgens de standaardverantwoordelijken (Instellingen; anders de projectlead)" : "aan de projectlead"}.</p>`, {
     saveLabel: "Toevoegen",
     onSave: async (d) => {
       const nr = Number(d.fase_nr);
-      const tasks = S.standaardtaken.filter(t => t.fase_nr === nr).map(t => ({ project_id: pid, titel: t.titel, fase_nr: nr, assignee: p.lead, volgorde: nr * 100 + t.volgorde, status: "todo", uren_gepland: 0 }));
+      const tasks = S.standaardtaken.filter(t => t.fase_nr === nr).map(t => stTaakRij(t, pid, p.lead));
       const { data, error } = await sb.from("taken").insert(tasks).select();
       if (error) { toast("Mislukt: " + error.message); return false; }
       (data || []).forEach(t => S.taken[t.id] = t); render(); toast(`${tasks.length} taken toegevoegd`);
@@ -3207,6 +3307,8 @@ document.addEventListener("click", (e) => {
   if (d.act === "fase-new") return faseForm(null);
   if (d.act === "fase-edit") { e.stopPropagation(); return faseForm(S.fasen[d.nr]); }
   if (d.act === "st-new") return stAdd(Number(d.nr));
+  if (d.act === "sw-voorstel") return swVoorstel();
+  if (d.act === "sw-toepassen") return swToepassen();
   if (d.act === "st-move") return stMove(d.id, Number(d.dir));
   if (d.act === "st-del") return stDel(d.id);
   if (d.sellot) { S.selLot = Number(d.sellot); return render(); }
@@ -3313,6 +3415,8 @@ document.addEventListener("change", (e) => {
   if (el.dataset.vgdeel) return dbUpdate("werf_fotos", el.dataset.vgdeel, { gedeeld_klant: el.checked }).catch(() => { });
   if (el.dataset.wd && (el.tagName === "SELECT" || el.type === "date") && typeof wdEdit === "function") return wdEdit(el.dataset.wd, el.dataset.f, el.value);
   if (el.dataset.dshare) return docShare(el.dataset.dshare, el.checked);
+  if (el.dataset.faseWie != null) return swZetFase(Number(el.dataset.faseWie), el.value);   // standaardverantwoordelijken (script 040)
+  if (el.dataset.stWie != null) return swZetTaak(Number(el.dataset.stWie), el.value);
   if (el.dataset.dshareA) return docShare(el.dataset.dshareA, el.checked, "aannemers");
 });
 document.addEventListener("input", (e) => {
