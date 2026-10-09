@@ -4,7 +4,7 @@
    nooit prijzen van BROS of van andere aannemers. Schrijven gaat via functies (opgelost melden, prijzen, vragen).
    ===================================================================== */
 if (window.top !== window.self) { try { window.top.location.replace(window.location.href); } catch (e) { document.documentElement.innerHTML = ""; } }   // niet in een vreemd frame (clickjacking)
-const PORTAAL_VERSION = "1.39.0";
+const PORTAAL_VERSION = "1.42.0";
 const todayLocal = () => { const n = new Date(); return `${n.getFullYear()}-${String(n.getMonth() + 1).padStart(2, "0")}-${String(n.getDate()).padStart(2, "0")}`; };
 const safeUrl = (u) => /^https?:\/\//i.test(String(u || "")) ? u : "#";
 const cfg = window.PLANBORD_CONFIG || {};
@@ -50,20 +50,21 @@ async function loadAll() {
       if (r.error) { if (opt) return []; throw new Error(v + ": " + r.error.message); }
       all = all.concat(r.data || []); if (!r.data || r.data.length < PAGE) return all;
     } };
-  const [me, projecten, vs, plannen, verslagen, documenten, planning, planTaken, taken, aanvragen, aanvraagPosten, vragen, team, ik, meetstaat, prijzenMs, fasen, loten, inst, pvProj] = await Promise.all([
+  const [me, projecten, vs, plannen, verslagen, documenten, planning, planTaken, taken, aanvragen, aanvraagPosten, vragen, team, ik, meetstaat, prijzenMs, fasen, loten, inst, pvProj, afspraken] = await Promise.all([
     sb.from("profiles").select("id,name,email,role").eq("id", S.session.user.id).maybeSingle().then(r => r.data),
     q("aan_project"), q("aan_vaststellingen"), q("aan_werfplannen"), q("aan_werfverslagen"), q("aan_documenten"), q("aan_planning"), q("aan_planning_taken"),
     q("aan_taken"), q("aan_prijsaanvragen"), q("aan_prijsaanvraag_posten"), q("aan_vragen"), q("klant_team", "*", true), q("klant_ik", "*", true), q("aan_meetstaat", "*", true), q("aan_meetstaat_prijzen", "*", true),
     q("fasen"), sb.from("loten_v").select("nr,naam").then(r => r.error ? [] : (r.data || [])),
     sb.from("instellingen").select("value").eq("key", "portaal").maybeSingle().then(r => r.data?.value || {}),
     q("aan_prijsvraag_projecten", "*", true),   // script 037: projecten waarvoor hij enkel een prijsvraag kreeg
+    q("aan_afspraken", "*", true),              // script 041: afspraken waarvoor hij uitgenodigd is
   ]);
   pvProj.filter(x => !projecten.some(p => p.id === x.id)).forEach(x => projecten.push({ id: x.id, nummer: x.nummer, gemeente: x.gemeente, klant: "", naam: "", kandidaat: true, mijn_loten: [] }));
   S.me = me; S.voorbeeldFout = false;
   if (VB.rol) { const vb = await VB.laad(sb); if (vb && me && me.role === "beheer") { S.me = { ...me, role: "aannemer", name: vb.naam }; VB.balk(); } else S.voorbeeldFout = true; }
   S.data = { projecten: projecten.sort((a, b) => (b.nummer || "").localeCompare(a.nummer || "")), vs: vs.sort((a, b) => (b.nr || 0) - (a.nr || 0)), plannen: plannen.sort((a, b) => (a.volgorde || 0) - (b.volgorde || 0)),
     verslagen: verslagen.sort((a, b) => (b.nr || 0) - (a.nr || 0)), documenten, planning, planTaken, taken, aanvragen: aanvragen.sort((a, b) => (b.created_at || "").localeCompare(a.created_at || "")), aanvraagPosten, vragen: vragen.sort((a, b) => (b.created_at || "").localeCompare(a.created_at || "")),
-    team, ik, meetstaat, prijzenMs, fasen: fasen.filter(f => f.actief !== false).sort((a, b) => a.nr - b.nr), loten: Object.fromEntries(loten.map(l => [l.nr, l])), inst };
+    afspraken, team, ik, meetstaat, prijzenMs, fasen: fasen.filter(f => f.actief !== false).sort((a, b) => a.nr - b.nr), loten: Object.fromEntries(loten.map(l => [l.nr, l])), inst };
   if (!S.project || !projecten.some(p => p.id === S.project)) S.project = (projecten.find(p => !p.kandidaat) || projecten[0])?.id || null;
   sb.rpc("portaal_bezoek").then(() => { });
 }
@@ -128,6 +129,7 @@ function vOverzicht(p) {
       <button class="kpi" data-tab="prijzen" style="text-align:left;cursor:pointer;font:inherit;color:inherit"><div class="k">Prijsaanvragen</div><div class="v num">${pa.length}</div><div class="muted" style="font-size:12px">${pa.length ? "in te vullen" + (pa.some(a => a.deadline) ? " · vóór " + fmt(pa.filter(a => a.deadline).sort((a, b) => a.deadline.localeCompare(b.deadline))[0].deadline) : "") : "geen open aanvragen"}</div></button>
       <button class="kpi" data-tab="vragen" style="text-align:left;cursor:pointer;font:inherit;color:inherit"><div class="k">Actiepunten</div><div class="v num">${tk.length}</div><div class="muted" style="font-size:12px">${tk.length ? "uit verslagen en afspraken" : "alles afgewerkt"}</div></button>
       <div class="kpi"><div class="k">Project</div><div class="v" style="font-size:16px">${PROJ_STATUS[p.status] || esc(p.status)}</div><div class="muted" style="font-size:12px">${p.fase_nr ? "stap " + p.fase_nr + " · " + esc(faseNaam(p.fase_nr)) : ""}</div></div></div>
+    ${window.BROS_AGENDA ? BROS_AGENDA.paneel(D().afspraken || [], { esc, datum: fmtLang, project: (a) => [a.project_nummer, a.project_klant || a.project_gemeente].filter(Boolean).join(" · ") }) : ""}
     <div class="two"><div class="stack">
       <div class="panel"><div class="panel-head"><h2>Open werfpunten</h2><button class="btn sm" data-tab="werf">Alles →</button></div>${open.length ? `<div class="panel-body" style="display:grid;gap:8px">${open.slice(0, 5).map(vsCard).join("")}</div>` : `<div class="empty"><b>Geen open punten</b>Nieuwe vaststellingen van BROS verschijnen hier.</div>`}</div>
       ${mpOf(p.id).filter(m => m.status === "gedeeld").map(m => `<div class="panel" style="border-color:var(--blue)"><div class="panel-head"><h2>Meetstaat met prijzen ter goedkeuring</h2></div><div class="panel-body"><p>BROS deelde versie ${m.versie} van de meetstaat met jouw prijzen: ${(m.regels || []).length} posten, samen <b>${eur(mpTot(m))}</b> excl. btw. <button class="btn sm primary" data-tab="meetstaat">Bekijken en goedkeuren →</button></p></div></div>`).join("")}
@@ -531,6 +533,7 @@ document.addEventListener("click", async (e) => {
   const el = e.target.closest("[data-tab],[data-act]"); if (!el) return; const d = el.dataset;
   if (d.tab) { S.tab = d.tab; S.detail = null; S.aanvraag = null; render(); return; }
   if (d.act === "logout") sb.auth.signOut().then(() => location.reload());
+  if (d.act === "afs-ics" && window.BROS_AGENDA) { const a = (D().afspraken || []).find(x => String(x.id) === d.id); if (a) BROS_AGENDA.download(a); return; }   // afspraak → eigen agenda (script 041)
   if (d.act === "vs-filter") { S.vsFilter = d.f; render(); }
   if (d.act === "vs-open") { S.tab = "werf"; S.detail = d.id; S.nieuw = []; S.opm = ""; render(); }
   if (d.act === "vs-back") { S.detail = null; S.nieuw.forEach(f => URL.revokeObjectURL(f.url)); S.nieuw = []; render(); }

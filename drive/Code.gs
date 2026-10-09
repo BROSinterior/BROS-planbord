@@ -12,6 +12,7 @@
  *     Die maakt zelf een nieuw Drive-secret (en zet het ook in het Planbord) en een nieuw wachtwoord voor de bot-login.
  *     Een nieuwe versie van dit script plakken wist de geheimen dus niet meer.
  *  Bij een latere wijziging aan dit script: Deploy → Manage deployments → potlood → Version: New → Deploy.
+ *  Afspraken in de Google Agenda (script 041): voer één keer agendaMachtiging() uit in de editor en geef toestemming voor Agenda.
  */
 /* ---- Geheimen: uit de Scripteigenschappen, nooit in de code (en dus nooit in git) ---- */
 let _geheimen = null;
@@ -51,6 +52,7 @@ function doPost(e) {
     if (body.action === "notitiemail") return json(notitieMail(body));
     if (body.action === "assistentmail") return json(assistentMail(body));   // vanuit de Edge Function (secret), melding aan de verantwoordelijke
     if (body.action === "werfverslagmail") return json(werfverslagMail(body));
+    if (body.action === "afspraak") return json(afspraakSync(body));   // afspraken ter plaatse (script 041): Google Agenda van brosburo + mail met agendabestand aan de deelnemers
     return json({ ok: false, error: "Onbekende actie." });
   } catch (err) {
     const msg = String(err && err.message || err); console.error(msg);
@@ -533,6 +535,123 @@ function overeenkomstMail(body) {
       + (g.status === "akkoord" ? "<p>Iedereen heeft nu goedgekeurd. De getekende versie verschijnt in je portaal onder Documenten.</p>" : "<p>De overeenkomst is goedgekeurd zodra ook de andere bouwheer(en) akkoord gaven.</p>")
       : "<p>We ontvingen je reactie op <b>" + H(g.titel) + "</b> en nemen contact met je op.</p>") + "<p>BROS</p>"));
   return { ok: true };
+}
+/* =====================================================================
+   Afspraken ter plaatse (script 041)
+   Het Planbord roept 'afspraak' aan na elke wijziging aan een taak met een afspraak (en vóór het verwijderen, met weg: true).
+   - Google Agenda van dit account (brosburo): "PB/Klant, onderwerp" met het adres; bijgewerkt of verwijderd als de afspraak wijzigt.
+   - Deelnemers (contacten met e-mail): mail met agendabestand (.ics) bij een nieuwe/gewijzigde afspraak, annulering als ze vervalt
+     of als iemand niet meer aangevinkt is. Wat gemaild werd, staat in taken.afspraak_mail ({hash, aan, seq}).
+   Eerste keer: voer agendaMachtiging() één keer uit in de editor (toestemming voor Google Agenda), en zet daarna een nieuwe versie online.
+   ===================================================================== */
+const AFS_BROS_ADRES = "BROS, Kloosterstraat 165, 2000 Antwerpen";
+function agendaMachtiging() { const c = CalendarApp.getDefaultCalendar(); Logger.log("Agenda: " + c.getName() + " (" + c.getId() + ") — in orde."); }
+function afsIcs(a, weg, organisator, deelnemer) {
+  const pad = (n) => ("0" + n).slice(-2);
+  const e = (x) => String(x == null ? "" : x).replace(/\\/g, "\\\\").replace(/;/g, "\\;").replace(/,/g, "\\,").replace(/\r?\n/g, "\\n");
+  // regels van max. 75 bytes (UTF-8), nooit midden in een teken
+  const vouw = (l) => { const o = []; let cur = "", n = 0; for (const ch of l) { const c = ch.codePointAt(0); const b = c < 0x80 ? 1 : c < 0x800 ? 2 : c < 0x10000 ? 3 : 4; if (n + b > 74) { o.push(cur); cur = " "; n = 1; } cur += ch; n += b; } o.push(cur); return o.join("\r\n"); };
+  const d = String(a.datum).replace(/-/g, ""); const v = String(a.van).slice(0, 5).split(":").map(Number);
+  let t = a.tot ? String(a.tot).slice(0, 5).split(":").map(Number) : null;
+  if (!t || t[0] * 60 + t[1] <= v[0] * 60 + v[1]) { const m = Math.min(v[0] * 60 + v[1] + 60, 23 * 60 + 59); t = [Math.floor(m / 60), m % 60]; }
+  const n = new Date(); const stamp = n.getUTCFullYear() + pad(n.getUTCMonth() + 1) + pad(n.getUTCDate()) + "T" + pad(n.getUTCHours()) + pad(n.getUTCMinutes()) + pad(n.getUTCSeconds()) + "Z";
+  const r = ["BEGIN:VCALENDAR", "VERSION:2.0", "PRODID:-//BROS//Planbord//NL", "CALSCALE:GREGORIAN", "METHOD:" + (weg ? "CANCEL" : "PUBLISH"),
+    "BEGIN:VTIMEZONE", "TZID:Europe/Brussels", "BEGIN:DAYLIGHT", "TZOFFSETFROM:+0100", "TZOFFSETTO:+0200", "TZNAME:CEST", "DTSTART:19700329T020000", "RRULE:FREQ=YEARLY;BYMONTH=3;BYDAY=-1SU", "END:DAYLIGHT",
+    "BEGIN:STANDARD", "TZOFFSETFROM:+0200", "TZOFFSETTO:+0100", "TZNAME:CET", "DTSTART:19701025T030000", "RRULE:FREQ=YEARLY;BYMONTH=10;BYDAY=-1SU", "END:STANDARD", "END:VTIMEZONE",
+    "BEGIN:VEVENT", "UID:taak-" + a.id + "@bros.be", "DTSTAMP:" + stamp, "SEQUENCE:" + (a.seq || 0),
+    "DTSTART;TZID=Europe/Brussels:" + d + "T" + pad(v[0]) + pad(v[1]) + "00", "DTEND;TZID=Europe/Brussels:" + d + "T" + pad(t[0]) + pad(t[1]) + "00",
+    "SUMMARY:" + e(a.titel), "LOCATION:" + e(a.adres), "DESCRIPTION:" + e(a.omschrijving), "STATUS:" + (weg ? "CANCELLED" : "CONFIRMED"),
+    ...(organisator ? ["ORGANIZER;CN=BROS:mailto:" + organisator] : []), ...(deelnemer ? ["ATTENDEE;CN=\"" + String(deelnemer.naam || deelnemer.email).replace(/["\r\n]/g, "") + "\":mailto:" + deelnemer.email] : []), "END:VEVENT", "END:VCALENDAR"];
+  return r.map(vouw).join("\r\n") + "\r\n";
+}
+function afspraakSync(body) {
+  caller(body.token, false);
+  const id = uuid(body.id);
+  if (!quotum("afs:" + id, 30, 3600)) return { ok: false, error: "Deze afspraak werd het voorbije uur al heel vaak bijgewerkt; probeer het later opnieuw." };
+  // één tegelijk: twee snelle bewaringen na elkaar mogen geen dubbel agenda-item of dubbele mails geven
+  const lock = LockService.getScriptLock(); if (!lock.tryLock(30000)) return { ok: false, error: "Het Drive-script is bezig; probeer het zo opnieuw." };
+  try { return afspraakSyncIn(body, id); } finally { lock.releaseLock(); }
+}
+function afspraakSyncIn(body, id) {
+  const t = (pbAdmin("/rest/v1/taken?id=eq." + id + "&select=*", "get") || [])[0];
+  if (!t) return { ok: false, error: "Taak niet gevonden." };
+  const p = (pbAdmin("/rest/v1/projecten?id=eq." + t.project_id + "&select=nummer,klant,naam", "get") || [])[0] || {};
+  const actief = !body.weg && !!t.afspraak && !!t.start && !!t.afspraak_van;
+  const onderwerp = String(t.afspraak_onderwerp || "").trim() || t.titel;
+  const prof = t.assignee ? ((pbAdmin("/rest/v1/profiles?id=eq." + t.assignee + "&select=name,initials,email", "get") || [])[0] || null) : null;
+  const ini = prof ? String(prof.initials || String(prof.name || "").slice(0, 2)).toUpperCase() : "BROS";
+  const ids = (t.afspraak_contacten || []).filter(x => UUID_RE.test(String(x)));
+  const cs = ids.length ? (pbAdmin("/rest/v1/contacten?id=in.(" + ids.join(",") + ")&select=id,naam,contactpersoon,email,taal,actief", "get") || []) : [];
+  const van = String(t.afspraak_van || "").slice(0, 5), tot = t.afspraak_tot ? String(t.afspraak_tot).slice(0, 5) : "";
+  const res = { ok: true, agenda: "", gemaild: [], geannuleerd: [] };
+  const patch = {};
+  // ---- 1. Google Agenda van brosburo
+  const wilAgenda = actief && t.afspraak_agenda !== false;
+  try {   // agendafouten (bv. nog geen toestemming: agendaMachtiging()) mogen de mails niet tegenhouden
+  const cal = wilAgenda || t.agenda_event_id ? CalendarApp.getDefaultCalendar() : null;
+  let ev = null; if (cal && t.agenda_event_id) { try { ev = cal.getEventById(t.agenda_event_id); } catch (e) { ev = null; } }
+  if (wilAgenda) {
+    const begin = Utilities.parseDate(t.start + " " + van, "Europe/Brussels", "yyyy-MM-dd HH:mm");
+    let einde = tot ? Utilities.parseDate(t.start + " " + tot, "Europe/Brussels", "yyyy-MM-dd HH:mm") : new Date(begin.getTime() + 3600000);
+    if (einde <= begin) einde = new Date(begin.getTime() + 3600000);
+    const titel = ini + "/" + (p.klant || "") + ", " + onderwerp;
+    const besch = [(p.nummer ? p.nummer + " · " : "") + (p.klant || "") + (p.naam && p.naam !== p.klant ? " · " + p.naam : ""),
+      prof ? "BROS: " + prof.name : "", cs.length ? "Deelnemers: " + cs.map(c => c.naam).join(", ") : "", t.notitie ? "Notitie: " + t.notitie : "", "(Aangemaakt vanuit het BROS Planbord — wijzig de afspraak in het Planbord, niet hier.)"].filter(Boolean).join("\n");
+    if (ev) { ev.setTitle(titel); ev.setTime(begin, einde); ev.setLocation(t.afspraak_adres || ""); ev.setDescription(besch); res.agenda = "gewijzigd"; }
+    else { ev = cal.createEvent(titel, begin, einde, { location: t.afspraak_adres || "", description: besch }); res.agenda = "gezet"; }
+    if (ev.getId() !== t.agenda_event_id) pbAdmin("/rest/v1/taken?id=eq." + t.id, "patch", { agenda_event_id: ev.getId() });   // meteen bewaren (geen dubbel item als iets hierna misloopt)
+  } else if (ev || t.agenda_event_id) {
+    if (ev) { try { ev.deleteEvent(); } catch (e) { } res.agenda = "verwijderd"; }
+    patch.agenda_event_id = null;
+  }
+  } catch (e) { console.error("agenda: " + e); res.waarschuwing = "Niet in de Google Agenda gezet (" + String(e.message || e).slice(0, 120) + "). Voer agendaMachtiging() één keer uit in het Drive-script."; }
+  // ---- 2. mails aan de deelnemers
+  const vorig = t.afspraak_mail || {}; const vorigAan = (vorig.aan || []).map(String);
+  const mailen = t.afspraak_mailen !== false && t.start >= Utilities.formatDate(new Date(), "Europe/Brussels", "yyyy-MM-dd");
+  const ontvangers = actief ? cs.filter(c => c.actief !== false && /^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(String(c.email || "").trim())) : [];
+  const aan = ontvangers.map(c => String(c.email).trim().toLowerCase());
+  const hash = actief ? JSON.stringify([t.start, van, tot, t.afspraak_adres || "", onderwerp]) : "";
+  let seq = Number(vorig.seq) || 0; const gewijzigd = !!vorig.hash && hash !== vorig.hash;
+  const datumTxt = (en) => { const d = Utilities.parseDate(t.start + " 12:00", "Europe/Brussels", "yyyy-MM-dd HH:mm"); const dagen = en ? ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"] : ["zondag", "maandag", "dinsdag", "woensdag", "donderdag", "vrijdag", "zaterdag"]; return dagen[Number(Utilities.formatDate(d, "Europe/Brussels", "u")) % 7] + " " + Utilities.formatDate(d, "Europe/Brussels", "dd/MM/yyyy") + ", " + van + (tot ? "–" + tot : ""); };
+  const wrap = (inner) => "<div style=\"font-family:Helvetica,Arial,sans-serif;font-size:15px;line-height:1.5;color:#1B1E1C;max-width:640px\">" + inner + "</div>";
+  const stuur = (c, weg, nieuwsoort) => {
+    const en = String(c.taal || "") === "en"; const naam = c.contactpersoon || c.naam;
+    const a = { id: t.id, seq: seq, datum: t.start, van: van, tot: tot, adres: t.afspraak_adres || "", titel: "BROS: " + onderwerp,
+      omschrijving: (en ? "Appointment with " : "Afspraak met ") + (prof ? prof.name + " (BROS)" : "BROS") + "\n" + (en ? "Questions? info@bros.be" : "Vragen? info@bros.be") };
+    const ics = Utilities.newBlob(afsIcs(a, weg, PORTAAL.VAN, weg ? { naam: naam, email: String(c.email).trim() } : null), "text/calendar; charset=utf-8; method=" + (weg ? "CANCEL" : "PUBLISH"), weg ? "annulering-bros.ics" : "afspraak-bros.ics");
+    const kop = weg ? (en ? "Cancelled: appointment with BROS" : "Geannuleerd: afspraak met BROS") : nieuwsoort === "gewijzigd" ? (en ? "Changed appointment with BROS" : "Gewijzigde afspraak met BROS") : (en ? "Appointment with BROS" : "Afspraak met BROS");
+    const onderwerpMail = kop + ": " + onderwerp + " — " + datumTxt(en);
+    const tekst = (en ? "Dear " : "Beste ") + naam + ",\n\n" + (weg ? (en ? "The following appointment has been cancelled:" : "Deze afspraak gaat niet door:") : (en ? "Here are the details of your appointment with BROS:" : "Hierbij de gegevens van je afspraak met BROS:"))
+      + "\n\n" + onderwerp + "\n" + datumTxt(en) + "\n" + (t.afspraak_adres || "") + "\n\n" + (weg ? (en ? "If it is in your calendar, you can remove it.\n\n" : "Staat ze in je agenda, dan kan je ze verwijderen.\n\n") : (en ? "The attachment adds it to your calendar. You can also find it in your BROS portal." : "Met de bijlage zet je ze in je agenda. Je vindt ze ook in je BROS-portaal.") + "\n\n") + (prof ? prof.name + " — " : "") + "BROS";
+    const html = wrap("<p>" + (en ? "Dear " : "Beste ") + H(naam) + ",</p><p>" + (weg ? (en ? "The following appointment has been <b>cancelled</b>:" : "Deze afspraak gaat <b>niet door</b>:") : nieuwsoort === "gewijzigd" ? (en ? "Your appointment with BROS has <b>changed</b>:" : "Je afspraak met BROS is <b>gewijzigd</b>:") : (en ? "Here are the details of your appointment with BROS:" : "Hierbij de gegevens van je afspraak met BROS:")) + "</p>"
+      + "<table style=\"border-collapse:collapse;margin:12px 0\"><tr><td style=\"padding:4px 14px 4px 0;color:#767D78\">" + (en ? "What" : "Wat") + "</td><td style=\"padding:4px 0\"><b>" + H(onderwerp) + "</b></td></tr><tr><td style=\"padding:4px 14px 4px 0;color:#767D78\">" + (en ? "When" : "Wanneer") + "</td><td style=\"padding:4px 0\">" + H(datumTxt(en)) + "</td></tr><tr><td style=\"padding:4px 14px 4px 0;color:#767D78\">" + (en ? "Where" : "Waar") + "</td><td style=\"padding:4px 0\">" + H(t.afspraak_adres || "") + "</td></tr>" + (prof ? "<tr><td style=\"padding:4px 14px 4px 0;color:#767D78\">" + (en ? "With" : "Met") + "</td><td style=\"padding:4px 0\">" + H(prof.name) + "</td></tr>" : "") + "</table>"
+      + (weg ? "<p>" + (en ? "If it is in your calendar, you can remove it." : "Staat ze in je agenda, dan kan je ze verwijderen.") + "</p>" : "<p>" + (en ? "Open the attachment to add it to your calendar. You can also find it in your BROS portal." : "Open de bijlage om de afspraak in je agenda te zetten. Je vindt ze ook in je BROS-portaal.") + "</p>") + "<p>" + (prof ? H(prof.name) + " — " : "") + "BROS</p>");
+    const opt = { htmlBody: html, name: PORTAAL.AFZENDER, attachments: [ics] };
+    if (PORTAAL.VAN) { const al = GmailApp.getAliases(); if (al.indexOf(PORTAAL.VAN) >= 0) opt.from = PORTAAL.VAN; else opt.replyTo = PORTAAL.VAN; }
+    GmailApp.sendEmail(String(c.email).trim(), onderwerpMail.replace(/[\r\n]+/g, " ").slice(0, 240), tekst, opt);
+  };
+  if (mailen) try {
+    const weg = vorigAan.filter(m => aan.indexOf(m) < 0);
+    if (weg.length && vorig.hash) {
+      const wie = vorig.wie || {}; seq += 1;
+      weg.forEach(m => { const w = wie[m] || {}; try { stuur({ naam: w.naam || "", taal: w.taal || "", email: m }, true); res.geannuleerd.push(m); } catch (e) { console.error("annulering " + m + ": " + e); } });
+    }
+    const naar = ontvangers.filter(c => gewijzigd || vorigAan.indexOf(String(c.email).trim().toLowerCase()) < 0 || !vorig.hash);
+    if (naar.length) {
+      if (gewijzigd && !weg.length) seq += 1;
+      naar.forEach(c => { const m = String(c.email).trim().toLowerCase(); try { stuur(c, false, gewijzigd && vorigAan.indexOf(m) >= 0 ? "gewijzigd" : "nieuw"); res.gemaild.push(m); } catch (e) { console.error("afspraakmail " + m + ": " + e); } });
+    }
+    const blijft = aan.filter(m => res.gemaild.indexOf(m) >= 0 || vorigAan.indexOf(m) >= 0); const wie = {};
+    blijft.forEach(m => { const c = ontvangers.find(x => String(x.email).trim().toLowerCase() === m); if (c) wie[m] = { naam: c.contactpersoon || c.naam, taal: c.taal || "" }; });
+    patch.afspraak_mail = actief ? { hash: hash, aan: blijft, seq: seq, wie: wie } : (res.geannuleerd.length || !vorigAan.length ? {} : vorig);
+  } finally {
+    if (!patch.afspraak_mail && (res.gemaild.length || res.geannuleerd.length)) {   // fout halverwege: bewaren wie al gemaild werd (anders mailt de volgende keer opnieuw)
+      const aanNu = vorigAan.filter(m => res.geannuleerd.indexOf(m) < 0).concat(res.gemaild.filter(m => vorigAan.indexOf(m) < 0));
+      patch.afspraak_mail = { hash: hash, aan: aanNu, seq: seq, wie: vorig.wie || {} };
+    }
+  }
+  if (Object.keys(patch).length) pbAdmin("/rest/v1/taken?id=eq." + t.id, "patch", patch);
+  return res;
 }
 /** Verslag gedeeld met de klant: mail met het verslag en de actiepunten naar de klanten met portaal-toegang. */
 function notitieMail(body) {

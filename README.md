@@ -14,8 +14,10 @@ Statische webapp (geen build-stap) op een Supabase-database.
 | `app.js` | alle logica |
 | `config.js` | koppeling met de database — **hier de Project URL en anon-sleutel invullen** |
 | `version.json` | versienummer; de app meldt een nieuwe versie aan wie ze open heeft |
-| `sql/001_init.sql` … `sql/031_*.sql` | databasescripts, in volgorde uit te voeren (`versie_schema` in instellingen bewaakt de volgorde vanaf 022) |
+| `sql/001_init.sql` … `sql/041_*.sql` | databasescripts, in volgorde uit te voeren (`versie_schema` in instellingen bewaakt de volgorde vanaf 022) |
 | `drive/Code.gs` | Google Apps Script dat projectmappen aanmaakt/koppelt op Drive en de meetstaat-export wegschrijft (installatie: zie bovenaan dat bestand) |
+| `agenda.js` | gedeeld (Planbord en portalen): agendabestand (.ics) en Google Agenda-link voor afspraken (script 041) |
+| `afspraken.js` | Planbord: afspraak ter plaatse in het taakformulier, synchronisatie met de Google Agenda en de mails (script 041) |
 | `meetstaat-export.js` | schrijft de meetstaat van een project in het Excel-sjabloon (zip/XML, opmaak en formules blijven intact) |
 | `klant/` | het klantenportaal (index.html + portaal.js): alleen-lezen zicht van de bouwheer op zijn project |
 | `werf/` | de werfmodus voor op de smartphone (vaststellingen met foto's, werkt ook zonder bereik; installeerbaar als app) — ook voor aannemers, beperkt tot hun eigen punten |
@@ -160,6 +162,14 @@ Activeren (eenmalig):
 4. Edge Function `assistent` opnieuw plakken (weigert nu aannemerslogins) en pushen.
 
 Gebruik: Dossier › Contacten → bij een aannemer de knop **Aannemersportaal** (beheer) → hij krijgt een mail met een persoonlijke link. Instellingen → Klantenportaal toont wie toegang heeft (klant/aannemer). Een aannemer die op het Planbord of het klantenportaal inlogt, wordt doorgestuurd.
+
+## Afspraken ter plaatse — Google Agenda en portaal (script 041, v1.42)
+
+- **Planbord › taak › Afspraak ter plaatse:** op de werf (adres van het project), op kantoor van BROS (Kloosterstraat 165, 2000 Antwerpen) of een ander adres; datum = startdatum van de taak, van–tot (leeg = 1 uur), onderwerp voor de agenda (leeg = titel van de taak) en de deelnemers (klant en aannemers van het project). In de takenlijsten staat een label 📍 met uur en plaats. Code: `afspraken.js` (Planbord) en `agenda.js` (gedeeld: .ics en Google-link, ook voor de portalen).
+- **Google Agenda van brosburo:** het Drive-script (actie `afspraak`) zet de afspraak in de standaardagenda van het scriptaccount als "PB/Klant, onderwerp" (initialen van de verantwoordelijke) met het adres, en werkt ze bij of verwijdert ze bij elke wijziging — ook als datum, uur, plaats, deelnemers of verantwoordelijke wijzigen, de afspraak uitgevinkt of de taak verwijderd wordt (`taken.agenda_event_id`). Wijzig de afspraak in het Planbord, niet in de agenda.
+- **Mail aan de deelnemers:** bij een nieuwe of gewijzigde afspraak een mail (nl/en volgens het contact) met agendabestand (.ics, zelfde UID → de nieuwe versie vervangt de oude); wie niet meer aangevinkt is of als de afspraak vervalt, krijgt een annulering. Geen mails voor afspraken in het verleden of met het vinkje "Deelnemers mailen" uit. Wat gemaild werd: `taken.afspraak_mail`.
+- **Portalen:** views `klant_afspraken` en `aan_afspraken` (enkel als deelnemer aangevinkt, vanaf een week geleden). Bovenaan het welkomstscherm (klant) en het overzicht (aannemer): "Je afspraken met BROS" met **In mijn agenda** (.ics voor Apple Agenda, Outlook, …) en **Google Agenda**. Deelnemers zonder portaaltoegang krijgen enkel de mail.
+- **Eenmalig na het plakken van het nieuwe Drive-script:** voer `agendaMachtiging()` uit in de editor en geef toestemming voor Google Agenda; daarna een nieuwe versie online zetten.
 
 ## Standaardverantwoordelijken per fase en standaardtaak (script 040, v1.41)
 

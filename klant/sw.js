@@ -1,6 +1,6 @@
 /* BROS Klantenportaal — service worker: enkel de app-schil (pagina, script, logo) bewaren zodat het portaal als app
    snel opent. Gegevens (Supabase), inloggen en Drive-bestanden gaan altijd rechtstreeks: nooit uit een cache. */
-const VERSION = "1.40.0";
+const VERSION = "1.42.0";
 const SHELL = "bros-klant-" + VERSION;
 const SCHIL = ["./", "./index.html", "./manifest.json", "./icon-192.png", "./icon-512.png"];
 self.addEventListener("install", (e) => { e.waitUntil(caches.open(SHELL).then(c => Promise.all(SCHIL.map(f => c.add(f).catch(() => null)))).then(() => self.skipWaiting())); });

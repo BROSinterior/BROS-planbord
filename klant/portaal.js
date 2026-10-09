@@ -3,7 +3,7 @@
    Leest uitsluitend de klant_*-views (databasescript 011): geen kostprijzen, marges of interne notities.
    ===================================================================== */
 if (window.top !== window.self) { try { window.top.location.replace(window.location.href); } catch (e) { document.documentElement.innerHTML = ""; } }   // niet in een vreemd frame (clickjacking)
-const PORTAAL_VERSION = "1.40.0";
+const PORTAAL_VERSION = "1.42.0";
 const todayLocal = () => { const n = new Date(); return `${n.getFullYear()}-${String(n.getMonth() + 1).padStart(2, "0")}-${String(n.getDate()).padStart(2, "0")}`; };
 const safeUrl = (u) => /^https?:\/\//i.test(String(u || "")) ? u : "#";
 const cfg = window.PLANBORD_CONFIG || {};
@@ -48,7 +48,7 @@ async function loadAll(stil) {
       all = all.concat(r.data || []); if (!r.data || r.data.length < PAGE) return all;
     } };
   const opt = (v) => q(v).catch(() => []);   // views van recente databasescripts: ontbreken ze nog, dan gewoon leeg
-  const [me, projecten, meetstaat, vorderingen, regels, planning, uren, documenten, team, ik, fasen, loten, inst, goedkeuringen, notities, notitieTaken, mijnTaken, planTaken, werfverslagen, assistent, chat, keuzes, keuzeOpties, mwAanvragen, werfpunten, werfFotos, werfUpdates, woningdossier, tekenaars] = await Promise.all([
+  const [me, projecten, meetstaat, vorderingen, regels, planning, uren, documenten, team, ik, fasen, loten, inst, goedkeuringen, notities, notitieTaken, mijnTaken, planTaken, werfverslagen, assistent, chat, keuzes, keuzeOpties, mwAanvragen, werfpunten, werfFotos, werfUpdates, woningdossier, tekenaars, afspraken] = await Promise.all([
     sb.from("profiles").select("id,name,email,role").eq("id", S.session.user.id).maybeSingle().then(r => r.data),
     q("klant_project"), q("klant_meetstaat"), q("klant_vorderingen"), q("klant_vordering_regels"), q("klant_planning"), q("klant_uren"),
     q("klant_documenten"), q("klant_team"), q("klant_ik"), q("fasen"), sb.from("loten_v").select("*").then(r => r.error || !(r.data || []).length ? q("loten") : r.data),
@@ -61,11 +61,11 @@ async function loadAll(stil) {
     sb.from("klant_werfverslagen").select("*").then(r => r.error ? [] : (r.data || [])),
     sb.from("instellingen").select("value").eq("key", "assistent").maybeSingle().then(r => r.data?.value || null),
     sb.from("klant_assistent_berichten").select("*").order("created_at").then(r => r.error ? [] : (r.data || [])),
-    opt("klant_keuzes"), opt("klant_keuze_opties"), opt("klant_meerwerk_aanvragen"), opt("klant_vaststellingen"), opt("klant_werf_fotos"), opt("klant_werf_updates"), opt("klant_woningdossier"), opt("klant_tekenaars"),
+    opt("klant_keuzes"), opt("klant_keuze_opties"), opt("klant_meerwerk_aanvragen"), opt("klant_vaststellingen"), opt("klant_werf_fotos"), opt("klant_werf_updates"), opt("klant_woningdossier"), opt("klant_tekenaars"), opt("klant_afspraken"),
   ]);
   S.me = me; S.voorbeeldFout = false;
   if (VB.rol) { const vb = await VB.laad(sb); if (vb && me && me.role === "beheer") { S.me = { ...me, role: "klant", name: vb.naam }; VB.balk(); } else S.voorbeeldFout = true; }
-  S.data = { tekenaars, keuzes, keuzeOpties, mwAanvragen, werfpunten, werfFotos, werfUpdates, woningdossier, assistent, chat, werfverslagen, planTaken, projecten: projecten.sort((a, b) => (b.nummer || "").localeCompare(a.nummer || "")), meetstaat, vorderingen, regels, planning, uren, documenten, team, ik, fasen: fasen.filter(f => f.actief !== false).sort((a, b) => a.nr - b.nr), loten: Object.fromEntries(loten.map(l => [l.nr, l])), inst, goedkeuringen: goedkeuringen.sort((a, b) => (b.voorgelegd_op || "").localeCompare(a.voorgelegd_op || "")), notities: notities.sort((a, b) => (b.datum || "").localeCompare(a.datum || "")), notitieTaken, mijnTaken: mijnTaken.sort((a, b) => (a.status === "done") - (b.status === "done") || (a.eind || "9").localeCompare(b.eind || "9")) };
+  S.data = { afspraken, tekenaars, keuzes, keuzeOpties, mwAanvragen, werfpunten, werfFotos, werfUpdates, woningdossier, assistent, chat, werfverslagen, planTaken, projecten: projecten.sort((a, b) => (b.nummer || "").localeCompare(a.nummer || "")), meetstaat, vorderingen, regels, planning, uren, documenten, team, ik, fasen: fasen.filter(f => f.actief !== false).sort((a, b) => a.nr - b.nr), loten: Object.fromEntries(loten.map(l => [l.nr, l])), inst, goedkeuringen: goedkeuringen.sort((a, b) => (b.voorgelegd_op || "").localeCompare(a.voorgelegd_op || "")), notities: notities.sort((a, b) => (b.datum || "").localeCompare(a.datum || "")), notitieTaken, mijnTaken: mijnTaken.sort((a, b) => (a.status === "done") - (b.status === "done") || (a.eind || "9").localeCompare(b.eind || "9")) };
   if (!S.project || !projecten.some(p => p.id === S.project)) S.project = projecten[0]?.id || null;
   if (VB.rol) { let t = null; try { t = sessionStorage.getItem("bros.vb.taal"); } catch (e) { } zetTaal(t || (ik[0] && ik[0].taal === "en" ? "en" : "nl"), false); }
   else if (!taalGekozen()) zetTaal(ik[0] && ik[0].taal === "en" ? "en" : "nl", false);   // eigen keuze op dit toestel › taal van het contact › Nederlands
@@ -116,6 +116,8 @@ function renderNl(houdScroll) {
   if (!VB.rol) liveStart();   // testmodus: geen live bijwerken (dat zou op elk project reageren)
 }
 
+/* afspraken (script 041): titel en omschrijving in de agenda in de taal van het portaal */
+const afsOpties = (a) => TAAL === "en" ? { titel: "BROS: " + (a.onderwerp || "appointment"), omschrijving: `Appointment with ${a.met || "BROS"}${a.met ? " (BROS)" : ""}\nQuestions? info@bros.be` } : undefined;
 function vWelkom(p) {
   const inst = D().inst; const fasen = D().fasen; const nu = p.fase_nr;
   const plan = Object.fromEntries(D().planning.filter(x => x.project_id === p.id).map(x => [x.fase_nr, x]));
@@ -130,6 +132,7 @@ function vWelkom(p) {
     ${(() => { const kz = kzVanProject(p).filter(k => k.status === "open"); if (!kz.length) return ""; const eerst = kz.filter(k => k.deadline).sort((a, b) => a.deadline.localeCompare(b.deadline))[0];
       return `<div class="notice" style="border-color:var(--blue);background:var(--blue-soft)"><div><b>${kz.length === 1 ? "Er wacht een keuze op jou" : `Er wachten ${kz.length} keuzes op jou`}</b><div class="muted" style="font-size:13px">${kz.slice(0, 4).map(k => nt(k.onderwerp)).join(" · ")}${eerst ? ` · eerste deadline ${fmt(eerst.deadline)}` : ""}</div></div><button class="btn primary" data-tab="keuzes">Kiezen</button></div>`; })()}
     ${open.length ? `<div class="notice"><div><b>${open.length === 1 ? "Er wacht een voorstel op je akkoord" : `Er wachten ${open.length} voorstellen op je akkoord`}</b><div class="muted" style="font-size:13px">${open.map(g => nt(g.titel) + (g.soort === "overeenkomst" ? "" : " · " + eur(g.totaal_incl, 0) + " incl. btw") + (g.geldig_tot ? " · vóór " + fmt(g.geldig_tot) : "")).join(" · ")}</div></div><button class="btn primary" data-tab="akkoord">Bekijken en goedkeuren →</button></div>` : ""}
+    ${window.BROS_AGENDA ? BROS_AGENDA.paneel(D().afspraken || [], { esc, datum: fmtLang, opties: afsOpties, project: (a) => D().projecten.length > 1 ? (D().projecten.find(x => x.id === a.project_id) || {}).naam || "" : "" }) : ""}
     <div class="two"><div class="stack">
       <div class="panel"><div class="panel-head"><h2>Waar staat je project?</h2><span class="pill grijs">${PROJ_STATUS[p.status] || esc(p.status)}</span></div><div class="panel-body">
         <p>${status}</p>
@@ -607,6 +610,7 @@ document.addEventListener("click", (e) => {
   const el = e.target.closest("[data-tab],[data-act]"); if (!el) return;
   if (el.dataset.tab) { S.tab = el.dataset.tab; S.dossier = null; render(); }
   if (el.dataset.act === "logout") { try { localStorage.removeItem("bros.klant.taal"); } catch (x) { } sb.auth.signOut().then(() => location.reload()); }
+  if (el.dataset.act === "afs-ics" && window.BROS_AGENDA) { const a = (D().afspraken || []).find(x => String(x.id) === el.dataset.id); if (a) BROS_AGENDA.download(a, afsOpties(a)); }   // afspraak → eigen agenda (script 041)
   if (el.dataset.act === "betaal") { const zelfde = S.betaal === el.dataset.id && !el.dataset.ga; S.betaal = zelfde ? null : el.dataset.id; if (el.dataset.ga) S.tab = el.dataset.ga; render(!el.dataset.ga); if (S.betaal) setTimeout(() => document.getElementById("betaal_" + S.betaal)?.scrollIntoView({ behavior: "smooth", block: "start" }), 50); return; }
   if (el.dataset.act === "kopieer") { const t = el.dataset.v || ""; (navigator.clipboard ? navigator.clipboard.writeText(t) : Promise.reject()).then(() => toast("Gekopieerd: " + t)).catch(() => toast(t, 6000)); return; }
   if (el.dataset.act === "gk-nee") { const box = $("#gk_nee_" + el.dataset.id); box.hidden = !box.hidden; if (!box.hidden) box.querySelector("textarea").focus(); }

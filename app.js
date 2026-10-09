@@ -3,7 +3,7 @@
    Statische webapp op Supabase (login, live-synchronisatie, rechten)
    ===================================================================== */
 if (window.top !== window.self) { try { window.top.location.replace(window.location.href); } catch (e) { document.documentElement.innerHTML = ""; } }   // niet in een vreemd frame (clickjacking)
-const APP_VERSION = "1.41.0";
+const APP_VERSION = "1.42.0";
 const PROJ_STATUS = { offerte: "In offerte", lopend: "Lopend", on_hold: "On hold", afgerond: "Afgerond", verloren: "Verloren" };
 const KLANTTYPE = { particulier: "Particulier", zakelijk: "Zakelijk" };
 const KLANTCODE = { particulier: "PAR", zakelijk: "ZAK" };
@@ -106,7 +106,7 @@ const avatar = (id) => { const u = userById(id); return `<span class="avatar" st
 const vsTag = (t) => t.vaststelling_id && S.vaststellingen[t.vaststelling_id] ? ` <span class="pill kl" data-vs="${t.vaststelling_id}" title="Uit een vaststelling op de werf — klik om ze te openen" style="cursor:pointer">📍 ${vsNr(S.vaststellingen[t.vaststelling_id])}</span>` : "";
 /* actiepunt uit een verslag: klik opent het verslag */
 const noteTag = (t) => { const n = t.notitie_id && S.notities && S.notities[t.notitie_id]; return n ? ` <span class="pill kl" data-act="note-open" data-id="${n.id}" title="Actiepunt uit ${esc(n.titel || "dit verslag")} — klik om het verslag te openen" style="cursor:pointer">📝 ${esc(NOTE_SOORT[n.soort] || "Verslag")} ${esc(fmt(n.datum))}</span>` : ""; };
-const klantTag = (t) => vsTag(t) + noteTag(t) + (t.uren_klant ? ` <span class="pill kl" title="Uren van deze taak zijn zichtbaar voor de klant">uren → klant</span>` : "") + (t.timing_klant ? ` <span class="pill kl" title="Titel en timing van deze taak staan in de planning van de klant">timing → klant</span>` : "");
+const klantTag = (t) => (typeof afsTag === "function" ? afsTag(t) : "") + vsTag(t) + noteTag(t) + (t.uren_klant ? ` <span class="pill kl" title="Uren van deze taak zijn zichtbaar voor de klant">uren → klant</span>` : "") + (t.timing_klant ? ` <span class="pill kl" title="Titel en timing van deze taak staan in de planning van de klant">timing → klant</span>` : "");
 const pill = (t) => isLate(t) ? `<span class="pill late">Te laat</span>` : `<span class="pill ${esc(t.status)}">${esc(TASK_STATUS[t.status] || t.status)}</span>`;
 const kost = (uid, uren, soort) => (Number(S.tarieven[uid]?.[soort]) || 0) * uren;
 const projKost = (pid, soort) => Object.values(S.uren).filter(h => h.project_id === pid).reduce((s, h) => s + kost(h.user_id, Number(h.uren) || 0, soort), 0);
@@ -222,15 +222,18 @@ async function refetchAll() { try { await loadAll(); render(); } catch (e) { } }
 async function dbInsert(table, row) {
   const { data, error } = await sb.from(table).insert(row).select().single();
   if (error) { toast("Bewaren mislukt: " + error.message, 5000); error.__toasted = true; throw error; }
-  const key = table === "tarieven" ? "user_id" : table === "loten" ? "nr" : "id"; S[table][data[key]] = data; render(); return data;
+  const key = table === "tarieven" ? "user_id" : table === "loten" ? "nr" : "id"; S[table][data[key]] = data; render();
+  if (table === "taken" && typeof afsNaWijziging === "function") afsNaWijziging(null, data);   // afspraak → agenda + mail (afspraken.js, script 041)
+  return data;
 }
 async function dbUpdate(table, id, patch) {
   const key = table === "tarieven" ? "user_id" : table === "loten" ? "nr" : "id";
-  const prev = S[table][id]; S[table][id] = { ...prev, ...patch }; render();
+  const prev = S[table][id]; const vorig = table === "taken" && prev ? { ...prev } : null; S[table][id] = { ...prev, ...patch }; render();
   const { data, error } = await sb.from(table).update(patch).eq(key, id).select().single();
   if (error) { if (prev === undefined) delete S[table][id]; else S[table][id] = prev; render(); toast("Bewaren mislukt: " + error.message, 5000); error.__toasted = true; throw error; }
   S[table][id] = VIEW_OF[table] ? { ...prev, ...data } : data; render();
   if (VIEW_OF[table] && S.viewsOk !== false) rowRefetch(table, id);
+  if (table === "taken" && typeof afsNaWijziging === "function") afsNaWijziging(vorig, S[table][id]);   // afspraak gewijzigd (ook via de planning) → agenda + mail
   return data;
 }
 async function dbUpsert(table, row) {
@@ -240,6 +243,7 @@ async function dbUpsert(table, row) {
   S[table][data[key]] = data; render(); return data;
 }
 async function dbDelete(table, id) {
+  if (table === "taken" && typeof afsVoorVerwijderen === "function") await afsVoorVerwijderen(S[table][id]);   // afspraak: agenda-item weg + annulering mailen
   const prev = S[table][id]; delete S[table][id]; render();
   const { error } = await sb.from(table).delete().eq("id", id);
   if (error) { if (prev === undefined) delete S[table][id]; else S[table][id] = prev; render(); toast("Verwijderen mislukt: " + error.message, 5000); error.__toasted = true; throw error; }
@@ -2861,6 +2865,7 @@ function swToepassen() {
         await Promise.all(jobs);
       } catch (e) { toast("Niet alles toegewezen: " + (e.message || e), 7000); await refetch("taken"); render(); return false; }
       render(); toast(`${ids.length} ta${ids.length === 1 ? "ak" : "ken"} opnieuw toegewezen`);
+      if (typeof afsSync === "function") ids.map(id => S.taken[id]).filter(t => t && (t.afspraak || t.agenda_event_id)).forEach(t => afsSync(t.id, false, true));   // initialen in de agendatitel volgen mee
     },
   });
   $("#mform").querySelectorAll("[data-swt]").forEach(b => b.addEventListener("click", () => $("#mform").querySelectorAll('input[name="sw"]').forEach(i => i.checked = b.dataset.swt === "alle")));
@@ -3004,7 +3009,7 @@ function projectForm(p = {}) {
         if (driveReady()) { try { await driveSync(S.projecten[created.id], "create"); } catch (e) { toast("Drive-map niet aangemaakt: " + e.message); } }
       } else { await dbUpdate("projecten", p.id, row); toast("Project bewaard"); }
     },
-    onDelete: isNew ? null : async () => { await dbDelete("projecten", p.id); Object.values(S.taken).filter(t => t.project_id === p.id).forEach(t => delete S.taken[t.id]); Object.values(S.uren).filter(h => h.project_id === p.id).forEach(h => delete S.uren[h.id]); S.project = null; render(); toast("Project verwijderd"); },
+    onDelete: isNew ? null : async () => { if (typeof afsVoorVerwijderen === "function") for (const t of Object.values(S.taken).filter(t => t.project_id === p.id && (t.afspraak || t.agenda_event_id))) await afsVoorVerwijderen(t); await dbDelete("projecten", p.id); Object.values(S.taken).filter(t => t.project_id === p.id).forEach(t => delete S.taken[t.id]); Object.values(S.uren).filter(h => h.project_id === p.id).forEach(h => delete S.uren[h.id]); S.project = null; render(); toast("Project verwijderd"); },
   });
   wirePostcode();
   const cidSel = $("#f_cid"); if (cidSel) cidSel.addEventListener("change", () => { const c = S.contacten[cidSel.value]; if (!c) return; const f = $("#mform"); const set = (n, v) => { const el = f.querySelector(`[name="${n}"]`); if (el) el.value = v || ""; };
@@ -3071,17 +3076,20 @@ function taskForm(t = {}, pid) {
     <div class="field"><label for="t_not">Notitie</label><input id="t_not" name="notitie" value="${esc(t.notitie || "")}"></div>
     ${schemaV() >= 10 ? `<div class="field span2"><label class="sw-row"><input type="checkbox" class="sw" name="uren_klant" value="1" ${t.uren_klant ? "checked" : ""}><span><b>Gepresteerde uren zichtbaar voor de klant</b><small class="muted" style="display:block">De klant ziet de geregistreerde uren van deze taak, met datum en tijdstip. Staat standaard uit.</small></span></label></div>` : ""}
     ${schemaV() >= 17 ? `<div class="field span2"><label class="sw-row"><input type="checkbox" class="sw" name="timing_klant" value="1" ${t.timing_klant ? "checked" : ""}><span><b>Timing delen met de klant</b><small class="muted" style="display:block">Titel en van–tot van deze taak verschijnen onder de fase in de planning van het portaal (geen uren, geen wie). Staat standaard uit.</small></span></label></div>` : ""}
+    ${typeof afsVelden === "function" ? afsVelden(t, projectId) : ""}
   </div>`, {
     onSave: async (d) => {
       const row = { titel: d.titel.trim(), project_id: d.project_id, fase_nr: d.fase_nr ? Number(d.fase_nr) : null, ...(schemaV() >= 15 ? wieSplit(d.assignee) : { assignee: d.assignee || null }), status: d.status, start: d.start || null, eind: d.eind || null, uren_gepland: Number(d.uren_gepland) || 0, notitie: d.notitie , ...(schemaV() >= 14 && "notitie_id" in d ? { notitie_id: d.notitie_id || null } : {}) };
       if (schemaV() >= 10) row.uren_klant = !!d.uren_klant;
       if (schemaV() >= 17) row.timing_klant = !!d.timing_klant;
       if (row.start && !row.eind) row.eind = row.start; if (row.eind && !row.start) row.start = row.eind; if (row.eind < row.start) row.eind = row.start;
+      if (typeof afsUitForm === "function") { const fout = afsUitForm(d, row, t); if (fout) { toast(fout, 6000); return false; } }   // afspraak ter plaatse (script 041)
       if (isNew) { row.volgorde = (row.fase_nr || 99) * 100 + 90; await dbInsert("taken", row); toast("Taak aangemaakt"); }
       else { const wasKlaar = t.status === "done"; if (row.status === "done" && !wasKlaar) vierTaak(t, null); await dbUpdate("taken", t.id, row); toast("Taak bewaard"); }
     },
     onDelete: isNew ? null : async () => { await dbDelete("taken", t.id); toast("Taak verwijderd"); },
   });
+  if (typeof afsWire === "function") afsWire(t);
 }
 function hoursForm(h = {}, pid) {
   const isNew = !h.id;
@@ -3427,7 +3435,7 @@ document.addEventListener("keydown", (e) => { if (e.key === "Escape" && !/^(SELE
 
 /* ---------- versiecontrole: melden als er een nieuwe versie online staat ---------- */
 let updateAvailable = false;
-const APP_FILES = ["index.html", "app.js", "config.js", "postcodes.js", "meetstaat-export.js", "meetstaat-import.js", "tekenen.js", "symbolen.js", "vendor/dxf-parser.js", "version.json", "klant/index.html", "klant/portaal.js", "klant/i18n-en.js", "kp-beheer.js", "pv-beheer.js", "portaal-voorbeeld.js", "logo-mark.svg", "werf/index.html", "werf/werf.js", "werf/sw.js", "aannemer/index.html", "aannemer/aannemer.js"];
+const APP_FILES = ["index.html", "app.js", "config.js", "postcodes.js", "meetstaat-export.js", "meetstaat-import.js", "tekenen.js", "symbolen.js", "vendor/dxf-parser.js", "version.json", "klant/index.html", "klant/portaal.js", "klant/i18n-en.js", "kp-beheer.js", "pv-beheer.js", "portaal-voorbeeld.js", "agenda.js", "afspraken.js", "logo-mark.svg", "werf/index.html", "werf/werf.js", "werf/sw.js", "aannemer/index.html", "aannemer/aannemer.js"];
 /* de browser-cache omzeilen: alle bestanden van de app vers ophalen (cache: "reload" ververst de HTTP-cache) en dan herladen */
 async function hardReload() {
   try { sessionStorage.setItem("pb-state", JSON.stringify({ view: S.view, project: S.project, ptab: S.ptab })); } catch (e) { }
