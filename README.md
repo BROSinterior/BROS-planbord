@@ -14,7 +14,7 @@ Statische webapp (geen build-stap) op een Supabase-database.
 | `app.js` | alle logica |
 | `config.js` | koppeling met de database — **hier de Project URL en anon-sleutel invullen** |
 | `version.json` | versienummer; de app meldt een nieuwe versie aan wie ze open heeft |
-| `sql/001_init.sql` … `sql/041_*.sql` | databasescripts, in volgorde uit te voeren (`versie_schema` in instellingen bewaakt de volgorde vanaf 022) |
+| `sql/001_init.sql` … `sql/042_*.sql` | databasescripts, in volgorde uit te voeren (`versie_schema` in instellingen bewaakt de volgorde vanaf 022) |
 | `drive/Code.gs` | Google Apps Script dat projectmappen aanmaakt/koppelt op Drive en de meetstaat-export wegschrijft (installatie: zie bovenaan dat bestand) |
 | `agenda.js` | gedeeld (Planbord en portalen): agendabestand (.ics) en Google Agenda-link voor afspraken (script 041) |
 | `afspraken.js` | Planbord: afspraak ter plaatse in het taakformulier, synchronisatie met de Google Agenda en de mails (script 041) |
@@ -162,6 +162,12 @@ Activeren (eenmalig):
 4. Edge Function `assistent` opnieuw plakken (weigert nu aannemerslogins) en pushen.
 
 Gebruik: Dossier › Contacten → bij een aannemer de knop **Aannemersportaal** (beheer) → hij krijgt een mail met een persoonlijke link. Instellingen → Klantenportaal toont wie toegang heeft (klant/aannemer). Een aannemer die op het Planbord of het klantenportaal inlogt, wordt doorgestuurd.
+
+## Vragen van aannemers en klanten beantwoorden (script 042, v1.43)
+
+- **Planbord › Voorstellen › Beantwoorden…** (ook bij het project › Vragen): je antwoord aan de aannemer of klant, met het vinkje *Maak er ook een taak van* (titel, wie, tegen, fase). Zonder vinkje is de vraag afgehandeld (status *beantwoord*). Een al beoordeelde vraag kan je nog (opnieuw) beantwoorden. RPC `voorstel_beantwoord` (enkel team); kolommen `taak_voorstellen.bros_antwoord`, `beantwoord_op`, `beantwoord_door`.
+- **Aannemer:** het antwoord staat onder zijn vraag in het aannemersportaal (tab Vragen, view `aan_vragen`) en hij krijgt een mail. **Klant:** het antwoord komt als bericht van BROS in zijn gesprek (tab Vragen; `assistent_berichten.rol = 'bros'`, met de naam in `afzender`) en hij krijgt een mail (nl/en). De assistent ziet het antwoord ook als context bij volgende vragen.
+- **Mail:** Drive-actie `antwoordmail` (team), één keer per antwoord. Weigeren met een reden werkt zoals voorheen.
 
 ## Afspraken ter plaatse — Google Agenda en portaal (script 041, v1.42)
 

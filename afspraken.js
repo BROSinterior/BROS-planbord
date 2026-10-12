@@ -11,7 +11,7 @@ const AFS_BROS_ADRES = (window.BROS_AGENDA && window.BROS_AGENDA.BROS_ADRES) || 
 const afsWerfAdres = (p) => p ? [p.adres, [p.postcode, p.gemeente].filter(Boolean).join(" ")].filter(Boolean).join(", ") : "";
 const afsTijd = (x) => String(x || "").slice(0, 5);
 /* label in de takenlijsten */
-const afsTag = (t) => t && t.afspraak ? ` <span class="pill" style="background:var(--blue-soft,#e6efff);color:var(--blue,#1d5bd8)" title="${esc(AFS_PLAATS[t.afspraak] + (t.afspraak_adres ? " · " + t.afspraak_adres : ""))}${t.agenda_event_id ? " · staat in de agenda" : ""}">📍 ${esc(afsTijd(t.afspraak_van))}${t.afspraak_tot ? "–" + esc(afsTijd(t.afspraak_tot)) : ""} ${t.afspraak === "werf" ? "werf" : t.afspraak === "kantoor" ? "kantoor" : "afspraak"}</span>` : "";
+const afsTag = (t) => t && t.afspraak ? ` <span class="pill" style="background:var(--accent-soft);color:var(--accent)" title="${esc(AFS_PLAATS[t.afspraak] + (t.afspraak_adres ? " · " + t.afspraak_adres : ""))}${t.agenda_event_id ? " · staat in de agenda" : ""}">📍 ${esc(afsTijd(t.afspraak_van))}${t.afspraak_tot ? "–" + esc(afsTijd(t.afspraak_tot)) : ""} ${t.afspraak === "werf" ? "werf" : t.afspraak === "kantoor" ? "kantoor" : "afspraak"}</span>` : "";
 
 /* deelnemers: klant(en) en aannemers van dit project (+ wie al aangevinkt was) */
 function afsKandidaten(pid, t) {

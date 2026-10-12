@@ -3,7 +3,7 @@
    Leest uitsluitend de klant_*-views (databasescript 011): geen kostprijzen, marges of interne notities.
    ===================================================================== */
 if (window.top !== window.self) { try { window.top.location.replace(window.location.href); } catch (e) { document.documentElement.innerHTML = ""; } }   // niet in een vreemd frame (clickjacking)
-const PORTAAL_VERSION = "1.42.0";
+const PORTAAL_VERSION = "1.43.0";
 const todayLocal = () => { const n = new Date(); return `${n.getFullYear()}-${String(n.getMonth() + 1).padStart(2, "0")}-${String(n.getDate()).padStart(2, "0")}`; };
 const safeUrl = (u) => /^https?:\/\//i.test(String(u || "")) ? u : "#";
 const cfg = window.PLANBORD_CONFIG || {};
@@ -506,7 +506,7 @@ const assistentAan = (p) => !!(D().assistent && D().assistent.actief !== false &
 function vVragen(p) {
   const msgs = (D().chat || []).filter(m => m.project_id === p.id); const cfg = D().assistent || {};
   return `<h1 style="margin-bottom:6px">Vragen</h1><p class="muted" style="margin-bottom:16px">${esc(cfg.begroeting || "Vraag gerust iets over je project. Een medewerker van BROS kijkt mee.")}</p>
-    <div class="panel"><div class="chat" id="chat">${msgs.length ? msgs.map(m => `<div class="msg ${m.rol}"><div class="bubble">${nt(m.tekst)}</div><div class="when">${m.rol === "assistent" ? "Assistent · " : ""}${fmtLang(m.created_at.slice(0, 10))} ${m.created_at.slice(11, 16)}</div></div>`).join("") : `<div class="muted" style="padding:20px;text-align:center">Nog geen vragen gesteld. Bijvoorbeeld: <i>wanneer start de uitvoering?</i>, <i>hoeveel is er al gefactureerd?</i>, <i>welke documenten staan er klaar?</i></div>`}${S.chatBezig ? `<div class="msg assistent"><div class="bubble muted">…</div></div>` : ""}</div>
+    <div class="panel"><div class="chat" id="chat">${msgs.length ? msgs.map(m => `<div class="msg ${m.rol}"><div class="bubble">${nt(m.tekst)}</div><div class="when">${m.rol === "assistent" ? "Assistent · " : m.rol === "bros" ? `<span>BROS</span>${m.afzender ? " · " + nt(m.afzender) : ""} · ` : ""}${fmtLang(m.created_at.slice(0, 10))} ${m.created_at.slice(11, 16)}</div></div>`).join("") : `<div class="muted" style="padding:20px;text-align:center">Nog geen vragen gesteld. Bijvoorbeeld: <i>wanneer start de uitvoering?</i>, <i>hoeveel is er al gefactureerd?</i>, <i>welke documenten staan er klaar?</i></div>`}${S.chatBezig ? `<div class="msg assistent"><div class="bubble muted">…</div></div>` : ""}</div>
       <form class="chat-form" id="chatForm"><input name="vraag" placeholder="Stel je vraag over dit project…" autocomplete="off" maxlength="1500" ${S.chatBezig ? "disabled" : ""} required><button class="btn primary" type="submit" ${S.chatBezig ? "disabled" : ""}>Vragen</button></form>
       <p class="muted" style="font-size:12px;padding:0 18px 14px;margin:0">Antwoorden worden automatisch opgesteld op basis van je dossier en kunnen een vergissing bevatten; bij twijfel geldt wat BROS je bevestigt. Vragen die actie vragen, komen bij het team terecht.</p></div>`;
 }

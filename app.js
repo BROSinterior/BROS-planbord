@@ -3,7 +3,7 @@
    Statische webapp op Supabase (login, live-synchronisatie, rechten)
    ===================================================================== */
 if (window.top !== window.self) { try { window.top.location.replace(window.location.href); } catch (e) { document.documentElement.innerHTML = ""; } }   // niet in een vreemd frame (clickjacking)
-const APP_VERSION = "1.42.0";
+const APP_VERSION = "1.43.0";
 const PROJ_STATUS = { offerte: "In offerte", lopend: "Lopend", on_hold: "On hold", afgerond: "Afgerond", verloren: "Verloren" };
 const KLANTTYPE = { particulier: "Particulier", zakelijk: "Zakelijk" };
 const KLANTCODE = { particulier: "PAR", zakelijk: "ZAK" };
@@ -1504,14 +1504,17 @@ const voorstellenOpen = () => schemaV() >= 23 ? Object.values(S.taak_voorstellen
 const vsMijn = () => voorstellenOpen().filter(v => v.voorgestelde_user === S.me.id);
 const berichtenOf = (pid) => Object.values(S.assistent_berichten).filter(b => b.project_id === pid).sort((a, b) => (a.created_at || "").localeCompare(b.created_at || ""));
 const maandStart = () => { const d = new Date(); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-01`; };
+const VT_STATUS = { open: "Open", bevestigd: "Bevestigd", geweigerd: "Geweigerd", beantwoord: "Beantwoord" };
 function voorstelCard(v, withProject) {
   const p = S.projecten[v.project_id]; const wie = v.voorgestelde_user ? userById(v.voorgestelde_user).name : "—";
+  const vtAntw = schemaV() >= 42 && (v.bron === "aannemer" || !!v.bericht_id);   // antwoorden (script 042): aannemer, of klant met een gesprek
   return `<div class="panel voorstel ${v.urgentie === "hoog" ? "urgent" : ""}" style="margin-bottom:12px">
     <div class="panel-head"><div><div class="eyebrow">${v.urgentie === "hoog" ? `<span class="pill late">Dringend</span> ` : ""}${v.bron === "aannemer" ? `<span class="pill st-on_hold">Aannemer${v.contact_id && S.contacten[v.contact_id] ? " · " + esc(S.contacten[v.contact_id].naam) : ""}</span> ` : ""}${ONDERWERP[v.onderwerp] || esc(v.onderwerp)} · ${fmtLong((v.created_at || "").slice(0, 10))}${withProject && p ? ` · <a href="#" data-open="${p.id}">${esc(projName(p))}</a>` : ""}</div><h3 style="margin-top:4px">${esc(v.titel)}</h3>${v.omschrijving ? `<div class="muted" style="font-size:13px;margin-top:4px">${esc(v.omschrijving)}</div>` : ""}</div>
-      <div class="actions" style="align-self:flex-start">${v.status === "open" ? `<button class="btn sm primary" data-act="vt-ok" data-id="${v.id}">Bevestigen</button><button class="btn sm" data-act="vt-edit" data-id="${v.id}">Aanpassen…</button><button class="btn sm ghost danger" data-act="vt-nee" data-id="${v.id}">Weigeren</button>` : `<span class="pill ${v.status === "bevestigd" ? "done" : "kl"}">${v.status === "bevestigd" ? "Bevestigd" : "Geweigerd"}${v.beoordeeld_door ? " · " + esc(userById(v.beoordeeld_door).name) : ""}</span>`}</div></div>
+      <div class="actions" style="align-self:flex-start">${v.status === "open" ? `${vtAntw ? `<button class="btn sm primary" data-act="vt-antw" data-id="${v.id}">Beantwoorden…</button>` : ""}<button class="btn sm ${vtAntw ? "" : "primary"}" data-act="vt-ok" data-id="${v.id}">Bevestigen</button><button class="btn sm" data-act="vt-edit" data-id="${v.id}">Aanpassen…</button><button class="btn sm ghost danger" data-act="vt-nee" data-id="${v.id}">Weigeren</button>` : `<span class="pill ${v.status === "bevestigd" ? "done" : v.status === "beantwoord" ? "st-afgerond" : "kl"}">${VT_STATUS[v.status] || esc(v.status)}${v.beoordeeld_door ? " · " + esc(userById(v.beoordeeld_door).name) : ""}</span>${vtAntw ? `<button class="btn sm ghost" data-act="vt-antw" data-id="${v.id}" style="margin-left:6px">${v.bros_antwoord ? "Opnieuw antwoorden…" : "Antwoorden…"}</button>` : ""}`}</div></div>
     <div class="panel-body" style="display:grid;grid-template-columns:1fr 1fr;gap:12px;font-size:13px">
-      ${v.bron === "aannemer" ? `<div style="grid-column:1/-1"><div class="eyebrow">Vraag of melding van de aannemer</div><div style="white-space:pre-wrap;margin-top:4px">${esc(v.vraag) || "<span class='muted'>(geen toelichting)</span>"}</div><div class="muted" style="font-size:12px;margin-top:6px">Bevestigen maakt er een taak van; weigeren met een reden = je antwoord aan de aannemer (hij leest het in zijn portaal).</div></div>` : `<div><div class="eyebrow">Vraag van de klant</div><div style="white-space:pre-wrap;margin-top:4px">${esc(v.vraag)}</div></div>
+      ${v.bron === "aannemer" ? `<div style="grid-column:1/-1"><div class="eyebrow">Vraag of melding van de aannemer</div><div style="white-space:pre-wrap;margin-top:4px">${esc(v.vraag) || "<span class='muted'>(geen toelichting)</span>"}</div><div class="muted" style="font-size:12px;margin-top:6px">${vtAntw ? "Beantwoorden: je antwoord komt in zijn portaal en per mail (met of zonder taak). Bevestigen maakt er enkel een taak van." : "Bevestigen maakt er een taak van; weigeren met een reden = je antwoord aan de aannemer (hij leest het in zijn portaal)."}</div></div>` : `<div><div class="eyebrow">Vraag van de klant</div><div style="white-space:pre-wrap;margin-top:4px">${esc(v.vraag)}</div></div>
       <div><div class="eyebrow">Antwoord van de assistent</div><div style="white-space:pre-wrap;margin-top:4px;color:var(--ink-2)">${esc(v.antwoord)}</div></div>`}
+      ${v.bros_antwoord ? `<div style="grid-column:1/-1;border-left:3px solid var(--accent);padding:6px 10px;background:var(--accent-soft);border-radius:6px"><div class="eyebrow">Antwoord van BROS${v.beantwoord_door ? " · " + esc(userById(v.beantwoord_door).name) : ""}${v.beantwoord_op ? " · " + fmtLong(v.beantwoord_op.slice(0, 10)) : ""}</div><div style="white-space:pre-wrap;margin-top:4px">${esc(v.bros_antwoord)}</div></div>` : ""}
       <div class="muted" style="grid-column:1/-1">Voorgesteld: <b>${esc(wie)}</b>${v.eind ? ` · tegen ${fmtLong(v.eind)}` : ""}${v.taak_id && S.taken[v.taak_id] ? ` · <a href="#" data-edit-task="${v.taak_id}">taak openen</a>` : ""}${v.reden ? ` · reden: ${esc(v.reden)}` : ""}</div>
     </div></div>`;
 }
@@ -1519,7 +1522,7 @@ function vVoorstellen() {
   if (schemaV() < 23) return `<div class="page-head"><div><h1>Voorstellen</h1></div></div>` + SCHEMA_HINT(23);
   const open = voorstellenOpen().sort((a, b) => (a.urgentie === "hoog" ? 0 : 1) - (b.urgentie === "hoog" ? 0 : 1) || (a.created_at || "").localeCompare(b.created_at || ""));
   const rest = Object.values(S.taak_voorstellen).filter(v => v.status !== "open").sort((a, b) => (b.beoordeeld_op || "").localeCompare(a.beoordeeld_op || "")).slice(0, 30);
-  return `<div class="page-head"><div><div class="eyebrow">${open.length} open</div><h1>Voorstellen</h1><div class="sub">Vragen van klanten aan de assistent en vragen of meldingen van aannemers uit hun portaal, waar BROS iets voor moet doen. Bevestigen maakt er een taak van; aanpassen laat je titel, wie en datum kiezen; weigeren sluit het af (bij een aannemer is je reden meteen het antwoord dat hij te zien krijgt).</div></div></div>
+  return `<div class="page-head"><div><div class="eyebrow">${open.length} open</div><h1>Voorstellen</h1><div class="sub">Vragen van klanten aan de assistent en vragen of meldingen van aannemers uit hun portaal, waar BROS iets voor moet doen. ${schemaV() >= 42 ? "Beantwoorden stuurt je antwoord naar de aannemer of klant (in het portaal én per mail), met of zonder taak; bevestigen maakt er een taak van; aanpassen laat je titel, wie en datum kiezen; weigeren sluit het af." : "Bevestigen maakt er een taak van; aanpassen laat je titel, wie en datum kiezen; weigeren sluit het af (bij een aannemer is je reden meteen het antwoord dat hij te zien krijgt)."}</div></div></div>
     ${open.length ? open.map(v => voorstelCard(v, true)).join("") : `<div class="panel"><div class="empty"><b>Geen open voorstellen</b>Alles is beoordeeld.</div></div>`}
     ${rest.length ? `<details style="margin-top:16px"><summary class="muted" style="cursor:pointer">Beoordeeld (${rest.length})</summary><div style="margin-top:10px">${rest.map(v => voorstelCard(v, true)).join("")}</div></details>` : ""}`;
 }
@@ -1528,7 +1531,7 @@ function vVragenProject(p) {
   const msgs = berichtenOf(p.id); const vs = Object.values(S.taak_voorstellen).filter(v => v.project_id === p.id).sort((a, b) => (b.created_at || "").localeCompare(a.created_at || ""));
   const cfg = aiCfg(); const nMaand = msgs.filter(m => m.rol === "klant" && (m.created_at || "") >= maandStart()).length; const kost = msgs.reduce((s, m) => s + (Number(m.kost) || 0), 0);
   return `<div class="panel" style="margin-bottom:16px"><div class="panel-head"><div><h3>Vragen van de klant aan de assistent</h3><div class="muted" style="font-size:12px;margin-top:2px">${msgs.length ? `${msgs.filter(m => m.rol === "klant").length} vragen · ${nMaand} deze maand${cfg.plafond_project ? ` van ${cfg.plafond_project}` : ""} · ca. € ${kost.toFixed(2)} modelkost` : "Nog geen vragen gesteld"}${p.assistent === false ? ` · <span class="pill late">assistent uit voor dit project</span>` : ""}</div></div></div>
-    ${msgs.length ? `<div class="chat">${msgs.map(m => `<div class="msg ${m.rol}"><div class="bubble">${esc(m.tekst)}</div><div class="when">${m.rol === "assistent" ? "Assistent · " : "Klant · "}${fmtLong((m.created_at || "").slice(0, 10))} ${(m.created_at || "").slice(11, 16)}</div></div>`).join("")}</div>` : `<div class="empty">De klant heeft nog niets gevraagd in het portaal.</div>`}</div>
+    ${msgs.length ? `<div class="chat">${msgs.map(m => `<div class="msg ${m.rol}"><div class="bubble">${esc(m.tekst)}</div><div class="when">${m.rol === "assistent" ? "Assistent · " : m.rol === "bros" ? "BROS" + (m.afzender ? " (" + esc(m.afzender) + ")" : "") + " · " : "Klant · "}${fmtLong((m.created_at || "").slice(0, 10))} ${(m.created_at || "").slice(11, 16)}</div></div>`).join("")}</div>` : `<div class="empty">De klant heeft nog niets gevraagd in het portaal.</div>`}</div>
     ${vs.length ? `<h3 style="margin:0 0 10px">Taakvoorstellen (${vs.filter(v => v.status === "open").length} open)</h3>` + vs.map(v => voorstelCard(v)).join("") : ""}`;
 }
 async function voorstelBevestig(id, extra = {}) {
@@ -1545,6 +1548,34 @@ function voorstelForm(v) {
     <div class="field"><label for="vt_fase">Fase</label><select id="vt_fase" name="fase"><option value="">— huidige fase van het project —</option>${opts(fasenList().map(f => [f.nr, f.nr + " · " + f.naam]), p?.fase_nr || "")}</select></div>
     <div class="field span2"><div class="muted" style="font-size:13px"><b>Vraag:</b> ${esc(v.vraag)}<br><b>Antwoord:</b> ${esc(v.antwoord)}</div></div>
   </div>`, { saveLabel: "Bevestigen", onSave: async (d) => { await voorstelBevestig(v.id, { titel: d.titel.trim(), assignee: d.assignee || null, eind: d.eind || null, fase: d.fase ? Number(d.fase) : null }); } });
+}
+/* antwoorden (script 042): het antwoord gaat naar het portaal (aannemer: onder zijn vraag; klant: in zijn gesprek) en per mail */
+function voorstelAntwoordForm(v) {
+  const p = S.projecten[v.project_id]; const open = v.status === "open"; const wie = v.bron === "aannemer" ? (S.contacten[v.contact_id]?.naam || "de aannemer") : "de klant";
+  openModal((v.bros_antwoord ? "Opnieuw antwoorden" : "Beantwoorden") + " — " + v.titel, `<div class="form-grid">
+    <div class="field span2"><div class="muted" style="font-size:13px;white-space:pre-wrap"><b>Vraag van ${esc(wie)}:</b> ${esc(v.vraag || v.titel)}</div>${v.bros_antwoord ? `<div class="muted" style="font-size:13px;margin-top:6px;white-space:pre-wrap"><b>Vorig antwoord:</b> ${esc(v.bros_antwoord)}</div>` : ""}</div>
+    <div class="field span2"><label for="va_tekst">Je antwoord aan ${esc(wie)}</label><textarea id="va_tekst" name="antwoord" rows="6" required placeholder="bv. De BA-verzekering staat in de aannemingsmodaliteiten (Documenten). Orde en netheid: dagelijks opruimen, container voorzien door BROS."></textarea>
+      <small class="muted">${v.bron === "aannemer" ? "Hij leest het onder zijn vraag in het aannemersportaal en krijgt een mail." : "Het komt als bericht van BROS in zijn gesprek in het klantenportaal, en hij krijgt een mail."}</small></div>
+    ${open ? `<div class="field span2"><label class="sw-row"><input type="checkbox" class="sw" name="taak" value="1"><span><b>Maak er ook een taak van</b><small class="muted" style="display:block">Zonder vinkje is de vraag met dit antwoord afgehandeld.</small></span></label></div>
+    <div class="field span2 va-taak" hidden><div class="form-grid">
+      <div class="field span2"><label for="va_titel">Taak</label><input id="va_titel" name="titel" value="${esc(v.titel)}"></div>
+      <div class="field"><label for="va_wie">Wie</label><select id="va_wie" name="assignee">${userOpts(v.voorgestelde_user || S.me.id)}</select></div>
+      <div class="field"><label for="va_eind">Tegen</label><input id="va_eind" name="eind" type="date" value="${esc(v.eind || "")}"></div>
+      <div class="field"><label for="va_fase">Fase</label><select id="va_fase" name="fase"><option value="">— huidige fase van het project —</option>${opts(fasenList().map(f => [f.nr, f.nr + " · " + f.naam]), p?.fase_nr || "")}</select></div></div></div>` : ""}
+  </div>`, { wide: true, saveLabel: "Antwoord versturen", onSave: async (d) => {
+    const tekst = (d.antwoord || "").trim(); if (tekst.length < 2) { toast("Schrijf een antwoord."); return false; }
+    const taak = open && !!d.taak;
+    const { data, error } = await sb.rpc("voorstel_beantwoord", { p_id: v.id, p_antwoord: tekst, p_taak: taak, p_titel: taak ? (d.titel || "").trim() || null : null, p_assignee: taak ? d.assignee || null : null, p_eind: taak ? d.eind || null : null, p_fase: taak && d.fase ? Number(d.fase) : null });
+    if (error) { toast("Antwoorden mislukt: " + error.message, 6000); return false; }
+    if (data) S.taak_voorstellen[data.id] = data; if (data && data.taak_id) rowRefetch("taken", data.taak_id).catch(() => refetch("taken"));
+    if (v.bron !== "aannemer") refetch("assistent_berichten").catch(() => { });
+    render();
+    let mail = "";
+    if (driveReady()) { try { const j = await driveCall("antwoordmail", { id: v.id }); mail = j && j.naar ? " · gemaild naar " + j.naar : j && j.waarschuwing ? " · " + j.waarschuwing : ""; } catch (e) { mail = " · mail niet verstuurd: " + (e.message || e); } }
+    else mail = " · niet gemaild (Drive-script niet ingesteld)";
+    toast((taak ? "Beantwoord en taak gemaakt" : "Beantwoord") + mail, 7000);
+  } });
+  const f = $("#mform"); const cb = f.querySelector('[name="taak"]'); if (cb) cb.addEventListener("change", () => { f.querySelector(".va-taak").hidden = !cb.checked; });
 }
 async function voorstelWeiger(id) {
   const v = S.taak_voorstellen[id]; const reden = prompt(v && v.bron === "aannemer" ? "Antwoord aan de aannemer (hij leest dit in zijn portaal):" : "Reden (optioneel, komt in het logboek):", ""); if (reden === null) return;
@@ -3309,6 +3340,7 @@ document.addEventListener("click", (e) => {
   if (d.act === "vt-ok") { voorstelBevestig(d.id).catch(() => { }); return; }
   if (d.act === "vt-edit") { const v = S.taak_voorstellen[d.id]; if (v) voorstelForm(v); return; }
   if (d.act === "vt-nee") return voorstelWeiger(d.id);
+  if (d.act === "vt-antw") { const v = S.taak_voorstellen[d.id]; if (v) voorstelAntwoordForm(v); return; }
   if (d.act === "portaal-invite") return portaalInviteForm(d.cid, d.pid, d.rol || "klant");
   if (d.act === "drive-test") return driveCall("ping", {}).then(j => toast(`OK — mappen: ${j.projecten} / ${j.sjabloon}`)).catch(err => toast("Drive: " + err.message));
   if (d.selfase) { S.selFase = Number(d.selfase); return render(); }

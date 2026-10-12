@@ -4,7 +4,7 @@
    nooit prijzen van BROS of van andere aannemers. Schrijven gaat via functies (opgelost melden, prijzen, vragen).
    ===================================================================== */
 if (window.top !== window.self) { try { window.top.location.replace(window.location.href); } catch (e) { document.documentElement.innerHTML = ""; } }   // niet in een vreemd frame (clickjacking)
-const PORTAAL_VERSION = "1.42.0";
+const PORTAAL_VERSION = "1.43.0";
 const todayLocal = () => { const n = new Date(); return `${n.getFullYear()}-${String(n.getMonth() + 1).padStart(2, "0")}-${String(n.getDate()).padStart(2, "0")}`; };
 const safeUrl = (u) => /^https?:\/\//i.test(String(u || "")) ? u : "#";
 const cfg = window.PLANBORD_CONFIG || {};
@@ -24,7 +24,7 @@ const fmtLang = (s) => { if (!s) return "—"; const d = new Date(s.slice(0, 10)
 const PROJ_STATUS = { offerte: "In offerte", lopend: "In uitvoering", on_hold: "Even gepauzeerd", afgerond: "Opgeleverd", verloren: "Niet doorgegaan" };
 const VS_STATUS = { open: "Open", opgelost: "Opgelost — wacht op controle", gecontroleerd: "Gecontroleerd", vervallen: "Vervallen" };
 const PA_STATUS = { open: "In te vullen", ingediend: "Ingediend", gekozen: "Gegund", afgesloten: "Afgesloten", niet_weerhouden: "Niet weerhouden" };
-const VR_STATUS = { open: "In behandeling", bevestigd: "Opgenomen als taak", geweigerd: "Beantwoord / niet weerhouden" };
+const VR_STATUS = { open: "In behandeling", bevestigd: "Opgenomen als taak", geweigerd: "Niet weerhouden", beantwoord: "Beantwoord" };
 const ONDERWERP = { planning: "Planning en uitvoering", documenten: "Plannen en documenten", ontwerp: "Ontwerp en materialen", facturatie: "Facturatie", klacht: "Probleem op de werf", overig: "Iets anders" };
 const ROL = { aannemer: "Aannemer", leverancier: "Leverancier", architect: "Architect", studiebureau: "Studiebureau", andere: "Andere" };
 const URL_AUTH = (() => {
@@ -447,7 +447,7 @@ function vVragen(p) {
         <div class="field"><label for="vr_titel">Kort samengevat</label><input id="vr_titel" name="titel" required maxlength="120" placeholder="bv. Startdatum plaatsing keuken bevestigen"></div>
         <div class="field"><label for="vr_tekst">Toelichting</label><textarea id="vr_tekst" name="tekst" rows="4" placeholder="Wat wil je weten of melden? Vermeld ruimte, lot of plan als dat helpt."></textarea></div>
         <button class="btn primary" type="submit" ${S.bezig ? "disabled" : ""}>${S.bezig ? "Bezig…" : "Versturen naar BROS"}</button></form></div></div>
-      ${vr.length ? `<div class="panel"><div class="panel-head"><h2>Je eerdere vragen</h2></div><table class="t"><tbody>${vr.map(v => `<tr><td><b>${esc(v.titel)}</b><div class="muted" style="font-size:13px">${fmt(v.created_at)} · ${ONDERWERP[v.onderwerp] || esc(v.onderwerp)}</div>${v.vraag ? `<div style="font-size:13px;margin-top:4px;white-space:pre-line">${esc(v.vraag)}</div>` : ""}${v.status === "geweigerd" && v.reden ? `<div style="font-size:13px;margin-top:6px;padding:8px 10px;background:var(--surface-2);border-radius:8px"><b>Antwoord van BROS:</b> ${esc(v.reden)}</div>` : ""}</td><td style="width:1%"><span class="pill ${v.status}">${VR_STATUS[v.status] || esc(v.status)}</span></td></tr>`).join("")}</tbody></table></div>` : ""}
+      ${vr.length ? `<div class="panel"><div class="panel-head"><h2>Je eerdere vragen</h2></div><table class="t"><tbody>${vr.map(v => `<tr><td><b>${esc(v.titel)}</b><div class="muted" style="font-size:13px">${fmt(v.created_at)} · ${ONDERWERP[v.onderwerp] || esc(v.onderwerp)}</div>${v.vraag ? `<div style="font-size:13px;margin-top:4px;white-space:pre-line">${esc(v.vraag)}</div>` : ""}${v.bros_antwoord ? `<div style="font-size:13px;margin-top:6px;padding:8px 10px;background:var(--blue-soft);border-left:3px solid var(--blue);border-radius:8px"><b>Antwoord van BROS${v.beantwoord_naam ? " (" + esc(v.beantwoord_naam) + ")" : ""}${v.beantwoord_op ? " · " + fmt(v.beantwoord_op) : ""}:</b><div style="white-space:pre-line;margin-top:2px">${esc(v.bros_antwoord)}</div></div>` : ""}${v.status === "geweigerd" && v.reden ? `<div style="font-size:13px;margin-top:6px;padding:8px 10px;background:var(--surface-2);border-radius:8px"><b>${v.bros_antwoord ? "Reden" : "Antwoord van BROS"}:</b> ${esc(v.reden)}</div>` : ""}</td><td style="width:1%"><span class="pill ${v.status}">${VR_STATUS[v.status] || esc(v.status)}</span></td></tr>`).join("")}</tbody></table></div>` : ""}
     </div><div class="stack">
       <div class="panel"><div class="panel-head"><h2>Jouw actiepunten</h2><span class="muted" style="font-size:13px">${tk.filter(t => t.status !== "done").length} open</span></div>${tk.length ? `<table class="t"><tbody>${tk.map(t => `<tr style="${t.status === "done" ? "opacity:.55" : ""}"><td style="width:34px"><input type="checkbox" data-taak="${t.id}" ${t.status === "done" ? "checked" : ""} style="width:18px;height:18px"></td><td>${esc(t.titel)}${t.notitie_titel ? `<div class="muted" style="font-size:12px">uit: ${esc(t.notitie_titel)}</div>` : ""}</td><td class="num muted" style="font-size:13px;${t.status !== "done" && t.eind && t.eind < todayLocal() ? "color:var(--crit)" : ""}">${t.eind ? fmt(t.eind) : ""}</td></tr>`).join("")}</tbody></table>` : `<div class="empty"><b>Geen actiepunten</b>Afspraken uit verslagen die BROS aan jou toewijst, staan hier.</div>`}</div>
     </div></div>`;

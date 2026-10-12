@@ -52,7 +52,8 @@ function doPost(e) {
     if (body.action === "notitiemail") return json(notitieMail(body));
     if (body.action === "assistentmail") return json(assistentMail(body));   // vanuit de Edge Function (secret), melding aan de verantwoordelijke
     if (body.action === "werfverslagmail") return json(werfverslagMail(body));
-    if (body.action === "afspraak") return json(afspraakSync(body));   // afspraken ter plaatse (script 041): Google Agenda van brosburo + mail met agendabestand aan de deelnemers
+    if (body.action === "afspraak") return json(afspraakSync(body));
+    if (body.action === "antwoordmail") return json(antwoordMail(body));   // vragen beantwoorden (script 042): mail met het antwoord aan de aannemer of klant   // afspraken ter plaatse (script 041): Google Agenda van brosburo + mail met agendabestand aan de deelnemers
     return json({ ok: false, error: "Onbekende actie." });
   } catch (err) {
     const msg = String(err && err.message || err); console.error(msg);
@@ -652,6 +653,44 @@ function afspraakSyncIn(body, id) {
   }
   if (Object.keys(patch).length) pbAdmin("/rest/v1/taken?id=eq." + t.id, "patch", patch);
   return res;
+}
+/* =====================================================================
+   Vragen beantwoorden (script 042): BROS antwoordt in het Planbord (voorstel_beantwoord); dit mailt het antwoord
+   naar de aannemer (contact van de vraag) of de klant (login van het gesprek met de assistent).
+   ===================================================================== */
+function antwoordMail(body) {
+  const wie = caller(body.token, false);
+  const v = (pbAdmin("/rest/v1/taak_voorstellen?id=eq." + uuid(body.id) + "&select=*", "get") || [])[0];
+  if (!v || !String(v.bros_antwoord || "").trim()) return { ok: false, error: "Geen antwoord gevonden bij deze vraag." };
+  if (!eenmalig("antw:" + v.id + ":" + v.beantwoord_op, 21600)) return { ok: true, naar: "" };   // dit antwoord werd al gemaild
+  const p = (pbAdmin("/rest/v1/projecten?id=eq." + v.project_id + "&select=nummer,klant,naam", "get") || [])[0] || {};
+  let c = null, url = PORTAAL.URL;
+  if (v.bron === "aannemer") {
+    if (v.contact_id) c = (pbAdmin("/rest/v1/contacten?id=eq." + v.contact_id + "&select=naam,contactpersoon,email,taal", "get") || [])[0] || null;
+    url = PORTAAL.URL_AANNEMER;
+  } else if (v.bericht_id) {
+    const b = (pbAdmin("/rest/v1/assistent_berichten?id=eq." + v.bericht_id + "&select=gesprek_id", "get") || [])[0];
+    const g = b ? (pbAdmin("/rest/v1/assistent_gesprekken?id=eq." + b.gesprek_id + "&select=user_id,contact_id", "get") || [])[0] : null;
+    if (g) {
+      c = (pbAdmin("/rest/v1/contacten?" + (g.contact_id ? "id=eq." + g.contact_id : "user_id=eq." + g.user_id) + "&select=naam,contactpersoon,email,taal&limit=1", "get") || [])[0] || null;
+      if (!c || !c.email) { const pr = (pbAdmin("/rest/v1/profiles?id=eq." + g.user_id + "&select=name,email", "get") || [])[0]; if (pr && pr.email) c = { naam: (c && c.naam) || pr.name || "", email: pr.email, taal: c && c.taal }; }
+    }
+  }
+  const email = c && String(c.email || "").trim();
+  if (!email || !/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email)) return { ok: true, naar: "", waarschuwing: "geen e-mailadres gekend — enkel in het portaal" };
+  const en = String(c.taal || "") === "en"; const naam = c.contactpersoon || c.naam || "";
+  const proj = (p.nummer ? p.nummer + " · " : "") + (p.klant || "") + (p.naam && p.naam !== p.klant ? " · " + p.naam : "");
+  const vraag = String(v.vraag || v.titel || "").trim();
+  const html = "<div style=\"font-family:Helvetica,Arial,sans-serif;font-size:15px;line-height:1.5;color:#1B1E1C;max-width:640px\"><p>" + (en ? "Dear " : "Beste ") + H(naam) + ",</p>"
+    + "<p>" + (en ? "Here is our answer to your question" : "Hierbij ons antwoord op je vraag") + (v.bron === "aannemer" && proj ? " (" + H(proj) + ")" : "") + ":</p>"
+    + (vraag ? "<p style=\"padding:8px 12px;border-left:3px solid #DAD8D0;color:#767D78;white-space:pre-line\">" + H(vraag.slice(0, 1500)) + "</p>" : "")
+    + "<p style=\"white-space:pre-line\">" + H(v.bros_antwoord) + "</p>"
+    + "<p style=\"margin:24px 0\"><a href=\"" + url + "\" style=\"background:#1B1E1C;color:#fff;text-decoration:none;padding:12px 20px;border-radius:8px;font-weight:600;display:inline-block\">" + (en ? "Open your portal" : "Naar je portaal") + "</a></p>"
+    + "<p>" + H(wie.name) + " — BROS</p></div>";
+  const tekst = (en ? "Dear " : "Beste ") + naam + ",\n\n" + (en ? "Here is our answer to your question:" : "Hierbij ons antwoord op je vraag:") + "\n\n" + (vraag ? "> " + vraag.slice(0, 1500).replace(/\n/g, "\n> ") + "\n\n" : "") + v.bros_antwoord + "\n\n" + url + "\n\n" + wie.name + " — BROS";
+  try { portaalMail(email, (en ? "Reply from BROS: " : "Antwoord van BROS: ") + (v.titel || ""), tekst, html); }
+  catch (e) { CacheService.getScriptCache().remove("q:1:antw:" + v.id + ":" + v.beantwoord_op); throw e; }   // mislukt: later opnieuw kunnen proberen
+  return { ok: true, naar: email };
 }
 /** Verslag gedeeld met de klant: mail met het verslag en de actiepunten naar de klanten met portaal-toegang. */
 function notitieMail(body) {
