@@ -308,7 +308,7 @@ function tmForm() {
       const w = window.open("about:blank", "_blank");
       const { error } = await sb.rpc("voorbeeld_start", { p_contact: cid, p_rol: rol });
       if (error) { if (w) w.close(); toast("Testmodus niet gestart: " + error.message, 7000); return false; }
-      const url = (rol === "klant" ? "klant/" : "aannemer/") + "?voorbeeld=" + rol + "&c=" + encodeURIComponent(cid);
+      const url = (rol === "klant" ? "klant/" : "aannemer/") + "?voorbeeld=" + rol + "&c=" + encodeURIComponent(cid) + (rol === "aannemer" && pid ? "&p=" + encodeURIComponent(pid) : "");   // aannemer: meteen het gekozen project (1.46)
       if (w) w.location = url; else window.open(url, "_blank");
       toast(`Testmodus: ${rol === "klant" ? "klantenportaal" : "aannemersportaal"} als ${S.contacten[cid]?.naam || "contact"}`);
     } });

@@ -192,6 +192,25 @@
   .lb { position: fixed; inset: 0; background: rgba(0,0,0,.92); display: none; place-items: center; z-index: 70; cursor: zoom-out; }
   .lb.show { display: grid; } .lb img { max-width: 100vw; max-height: 100vh; }
   .back { background: none; border: 0; color: var(--blue); font: inherit; font-size: 15px; padding: 0 0 12px; cursor: pointer; }
+  /* ---- 1.46: projectenlijst en projectbalk ---- */
+  .projbar { max-width: 1080px; margin: 0 auto; padding: 2px 20px 0; display: flex; align-items: baseline; gap: 12px; min-width: 0; }
+  .projbar .terug { flex: none; background: none; border: 0; color: var(--blue); font: inherit; font-size: 14px; font-weight: 600; padding: 4px 0; cursor: pointer; }
+  .projbar .pt { min-width: 0; font-size: 14px; font-weight: 600; color: var(--ink); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .pcards { display: grid; grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); gap: 12px; }
+  .pcard { background: var(--surface); border: 1px solid var(--line); border-radius: 16px; box-shadow: var(--card); display: flex; flex-direction: column; overflow: hidden; }
+  .pcard.laat { border-color: var(--crit); }
+  .pcard .pk { position: relative; display: flex; flex-direction: column; gap: 2px; text-align: left; background: none; border: 0; font: inherit; color: inherit; padding: 14px 40px 10px 16px; cursor: pointer; }
+  .pcard .pk:hover { background: var(--surface-2); }
+  .pcard .pk .nr { font-family: var(--font-mono); font-size: 12px; color: var(--muted); }
+  .pcard .pk b { font-size: 16px; line-height: 1.3; }
+  .pcard .pk small { font-size: 13px; color: var(--muted); }
+  .pcard .pk .pijl { position: absolute; right: 16px; top: 50%; transform: translateY(-50%); font-size: 26px; color: var(--muted); }
+  .pchips { display: flex; flex-wrap: wrap; gap: 6px; padding: 0 16px 14px; }
+  .pchips .chip { padding: 4px 11px; font-size: 12px; }
+  .pchips .chip.let { border-color: var(--blue); color: var(--blue); }
+  .pchips .chip.laat { border-color: var(--crit); color: var(--crit); background: var(--crit-soft); }
+  details.afg { margin-top: 22px; } details.afg summary { cursor: pointer; font-weight: 600; color: var(--ink-2); }
+  @media (max-width: 640px) { .projbar { padding: 2px 14px 0; } .pcards { grid-template-columns: 1fr; } }
   .meta { color: var(--muted); font-size: 14px; } .meta b { color: var(--ink); }
   .field select { font: inherit; padding: 11px 13px; border: 1px solid var(--line-2); border-radius: 10px; background: var(--surface); color: var(--ink); }
   .grid2 { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 12px; }
@@ -208,6 +227,6 @@
 <script src="../config.js?v=1.34.0"></script>
 <script src="../portaal-voorbeeld.js?v=1.42.0"></script>
 <script src="../agenda.js?v=1.42.0"></script>
-<script src="aannemer.js?v=1.45.0"></script>
+<script src="aannemer.js?v=1.46.0"></script>
 </body>
 </html>

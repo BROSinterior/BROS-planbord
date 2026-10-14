@@ -4,7 +4,7 @@
    nooit prijzen van BROS of van andere aannemers. Schrijven gaat via functies (opgelost melden, prijzen, vragen).
    ===================================================================== */
 if (window.top !== window.self) { try { window.top.location.replace(window.location.href); } catch (e) { document.documentElement.innerHTML = ""; } }   // niet in een vreemd frame (clickjacking)
-const PORTAAL_VERSION = "1.45.0";
+const PORTAAL_VERSION = "1.46.0";
 const todayLocal = () => { const n = new Date(); return `${n.getFullYear()}-${String(n.getMonth() + 1).padStart(2, "0")}-${String(n.getDate()).padStart(2, "0")}`; };
 const safeUrl = (u) => /^https?:\/\//i.test(String(u || "")) ? u : "#";
 const cfg = window.PLANBORD_CONFIG || {};
@@ -36,7 +36,8 @@ const URL_AUTH = (() => {
   return { type: p.get("type") || "", error: err };
 })();
 
-const S = { session: null, me: null, ready: false, loadError: null, setPassword: false, tab: "overzicht", project: null, data: null, vsFilter: "open", detail: null, aanvraag: null, nieuw: [], bezig: false };
+const START_P = (() => { const v = new URLSearchParams(location.search).get("p") || ""; return /^[\w-]{1,64}$/.test(v) ? v : null; })();   // ?p=<project> opent meteen dat project
+const S = { session: null, me: null, ready: false, loadError: null, setPassword: false, tab: "overzicht", project: START_P, data: null, vsFilter: "open", detail: null, aanvraag: null, nieuw: [], bezig: false };
 let loginNotice = URL_AUTH.error ? (/expired|invalid|otp/i.test(URL_AUTH.error) ? "Deze link is vervallen of al gebruikt. Log in met je wachtwoord, of vraag hieronder een nieuwe link aan." : "Er ging iets mis met de link: " + URL_AUTH.error) : "";
 function toast(msg, ms = 3500) { const t = document.createElement("div"); t.className = "toast"; t.textContent = msg; document.body.appendChild(t); setTimeout(() => t.remove(), ms); }
 
@@ -65,7 +66,9 @@ async function loadAll() {
   S.data = { projecten: projecten.sort((a, b) => (b.nummer || "").localeCompare(a.nummer || "")), vs: vs.sort((a, b) => (b.nr || 0) - (a.nr || 0)), plannen: plannen.sort((a, b) => (a.volgorde || 0) - (b.volgorde || 0)),
     verslagen: verslagen.sort((a, b) => (b.nr || 0) - (a.nr || 0)), documenten, planning, planTaken, taken, aanvragen: aanvragen.sort((a, b) => (b.created_at || "").localeCompare(a.created_at || "")), aanvraagPosten, vragen: vragen.sort((a, b) => (b.created_at || "").localeCompare(a.created_at || "")),
     afspraken, team, ik, meetstaat, prijzenMs, fasen: fasen.filter(f => f.actief !== false).sort((a, b) => a.nr - b.nr), loten: Object.fromEntries(loten.map(l => [l.nr, l])), inst };
-  if (!S.project || !projecten.some(p => p.id === S.project)) S.project = (projecten.find(p => !p.kandidaat) || projecten[0])?.id || null;
+  // 1.46: met meer dan één project start het portaal op de projectenlijst (S.project = null); met één project meteen dat project
+  if (S.project && !projecten.some(p => p.id === S.project)) { S.project = null; S.detail = null; S.aanvraag = null; }
+  if (!S.project && projecten.length === 1) S.project = projecten[0].id;
   sb.rpc("portaal_bezoek").then(() => { });
 }
 const D = () => S.data;
@@ -108,15 +111,72 @@ function render() {
   if (S.voorbeeldFout) { $("#app").innerHTML = VB.foutHtml("Aannemersportaal"); return; }
   if (S.me && S.me.role !== "aannemer") { $("#app").innerHTML = `<div class="login"><div class="card"><div class="brand" style="margin-bottom:14px"><span class="mark">BROS</span><span class="name">Aannemersportaal</span></div><h1>Dit is het aannemersportaal</h1><p>Je bent ingelogd als ${S.me.role === "klant" ? "klant" : "teamlid"} (${esc(S.me.email || "")}).</p><p><a class="btn primary" href="${S.me.role === "klant" ? "../klant/" : "../"}">${S.me.role === "klant" ? "Naar het klantenportaal" : "Naar het Planbord"}</a> <button class="btn ghost" data-act="logout">Uitloggen</button></p></div></div>`; return; }
   if (!D().projecten.length) { $("#app").innerHTML = `<div class="login"><div class="card"><div class="brand" style="margin-bottom:14px"><span class="mark">BROS</span><span class="name">Aannemersportaal</span></div><h1>Nog geen project gekoppeld</h1><p>Je login werkt, maar er is nog geen project aan je gekoppeld. Laat het ons weten via ${esc(D().inst.contact_email || "info@bros.be")}.</p><p><button class="btn ghost" data-act="logout">Uitloggen</button></p></div></div>`; return; }
+  if (!P()) { renderHome(); return navBewaar(); }
   const p = P(); const vs = vsOf(p.id);
   const nOpen = vs.filter(v => v.status === "open" && !v.te_beoordelen && v.aan_mij !== false).length, nPa = D().aanvragen.filter(a => a.project_id === p.id && a.status === "open").length, nTk = D().taken.filter(t => t.project_id === p.id && !t.vaststelling_id && t.status !== "done").length;
   const badge = (n) => n ? ` <span class="badge">${n}</span>` : "";
   if (p.kandidaat) S.tab = "prijzen";
   const tabs = p.kandidaat ? [["prijzen", "Prijsaanvragen" + badge(nPa)]] : [["overzicht", "Overzicht"], ["werf", "Werfpunten" + badge(nOpen)], ["prijzen", "Prijsaanvragen" + badge(nPa)], ...(msOf(p.id).length || mpOf(p.id).length ? [["meetstaat", "Meetstaat" + badge(mpOf(p.id).filter(m => m.status === "gedeeld").length)]] : []), ["plannen", "Plannen"], ["documenten", "Documenten"], ["planning", "Planning"], ["vragen", "Vragen" + badge(nTk)], ["team", "Wie is wie"]];
   $("#app").innerHTML = `<header class="top"><div class="top-in"><div class="brand"><span class="mark">BROS</span><span class="name">Aannemersportaal</span></div>
-      <div class="who">${D().projecten.length > 1 ? `<select id="projSel" class="btn sm">${D().projecten.map(x => `<option value="${x.id}" ${x.id === p.id ? "selected" : ""}>${esc(x.nummer ? x.nummer + " · " : "")}${esc(x.kandidaat ? "prijsvraag" + (x.gemeente ? " · " + x.gemeente : "") : x.klant || x.naam)}</option>`).join("")}</select>` : ""}<span>${esc(S.me?.name || "")}</span><button class="btn ghost sm" data-act="logout">Uitloggen</button></div></div>
+      <div class="who"><span>${esc(S.me?.name || "")}</span><button class="btn ghost sm" data-act="logout">Uitloggen</button></div></div>
+    ${D().projecten.length > 1 ? `<div class="projbar"><button class="terug" data-act="home">‹ Alle projecten <span class="muted">(${D().projecten.length})</span></button><span class="pt">${esc(p.nummer || "")}${p.nummer ? " · " : ""}${projTitel(p)}</span></div>` : ""}
     <nav class="tabs">${tabs.map(([k, l]) => `<button class="${S.tab === k ? "on" : ""}" data-tab="${k}">${l}</button>`).join("")}</nav></header>
     <main>${(({ overzicht: vOverzicht, werf: vWerf, prijzen: vPrijzen, meetstaat: vMeetstaat, plannen: vPlannen, documenten: vDocumenten, planning: vPlanning, vragen: vVragen, team: vTeam })[S.tab] || vOverzicht)(p)}</main>`;
+  window.scrollTo({ top: 0 });
+  navBewaar();
+}
+/* ---------- 1.46: projectenlijst + terugknop van de telefoon/browser ---------- */
+const navNu = () => ({ project: S.project || null, tab: S.project ? S.tab : null, detail: S.project ? S.detail || null : null, aanvraag: S.project ? S.aanvraag || null : null });
+const navSleutel = (n) => [n.project, n.tab, n.detail, n.aanvraag].join("|");
+function navBewaar() {   // elke stap (project, tabblad, punt) wordt een stap in de geschiedenis: "terug" brengt je terug i.p.v. het portaal te verlaten
+  try {
+    const nu = navNu(), oud = history.state && history.state.bros;
+    if (!oud || S.navHerstel) history.replaceState({ ...(history.state || {}), bros: nu }, "");
+    else if (navSleutel(oud) !== navSleutel(nu)) history.pushState({ bros: nu }, "");
+  } catch (e) { }
+  S.navHerstel = false;
+}
+window.addEventListener("popstate", (e) => {
+  const n = e.state && e.state.bros; if (!n || !S.ready || !S.data) return;
+  try { if (document.activeElement && document.activeElement !== document.body) document.activeElement.blur(); } catch (x) { }   // een net getypte prijs of opmerking eerst bewaren (change-event)
+  S.nieuw.forEach(f => URL.revokeObjectURL(f.url)); S.nieuw = []; S.opm = "";
+  S.project = n.project && D().projecten.some(p => p.id === n.project) ? n.project : (D().projecten.length === 1 ? D().projecten[0].id : null);
+  S.tab = n.tab || "overzicht"; S.detail = n.detail || null; S.aanvraag = n.aanvraag || null; S.navHerstel = true; render();
+});
+function projectOpenen(id, tab) {
+  if (!D().projecten.some(p => p.id === id)) return;
+  S.nieuw.forEach(f => URL.revokeObjectURL(f.url)); S.nieuw = []; S.opm = "";
+  S.project = id; S.tab = tab || "overzicht"; S.detail = null; S.aanvraag = null; S.vsFilter = "open"; render();
+}
+function projTellers(p) {
+  const vs = vsOf(p.id), open = vs.filter(v => v.status === "open" && !v.te_beoordelen && v.aan_mij !== false);
+  return { open: open.length, laat: open.filter(isLate).length, wacht: vs.filter(v => v.status === "opgelost" && v.aan_mij !== false).length, voorgelegd: vs.filter(v => v.te_beoordelen && v.status === "open" && v.door_mij).length,
+    pa: D().aanvragen.filter(a => a.project_id === p.id && a.status === "open").length, tk: D().taken.filter(t => t.project_id === p.id && !t.vaststelling_id && t.status !== "done").length,
+    mp: mpOf(p.id).filter(m => m.status === "gedeeld").length, afs: window.BROS_AGENDA ? BROS_AGENDA.komend((D().afspraken || []).filter(a => a.project_id === p.id)).length : 0 };
+}
+function projKaart(p) {
+  const t = projTellers(p), id = esc(p.id);
+  const knop = (tab, n, label, cls = "") => n ? `<button class="chip ${cls}" data-act="proj" data-id="${id}" data-t="${tab}">${label}</button>` : "";
+  const chips = p.kandidaat ? knop("prijzen", t.pa, `${t.pa} prijsaanvra${t.pa === 1 ? "ag" : "gen"} in te vullen`, "let")
+    : [knop("werf", t.open, `${t.open} open werfpunt${t.open === 1 ? "" : "en"}${t.laat ? ` · ${t.laat} te laat` : ""}`, t.laat ? "laat" : "let"), knop("vragen", t.tk, `${t.tk} actiepunt${t.tk === 1 ? "" : "en"}`, "let"),
+       knop("prijzen", t.pa, `${t.pa} prijsaanvra${t.pa === 1 ? "ag" : "gen"}`, "let"), knop("meetstaat", t.mp, "meetstaat ter goedkeuring", "let"), knop("werf", t.wacht, `${t.wacht} wacht${t.wacht === 1 ? "" : "en"} op controle`),
+       knop("werf", t.voorgelegd, `${t.voorgelegd} voorgelegd aan BROS`), knop("overzicht", t.afs, `${t.afs} afspra${t.afs === 1 ? "ak" : "ken"}`)].join("");
+  const sub = p.kandidaat ? "Prijsvraag" + (p.gemeente ? " · " + esc(p.gemeente) : "") : [esc(p.gemeente || ""), PROJ_STATUS[p.status] || esc(p.status || ""), p.fase_nr ? "stap " + p.fase_nr + " · " + esc(faseNaam(p.fase_nr)) : ""].filter(Boolean).join(" · ");
+  return `<div class="pcard${t.laat ? " laat" : ""}"><button class="pk" data-act="proj" data-id="${id}" data-t="${p.kandidaat ? "prijzen" : "overzicht"}"><span class="nr">${esc(p.nummer || "")}</span><b>${projTitel(p)}</b><small>${sub}</small>${(p.mijn_loten || []).length ? `<small>${p.mijn_loten.map(lotNaam).map(esc).join(", ")}</small>` : ""}<span class="pijl" aria-hidden="true">›</span></button>
+    <div class="pchips">${chips || `<span class="muted" style="font-size:13px">${p.kandidaat ? "niets in te vullen" : "niets open — alles afgewerkt"}</span>`}</div></div>`;
+}
+function renderHome() {
+  const ps = D().projecten, lopend = ps.filter(p => !p.kandidaat && !["afgerond", "verloren"].includes(p.status)), pv = ps.filter(p => p.kandidaat), af = ps.filter(p => !p.kandidaat && ["afgerond", "verloren"].includes(p.status));
+  const tot = ps.reduce((s, p) => { const t = projTellers(p); s.open += t.open; s.laat += t.laat; s.tk += t.tk; s.pa += t.pa; return s; }, { open: 0, laat: 0, tk: 0, pa: 0 });
+  const samen = [tot.open ? `${tot.open} open werfpunt${tot.open === 1 ? "" : "en"}${tot.laat ? ` (${tot.laat} te laat)` : ""}` : "", tot.tk ? `${tot.tk} actiepunt${tot.tk === 1 ? "" : "en"}` : "", tot.pa ? `${tot.pa} prijsaanvra${tot.pa === 1 ? "ag" : "gen"} in te vullen` : ""].filter(Boolean);
+  const sectie = (titel, lijst) => lijst.length ? `<h2 style="margin:22px 0 10px">${titel}</h2><div class="pcards">${lijst.map(projKaart).join("")}</div>` : "";
+  $("#app").innerHTML = `<header class="top"><div class="top-in"><div class="brand"><span class="mark">BROS</span><span class="name">Aannemersportaal</span></div>
+      <div class="who"><span>${esc(S.me?.name || "")}</span><button class="btn ghost sm" data-act="logout">Uitloggen</button></div></div></header>
+    <main><div class="hero"><div class="eyebrow">Je projecten bij BROS</div><h1>Dag ${esc(voornaam())}</h1>
+      <p class="lead">Kies een project: per project vind je de werfpunten, actiepunten, prijsaanvragen, plannen en documenten.${samen.length ? ` In totaal staan er ${samen.join(", ")} voor je klaar.` : ""}</p></div>
+      ${window.BROS_AGENDA ? BROS_AGENDA.paneel(D().afspraken || [], { esc, datum: fmtLang, project: (a) => [a.project_nummer, a.project_klant || a.project_gemeente].filter(Boolean).join(" · ") }) : ""}
+      ${sectie("Lopende projecten", lopend)}${sectie("Prijsvragen", pv)}
+      ${af.length ? `<details class="afg"><summary>Afgeronde projecten (${af.length})</summary><div class="pcards" style="margin-top:10px">${af.map(projKaart).join("")}</div></details>` : ""}</main>`;
   window.scrollTo({ top: 0 });
 }
 const projTitel = (p) => p.kandidaat ? `Project ${esc(p.nummer || "")}${p.gemeente ? " · " + esc(p.gemeente) : ""}` : `${esc(p.klant || "")}${p.naam && p.naam !== p.klant ? " · " + esc(p.naam) : ""}`;
@@ -130,7 +190,7 @@ function vOverzicht(p) {
       <button class="kpi" data-tab="prijzen" style="text-align:left;cursor:pointer;font:inherit;color:inherit"><div class="k">Prijsaanvragen</div><div class="v num">${pa.length}</div><div class="muted" style="font-size:12px">${pa.length ? "in te vullen" + (pa.some(a => a.deadline) ? " · vóór " + fmt(pa.filter(a => a.deadline).sort((a, b) => a.deadline.localeCompare(b.deadline))[0].deadline) : "") : "geen open aanvragen"}</div></button>
       <button class="kpi" data-tab="vragen" style="text-align:left;cursor:pointer;font:inherit;color:inherit"><div class="k">Actiepunten</div><div class="v num">${tk.length}</div><div class="muted" style="font-size:12px">${tk.length ? "uit verslagen en afspraken" : "alles afgewerkt"}</div></button>
       <div class="kpi"><div class="k">Project</div><div class="v" style="font-size:16px">${PROJ_STATUS[p.status] || esc(p.status)}</div><div class="muted" style="font-size:12px">${p.fase_nr ? "stap " + p.fase_nr + " · " + esc(faseNaam(p.fase_nr)) : ""}</div></div></div>
-    ${window.BROS_AGENDA ? BROS_AGENDA.paneel(D().afspraken || [], { esc, datum: fmtLang, project: (a) => [a.project_nummer, a.project_klant || a.project_gemeente].filter(Boolean).join(" · ") }) : ""}
+    ${window.BROS_AGENDA ? BROS_AGENDA.paneel((D().afspraken || []).filter(a => a.project_id === p.id), { esc, datum: fmtLang }) : ""}
     <div class="two"><div class="stack">
       <div class="panel"><div class="panel-head"><h2>Open werfpunten</h2><button class="btn sm" data-tab="werf">Alles →</button></div>${open.length ? `<div class="panel-body" style="display:grid;gap:8px">${open.slice(0, 5).map(vsCard).join("")}</div>` : `<div class="empty"><b>Geen open punten</b>Nieuwe vaststellingen van BROS verschijnen hier.</div>`}</div>
       ${mpOf(p.id).filter(m => m.status === "gedeeld").map(m => `<div class="panel" style="border-color:var(--blue)"><div class="panel-head"><h2>Meetstaat met prijzen ter goedkeuring</h2></div><div class="panel-body"><p>BROS deelde versie ${m.versie} van de meetstaat met jouw prijzen: ${(m.regels || []).length} posten, samen <b>${eur(mpTot(m))}</b> excl. btw. <button class="btn sm primary" data-tab="meetstaat">Bekijken en goedkeuren →</button></p></div></div>`).join("")}
@@ -138,7 +198,7 @@ function vOverzicht(p) {
     </div><div class="stack">
       <div class="panel"><div class="panel-head"><h2>Werf</h2></div><div class="panel-body"><p><b>${projTitel(p)}</b></p><p class="muted" style="font-size:14px">${esc([p.adres, [p.postcode, p.gemeente].filter(Boolean).join(" ")].filter(Boolean).join(", "))}</p>${p.start || p.eind ? `<p class="muted" style="font-size:13px">${p.start ? "gestart " + fmtLang(p.start) : ""}${p.eind ? " · geplande oplevering " + fmtLang(p.eind) : ""}</p>` : ""}</div></div>
       ${lead ? `<div class="panel"><div class="panel-head"><h2>Je aanspreekpunt bij BROS</h2></div><div class="panel-body"><div class="person">${avatar(lead, 56)}<div><b>${esc(lead.name)}</b><div class="muted" style="font-size:13px">${esc(lead.functie || "BROS")}</div></div></div></div></div>` : ""}
-      <div class="panel"><div class="panel-head"><h2>Op de werf?</h2></div><div class="panel-body"><p style="font-size:14px">Open de <a href="../werf/">werfmodus</a> op je smartphone: je punten met foto, ook zonder bereik. Zet ze op je beginscherm als app.</p><p class="muted" style="font-size:13px;white-space:pre-line">${esc(inst.contact || "")}</p></div></div>
+      <div class="panel"><div class="panel-head"><h2>Op de werf?</h2></div><div class="panel-body"><p style="font-size:14px">Open de <a href="../werf/?p=${esc(p.id)}">werfmodus</a> op je smartphone: je punten met foto, ook zonder bereik. Zet ze op je beginscherm als app.</p><p class="muted" style="font-size:13px;white-space:pre-line">${esc(inst.contact || "")}</p></div></div>
     </div></div>`;
 }
 function vsCard(v) {
@@ -539,6 +599,8 @@ document.addEventListener("click", async (e) => {
   const el = e.target.closest("[data-tab],[data-act]"); if (!el) return; const d = el.dataset;
   if (d.tab) { S.tab = d.tab; S.detail = null; S.aanvraag = null; render(); return; }
   if (d.act === "logout") sb.auth.signOut().then(() => location.reload());
+  if (d.act === "home") { S.nieuw.forEach(f => URL.revokeObjectURL(f.url)); S.nieuw = []; S.opm = ""; S.project = null; S.detail = null; S.aanvraag = null; render(); return; }
+  if (d.act === "proj") { projectOpenen(d.id, d.t); return; }
   if (d.act === "afs-ics" && window.BROS_AGENDA) { const a = (D().afspraken || []).find(x => String(x.id) === d.id); if (a) BROS_AGENDA.download(a); return; }   // afspraak → eigen agenda (script 041)
   if (d.act === "vs-filter") { S.vsFilter = d.f; render(); }
   if (d.act === "vs-open") { S.tab = "werf"; S.detail = d.id; S.nieuw = []; S.opm = ""; render(); }
@@ -570,7 +632,6 @@ document.addEventListener("change", async (e) => {
   const t = e.target;
   if (t.matches("input.mp-opm, input.mp-tp")) { await mpBewaar(t.dataset.mp); return; }
   if (t.dataset && t.dataset.mpOpm) { await mpBewaar(t.dataset.mpOpm); return; }
-  if (t.id === "projSel") { S.project = t.value; S.detail = null; S.aanvraag = null; render(); return; }
   if (t.hasAttribute("data-file")) {
     for (const file of [...t.files]) { try { S.nieuw.push(await verklein(file)); } catch (err) { toast("Foto niet bruikbaar"); } }
     t.value = ""; S.opm = $("#f_opm") ? $("#f_opm").value : S.opm; render(); return;

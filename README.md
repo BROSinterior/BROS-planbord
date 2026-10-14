@@ -163,6 +163,13 @@ Activeren (eenmalig):
 
 Gebruik: Dossier › Contacten → bij een aannemer de knop **Aannemersportaal** (beheer) → hij krijgt een mail met een persoonlijke link. Instellingen → Klantenportaal toont wie toegang heeft (klant/aannemer). Een aannemer die op het Planbord of het klantenportaal inlogt, wordt doorgestuurd.
 
+## Aannemersportaal per project (v1.46, geen databasescript)
+
+- **Projectenlijst:** heeft een aannemer meer dan één project, dan start `aannemer/` op *Je projecten bij BROS*: lopende projecten, prijsvragen en (ingeklapt) afgeronde projecten. Elke kaart toont wat er openstaat — open werfpunten (rood als er te laat zijn), actiepunten, prijsaanvragen, meetstaat ter goedkeuring, wacht op controle, voorgelegd aan BROS, afspraken — en elke teller opent meteen het juiste tabblad van dat project. Met één project opent het portaal meteen dat project (zoals vroeger).
+- **In een project:** onder de kopbalk **‹ Alle projecten** met de projectnaam (de keuzelijst bovenaan is weg). Alle tabbladen tonen enkel dat project; ook de afspraken in het overzicht.
+- **Terugknop:** elke stap (project, tabblad, werfpunt, prijsaanvraag) komt in de browsergeschiedenis, dus de terugknop van de telefoon of browser gaat stap voor stap terug in plaats van het portaal te verlaten.
+- **Rechtstreekse link:** `aannemer/?p=<project-id>` opent meteen dat project (de werfmodus-link in het overzicht gebruikt `werf/?p=<project-id>`).
+
 ## Reacties op werfpunten — aannemer ⇄ BROS (script 044, v1.45)
 
 - **Aannemer:** in het aannemersportaal (Werfpunten › punt) een opmerking schrijven en **💬 Bewaren — nog niet opgelost** (de knop werkt zodra er tekst staat), of in de werfmodus **💬 Opmerking voor BROS (nog niet klaar)**. Opmerkingen worden toegevoegd aan `vaststellingen.opmerking` als regel "dd/mm uu:mm · naam: tekst" (RPC `aannemer_vaststelling_melden`, niet meer overschreven). Mail aan de projectverantwoordelijke (Drive-actie `werfpuntfeedback`, max. 6 per uur per punt).
