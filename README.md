@@ -163,6 +163,14 @@ Activeren (eenmalig):
 
 Gebruik: Dossier › Contacten → bij een aannemer de knop **Aannemersportaal** (beheer) → hij krijgt een mail met een persoonlijke link. Instellingen → Klantenportaal toont wie toegang heeft (klant/aannemer). Een aannemer die op het Planbord of het klantenportaal inlogt, wordt doorgestuurd.
 
+## Afspraken in de Google Agenda: toestemming (v1.47, nieuw drive/Code.gs, geen databasescript)
+
+- Afspraken komen in de agenda `brosburo@gmail.com` (`AFS_AGENDA_ID` in het script; scripteigenschap `AGENDA_ID` overschrijft dat, bv. voor een gedeelde agenda).
+- **Toestemming geven (eenmalig):** open het Drive-script als brosburo@gmail.com → kies bovenaan de functie **agendaMachtiging** → **Uitvoeren** → *Toestemming controleren* → account kiezen → bij "Google heeft deze app niet geverifieerd": *Geavanceerd* → *Ga naar … (onveilig)* → **Toestaan**. Het logboek toont "Agenda in orde". Daarna **Implementeren → Implementaties beheren → potlood → Versie: Nieuwe versie → Implementeren**.
+- **Geen toestemmingsvenster, meteen "geen toestemming"?** Dan heeft het script een manifest met een vaste lijst rechten: Projectinstellingen (tandwiel) → vink *Manifestbestand appsscript.json weergeven in editor* aan → open `appsscript.json` → zet `"https://www.googleapis.com/auth/calendar"` bij in `"oauthScopes"` → opslaan → `agendaMachtiging` opnieuw uitvoeren.
+- **Controle:** Planbord › Instellingen › Drive-koppeling › **Agenda testen** (Drive-actie `agendatest`): toont in welke agenda de afspraken komen, of wat er nog ontbreekt.
+- Lukt de agenda niet, dan gaan de mails aan de deelnemers gewoon door en toont het Planbord 20 seconden wat je moet doen.
+
 ## Aannemersportaal per project (v1.46, geen databasescript)
 
 - **Projectenlijst:** heeft een aannemer meer dan één project, dan start `aannemer/` op *Je projecten bij BROS*: lopende projecten, prijsvragen en (ingeklapt) afgeronde projecten. Elke kaart toont wat er openstaat — open werfpunten (rood als er te laat zijn), actiepunten, prijsaanvragen, meetstaat ter goedkeuring, wacht op controle, voorgelegd aan BROS, afspraken — en elke teller opent meteen het juiste tabblad van dat project. Met één project opent het portaal meteen dat project (zoals vroeger).

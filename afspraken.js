@@ -84,7 +84,7 @@ async function afsSync(id, weg, stil) {
     if (j.agenda === "gezet") delen.push("in de agenda van BROS gezet"); else if (j.agenda === "gewijzigd") delen.push("agenda bijgewerkt"); else if (j.agenda === "verwijderd") delen.push("uit de agenda gehaald");
     if ((j.gemaild || []).length) delen.push("gemaild naar " + j.gemaild.join(", ")); if ((j.geannuleerd || []).length) delen.push("annulering gemaild naar " + j.geannuleerd.join(", "));
     if (j.waarschuwing) delen.push(j.waarschuwing);
-    if (delen.length && !stil) setTimeout(() => toast("Afspraak: " + delen.join(" · "), 7000), 1200);   // na de melding "Taak bewaard"
+    if (delen.length && !stil) setTimeout(() => toast("Afspraak: " + delen.join(" · "), j.agendaFout ? 20000 : 7000), 1200);   // agenda niet gelukt: langer tonen (wat te doen)   // na de melding "Taak bewaard"
     return j;
   } catch (e) { toast("Afspraak niet bijgewerkt in de agenda/mail: " + (e.message || e), 9000); return null; }
 }

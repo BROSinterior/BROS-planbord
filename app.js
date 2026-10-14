@@ -3,7 +3,7 @@
    Statische webapp op Supabase (login, live-synchronisatie, rechten)
    ===================================================================== */
 if (window.top !== window.self) { try { window.top.location.replace(window.location.href); } catch (e) { document.documentElement.innerHTML = ""; } }   // niet in een vreemd frame (clickjacking)
-const APP_VERSION = "1.46.0";
+const APP_VERSION = "1.47.0";
 const PROJ_STATUS = { offerte: "In offerte", lopend: "Lopend", on_hold: "On hold", afgerond: "Afgerond", verloren: "Verloren" };
 const KLANTTYPE = { particulier: "Particulier", zakelijk: "Zakelijk" };
 const KLANTCODE = { particulier: "PAR", zakelijk: "ZAK" };
@@ -2682,7 +2682,7 @@ function vInstellingen() {
     <div class="panel-body"><div class="form-grid">
       <div class="field"><label for="dr_url">Web app-URL van het Drive-script</label><input id="dr_url" value="${esc(driveCfg().url || "")}" placeholder="https://script.google.com/macros/s/…/exec"></div>
       <div class="field"><label for="dr_secret">Secret (zelfde als in het script)</label><input id="dr_secret" type="password" value="${esc(driveCfg().secret || "")}"></div>
-      <div class="field span2"><div class="actions"><button class="btn primary" data-act="drive-save">Bewaren</button><button class="btn" data-act="drive-test">Verbinding testen</button><span class="muted" style="font-size:12px">Het script staat in de map <code>drive/Code.gs</code>; de installatie staat bovenaan in dat bestand. Nieuwe projecten krijgen daarna automatisch hun map met de sjabloonbestanden.</span></div></div>
+      <div class="field span2"><div class="actions"><button class="btn primary" data-act="drive-save">Bewaren</button><button class="btn" data-act="drive-test">Verbinding testen</button><button class="btn" data-act="agenda-test" title="Kan het Drive-script afspraken in de Google Agenda van brosburo zetten?">Agenda testen</button><span class="muted" style="font-size:12px">Het script staat in de map <code>drive/Code.gs</code>; de installatie staat bovenaan in dat bestand. Nieuwe projecten krijgen daarna automatisch hun map met de sjabloonbestanden.</span></div></div>
     </div></div></div>
   ${vPortaalBeheer()}
   ${vAssistentBeheer()}
@@ -3357,6 +3357,7 @@ document.addEventListener("click", (e) => {
   if (d.act === "vt-nee") return voorstelWeiger(d.id);
   if (d.act === "vt-antw") { const v = S.taak_voorstellen[d.id]; if (v) voorstelAntwoordForm(v); return; }
   if (d.act === "portaal-invite") return portaalInviteForm(d.cid, d.pid, d.rol || "klant");
+  if (d.act === "agenda-test") return driveCall("agendatest", {}).then(j => toast(`Agenda in orde — afspraken komen in "${j.agenda}"${j.account ? " (Drive-script draait als " + j.account + ")" : ""}.`, 8000)).catch(err => toast("Agenda: " + (/Onbekende actie/.test(err.message) ? "het Drive-script is nog een oudere versie — plak het nieuwe Code.ingevuld.gs en zet een nieuwe versie online." : err.message), 20000));   // 1.47
   if (d.act === "drive-test") return driveCall("ping", {}).then(j => toast(`OK — mappen: ${j.projecten} / ${j.sjabloon}`)).catch(err => toast("Drive: " + err.message));
   if (d.selfase) { S.selFase = Number(d.selfase); return render(); }
   if (d.act === "fase-new") return faseForm(null);

@@ -12,7 +12,9 @@
  *     Die maakt zelf een nieuw Drive-secret (en zet het ook in het Planbord) en een nieuw wachtwoord voor de bot-login.
  *     Een nieuwe versie van dit script plakken wist de geheimen dus niet meer.
  *  Bij een latere wijziging aan dit script: Deploy → Manage deployments → potlood → Version: New → Deploy.
- *  Afspraken in de Google Agenda (script 041): voer één keer agendaMachtiging() uit in de editor en geef toestemming voor Agenda.
+ *  Afspraken in de Google Agenda (script 041): kies bovenaan de functie agendaMachtiging, klik Uitvoeren en geef toestemming voor Agenda
+ *  (melding "Google heeft deze app niet geverifieerd" → Geavanceerd → Ga naar … (onveilig) → Toestaan). Daarna een nieuwe versie online zetten.
+ *  Controle: Planbord › Instellingen › Drive-koppeling › Agenda testen.
  */
 /* ---- Geheimen: uit de Scripteigenschappen, nooit in de code (en dus nooit in git) ---- */
 let _geheimen = null;
@@ -55,6 +57,7 @@ function doPost(e) {
     if (body.action === "assistentmail") return json(assistentMail(body));   // vanuit de Edge Function (secret), melding aan de verantwoordelijke
     if (body.action === "werfverslagmail") return json(werfverslagMail(body));
     if (body.action === "afspraak") return json(afspraakSync(body));
+    if (body.action === "agendatest") return json(agendaStatus(body));   // Instellingen › Agenda testen (1.47)
     if (body.action === "antwoordmail") return json(antwoordMail(body));
     if (body.action === "werfpuntantwoord") return json(werfpuntAntwoord(body));
     if (body.action === "werfpuntreactie") return json(werfpuntReactie(body));   // werfpunt (script 044): reactie van BROS → mail aan de toegewezen aannemer   // werfpunt (script 043): antwoord van BROS aan de aannemer of klant die het meldde   // vragen beantwoorden (script 042): mail met het antwoord aan de aannemer of klant   // afspraken ter plaatse (script 041): Google Agenda van brosburo + mail met agendabestand aan de deelnemers
@@ -550,7 +553,38 @@ function overeenkomstMail(body) {
    Eerste keer: voer agendaMachtiging() één keer uit in de editor (toestemming voor Google Agenda), en zet daarna een nieuwe versie online.
    ===================================================================== */
 const AFS_BROS_ADRES = "BROS, Kloosterstraat 165, 2000 Antwerpen";
-function agendaMachtiging() { const c = CalendarApp.getDefaultCalendar(); Logger.log("Agenda: " + c.getName() + " (" + c.getId() + ") — in orde."); }
+const AFS_AGENDA_ID = "brosburo@gmail.com";   // de agenda waarin de afspraken komen (scripteigenschap AGENDA_ID overschrijft dit)
+const AFS_MACHTIGING = "Het Drive-script heeft nog geen toestemming voor Google Agenda. Open het script als brosburo@gmail.com, kies bovenaan de functie agendaMachtiging, klik Uitvoeren en geef toestemming (bij \"niet geverifieerd\": Geavanceerd → Ga naar … → Toestaan). Zet daarna een nieuwe versie online.";
+function agendaFout(e) {   // Google-foutmelding → wat je moet doen
+  const m = String((e && e.message) || e || "");
+  if (/permission|toestemming|authori[sz]|Required permissions|machtiging|gemachtigd|scope/i.test(m)) return new Error(AFS_MACHTIGING + " [Google: " + m.slice(0, 220) + "]");
+  return e instanceof Error ? e : new Error(m);
+}
+function scriptAccount() { try { return Session.getEffectiveUser().getEmail() || ""; } catch (e) { return ""; } }
+function agendaKalender() {
+  const id = geheim("AGENDA_ID") || AFS_AGENDA_ID; let cal = null;
+  try {
+    cal = CalendarApp.getCalendarById(id);
+    if (!cal && scriptAccount().toLowerCase() === id.toLowerCase()) cal = CalendarApp.getDefaultCalendar();
+  } catch (e) { throw agendaFout(e); }
+  if (!cal) { const me = scriptAccount(); throw new Error("De agenda " + id + " is niet bereikbaar voor het Drive-script" + (me ? " (dat draait als " + me + ")" : "") + ". Zet het script onder " + id + ", of deel die agenda met dat account (Wijzigingen aanbrengen in afspraken)."); }
+  return cal;
+}
+/* één keer uitvoeren in de editor: vraagt de toestemming voor Google Agenda en test meteen of een afspraak aanmaken lukt */
+const AFS_SCOPE = "https://www.googleapis.com/auth/calendar";
+function agendaMachtiging() {
+  // vraagt (in de editor) uitdrukkelijk de toestemming voor Google Agenda, ook als die vroeger werd uitgevinkt
+  if (ScriptApp.requireScopes) ScriptApp.requireScopes(ScriptApp.AuthMode.FULL, [AFS_SCOPE]);
+  const cal = agendaKalender(); const t0 = new Date(Date.now() + 86400000);
+  const ev = cal.createEvent("BROS Planbord — test (mag weg)", t0, new Date(t0.getTime() + 900000)); ev.deleteEvent();
+  Logger.log("Agenda in orde: " + cal.getName() + " (" + cal.getId() + "), script draait als " + scriptAccount() + ". Zet nu een nieuwe versie online: Implementeren → Implementaties beheren → potlood → Versie: Nieuwe versie → Implementeren.");
+}
+/* Planbord › Instellingen › Agenda testen */
+function agendaStatus(body) {
+  caller(body.token, false);
+  try { const cal = agendaKalender(); return { ok: true, agenda: cal.getName(), id: cal.getId(), account: scriptAccount() }; }
+  catch (e) { return { ok: false, error: agendaFout(e).message }; }
+}
 function afsIcs(a, weg, organisator, deelnemer) {
   const pad = (n) => ("0" + n).slice(-2);
   const e = (x) => String(x == null ? "" : x).replace(/\\/g, "\\\\").replace(/;/g, "\\;").replace(/,/g, "\\,").replace(/\r?\n/g, "\\n");
@@ -593,7 +627,7 @@ function afspraakSyncIn(body, id) {
   // ---- 1. Google Agenda van brosburo
   const wilAgenda = actief && t.afspraak_agenda !== false;
   try {   // agendafouten (bv. nog geen toestemming: agendaMachtiging()) mogen de mails niet tegenhouden
-  const cal = wilAgenda || t.agenda_event_id ? CalendarApp.getDefaultCalendar() : null;
+  const cal = wilAgenda || t.agenda_event_id ? agendaKalender() : null;
   let ev = null; if (cal && t.agenda_event_id) { try { ev = cal.getEventById(t.agenda_event_id); } catch (e) { ev = null; } }
   if (wilAgenda) {
     const begin = Utilities.parseDate(t.start + " " + van, "Europe/Brussels", "yyyy-MM-dd HH:mm");
@@ -609,7 +643,7 @@ function afspraakSyncIn(body, id) {
     if (ev) { try { ev.deleteEvent(); } catch (e) { } res.agenda = "verwijderd"; }
     patch.agenda_event_id = null;
   }
-  } catch (e) { console.error("agenda: " + e); res.waarschuwing = "Niet in de Google Agenda gezet (" + String(e.message || e).slice(0, 120) + "). Voer agendaMachtiging() één keer uit in het Drive-script."; }
+  } catch (e) { console.error("agenda: " + e); const f = agendaFout(e); res.agendaFout = true; res.waarschuwing = "Niet in de Google Agenda gezet: " + (f.message.indexOf(AFS_MACHTIGING) === 0 ? f.message : String(f.message).slice(0, 200)); }
   // ---- 2. mails aan de deelnemers
   const vorig = t.afspraak_mail || {}; const vorigAan = (vorig.aan || []).map(String);
   const mailen = t.afspraak_mailen !== false && t.start >= Utilities.formatDate(new Date(), "Europe/Brussels", "yyyy-MM-dd");
