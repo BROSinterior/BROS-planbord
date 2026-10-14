@@ -4,7 +4,7 @@
    lokale wachtrij (IndexedDB) en worden verzonden zodra er weer verbinding is.
    ===================================================================== */
 if (window.top !== window.self) { try { window.top.location.replace(window.location.href); } catch (e) { document.documentElement.innerHTML = ""; } }   // niet in een vreemd frame (clickjacking)
-const WERF_VERSION = "1.37.0";
+const WERF_VERSION = "1.45.0";
 const cfg = window.PLANBORD_CONFIG || {};
 if (!window.supabase) { document.getElementById("app").innerHTML = '<main><div class="empty"><b>De werfmodus is nog niet volledig geladen.</b><br>Open ze één keer met bereik; daarna werkt ze ook offline.<br><br><button class="btn" onclick="location.reload()">Opnieuw proberen</button></div></main>'; throw new Error("supabase-js niet geladen"); }
 const sb = window.supabase.createClient(cfg.supabaseUrl, cfg.supabaseAnonKey);
@@ -35,10 +35,11 @@ const contact = (id) => S.data.contacten.find(c => c.c && c.c.id === id)?.c;
 const profile = (id) => S.base.profiles.find(u => u.id === id);
 const lotName = (nr) => { const l = S.base.loten.find(x => x.nr === nr); return l ? `${nr}. ${l.naam}` : (nr ? String(nr) : ""); };
 const isAan = () => !!(S.me && S.me.role === "aannemer");   // aannemer (script 025): enkel eigen punten, enkel opgelost melden
-const wie = (v) => v.contact_id ? (contact(v.contact_id)?.naam || (isAan() ? "jij" : "aannemer")) : v.assignee ? (profile(v.assignee)?.name || "team") : "";
+const wie = (v) => v.contact_id ? (contact(v.contact_id)?.naam || (isAan() ? (v.aan_mij === false ? "een andere uitvoerder" : "jij") : "aannemer")) : v.assignee ? (profile(v.assignee)?.name || "team") : "";
+const aanMij = (v) => !isAan() || (v.aan_mij !== false && !v.te_beoordelen && !v._pending);   // aannemer: enkel aan hem toegewezen punten kan hij als opgelost melden (script 043)
 const isLate = (v) => v.status === "open" && v.deadline && v.deadline < todayIso;
 const vsNr = (v) => v.nr ? "V-" + String(v.nr).padStart(3, "0") : "nieuw";
-const pill = (v) => isLate(v) ? `<span class="pill late">Te laat</span>` : `<span class="pill ${v.status}">${VS_STATUS[v.status] || v.status}</span>`;
+const pill = (v) => v.te_beoordelen && v.status === "open" ? `<span class="pill pend">${isAan() ? "voorgelegd" : "te beoordelen"}</span>` : v.door_mij && v.status === "vervallen" ? `<span class="pill vervallen">niet weerhouden</span>` : isLate(v) ? `<span class="pill late">Te laat</span>` : `<span class="pill ${v.status}">${VS_STATUS[v.status] || v.status}</span>`;
 
 /* ---------- wachtrij (IndexedDB): items met foto's als blobs ---------- */
 const idb = {
@@ -141,7 +142,7 @@ async function refresh() {
 function allVs() {
   const rows = S.data.vaststellingen.map(v => ({ ...v }));
   S.queue.forEach(q => {
-    if (q.kind === "vs-new" && q.row.project_id === S.project && !rows.find(r => r.id === q.row.id)) rows.unshift({ ...q.row, _pending: true, _err: q.err, fotos: [...(q.done || []), ...q.fotos.map(f => ({ url: fotoUrl(f), _local: true }))] });
+    if ((q.kind === "vs-new" || q.kind === "aan-new") && q.row.project_id === S.project && !rows.find(r => r.id === q.row.id)) rows.unshift({ ...q.row, ...(q.kind === "aan-new" ? { status: "open", te_beoordelen: true, door_mij: true } : {}), _pending: true, _err: q.err, fotos: [...(q.done || []), ...q.fotos.map(f => ({ url: fotoUrl(f), _local: true }))] });
     if (q.kind === "vs-update") { const r = rows.find(r => r.id === q.vid); if (r) { Object.assign(r, q.patch, { _pending: true, _err: q.err }); const extra = [...(q.done || []), ...(q.fotos || []).map(f => ({ url: fotoUrl(f), _local: true }))]; if (extra.length) r[q.veld] = [...(r[q.veld] || []), ...extra]; } }
   });
   return rows;
@@ -176,6 +177,14 @@ async function sync() {
           const d0 = (q.done || [])[0]; if (!d0) throw new Error("Foto ontbreekt");
           const { error } = await sb.from("werf_fotos").upsert({ ...q.row, path: d0.path, url: d0.url, w: d0.w, h: d0.h }, { onConflict: "id" }); if (error) throw error;
         }
+        else if (q.kind === "aan-new") {   // aannemer (script 043): nieuw punt, eerst voorgelegd aan BROS
+          while (q.fotos.length) { const f = q.fotos[0]; const path = `${q.row.project_id}/aannemer/${q.row.id}-${Date.now()}-${Math.random().toString(36).slice(2, 6)}.jpg`;
+            const { error } = await sb.storage.from("werf").upload(path, f.blob, { contentType: "image/jpeg" }); if (error) throw error;
+            q.done = [...(q.done || []), { path, url: sb.storage.from("werf").getPublicUrl(path).data.publicUrl, w: f.w, h: f.h, op: new Date().toISOString() }]; q.fotos.shift(); await idb.put(q); }
+          const r = q.row; const { error } = await sb.rpc("aannemer_werfpunt_melden", { p_id: r.id, p_project: r.project_id, p_titel: r.titel, p_omschrijving: r.omschrijving || "", p_ruimte: r.ruimte || "", p_plan_id: r.plan_id || null, p_plan_x: r.plan_x ?? null, p_plan_y: r.plan_y ?? null, p_fotos: q.done || [] });
+          if (error) throw error;
+          if (cfg.driveScriptUrl) { try { fetch(cfg.driveScriptUrl, { method: "POST", body: JSON.stringify({ action: "werfpuntmelding", id: r.id, token: session.access_token }), redirect: "follow" }).catch(() => { }); } catch (e) { } }   // BROS verwittigen
+        }
         else if (q.kind === "vs-new") {
           const { error } = await sb.from("vaststellingen").upsert({ ...q.row, fotos: q.done || [] }, { onConflict: "id" }); if (error) throw error;
           while (q.fotos.length) { const f = await upload(q.row.project_id, q.row.id, q.fotos[0]); q.done = [...(q.done || []), f]; q.fotos.shift(); await idb.put(q); }
@@ -184,8 +193,16 @@ async function sync() {
           while (q.fotos.length) { const f = await upload(q.pid || S.project, q.vid, q.fotos[0]); q.done = [...(q.done || []), f]; q.fotos.shift(); await idb.put(q); }
           if (isAan()) {   // aannemer: alles via één functie (opgelost melden, opmerking, bewijsfoto's)
             const { error } = await sb.rpc("aannemer_vaststelling_melden", { p_id: q.vid, p_status: (q.patch || {}).status === "opgelost" ? "opgelost" : null, p_opmerking: (q.patch || {}).opmerking || null, p_fotos: q.done || [] }); if (error) throw error;
+            if ((q.patch || {}).opmerking && cfg.driveScriptUrl) { try { fetch(cfg.driveScriptUrl, { method: "POST", body: JSON.stringify({ action: "werfpuntfeedback", id: q.vid, token: session.access_token }), redirect: "follow" }).catch(() => { }); } catch (e) { } }   // BROS verwittigen (script 044)
           } else {
             if (Object.keys(q.patch || {}).length) { const { error } = await sb.from("vaststellingen").update(q.patch).eq("id", q.vid); if (error) throw error; }
+            if (q.reactie && !q.reactieOk) {   // opmerking toevoegen aan het gesprek (script 044); oudere databank: zelf achteraan toevoegen
+              const r = await sb.rpc("werfpunt_reactie", { p_id: q.vid, p_tekst: q.reactie });
+              if (r.error) { if (!/function|schema cache|not find/i.test(r.error.message || "")) throw r.error;
+                const { data } = await sb.from("vaststellingen").select("opmerking").eq("id", q.vid).single(); const oud = (data && data.opmerking) || "";
+                const { error } = await sb.from("vaststellingen").update({ opmerking: (oud ? oud + "\n" : "") + q.reactie }).eq("id", q.vid); if (error) throw error; }
+              q.reactieOk = true; await idb.put(q);
+            }
             if ((q.done || []).length) await fotosToevoegen(q.vid, q.veld, q.done);
           }
         }
@@ -219,7 +236,7 @@ function render() {
   else if (S.view === "detail") body = vDetail();
   else if (S.view === "bezoek") body = vBezoek();
   else body = vList();
-  app.innerHTML = topBar(projName(p), p ? `${p.nummer || ""}${p.gemeente ? " · " + p.gemeente : ""}` : "") + `<main>${body}</main>` + (S.view === "list" && !isAan() ? `<button class="fab" data-act="new">📷 Vaststelling</button>` : "");
+  app.innerHTML = topBar(projName(p), p ? `${p.nummer || ""}${p.gemeente ? " · " + p.gemeente : ""}` : "") + `<main>${body}</main>` + (S.view === "list" ? `<button class="fab" data-act="new">📷 ${isAan() ? "Punt melden" : "Vaststelling"}</button>` : "");
   if (S.view === "new" || S.view === "edit") bindForm();
 }
 const topBar = (title, sub) => `<div class="top"><span class="mark"></span><button class="proj" data-act="projects"><b>${esc(title)}</b>${sub ? `<small>${esc(sub)} · wijzigen</small>` : `<small>Werfmodus v${WERF_VERSION}${isAan() ? " · aannemer" : ""}</small>`}</button>${syncBadge()}</div>`;
@@ -249,7 +266,7 @@ function vList() {
   return `${isAan() ? "" : b ? `<div class="bezoek"><div><b>Werfbezoek ${b.nr || "(nieuw)"} · ${b.datum === todayIso ? "vandaag" : fmtLong(b.datum)}</b><small>${esc(b.aanwezigen || "nieuwe vaststellingen hangen aan dit bezoek")}</small></div><button class="btn" style="width:auto;padding:8px 12px;font-size:13px" data-act="bezoek-stop">Afsluiten</button></div>` : `<div class="bezoek"><div><b>Geen werfbezoek gestart</b><small>Start er een om vaststellingen te groeperen per bezoek</small></div><button class="btn" style="width:auto;padding:8px 12px;font-size:13px" data-act="bezoek">Bezoek starten</button></div>`}
     ${!isAan() && S.vgOk ? `<div class="bezoek" style="align-items:center"><div><b>📸 Voortgang voor de klant</b><small>${S.vgWeek ? S.vgWeek + " foto" + (S.vgWeek === 1 ? "" : "'s") + " deze week" : "foto's van de werken, per week in het portaal"}${S.queue.filter(q => q.kind === "vg-new").length ? " · " + S.queue.filter(q => q.kind === "vg-new").length + " in de wachtrij" : ""}</small><label style="display:flex;gap:6px;align-items:center;font-size:13px;margin-top:6px"><input type="checkbox" id="vg_deel" ${store.get("vgdeel", false) ? "checked" : ""}> meteen delen met de klant</label></div><label class="btn" style="width:auto;padding:8px 12px;font-size:14px">Foto's<input type="file" accept="image/*" capture="environment" multiple hidden data-vgfile="1"></label></div>` : ""}
     <div class="chips">${[["open", `Open ${n("open")}`], ["opgelost", `Opgelost ${n("opgelost")}`], ["alle", `Alles ${n("alle")}`]].map(([k, l]) => `<button class="chip" data-act="filter" data-f="${k}" aria-current="${f === k}">${l}</button>`).join("")}${all.some(v => v.lot) ? `<button class="chip" data-act="perlot" aria-current="${!!S.perLot}">Per lot</button>` : ""}</div>
-    ${body || `<div class="empty">${all.length ? "Niets in deze lijst." : isAan() ? "Nog geen punten aan jou toegewezen." : "Nog geen vaststellingen. Tik op 📷 Vaststelling."}</div>`}`;
+    ${body || `<div class="empty">${all.length ? "Niets in deze lijst." : isAan() ? "Nog geen punten. Zie je iets op de werf? Tik op 📷 Punt melden — BROS bekijkt het eerst." : "Nog geen vaststellingen. Tik op 📷 Vaststelling."}</div>`}`;
 }
 function vDetail() {
   const v = allVs().find(x => x.id === S.detail); if (!v) { S.view = "list"; return vList(); }
@@ -258,19 +275,22 @@ function vDetail() {
     ${fotos.length ? `<div class="gallery">${fotos.map(f => `<img src="${esc(veiligSrc(f.url))}" alt="" data-lb="${esc(veiligSrc(f.url))}">`).join("")}</div>` : ""}
     <div class="hd" style="display:flex;gap:8px;align-items:center;margin-bottom:6px"><span class="nr" style="font-size:18px">${vsNr(v)}</span>${v.prioriteit === "hoog" ? `<span class="pill late">Hoge prioriteit</span>` : ""}${pill(v)}${v._pending ? `<span class="pill pend">nog te verzenden</span>` : ""}</div>
     ${v.titel ? `<h1 style="margin:0 0 6px">${esc(v.titel)}</h1>` : ""}<p style="font-size:17px;margin:0 0 10px;white-space:pre-wrap">${esc(v.omschrijving || (v.titel ? "" : "—"))}</p>
-    <div class="meta">${v.ruimte ? `<div>Ruimte: <b>${esc(v.ruimte)}</b></div>` : ""}${v.lot ? `<div>Lot: <b>${esc(lotName(v.lot))}</b></div>` : ""}<div>Verantwoordelijke: <b>${esc(wie(v) || "nog niet toegewezen")}</b></div>${v.deadline ? `<div>Op te lossen tegen: <b class="${isLate(v) ? "late" : ""}">${fmtLong(v.deadline)}</b></div>` : ""}${v.opgelost_op ? `<div>Opgelost op <b>${fmtLong(v.opgelost_op.slice(0, 10))}</b>${v.opgelost_door ? " door " + esc(profile(v.opgelost_door)?.name || "") : ""}</div>` : ""}${v.opmerking ? `<div>Opmerking: <b>${esc(v.opmerking)}</b></div>` : ""}</div>
+    ${isAan() && v.door_mij ? `<p class="meta" style="margin:0 0 10px">${v.te_beoordelen && v.status === "open" ? "Door jou gemeld en voorgelegd aan BROS — na goedkeuring wordt het een werfpunt." : v.status === "vervallen" ? "Door jou gemeld — niet weerhouden door BROS." : "Door jou gemeld."}</p>` : ""}
+    ${v.bros_antwoord ? `<div class="antw"><b>Antwoord van BROS${v.beantwoord_naam ? " (" + esc(v.beantwoord_naam) + ")" : ""}</b><div style="white-space:pre-wrap;margin-top:4px">${esc(v.bros_antwoord)}</div></div>` : ""}
+    <div class="meta">${v.ruimte ? `<div>Ruimte: <b>${esc(v.ruimte)}</b></div>` : ""}${v.lot ? `<div>Lot: <b>${esc(lotName(v.lot))}</b></div>` : ""}<div>Verantwoordelijke: <b>${esc(wie(v) || "nog niet toegewezen")}</b></div>${v.deadline ? `<div>Op te lossen tegen: <b class="${isLate(v) ? "late" : ""}">${fmtLong(v.deadline)}</b></div>` : ""}${v.opgelost_op ? `<div>Opgelost op <b>${fmtLong(v.opgelost_op.slice(0, 10))}</b>${v.opgelost_door ? " door " + esc(profile(v.opgelost_door)?.name || "") : ""}</div>` : ""}${v.opmerking ? `<div style="margin-top:6px">Opmerkingen:<div style="white-space:pre-wrap;color:var(--ink);margin-top:2px">${esc(v.opmerking)}</div></div>` : ""}</div>
     ${v.plan_id && plan(v.plan_id) && v.plan_x != null ? `<h2>Op het plan · ${esc(plan(v.plan_id).naam)}</h2><div class="plan-wrap"><img src="${esc(plan(v.plan_id).url)}" alt="">${pinHtml(v)}</div>` : ""}
     ${bewijs.length ? `<h2>Bewijsfoto's</h2><div class="fotos">${bewijs.map(f => `<img src="${esc(veiligSrc(f.url))}" alt="" data-lb="${esc(veiligSrc(f.url))}">`).join("")}</div>` : ""}
     <div style="margin-top:18px;display:grid;gap:10px">
-      ${v.status === "open" ? `<label class="btn ok" style="text-align:center">✓ Opgelost — met bewijsfoto<input type="file" accept="image/*" capture="environment" hidden data-oplos="${v.id}"></label><button class="btn" data-act="oplos" data-id="${v.id}">✓ Opgelost zonder foto</button>` : ""}
+      ${v.status === "open" && aanMij(v) ? `<label class="btn ok" style="text-align:center">✓ Opgelost — met bewijsfoto<input type="file" accept="image/*" capture="environment" hidden data-oplos="${v.id}"></label><button class="btn" data-act="oplos" data-id="${v.id}">✓ Opgelost zonder foto</button>` : ""}
       ${isAan() ? (v.status === "opgelost" ? `<p class="meta" style="text-align:center">Gemeld als opgelost — BROS controleert dit bij het volgende werfbezoek.</p>` : "") : `${v.status === "opgelost" ? `<button class="btn ok" data-act="status" data-id="${v.id}" data-s="gecontroleerd">✓ Gecontroleerd en in orde</button><button class="btn" data-act="status" data-id="${v.id}" data-s="open">Heropenen — nog niet in orde</button>` : ""}
       ${v.status === "gecontroleerd" || v.status === "vervallen" ? `<button class="btn" data-act="status" data-id="${v.id}" data-s="open">Heropenen</button>` : ""}`}
-      <label class="btn" style="text-align:center">📷 ${isAan() ? "Bewijsfoto toevoegen" : "Foto toevoegen"}<input type="file" accept="image/*" capture="environment" hidden data-addfoto="${v.id}"></label>
-      ${isAan() ? `<button class="btn" data-act="opm" data-id="${v.id}">Opmerking toevoegen</button>` : `<button class="btn" data-act="edit" data-id="${v.id}">Bewerken</button>
+      ${isAan() && (!aanMij(v) || v.status === "vervallen") ? "" : `<label class="btn" style="text-align:center">📷 ${isAan() ? "Bewijsfoto toevoegen" : "Foto toevoegen"}<input type="file" accept="image/*" capture="environment" hidden data-addfoto="${v.id}"></label>`}
+      ${isAan() ? (!aanMij(v) || v.status === "vervallen" ? "" : `<button class="btn" data-act="opm" data-id="${v.id}">💬 Opmerking voor BROS (nog niet klaar)</button>`) : `<button class="btn" data-act="edit" data-id="${v.id}">Bewerken</button>
       ${v.status !== "vervallen" ? `<button class="btn ghost danger" data-act="status" data-id="${v.id}" data-s="vervallen">Vervallen (niet meer van toepassing)</button>` : ""}`}
     </div>`;
 }
 function vForm() {
+  if (isAan()) return vFormAan();
   const v = S.form; const pcs = S.data.contacten; const lots = S.data.lots || [];
   const ruimtes = [...new Set(allVs().map(x => x.ruimte).filter(Boolean))].sort();
   const cur = v.contact_id ? "c:" + v.contact_id : (v.assignee || "");
@@ -286,8 +306,22 @@ function vForm() {
     <div class="field"><label>Verantwoordelijke</label><select id="f_wie"><option value="">— nog niet toegewezen —</option>${pcs.length ? `<optgroup label="Klant, aannemers en contacten">${pcs.map(x => opt("c:" + x.c.id, x.c.naam + (x.c.vakgebied ? " · " + x.c.vakgebied : "") + " · " + (ROL[x.rol] || x.rol))).join("")}</optgroup>` : ""}<optgroup label="Team">${S.base.profiles.map(u => opt(u.id, u.name)).join("")}</optgroup></select></div>
     <div class="field"><label>Prioriteit</label><div class="seg" id="f_prio">${Object.entries(VS_PRIO).map(([k, l]) => `<button type="button" data-p="${k}" aria-pressed="${(v.prioriteit || "normaal") === k}">${l}</button>`).join("")}</div></div>
     <div class="field"><label>Op te lossen tegen</label><input id="f_deadline" type="date" value="${esc(v.deadline || "")}"></div>
-    ${v.id ? `<div class="field"><label>Status</label><select id="f_status">${Object.entries(VS_STATUS).map(([k, l]) => `<option value="${k}" ${v.status === k ? "selected" : ""}>${l}</option>`).join("")}</select></div><div class="field"><label>Opmerking</label><input id="f_opm" value="${esc(v.opmerking || "")}"></div>` : ""}
+    ${v.id ? `<div class="field"><label>Status</label><select id="f_status">${Object.entries(VS_STATUS).map(([k, l]) => `<option value="${k}" ${v.status === k ? "selected" : ""}>${l}</option>`).join("")}</select></div><div class="field"><label>Opmerkingen</label>${v.opmerking ? `<div class="meta" style="white-space:pre-wrap;color:var(--ink);margin-bottom:6px">${esc(v.opmerking)}</div>` : ""}<input id="f_opm" value="" placeholder="Opmerking toevoegen (bv. reactie aan de aannemer)"></div>` : ""}
     <button class="btn primary" id="f_save" style="margin-top:6px;padding:15px">${v.id ? "Bewaren" : "Vaststelling bewaren"}</button>
+    <p class="meta" style="text-align:center;margin-top:10px">${S.online ? "Wordt meteen verzonden." : "Geen bereik: wordt bewaard op dit toestel en later verzonden."}</p>`;
+}
+/* aannemer (script 043): een nieuw punt melden — gaat eerst naar BROS */
+function vFormAan() {
+  const v = S.form; const ruimtes = [...new Set(allVs().map(x => x.ruimte).filter(Boolean))].sort();
+  return `<button class="back" data-act="back">‹ Annuleren</button><h1>Punt melden</h1>
+    <p class="meta" style="margin:-4px 0 12px">Je punt gaat eerst naar BROS. Na goedkeuring wordt het een werfpunt (en wijst BROS het toe); BROS kan je ook meteen antwoorden.</p>
+    <div class="big"><label>📷<span></span>Foto nemen<input type="file" accept="image/*" capture="environment" hidden data-file></label><label>🖼️<span></span>Uit galerij<input type="file" accept="image/*" multiple hidden data-file></label></div>
+    <div class="fotos" id="f_fotos"></div>
+    <div class="field" style="margin-top:12px"><label>Titel</label><input id="f_titel" value="${esc(v.titel || "")}" maxlength="160" placeholder="Kort, bv. Leiding loopt anders dan op plan"></div>
+    <div class="field"><label>Omschrijving</label><textarea id="f_oms" maxlength="4000" placeholder="Wat zie je, wat is er nodig?">${esc(v.omschrijving || "")}</textarea></div>
+    <div class="field"><label>Ruimte / locatie</label><input id="f_ruimte" list="ruimtes" maxlength="120" value="${esc(v.ruimte || "")}" placeholder="bv. Keuken"><datalist id="ruimtes">${ruimtes.map(r => `<option value="${esc(r)}">`).join("")}</datalist></div>
+    ${(S.data.plannen || []).length ? `<div class="field"><label>Locatie op plan</label><select id="f_plan"><option value="">— geen plan —</option>${S.data.plannen.map(pl => `<option value="${pl.id}" ${v.plan_id === pl.id ? "selected" : ""}>${esc(pl.naam)}</option>`).join("")}</select><div id="f_planbox" style="margin-top:8px"></div></div>` : ""}
+    <button class="btn primary" id="f_save" style="margin-top:6px;padding:15px">Voorleggen aan BROS</button>
     <p class="meta" style="text-align:center;margin-top:10px">${S.online ? "Wordt meteen verzonden." : "Geen bereik: wordt bewaard op dit toestel en later verzonden."}</p>`;
 }
 function bindForm() {
@@ -305,23 +339,30 @@ function bindForm() {
   draw();
   document.querySelectorAll("[data-file]").forEach(inp => inp.addEventListener("change", async (e) => {
     const sv = $("#f_save"); if (sv) { sv.disabled = true; sv.textContent = "Foto's verwerken…"; }
-    for (const file of [...e.target.files]) { try { const r = await verklein(file); v._nieuw.push({ ...r, url: blobUrl(r.blob) }); } catch (err) { toast("Foto niet bruikbaar"); } }
-    e.target.value = ""; draw(); if (sv) { sv.disabled = false; sv.textContent = v.id ? "Bewaren" : "Vaststelling bewaren"; }
+    for (const file of [...e.target.files]) { if (isAan() && v._nieuw.length >= 12) { toast("Maximaal 12 foto's per punt"); break; } try { const r = await verklein(file); v._nieuw.push({ ...r, url: blobUrl(r.blob) }); } catch (err) { toast("Foto niet bruikbaar"); } }
+    e.target.value = ""; draw(); if (sv) { sv.disabled = false; sv.textContent = isAan() ? "Voorleggen aan BROS" : v.id ? "Bewaren" : "Vaststelling bewaren"; }
   }));
-  ["f_titel", "f_oms", "f_ruimte", "f_deadline", "f_opm"].forEach(id => { const el = $("#" + id); if (el) el.addEventListener("input", () => { v[{ f_titel: "titel", f_oms: "omschrijving", f_ruimte: "ruimte", f_deadline: "deadline", f_opm: "opmerking" }[id]] = el.value; }); });
-  $("#f_prio").addEventListener("click", (e) => { const b = e.target.closest("button"); if (!b) return; prio = b.dataset.p; v.prioriteit = prio; $("#f_prio").querySelectorAll("button").forEach(x => x.setAttribute("aria-pressed", x === b)); });
+  ["f_titel", "f_oms", "f_ruimte", "f_deadline"].forEach(id => { const el = $("#" + id); if (el) el.addEventListener("input", () => { v[{ f_titel: "titel", f_oms: "omschrijving", f_ruimte: "ruimte", f_deadline: "deadline", f_opm: "opmerking" }[id]] = el.value; }); });
+  if ($("#f_prio")) $("#f_prio").addEventListener("click", (e) => { const b = e.target.closest("button"); if (!b) return; prio = b.dataset.p; v.prioriteit = prio; $("#f_prio").querySelectorAll("button").forEach(x => x.setAttribute("aria-pressed", x === b)); });
   $("#f_save").onclick = async () => {
     const oms = $("#f_oms").value.trim(); const titel = $("#f_titel").value.trim(); if (!oms && !titel && !v._nieuw.length && !(v.fotos || []).length) { toast("Geef een titel of omschrijving, of neem een foto"); $("#f_titel").focus(); return; }
+    if (isAan()) {   // aannemer: nieuw punt voorleggen (script 043)
+      if (titel.length < 3) { toast("Geef het punt een korte titel"); $("#f_titel").focus(); return; }
+      const row = { id: uuid(), project_id: S.project, titel, omschrijving: oms, ruimte: $("#f_ruimte").value.trim(), ...(planSel && planSel.value ? { plan_id: planSel.value, plan_x: pin ? pin.x : null, plan_y: pin ? pin.y : null } : {}) };
+      $("#f_save").disabled = true;
+      try { await enqueue({ kind: "aan-new", row, fotos: v._nieuw.map(f => ({ blob: f.blob, w: f.w, h: f.h })) }); } catch (e) { $("#f_save").disabled = false; return; }
+      S.view = "list"; S.filter = "open"; S.form = null; toast(S.online ? "Voorgelegd aan BROS" : "Bewaard op dit toestel — wordt voorgelegd zodra er bereik is", 3500); return render();
+    }
     const wieV = $("#f_wie").value; const wieP = wieV.startsWith("c:") ? { contact_id: wieV.slice(2), assignee: null } : { contact_id: null, assignee: wieV || null };
     const patch = { titel, omschrijving: oms, ...(planSel ? { plan_id: planSel.value || null, plan_x: planSel.value && pin ? pin.x : null, plan_y: planSel.value && pin ? pin.y : null } : {}), ruimte: $("#f_ruimte").value.trim(), lot: $("#f_lot") && $("#f_lot").value ? Number($("#f_lot").value) : null, ...wieP, prioriteit: prio, deadline: $("#f_deadline").value || null };
     $("#f_save").disabled = true;
     try {
     if (v.id) {
-      const st = $("#f_status").value; patch.opmerking = $("#f_opm").value.trim();
+      const st = $("#f_status").value; const reactie = $("#f_opm").value.trim();   // toevoegen aan het gesprek, nooit overschrijven (script 044)
       // punt gemeld door de klant (script 035): een verantwoordelijke kiezen of het afhandelen in de werfmodus = goedkeuren
       if (v.te_beoordelen && !isAan() && (wieP.contact_id || wieP.assignee || st !== "open")) patch.te_beoordelen = false;
       if (st !== v.status) { patch.status = st; if (st === "opgelost") { patch.opgelost_op = new Date().toISOString(); patch.opgelost_door = S.me?.id || null; } if (st === "open") { patch.opgelost_op = null; patch.opgelost_door = null; } }
-      await enqueue({ kind: "vs-update", vid: v.id, pid: v.project_id || S.project, patch, veld: "fotos", fotos: v._nieuw.map(f => ({ blob: f.blob, w: f.w, h: f.h })) });
+      await enqueue({ kind: "vs-update", vid: v.id, pid: v.project_id || S.project, patch, reactie: reactie || null, veld: "fotos", fotos: v._nieuw.map(f => ({ blob: f.blob, w: f.w, h: f.h })) });
       S.view = "detail"; S.detail = v.id; toast("Bewaard");
     } else {
       const row = { id: uuid(), project_id: S.project, bezoek_id: S.bezoek || null, status: "open", klant_zichtbaar: false, fotos: [], created_by: S.me?.id || null, ...patch };
@@ -365,13 +406,13 @@ document.addEventListener("click", async (e) => {
   if (d.act === "edit") { const v = allVs().find(x => x.id === d.id); if (!v) return; S.form = { ...v }; S.view = "edit"; return render(); }
   if (d.act === "status") { await setStatus(d.id, d.s); return render(); }
   if (d.act === "oplos") { await setStatus(d.id, "opgelost"); return render(); }
-  if (d.act === "opm") { const t = prompt("Opmerking voor BROS bij dit punt:", ""); if (t === null || !t.trim()) return; try { await enqueue({ kind: "vs-update", vid: d.id, pid: S.project, patch: { opmerking: t.trim() }, veld: "opgelost_fotos", fotos: [] }); toast("Opmerking bewaard"); } catch (e) { } return render(); }
+  if (d.act === "opm") { const t = prompt("Opmerking voor BROS bij dit punt (bv. nog niet klaar omdat …):", ""); if (t === null || !t.trim()) return; try { await enqueue({ kind: "vs-update", vid: d.id, pid: S.project, patch: { opmerking: t.trim() }, veld: "opgelost_fotos", fotos: [] }); toast("Opmerking bewaard"); } catch (e) { } return render(); }
   if (d.act === "bezoek") { S.view = "bezoek"; return render(); }
   if (d.act === "bezoek-save") { const row = { id: uuid(), project_id: S.project, datum: $("#b_datum").value || todayIso, weer: $("#b_weer").value, aanwezigen: $("#b_aanw").value.trim(), notities: $("#b_not").value, auteur: S.me?.id || null }; await enqueue({ kind: "wb-new", row }); S.bezoek = row.id; store.set("bezoek", row.id); S.view = "list"; toast("Werfbezoek gestart"); return render(); }
   if (d.act === "bezoek-stop") { S.bezoek = null; store.del("bezoek"); toast("Werfbezoek afgesloten"); return render(); }
   if (d.act === "sync") {
     const mislukt = S.queue.filter(q => (q.tries || 0) >= 5);
-    if (mislukt.length) { const txt = mislukt.map(q => "• " + (q.kind === "vs-new" ? (q.row.titel || q.row.omschrijving || "vaststelling") : q.kind) + ": " + (q.err || "?")).join("\n"); if (confirm(mislukt.length + " item(s) konden niet verzonden worden:\n" + txt + "\n\nOK = nog eens proberen · Annuleren = niets doen")) { mislukt.forEach(q => { q.tries = 0; idb.put(q).catch(() => { }); }); return sync(); } return; }
+    if (mislukt.length) { const txt = mislukt.map(q => "• " + (q.kind === "vs-new" || q.kind === "aan-new" ? (q.row.titel || q.row.omschrijving || "vaststelling") : q.kind) + ": " + (q.err || "?")).join("\n"); if (confirm(mislukt.length + " item(s) konden niet verzonden worden:\n" + txt + "\n\nOK = nog eens proberen · Annuleren = niets doen")) { mislukt.forEach(q => { q.tries = 0; idb.put(q).catch(() => { }); }); return sync(); } return; }
     if (!S.online) return toast("Geen verbinding — de wachtrij wordt verzonden zodra er bereik is"); if (!S.queue.length) { refresh(); return toast("Alles is verzonden"); } return sync(); }
   if (d.act === "logout") { if (S.queue.length && !confirm(S.queue.length + " item(s) zijn nog niet verzonden. Toch afmelden? Ze worden dan van dit toestel gewist.")) return; await sb.auth.signOut(); S.session = null; S.me = null; await opruimenNaUitloggen(); return render(); }
 });

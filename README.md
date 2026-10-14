@@ -14,7 +14,7 @@ Statische webapp (geen build-stap) op een Supabase-database.
 | `app.js` | alle logica |
 | `config.js` | koppeling met de database — **hier de Project URL en anon-sleutel invullen** |
 | `version.json` | versienummer; de app meldt een nieuwe versie aan wie ze open heeft |
-| `sql/001_init.sql` … `sql/042_*.sql` | databasescripts, in volgorde uit te voeren (`versie_schema` in instellingen bewaakt de volgorde vanaf 022) |
+| `sql/001_init.sql` … `sql/044_*.sql` | databasescripts, in volgorde uit te voeren (`versie_schema` in instellingen bewaakt de volgorde vanaf 022) |
 | `drive/Code.gs` | Google Apps Script dat projectmappen aanmaakt/koppelt op Drive en de meetstaat-export wegschrijft (installatie: zie bovenaan dat bestand) |
 | `agenda.js` | gedeeld (Planbord en portalen): agendabestand (.ics) en Google Agenda-link voor afspraken (script 041) |
 | `afspraken.js` | Planbord: afspraak ter plaatse in het taakformulier, synchronisatie met de Google Agenda en de mails (script 041) |
@@ -162,6 +162,17 @@ Activeren (eenmalig):
 4. Edge Function `assistent` opnieuw plakken (weigert nu aannemerslogins) en pushen.
 
 Gebruik: Dossier › Contacten → bij een aannemer de knop **Aannemersportaal** (beheer) → hij krijgt een mail met een persoonlijke link. Instellingen → Klantenportaal toont wie toegang heeft (klant/aannemer). Een aannemer die op het Planbord of het klantenportaal inlogt, wordt doorgestuurd.
+
+## Reacties op werfpunten — aannemer ⇄ BROS (script 044, v1.45)
+
+- **Aannemer:** in het aannemersportaal (Werfpunten › punt) een opmerking schrijven en **💬 Bewaren — nog niet opgelost** (de knop werkt zodra er tekst staat), of in de werfmodus **💬 Opmerking voor BROS (nog niet klaar)**. Opmerkingen worden toegevoegd aan `vaststellingen.opmerking` als regel "dd/mm uu:mm · naam: tekst" (RPC `aannemer_vaststelling_melden`, niet meer overschreven). Mail aan de projectverantwoordelijke (Drive-actie `werfpuntfeedback`, max. 6 per uur per punt).
+- **BROS:** in het Planbord › Werf staat **💬 reactie** bij een punt waar de laatste opmerking van de aannemer komt. In het punt: het gesprek en **Reactie aan de aannemer** (RPC `werfpunt_reactie`, regel "BROS (naam)"), per mail aan de toegewezen aannemer (Drive-actie `werfpuntreactie`). Het veld Opmerking overschrijft het gesprek niet meer.
+
+## Werfpunten gemeld door aannemers — eerst voorgelegd aan BROS (script 043, v1.44)
+
+- **Aannemer — werfmodus (`werf/`, ook offline):** knop **📷 Punt melden**: foto's, titel, omschrijving, ruimte en eventueel een pin op het plan → *Voorleggen aan BROS*. Foto's gaan naar `werf/<project>/aannemer/…jpg` (opslagregel `werf_insert` uitgebreid), het punt via RPC `aannemer_werfpunt_melden` (id van het toestel: een herhaalde verzending vult enkel foto's aan; max. 40 per dag). Het wordt een vaststelling met `te_beoordelen` en `gemeld_door_aannemer`; zolang het voorgelegd is kan hij het niet als opgelost melden. In het aannemersportaal: Werfpunten › **📷 Nieuw punt melden** (opent de werfmodus).
+- **BROS:** mail aan de projectverantwoordelijke (Drive-actie `werfpuntmelding`, token van de aannemer). Planbord › project › Werf: banner *te beoordelen*; in het punt *Punt van de aannemer goedkeuren* (verantwoordelijke staat standaard op de aannemer zelf → taak en zichtbaar als gewoon werfpunt), **Antwoord aan de aannemer** (`vaststellingen.bros_antwoord`, + wie/wanneer via trigger) of niet weerhouden (status *Vervallen* + reden als antwoord).
+- **Antwoord:** zichtbaar in de werfmodus en het aannemersportaal (view `aan_vaststellingen`: ook de eigen meldingen, kolommen `door_mij`, `te_beoordelen`, `bros_antwoord`) en per mail (Drive-actie `werfpuntantwoord`). Ook bij punten die een klant meldde (view `klant_vaststellingen`, klantenportaal › Werf).
 
 ## Vragen van aannemers en klanten beantwoorden (script 042, v1.43)
 

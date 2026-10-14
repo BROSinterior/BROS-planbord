@@ -4,7 +4,7 @@
    nooit prijzen van BROS of van andere aannemers. Schrijven gaat via functies (opgelost melden, prijzen, vragen).
    ===================================================================== */
 if (window.top !== window.self) { try { window.top.location.replace(window.location.href); } catch (e) { document.documentElement.innerHTML = ""; } }   // niet in een vreemd frame (clickjacking)
-const PORTAAL_VERSION = "1.43.0";
+const PORTAAL_VERSION = "1.45.0";
 const todayLocal = () => { const n = new Date(); return `${n.getFullYear()}-${String(n.getMonth() + 1).padStart(2, "0")}-${String(n.getDate()).padStart(2, "0")}`; };
 const safeUrl = (u) => /^https?:\/\//i.test(String(u || "")) ? u : "#";
 const cfg = window.PLANBORD_CONFIG || {};
@@ -77,7 +77,8 @@ const faseNaam = (nr) => D().fasen.find(f => f.nr === nr)?.naam || "";
 const vsOf = (pid) => D().vs.filter(v => v.project_id === pid);
 const vsNr = (v) => "V-" + String(v.nr || 0).padStart(3, "0");
 const isLate = (v) => v.status === "open" && v.deadline && v.deadline < todayLocal();
-const vsPill = (v) => isLate(v) ? `<span class="pill late">Te laat · ${fmt(v.deadline)}</span>` : `<span class="pill ${v.status}">${VS_STATUS[v.status] || v.status}</span>`;
+const vsPill = (v) => v.te_beoordelen && v.status === "open" ? `<span class="pill ingediend">Voorgelegd aan BROS</span>` : v.door_mij && v.status === "vervallen" ? `<span class="pill vervallen">Niet weerhouden</span>` : isLate(v) ? `<span class="pill late">Te laat · ${fmt(v.deadline)}</span>` : `<span class="pill ${v.status}">${VS_STATUS[v.status] || v.status}</span>`;
+const vsAntwoord = (v) => v.bros_antwoord ? `<div style="font-size:14px;margin:8px 0 14px;padding:10px 12px;background:var(--blue-soft);border-left:3px solid var(--blue);border-radius:8px"><b>Antwoord van BROS${v.beantwoord_naam ? " (" + esc(v.beantwoord_naam) + ")" : ""}${v.beantwoord_op ? " · " + fmt(v.beantwoord_op) : ""}:</b><div style="white-space:pre-line;margin-top:2px">${esc(v.bros_antwoord)}</div></div>` : "";   // script 043
 const plan = (id) => D().plannen.find(x => x.id === id);
 const pinHtml = (v, cls = "") => v.plan_x == null ? "" : `<span class="pin ${cls || v.status}" data-vs="${v.id}" style="left:${Number(v.plan_x) * 100}%;top:${Number(v.plan_y) * 100}%" title="${esc(vsNr(v))}">${v.nr || "•"}</span>`;
 
@@ -108,7 +109,7 @@ function render() {
   if (S.me && S.me.role !== "aannemer") { $("#app").innerHTML = `<div class="login"><div class="card"><div class="brand" style="margin-bottom:14px"><span class="mark">BROS</span><span class="name">Aannemersportaal</span></div><h1>Dit is het aannemersportaal</h1><p>Je bent ingelogd als ${S.me.role === "klant" ? "klant" : "teamlid"} (${esc(S.me.email || "")}).</p><p><a class="btn primary" href="${S.me.role === "klant" ? "../klant/" : "../"}">${S.me.role === "klant" ? "Naar het klantenportaal" : "Naar het Planbord"}</a> <button class="btn ghost" data-act="logout">Uitloggen</button></p></div></div>`; return; }
   if (!D().projecten.length) { $("#app").innerHTML = `<div class="login"><div class="card"><div class="brand" style="margin-bottom:14px"><span class="mark">BROS</span><span class="name">Aannemersportaal</span></div><h1>Nog geen project gekoppeld</h1><p>Je login werkt, maar er is nog geen project aan je gekoppeld. Laat het ons weten via ${esc(D().inst.contact_email || "info@bros.be")}.</p><p><button class="btn ghost" data-act="logout">Uitloggen</button></p></div></div>`; return; }
   const p = P(); const vs = vsOf(p.id);
-  const nOpen = vs.filter(v => v.status === "open").length, nPa = D().aanvragen.filter(a => a.project_id === p.id && a.status === "open").length, nTk = D().taken.filter(t => t.project_id === p.id && !t.vaststelling_id && t.status !== "done").length;
+  const nOpen = vs.filter(v => v.status === "open" && !v.te_beoordelen && v.aan_mij !== false).length, nPa = D().aanvragen.filter(a => a.project_id === p.id && a.status === "open").length, nTk = D().taken.filter(t => t.project_id === p.id && !t.vaststelling_id && t.status !== "done").length;
   const badge = (n) => n ? ` <span class="badge">${n}</span>` : "";
   if (p.kandidaat) S.tab = "prijzen";
   const tabs = p.kandidaat ? [["prijzen", "Prijsaanvragen" + badge(nPa)]] : [["overzicht", "Overzicht"], ["werf", "Werfpunten" + badge(nOpen)], ["prijzen", "Prijsaanvragen" + badge(nPa)], ...(msOf(p.id).length || mpOf(p.id).length ? [["meetstaat", "Meetstaat" + badge(mpOf(p.id).filter(m => m.status === "gedeeld").length)]] : []), ["plannen", "Plannen"], ["documenten", "Documenten"], ["planning", "Planning"], ["vragen", "Vragen" + badge(nTk)], ["team", "Wie is wie"]];
@@ -120,7 +121,7 @@ function render() {
 }
 const projTitel = (p) => p.kandidaat ? `Project ${esc(p.nummer || "")}${p.gemeente ? " · " + esc(p.gemeente) : ""}` : `${esc(p.klant || "")}${p.naam && p.naam !== p.klant ? " · " + esc(p.naam) : ""}`;
 function vOverzicht(p) {
-  const vs = vsOf(p.id); const open = vs.filter(v => v.status === "open"), late = open.filter(isLate), wacht = vs.filter(v => v.status === "opgelost");
+  const vs = vsOf(p.id); const open = vs.filter(v => v.status === "open" && !v.te_beoordelen && v.aan_mij !== false), late = open.filter(isLate), wacht = vs.filter(v => v.status === "opgelost");
   const pa = D().aanvragen.filter(a => a.project_id === p.id && a.status === "open"); const tk = D().taken.filter(t => t.project_id === p.id && !t.vaststelling_id && t.status !== "done");
   const lead = D().team.find(t => t.id === p.lead); const inst = D().inst;
   return `<div class="hero"><div class="eyebrow">${esc(p.nummer || "")} · ${projTitel(p)}${(p.mijn_loten || []).length ? ` · ${p.mijn_loten.map(lotNaam).map(esc).join(", ")}` : ""}</div><h1>Dag ${esc(voornaam())}</h1>
@@ -148,7 +149,8 @@ function vWerf(p) {
   const all = vsOf(p.id); const f = S.vsFilter;
   const list = all.filter(v => f === "open" ? v.status === "open" : f === "opgelost" ? v.status === "opgelost" : true);
   const n = (k) => all.filter(v => k === "alle" ? true : v.status === k).length;
-  return `<h1 style="margin-bottom:6px">Werfpunten</h1><p class="muted" style="margin-bottom:16px">Vaststellingen die BROS aan jou toewees. Meld een punt als opgelost met een bewijsfoto; BROS controleert het daarna op de werf.</p>
+  return `<div style="display:flex;justify-content:space-between;gap:12px;flex-wrap:wrap;align-items:flex-start"><div><h1 style="margin-bottom:6px">Werfpunten</h1><p class="muted" style="margin-bottom:16px">Vaststellingen die BROS aan jou toewees, en de punten die je zelf meldde. Meld een punt als opgelost met een bewijsfoto; BROS controleert het daarna op de werf.</p></div>
+    <a class="btn primary" href="../werf/?p=${esc(p.id)}" title="Werfmodus op je smartphone: foto's nemen, ook zonder bereik">📷 Nieuw punt melden</a></div>
     <div class="chips">${[["open", `Open ${n("open")}`], ["opgelost", `Wacht op controle ${n("opgelost")}`], ["alle", `Alles ${n("alle")}`]].map(([k, l]) => `<button class="chip" data-act="vs-filter" data-f="${k}" aria-current="${f === k}">${l}</button>`).join("")}</div>
     ${list.length ? `<div style="display:grid;gap:8px">${list.map(vsCard).join("")}</div>` : `<div class="panel"><div class="empty"><b>${all.length ? "Niets in deze lijst" : "Nog geen werfpunten"}</b>${all.length ? "" : "Zodra BROS je een vaststelling toewijst, staat ze hier."}</div></div>`}`;
 }
@@ -159,14 +161,16 @@ function vDetail(p) {
     ${fotos.length ? `<div class="gallery">${fotos.map(f => `<img src="${esc(safeUrl(f.url))}" alt="" data-lb="${esc(safeUrl(f.url))}">`).join("")}</div>` : ""}
     <div style="display:flex;gap:8px;align-items:center;margin-bottom:6px;flex-wrap:wrap"><span class="nr" style="font-size:18px">${vsNr(v)}</span>${v.prioriteit === "hoog" ? `<span class="pill late">Dringend</span>` : ""}${vsPill(v)}</div>
     ${v.titel ? `<h1 style="margin:0 0 6px">${esc(v.titel)}</h1>` : ""}<p style="font-size:16px;white-space:pre-wrap">${esc(v.omschrijving || "")}</p>
-    <div class="meta" style="margin-bottom:16px">${v.ruimte ? `<div>Ruimte: <b>${esc(v.ruimte)}</b></div>` : ""}${v.lot ? `<div>Lot: <b>${esc(lotNaam(v.lot))}</b></div>` : ""}${v.deadline ? `<div>Op te lossen tegen: <b class="${isLate(v) ? "late" : ""}">${fmtLang(v.deadline)}</b></div>` : ""}${v.bezoek_datum ? `<div>Vastgesteld bij het werfbezoek van <b>${fmtLang(v.bezoek_datum)}</b></div>` : ""}${v.opgelost_op ? `<div>Opgelost gemeld op <b>${fmtLang(v.opgelost_op.slice(0, 10))}</b></div>` : ""}${v.opmerking ? `<div>Opmerking: <b>${esc(v.opmerking)}</b></div>` : ""}</div>
+    ${v.door_mij ? `<p class="muted" style="font-size:13px;margin:-4px 0 8px">${v.te_beoordelen && v.status === "open" ? "Door jou gemeld — BROS bekijkt het en wijst het daarna toe." : v.status === "vervallen" ? "Door jou gemeld — niet weerhouden door BROS." : v.aan_mij === false ? "Door jou gemeld — BROS nam het op en wees het toe aan een andere uitvoerder of het team." : "Door jou gemeld."}</p>` : ""}${vsAntwoord(v)}
+    <div class="meta" style="margin-bottom:16px">${v.ruimte ? `<div>Ruimte: <b>${esc(v.ruimte)}</b></div>` : ""}${v.lot ? `<div>Lot: <b>${esc(lotNaam(v.lot))}</b></div>` : ""}${v.deadline ? `<div>Op te lossen tegen: <b class="${isLate(v) ? "late" : ""}">${fmtLang(v.deadline)}</b></div>` : ""}${v.bezoek_datum ? `<div>Vastgesteld bij het werfbezoek van <b>${fmtLang(v.bezoek_datum)}</b></div>` : ""}${v.opgelost_op ? `<div>Opgelost gemeld op <b>${fmtLang(v.opgelost_op.slice(0, 10))}</b></div>` : ""}</div>
+    ${v.opmerking ? `<div class="panel" style="margin-bottom:16px"><div class="panel-head"><h2>Opmerkingen</h2></div><div class="panel-body" style="white-space:pre-line;font-size:14px">${esc(v.opmerking)}</div></div>` : ""}
     <div class="two"><div class="stack">
-      ${v.status === "open" ? `<div class="panel" style="border-color:var(--ink)"><div class="panel-head"><h2>Opgelost melden</h2></div><div class="panel-body">
+      ${v.status === "open" && !v.te_beoordelen && v.aan_mij !== false ? `<div class="panel" style="border-color:var(--ink)"><div class="panel-head"><h2>Opgelost melden</h2></div><div class="panel-body">
         <div class="big"><label>📷<span></span>Foto nemen<input type="file" accept="image/*" capture="environment" hidden data-file></label><label>🖼️<span></span>Uit galerij<input type="file" accept="image/*" multiple hidden data-file></label></div>
         <div class="fotos" id="f_fotos">${S.nieuw.map((f, i) => `<div class="fi"><img src="${f.url}" alt=""><button type="button" class="x" data-x="${i}">✕</button></div>`).join("")}</div>
-        <div class="field" style="margin-top:12px"><label for="f_opm">Opmerking (optioneel)</label><textarea id="f_opm" rows="2" placeholder="bv. Scharnier vervangen en deur bijgesteld">${esc(S.opm || "")}</textarea></div>
-        <div class="gk-actions"><button class="btn primary" data-act="vs-opgelost" data-id="${v.id}" ${S.bezig ? "disabled" : ""}>${S.bezig ? "Bezig…" : "✓ Opgelost melden"}</button><button class="btn" data-act="vs-foto" data-id="${v.id}" ${S.bezig || !S.nieuw.length && !(S.opm || "").trim() ? "disabled" : ""}>Enkel foto/opmerking toevoegen</button></div>
-        <p class="muted" style="font-size:12px;margin:10px 0 0">Een bewijsfoto is niet verplicht, maar helpt BROS om het punt sneller af te sluiten.</p></div></div>` : v.status === "opgelost" ? `<div class="panel"><div class="panel-body"><b>Gemeld als opgelost.</b> BROS controleert dit punt bij het volgende werfbezoek. Wil je nog een foto of opmerking toevoegen?
+        <div class="field" style="margin-top:12px"><label for="f_opm">Opmerking voor BROS (optioneel)</label><textarea id="f_opm" rows="3" placeholder="bv. Scharnier vervangen en deur bijgesteld — of: nog niet klaar, we wachten op …">${esc(S.opm || "")}</textarea></div>
+        <div class="gk-actions"><button class="btn primary" data-act="vs-opgelost" data-id="${v.id}" ${S.bezig ? "disabled" : ""}>${S.bezig ? "Bezig…" : "✓ Opgelost melden"}</button><button class="btn" data-act="vs-foto" data-id="${v.id}" ${S.bezig || !S.nieuw.length && !(S.opm || "").trim() ? "disabled" : ""}>💬 Bewaren — nog niet opgelost</button></div>
+        <p class="muted" style="font-size:12px;margin:10px 0 0">Klaar? Meld het als opgelost (een bewijsfoto helpt BROS om het punt sneller af te sluiten). Nog niet klaar of heb je een vraag? Schrijf het hierboven en kies <i>Bewaren — nog niet opgelost</i>: BROS krijgt je opmerking en kan erop reageren.</p></div></div>` : v.status === "opgelost" && !v.te_beoordelen && v.aan_mij !== false ? `<div class="panel"><div class="panel-body"><b>Gemeld als opgelost.</b> BROS controleert dit punt bij het volgende werfbezoek. Wil je nog een foto of opmerking toevoegen?
         <div class="big" style="margin-top:12px"><label>📷<span></span>Foto toevoegen<input type="file" accept="image/*" multiple hidden data-file></label></div><div class="fotos" id="f_fotos">${S.nieuw.map((f, i) => `<div class="fi"><img src="${f.url}" alt=""><button type="button" class="x" data-x="${i}">✕</button></div>`).join("")}</div>
         <div class="field" style="margin-top:12px"><label for="f_opm">Opmerking</label><textarea id="f_opm" rows="2">${esc(S.opm || "")}</textarea></div><button class="btn" data-act="vs-foto" data-id="${v.id}" ${S.bezig ? "disabled" : ""}>Toevoegen</button></div></div>` : ""}
       ${bewijs.length ? `<div class="panel"><div class="panel-head"><h2>Bewijsfoto's</h2></div><div class="panel-body"><div class="fotos">${bewijs.map(f => `<img src="${esc(safeUrl(f.url))}" alt="" data-lb="${esc(safeUrl(f.url))}">`).join("")}</div></div></div>` : ""}
@@ -467,8 +471,10 @@ async function vsMelden(id, opgelost) {
     const fotos = []; for (const f of S.nieuw) fotos.push(await upload(v.project_id, v.id, f));
     const { error } = await sb.rpc("aannemer_vaststelling_melden", { p_id: id, p_status: opgelost ? "opgelost" : null, p_opmerking: (S.opm || "").trim() || null, p_fotos: fotos });
     if (error) throw error;
-    S.nieuw.forEach(f => URL.revokeObjectURL(f.url)); S.nieuw = []; S.opm = "";
-    await loadAll(); toast(opgelost ? "Gemeld als opgelost — BROS controleert het bij het volgende werfbezoek." : "Toegevoegd.", 5000);
+    S.nieuw.forEach(f => URL.revokeObjectURL(f.url)); S.nieuw = [];
+    const opm = (S.opm || "").trim(); S.opm = "";
+    if (cfg.driveScriptUrl && opm) { try { fetch(cfg.driveScriptUrl, { method: "POST", body: JSON.stringify({ action: "werfpuntfeedback", id, token: S.session?.access_token || "" }), redirect: "follow" }).catch(() => { }); } catch (e) { } }   // BROS verwittigen (script 044)
+    await loadAll(); toast(opgelost ? "Gemeld als opgelost — BROS controleert het bij het volgende werfbezoek." : "Bewaard — BROS krijgt je opmerking en kan erop reageren.", 5000);
   } catch (e) { toast("Dat lukte niet: " + (e.message || e), 6000); }
   S.bezig = false; render();
 }
@@ -576,7 +582,7 @@ document.addEventListener("change", async (e) => {
     if (error) { toast("Dat lukte niet: " + error.message); t.checked = !klaar; t.disabled = false; return; }
     D().taken.forEach(x => { if (x.id === id) x.status = klaar ? "done" : "todo"; }); render(); toast(klaar ? "Afgevinkt — bedankt!" : "Weer open gezet"); }
 });
-document.addEventListener("input", (e) => { if (e.target.id === "f_opm") S.opm = e.target.value; });
+document.addEventListener("input", (e) => { if (e.target.id === "f_opm") { S.opm = e.target.value; const b = document.querySelector('[data-act="vs-foto"]'); if (b && !S.bezig) b.disabled = !S.nieuw.length && !S.opm.trim(); } });   // knop meteen bruikbaar zodra er tekst staat
 document.addEventListener("keydown", (e) => { if (e.key === "Enter" && e.target.matches && e.target.matches("input.prijs, input.opm")) { e.preventDefault(); e.target.blur(); } });
 
 async function start() {

@@ -3,7 +3,7 @@
    Leest uitsluitend de klant_*-views (databasescript 011): geen kostprijzen, marges of interne notities.
    ===================================================================== */
 if (window.top !== window.self) { try { window.top.location.replace(window.location.href); } catch (e) { document.documentElement.innerHTML = ""; } }   // niet in een vreemd frame (clickjacking)
-const PORTAAL_VERSION = "1.43.0";
+const PORTAAL_VERSION = "1.44.0";
 const todayLocal = () => { const n = new Date(); return `${n.getFullYear()}-${String(n.getMonth() + 1).padStart(2, "0")}-${String(n.getDate()).padStart(2, "0")}`; };
 const safeUrl = (u) => /^https?:\/\//i.test(String(u || "")) ? u : "#";
 const cfg = window.PLANBORD_CONFIG || {};
@@ -714,6 +714,7 @@ function vWerf(p) {
   const groep = (titel, lijst) => lijst.length ? `<h3 style="margin:18px 0 10px">${titel} <span class="muted" style="font-weight:400">${lijst.length}</span></h3><div class="stack">${lijst.map(v => { const [lbl, cls] = WP_STATUS(v);
     return `<div class="panel"><div class="panel-body"><div style="display:flex;justify-content:space-between;gap:10px;flex-wrap:wrap"><div><b>${(v.titel ? nt(v.titel) : "Werfpunt")}</b> <span class="muted num" style="font-size:12px">V-${String(v.nr || 0).padStart(3, "0")}</span>${v.door_klant ? ` <span class="pill grijs" style="font-size:11px">door jou gemeld</span>` : ""}<div class="muted" style="font-size:13px">${esc([v.ruimte, "gemeld " + fmt(v.created_at)].filter(Boolean).join(" · "))}${v.deadline && v.status === "open" && !v.te_beoordelen ? ` · op te lossen tegen ${fmt(v.deadline)}` : ""}</div></div><span class="pill ${cls}">${esc(lbl)}</span></div>
       ${v.omschrijving ? `<div style="font-size:14px;white-space:pre-line;margin-top:6px">${nt(v.omschrijving)}</div>` : ""}${fotoStrip(v.fotos)}
+      ${v.bros_antwoord ? `<div style="margin-top:8px;padding:8px 10px;background:var(--blue-soft);border-left:3px solid var(--blue);border-radius:8px;font-size:13px;white-space:pre-line"><b>BROS:</b> ${nt(v.bros_antwoord)}</div>` : ""}
       ${(v.opgelost_fotos || []).length ? `<div class="muted" style="font-size:12px;margin-top:8px">Na de herstelling${v.opgelost_op ? " (" + fmt(v.opgelost_op) + ")" : ""}:</div>${fotoStrip(v.opgelost_fotos)}` : ""}</div></div>`; }).join("")}</div>` : "";
   return vVoortgang(p) + `<div style="display:flex;justify-content:space-between;align-items:flex-start;gap:12px;flex-wrap:wrap"><div><h1 style="margin-bottom:6px;${(D().werfFotos || []).some(f => f.project_id === p.id) ? "font-size:24px" : ""}">${(D().werfFotos || []).some(f => f.project_id === p.id) ? "Werfpunten" : "Werf"}</h1><p class="muted" style="margin-bottom:16px">Zie je iets dat niet in orde is, of bij de oplevering iets dat nog moet gebeuren? Meld het hier met een foto: BROS bekijkt het en zorgt dat de juiste vakman het oplost. Je volgt hier de status.</p></div>${S.wpNieuw ? "" : `<button class="btn primary" data-act="wp-nieuw">Punt melden</button>`}</div>
     ${S.wpNieuw ? `<div class="panel" style="margin-bottom:16px"><div class="panel-head"><h2>Nieuw punt</h2></div><form id="wpForm" class="panel-body kp-form" style="max-width:620px">

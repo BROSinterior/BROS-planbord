@@ -38,6 +38,8 @@ function doPost(e) {
     if (body.action === "aanprijsmail") return json(aanPrijsMail(body)); // meetstaat met prijzen (script 032): team (beheer) → aannemer bij delen, aannemer → BROS bij akkoord/tegenvoorstel
     if (body.action === "klantmelding") return json(klantMelding(body));
     if (body.action === "ovmail") return json(overeenkomstMail(body)); // overeenkomsten (script 039): voorgelegd (team), code en beslist (klant) // klantenportaal (script 035): keuze gemaakt, meerwerk aangevraagd of werfpunt gemeld → mail aan de projectverantwoordelijke
+    if (body.action === "werfpuntmelding") return json(werfpuntMelding(body));
+    if (body.action === "werfpuntfeedback") return json(werfpuntFeedback(body));   // aannemer (script 044): opmerking/foto bij een toegewezen werfpunt zonder het op te lossen → mail aan de projectverantwoordelijke   // aannemer (script 043): nieuw werfpunt gemeld in de werfmodus → mail aan de projectverantwoordelijke (token-gecontroleerd)
     if (body.action === "bestand") return json(portaalBestand(body)); // klant/aannemer: een gedeeld document ophalen om er een pdf-dossier van te maken (login + toegang gecontroleerd) // team (token): aannemer verwittigen dat hij aan een project gekoppeld is (met uitnodiging als hij nog geen login heeft)
     if (!body.secret || body.secret !== CONFIG.SECRET) return json({ ok: false, error: "Geen toegang (secret klopt niet)." });
     if (body.action === "ping") return json({ ok: true, info: "Verbinding en secret in orde.", projecten: DriveApp.getFolderById(CONFIG.PROJECTEN_FOLDER_ID).getName(), sjabloon: DriveApp.getFolderById(CONFIG.SJABLOON_FOLDER_ID).getName() });
@@ -53,7 +55,9 @@ function doPost(e) {
     if (body.action === "assistentmail") return json(assistentMail(body));   // vanuit de Edge Function (secret), melding aan de verantwoordelijke
     if (body.action === "werfverslagmail") return json(werfverslagMail(body));
     if (body.action === "afspraak") return json(afspraakSync(body));
-    if (body.action === "antwoordmail") return json(antwoordMail(body));   // vragen beantwoorden (script 042): mail met het antwoord aan de aannemer of klant   // afspraken ter plaatse (script 041): Google Agenda van brosburo + mail met agendabestand aan de deelnemers
+    if (body.action === "antwoordmail") return json(antwoordMail(body));
+    if (body.action === "werfpuntantwoord") return json(werfpuntAntwoord(body));
+    if (body.action === "werfpuntreactie") return json(werfpuntReactie(body));   // werfpunt (script 044): reactie van BROS → mail aan de toegewezen aannemer   // werfpunt (script 043): antwoord van BROS aan de aannemer of klant die het meldde   // vragen beantwoorden (script 042): mail met het antwoord aan de aannemer of klant   // afspraken ter plaatse (script 041): Google Agenda van brosburo + mail met agendabestand aan de deelnemers
     return json({ ok: false, error: "Onbekende actie." });
   } catch (err) {
     const msg = String(err && err.message || err); console.error(msg);
@@ -690,6 +694,101 @@ function antwoordMail(body) {
   const tekst = (en ? "Dear " : "Beste ") + naam + ",\n\n" + (en ? "Here is our answer to your question:" : "Hierbij ons antwoord op je vraag:") + "\n\n" + (vraag ? "> " + vraag.slice(0, 1500).replace(/\n/g, "\n> ") + "\n\n" : "") + v.bros_antwoord + "\n\n" + url + "\n\n" + wie.name + " — BROS";
   try { portaalMail(email, (en ? "Reply from BROS: " : "Antwoord van BROS: ") + (v.titel || ""), tekst, html); }
   catch (e) { CacheService.getScriptCache().remove("q:1:antw:" + v.id + ":" + v.beantwoord_op); throw e; }   // mislukt: later opnieuw kunnen proberen
+  return { ok: true, naar: email };
+}
+/* =====================================================================
+   Werfpunten gemeld door een aannemer (script 043)
+   - werfpuntMelding: de aannemer (eigen token) meldt een nieuw punt → mail aan de projectverantwoordelijke (één keer per punt)
+   - werfpuntAntwoord: BROS antwoordt (Planbord) → mail aan wie het punt meldde (aannemer of klant)
+   ===================================================================== */
+function werfpuntMelding(body) {
+  const wie = callerAny(body.token);
+  if (wie.role !== "aannemer") return { ok: false, error: "Geen toegang." };
+  if (!quotum("werfpuntmelding:" + wie.id, 40, 3600)) return { ok: false, error: "Te veel meldingen in korte tijd." };
+  const id = uuid(body.id);
+  const rij = (pbReq("/rest/v1/aan_vaststellingen?id=eq." + id + "&select=*", "get", null, body.token) || [])[0];
+  if (!rij || !rij.door_mij || !rij.te_beoordelen) return { ok: true, overgeslagen: true };
+  if (!eenmalig("werfpuntmelding:" + id, 86400)) return { ok: true, al: true };
+  const v = (pbAdmin("/rest/v1/vaststellingen?id=eq." + id + "&select=gemeld_door_aannemer", "get") || [])[0] || {};
+  const c = v.gemeld_door_aannemer ? (pbAdmin("/rest/v1/contacten?id=eq." + v.gemeld_door_aannemer + "&select=naam,contactpersoon", "get") || [])[0] : null;
+  const p = (pbAdmin("/rest/v1/projecten?id=eq." + rij.project_id + "&select=nummer,klant,naam,lead", "get") || [])[0] || {};
+  const lead = p.lead ? (pbAdmin("/rest/v1/profiles?id=eq." + p.lead + "&select=name,email", "get") || [])[0] : null;
+  const naar = (lead && lead.email) || YUKI.REPORT_TO; const proj = (p.klant || "") + (p.naam && p.naam !== p.klant ? " · " + p.naam : "");
+  const van = (c && (c.naam + (c.contactpersoon ? " (" + c.contactpersoon + ")" : ""))) || wie.name || "Een aannemer";
+  const lijnen = ["V-" + ("00" + (rij.nr || 0)).slice(-3) + " · " + rij.titel + (rij.ruimte ? " (" + rij.ruimte + ")" : ""), rij.omschrijving || "", "Te beoordelen in het Planbord › project › Werf: goedkeuren (en een verantwoordelijke kiezen), antwoorden of niet weerhouden."].filter(Boolean);
+  const fotos = (rij.fotos || []).slice(0, 6).filter(f => String(f.url || "").indexOf(YUKI.PLANBORD_URL + "/storage/v1/object/public/werf/") === 0);
+  const html = "<div style=\"font-family:Helvetica,Arial,sans-serif;font-size:15px;line-height:1.5;color:#1B1E1C;max-width:640px\"><p><b>" + H(van) + "</b> meldde een werfpunt in de werfmodus (" + H(proj) + "):</p><ul>" + lijnen.map(l => "<li style=\"white-space:pre-line\">" + H(l) + "</li>").join("") + "</ul>"
+    + fotos.map(f => "<a href=\"" + H(f.url) + "\"><img src=\"" + H(f.url) + "\" width=\"120\" style=\"border-radius:6px;margin:2px\"></a>").join("") + "</div>";
+  try { GmailApp.sendEmail(naar, "Werf · " + proj + " · punt gemeld door " + van + ": " + rij.titel, van + " meldde een werfpunt (" + proj + "):\n\n- " + lijnen.join("\n- "), { htmlBody: html, name: "BROS Planbord" }); }
+  catch (e) { CacheService.getScriptCache().remove("q:1:werfpuntmelding:" + id); throw e; }
+  return { ok: true };
+}
+function werfpuntAntwoord(body) {
+  const wie = caller(body.token, false);
+  const v = (pbAdmin("/rest/v1/vaststellingen?id=eq." + uuid(body.id) + "&select=id,nr,titel,omschrijving,status,te_beoordelen,project_id,gemeld_door_aannemer,gemeld_door_klant,bros_antwoord,beantwoord_op", "get") || [])[0];
+  if (!v || !String(v.bros_antwoord || "").trim()) return { ok: false, error: "Geen antwoord bij dit punt." };
+  const cid = v.gemeld_door_aannemer || v.gemeld_door_klant; if (!cid) return { ok: true, naar: "", waarschuwing: "niemand te mailen (punt van BROS)" };
+  const key = "werfpuntantwoord:" + v.id + ":" + v.beantwoord_op;
+  if (!eenmalig(key, 21600)) return { ok: true, naar: "" };
+  const c = (pbAdmin("/rest/v1/contacten?id=eq." + cid + "&select=naam,contactpersoon,email,taal", "get") || [])[0] || {};
+  const email = String(c.email || "").trim();
+  if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email)) return { ok: true, naar: "", waarschuwing: "geen e-mailadres gekend — enkel in het portaal" };
+  const p = (pbAdmin("/rest/v1/projecten?id=eq." + v.project_id + "&select=nummer,klant,naam", "get") || [])[0] || {};
+  const aannemer = !!v.gemeld_door_aannemer; const en = String(c.taal || "") === "en"; const naam = c.contactpersoon || c.naam || "";
+  const nr = "V-" + ("00" + (v.nr || 0)).slice(-3); const url = aannemer ? PORTAAL.URL_AANNEMER : PORTAAL.URL;
+  const stand = v.status === "vervallen" ? (en ? "not retained" : "niet weerhouden") : v.te_beoordelen ? (en ? "still being reviewed" : "nog in beoordeling") : (en ? "accepted" : "opgenomen in de werfopvolging");
+  const html = "<div style=\"font-family:Helvetica,Arial,sans-serif;font-size:15px;line-height:1.5;color:#1B1E1C;max-width:640px\"><p>" + (en ? "Dear " : "Beste ") + H(naam) + ",</p>"
+    + "<p>" + (en ? "About the site issue you reported" : "Over het werfpunt dat je meldde") + " — <b>" + H(nr + " " + (v.titel || "")) + "</b>" + (aannemer && (p.nummer || p.klant) ? " (" + H((p.nummer ? p.nummer + " · " : "") + (p.klant || "")) + ")" : "") + ", " + stand + ":</p>"
+    + "<p style=\"white-space:pre-line\">" + H(v.bros_antwoord) + "</p>"
+    + "<p style=\"margin:24px 0\"><a href=\"" + url + "\" style=\"background:#1B1E1C;color:#fff;text-decoration:none;padding:12px 20px;border-radius:8px;font-weight:600;display:inline-block\">" + (en ? "Open your portal" : "Naar je portaal") + "</a></p><p>" + H(wie.name) + " — BROS</p></div>";
+  const tekst = (en ? "Dear " : "Beste ") + naam + ",\n\n" + (en ? "About the site issue you reported" : "Over het werfpunt dat je meldde") + " — " + nr + " " + (v.titel || "") + ", " + stand + ":\n\n" + v.bros_antwoord + "\n\n" + url + "\n\n" + wie.name + " — BROS";
+  try { portaalMail(email, (en ? "Reply from BROS: " : "Antwoord van BROS: ") + nr + " " + (v.titel || ""), tekst, html); }
+  catch (e) { CacheService.getScriptCache().remove("q:1:" + key); throw e; }
+  return { ok: true, naar: email };
+}
+/* ---- reacties op werfpunten (script 044): aannemer ⇄ BROS in vaststellingen.opmerking ---- */
+const laatsteRegels = (t, n) => String(t || "").split("\n").filter(Boolean).slice(-n);
+function werfpuntFeedback(body) {
+  const wie = callerAny(body.token);
+  if (wie.role !== "aannemer") return { ok: false, error: "Geen toegang." };
+  const id = uuid(body.id);
+  const rij = (pbReq("/rest/v1/aan_vaststellingen?id=eq." + id + "&select=*", "get", null, body.token) || [])[0];
+  if (!rij || rij.aan_mij === false) return { ok: true, overgeslagen: true };
+  const laatste = laatsteRegels(rij.opmerking, 1)[0] || "";
+  if (!laatste || / · BROS \(/.test(laatste)) return { ok: true, overgeslagen: true };   // enkel als het laatste bericht van de aannemer komt
+  if (!quotum("werfpuntfeedback-user:" + wie.id, 20, 3600) || !eenmalig("werfpuntfeedback:" + id + ":" + laatste.slice(0, 120), 86400)) return { ok: true, overgeslagen: true };   // geen herhaalde mails
+  const v = (pbAdmin("/rest/v1/vaststellingen?id=eq." + id + "&select=contact_id", "get") || [])[0] || {};
+  const c = v.contact_id ? (pbAdmin("/rest/v1/contacten?id=eq." + v.contact_id + "&select=naam,contactpersoon", "get") || [])[0] : null;
+  const p = (pbAdmin("/rest/v1/projecten?id=eq." + rij.project_id + "&select=nummer,klant,naam,lead", "get") || [])[0] || {};
+  const lead = p.lead ? (pbAdmin("/rest/v1/profiles?id=eq." + p.lead + "&select=name,email", "get") || [])[0] : null;
+  const naar = (lead && lead.email) || YUKI.REPORT_TO; const proj = (p.klant || "") + (p.naam && p.naam !== p.klant ? " · " + p.naam : "");
+  const van = (c && (c.naam + (c.contactpersoon ? " (" + c.contactpersoon + ")" : ""))) || wie.name || "De aannemer";
+  const nr = "V-" + ("00" + (rij.nr || 0)).slice(-3);
+  const regels = laatsteRegels(rij.opmerking, 4);
+  const html = "<div style=\"font-family:Helvetica,Arial,sans-serif;font-size:15px;line-height:1.5;color:#1B1E1C;max-width:640px\"><p><b>" + H(van) + "</b> reageerde op werfpunt <b>" + H(nr + " " + (rij.titel || "")) + "</b> (" + H(proj) + ")" + (rij.status === "opgelost" ? " en meldde het als opgelost" : " — het punt is nog niet opgelost") + ":</p>"
+    + "<div style=\"padding:10px 14px;border-left:3px solid #DAD8D0;white-space:pre-line\">" + H(regels.join("\n")) + "</div>"
+    + "<p style=\"color:#767D78\">Antwoorden: Planbord › project › Werf › " + H(nr) + " › Reactie aan de aannemer.</p></div>";
+  GmailApp.sendEmail(naar, "Werf · " + proj + " · reactie van " + van + " op " + nr + " " + (rij.titel || ""), van + " reageerde op " + nr + " (" + proj + "):\n\n" + regels.join("\n"), { htmlBody: html, name: "BROS Planbord" });
+  return { ok: true };
+}
+function werfpuntReactie(body) {
+  const wie = caller(body.token, false);
+  const v = (pbAdmin("/rest/v1/vaststellingen?id=eq." + uuid(body.id) + "&select=id,nr,titel,status,project_id,contact_id,opmerking", "get") || [])[0];
+  if (!v) return { ok: false, error: "Werfpunt niet gevonden." };
+  if (!v.contact_id) return { ok: true, naar: "", waarschuwing: "niet toegewezen aan een aannemer — niet gemaild" };
+  const c = (pbAdmin("/rest/v1/contacten?id=eq." + v.contact_id + "&select=naam,contactpersoon,email,soort", "get") || [])[0] || {};
+  const email = String(c.email || "").trim();
+  if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email)) return { ok: true, naar: "", waarschuwing: "geen e-mailadres gekend — enkel in het portaal" };
+  if (!quotum("werfpuntreactie:" + v.id, 10, 3600)) return { ok: true, naar: "" };
+  const p = (pbAdmin("/rest/v1/projecten?id=eq." + v.project_id + "&select=nummer,klant,naam", "get") || [])[0] || {};
+  const nr = "V-" + ("00" + (v.nr || 0)).slice(-3); const laatste = laatsteRegels(v.opmerking, 1)[0] || "";
+  const tekst = laatste.replace(/^\d\d\/\d\d \d\d:\d\d · [^:]*: /, "");
+  const url = c.soort === "klant" ? PORTAAL.URL : PORTAAL.URL_AANNEMER;
+  const html = "<div style=\"font-family:Helvetica,Arial,sans-serif;font-size:15px;line-height:1.5;color:#1B1E1C;max-width:640px\"><p>Beste " + H(c.contactpersoon || c.naam || "") + ",</p>"
+    + "<p>BROS reageerde op werfpunt <b>" + H(nr + " " + (v.titel || "")) + "</b>" + (p.nummer || p.klant ? " (" + H((p.nummer ? p.nummer + " · " : "") + (p.klant || "")) + ")" : "") + ":</p>"
+    + "<p style=\"white-space:pre-line\">" + H(tekst) + "</p>"
+    + "<p style=\"margin:24px 0\"><a href=\"" + url + "\" style=\"background:#1B1E1C;color:#fff;text-decoration:none;padding:12px 20px;border-radius:8px;font-weight:600;display:inline-block\">Naar je portaal</a></p><p>" + H(wie.name) + " — BROS</p></div>";
+  portaalMail(email, "Reactie van BROS: " + nr + " " + (v.titel || ""), "Beste " + (c.contactpersoon || c.naam || "") + ",\n\nBROS reageerde op werfpunt " + nr + " " + (v.titel || "") + ":\n\n" + tekst + "\n\n" + url + "\n\n" + wie.name + " — BROS", html);
   return { ok: true, naar: email };
 }
 /** Verslag gedeeld met de klant: mail met het verslag en de actiepunten naar de klanten met portaal-toegang. */
