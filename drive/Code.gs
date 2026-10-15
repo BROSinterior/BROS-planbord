@@ -32,6 +32,7 @@ const CONFIG = {
 function doPost(e) {
   try {
     const body = JSON.parse((e.postData && e.postData.contents) || "{}");
+    try { onderhoudZeker(); } catch (x) { }   // 1.48: de onderhoudstrigger bestaat (zonder dat iemand iets moet uitvoeren)
     if (body.action === "reset") return json(portaalReset(body));   // klantenportaal: "wachtwoord vergeten" — bewust zonder secret, stuurt enkel een mail naar een bestaande klantlogin
     if (body.action === "gkmail") return json(goedkeuringMail(body)); // portaal (klant beslist) én Planbord: identiteit en rol via het meegestuurde login-token
     if (body.action === "voorstelmail") return json(voorstelMailAannemer(body)); // aannemersportaal: melding van een vraag/opmerking (token-gecontroleerd, aannemer)
@@ -165,7 +166,8 @@ function listById(folderId) {
   if (!folderId) return { ok: false, error: "Geen map-id." };
   const r = UrlFetchApp.fetch("https://www.googleapis.com/drive/v3/files/" + folderId + "?supportsAllDrives=true&fields=id,name,webViewLink", { headers: { Authorization: "Bearer " + ScriptApp.getOAuthToken() }, muteHttpExceptions: true });
   const f = JSON.parse(r.getContentText()); if (f.error) throw new Error("Map niet gevonden: " + (f.error.message || ""));
-  return { ok: true, folder: { id: f.id, url: f.webViewLink, name: f.name }, files: listFiles(f.id, "") };
+  const lijst = { volledig: true }; const files = listFiles(f.id, "", lijst);
+  return { ok: true, folder: { id: f.id, url: f.webViewLink, name: f.name }, files: files, volledig: lijst.volledig };   // volledig: geen limiet geraakt (dan mag het Planbord verdwenen bestanden opruimen)
 }
 
 /* ---- Snel oplijsten via de Drive REST API (DriveApp is te traag per map) ---- */
@@ -183,7 +185,12 @@ function driveQuery(q, fields) {
   return out;
 }
 function chunks(arr, n) { const o = []; for (let i = 0; i < arr.length; i += n) o.push(arr.slice(i, i + n)); return o; }
-function listFiles(rootId, path) {
+/* 1.48: "kol=in.(…)" in stukken van 25 — een URL van Apps Script mag niet langer dan ±2 kB zijn (anders "URLFetch URL Length") */
+function pbIn(voor, kol, ids, na) { let o = []; chunks([...new Set((ids || []).filter(Boolean))], 25).forEach(c => { o = o.concat(pbAdmin(voor + kol + "=in.(" + c.join(",") + ")" + (na || ""), "get") || []); }); return o; }
+/* 1.48: genoeg dagquotum voor mails over? (gmail.com: ±100 ontvangers per dag) — houdt een reserve voor de belangrijke mails (codes, uitnodigingen, goedkeuringen) */
+function mailRuimte(n) { try { return MailApp.getRemainingDailyQuota() >= (n || 1) + 20; } catch (e) { return true; } }
+function listFiles(rootId, path, info) {
+  info = info || {};
   const paths = {}; paths[rootId] = path || "";
   let level = [rootId], allIds = [rootId];
   // mappenboom in de breedte (één aanvraag per laag van max. 20 mappen)
@@ -194,12 +201,12 @@ function listFiles(rootId, path) {
       driveQuery(q, "id,name,parents").forEach(f => { const parent = (f.parents || []).find(p => paths[p] !== undefined); if (parent === undefined) return; paths[f.id] = paths[parent] ? paths[parent] + "/" + f.name : f.name; next.push(f.id); allIds.push(f.id); });
     });
     level = next;
-    if (allIds.length > 300) break;
+    if (allIds.length > 300) { info.volledig = false; break; }
   }
   // bestanden van alle mappen (video's overslaan; afbeeldingen wel, maar max. MAX_IMG_PER_MAP per map — de recentste)
   let out = []; const imgs = {};
   chunks(allIds, 20).forEach(ids => {
-    if (out.length >= MAX_FILES) return;
+    if (out.length >= MAX_FILES) { info.volledig = false; return; }
     const q = "mimeType!='application/vnd.google-apps.folder' and trashed=false and not mimeType contains 'video/' and (" + ids.map(i => "'" + i + "' in parents").join(" or ") + ")";
     driveQuery(q, "id,name,mimeType,size,modifiedTime,webViewLink,parents").forEach(f => {
       if (f.name.indexOf("~$") === 0 || f.name.indexOf("._") === 0 || f.name.indexOf("Icon") === 0 || f.name === ".DS_Store") return;
@@ -208,7 +215,8 @@ function listFiles(rootId, path) {
       if ((f.mimeType || "").indexOf("image/") === 0) { (imgs[row.path] = imgs[row.path] || []).push(row); } else out.push(row);
     });
   });
-  Object.keys(imgs).forEach(p => { const l = imgs[p].sort((a, b) => String(b.updated).localeCompare(String(a.updated))); out = out.concat(l.slice(0, MAX_IMG_PER_MAP)); });
+  Object.keys(imgs).forEach(p => { const l = imgs[p].sort((a, b) => String(b.updated).localeCompare(String(a.updated))); if (l.length > MAX_IMG_PER_MAP) info.volledig = false; out = out.concat(l.slice(0, MAX_IMG_PER_MAP)); });
+  if (out.length > MAX_FILES) info.volledig = false;
   return out.slice(0, MAX_FILES);
 }
 
@@ -217,6 +225,8 @@ function listFiles(rootId, path) {
 function getTemplate(match) {
   const files = listFiles(CONFIG.SJABLOON_FOLDER_ID, "").filter(f => f.name.toUpperCase().indexOf(match.toUpperCase()) >= 0 && /\.xlsx$/i.test(f.name) && f.name.indexOf("~$") !== 0);
   if (!files.length) return { ok: false, error: "Geen sjabloon gevonden met \"" + match + "\" in de naam (map A SJABLOON)." };
+  const jaar = (n) => Math.max(0, ...(String(n).match(/\b20\d\d\b/g) || []).map(Number));
+  files.sort((a, b) => jaar(b.name) - jaar(a.name) || String(b.updated).localeCompare(String(a.updated)));   // 1.48: bij "…2026" en "…2027" het nieuwste jaar, anders het laatst gewijzigde
   const f = files[0];
   const r = UrlFetchApp.fetch("https://www.googleapis.com/drive/v3/files/" + f.id + "?alt=media&supportsAllDrives=true", { headers: { Authorization: "Bearer " + ScriptApp.getOAuthToken() }, muteHttpExceptions: true });
   if (r.getResponseCode() !== 200) return { ok: false, error: "Sjabloon niet leesbaar (" + r.getResponseCode() + ")." };
@@ -303,11 +313,12 @@ function portaalMail(to, subject, text, html) {
 }
 /** Controle: welke afzenders kan dit account gebruiken? (Uitvoeren in de editor → Logboek.) */
 function portaalAliassen() { Logger.log("Aliassen van " + Session.getActiveUser().getEmail() + ": " + JSON.stringify(GmailApp.getAliases()) + " — PORTAAL.VAN = " + PORTAAL.VAN); }
-function pbAdmin(path, method, body) {
+function pbAdmin(path, method, body, prefer) {
   if (!PORTAAL.SERVICE_KEY) throw new Error("De secret key van Supabase ontbreekt: zet ze als scripteigenschap SERVICE_KEY (Projectinstellingen → Scripteigenschappen).");
   const headers = { apikey: PORTAAL.SERVICE_KEY };
   if (PORTAAL.SERVICE_KEY.indexOf("sb_") !== 0) headers.Authorization = "Bearer " + PORTAAL.SERVICE_KEY;   // enkel de oude service_role-JWT hoort ook als Bearer; een sb_secret_-key niet
   const opt = { method: method || "get", contentType: "application/json", headers: headers, muteHttpExceptions: true };
+  if (prefer) headers.Prefer = prefer;
   if (body) opt.payload = JSON.stringify(body);
   const r = UrlFetchApp.fetch(YUKI.PLANBORD_URL + path, opt); const t = r.getContentText();
   if (r.getResponseCode() >= 300) throw new Error("Supabase " + r.getResponseCode() + ": " + t.slice(0, 300));
@@ -342,7 +353,20 @@ function portaalLink(email, naam, contactId, rol) {
     const r0 = prof && prof[0];
     // een inactieve 'medewerker' is een (al dan niet ongewenste) registratie zonder toegang: die mag een portaallogin worden
     if (r0 && r0.role !== rol && !(r0.role === "medewerker" && !r0.active)) throw new Error("Dit e-mailadres hoort al bij een " + (r0.role === "beheer" || r0.role === "medewerker" ? "teamlid van het Planbord" : "login als " + r0.role) + "; gebruik een ander adres.");
+    // 1.48: een inactieve 'medewerker' kan iemand zijn die zich zelf registreerde met het adres van de klant (en dus het wachtwoord kent):
+    // nooit zo'n login overnemen — eerst verwijderen, dan een verse uitnodiging (enkel wie de mail ontvangt kiest het wachtwoord)
+    const gebruikt = r0 && r0.role === "medewerker" && !r0.active && ["uren?user_id", "taken?assignee", "projecten?lead"].some(q => (pbAdmin("/rest/v1/" + q + "=eq." + userId + "&select=id&limit=1", "get") || []).length);
+    if (r0 && r0.role === "medewerker" && !r0.active && !gebruikt) {   // (een oud-teamlid met uren/taken wordt gewoon omgezet, zoals vroeger)
+      pbAdmin("/auth/v1/admin/users/" + userId, "delete");
+      j = pbAdmin("/auth/v1/admin/generate_link", "post", { type: "invite", email: email, data: { name: String(naam || "").slice(0, 80) }, redirect_to: url });
+      const l2 = j.action_link || (j.properties && j.properties.action_link); const u2 = j.id || (j.user && j.user.id);
+      if (!l2 || !u2) throw new Error("Geen nieuwe uitnodigingslink gekregen van Supabase.");
+      return portaalKoppelAf(l2, u2, false, url, rol, contactId);
+    }
   }
+  return portaalKoppelAf(link, userId, bestaand, url, rol, contactId);
+}
+function portaalKoppelAf(link, userId, bestaand, url, rol, contactId) {
   pbAdmin("/rest/v1/rpc/portaal_koppel", "post", { p_user: userId, p_rol: rol, p_contact: contactId || null });   // rol + koppeling (script 030)
   if (contactId) pbAdmin("/rest/v1/contacten?id=eq." + contactId, "patch", { portaal_sinds: new Date().toISOString() });
   return { link: link, userId: userId || null, bestaand: bestaand, url: url };
@@ -357,18 +381,18 @@ function portaalInvite(body) {
   const aanhef = naam ? "Beste " + naam : "Beste";
   if (rol === "aannemer") {
     const tekstA = aanhef + ",\n\nBROS geeft je toegang tot het aannemersportaal. Daar vind je per project de werfpunten die aan jou toegewezen zijn (met foto's en plannen), de werfverslagen, de documenten die we delen en de prijsaanvragen die we je sturen. Werfpunten meld je er als opgelost, met een bewijsfoto.\n\nKies je wachtwoord via deze link:\n" + link + "\n\nDaarna log je altijd in op " + PORTAAL.URL_AANNEMER + " met je e-mailadres en wachtwoord. Op de werf gebruik je dezelfde login in de werfmodus (" + PORTAAL.URL_AANNEMER.replace(/aannemer\/?$/, "werf/") + "), die ook zonder bereik werkt.\nDe link hierboven is beperkt geldig; is hij vervallen, klik dan op het portaal op \"Wachtwoord vergeten\".\n\nMet vriendelijke groeten,\n" + wie.name + " — BROS";
-    const htmlA = "<div style=\"font-family:Helvetica,Arial,sans-serif;font-size:15px;line-height:1.5;color:#1B1E1C\"><p>" + aanhef + ",</p><p>BROS geeft je toegang tot het <b>aannemersportaal</b>. Daar vind je per project de werfpunten die aan jou toegewezen zijn (met foto's en plannen), de werfverslagen, de documenten die we delen en de prijsaanvragen die we je sturen. Werfpunten meld je er als opgelost, met een bewijsfoto.</p>"
+    const htmlA = "<div style=\"font-family:Helvetica,Arial,sans-serif;font-size:15px;line-height:1.5;color:#1B1E1C\"><p>" + H(aanhef) + ",</p><p>BROS geeft je toegang tot het <b>aannemersportaal</b>. Daar vind je per project de werfpunten die aan jou toegewezen zijn (met foto's en plannen), de werfverslagen, de documenten die we delen en de prijsaanvragen die we je sturen. Werfpunten meld je er als opgelost, met een bewijsfoto.</p>"
       + "<p style=\"margin:24px 0\"><a href=\"" + link + "\" style=\"background:#1B1E1C;color:#fff;text-decoration:none;padding:12px 20px;border-radius:8px;font-weight:600;display:inline-block\">Kies je wachtwoord</a></p>"
       + "<p>Daarna log je altijd in op <a href=\"" + PORTAAL.URL_AANNEMER + "\">" + PORTAAL.URL_AANNEMER + "</a> met je e-mailadres en wachtwoord. Op de werf gebruik je dezelfde login in de <a href=\"" + PORTAAL.URL_AANNEMER.replace(/aannemer\/?$/, "werf/") + "\">werfmodus</a> op je smartphone, die ook zonder bereik werkt.<br><span style=\"color:#767D78;font-size:13px\">De knop hierboven is beperkt geldig; is hij vervallen, klik dan op het portaal op \"Wachtwoord vergeten\".</span></p>"
-      + "<p>Met vriendelijke groeten,<br>" + wie.name + " — BROS</p></div>";
+      + "<p>Met vriendelijke groeten,<br>" + H(wie.name) + " — BROS</p></div>";
     portaalMail(email, "Toegang tot het BROS-aannemersportaal", tekstA, htmlA);
     return { ok: true, bestaand: bestaand, user_id: userId };
   }
   const tekst = aanhef + ",\n\nWelkom in je persoonlijke BROS-klantenportaal. Daar volg je je project op de voet: de meetstaat, de facturatie, de planning en de documenten die we met je delen.\n\nKies je wachtwoord via deze link:\n" + link + "\n\nDaarna log je altijd in op " + PORTAAL.URL + " met je e-mailadres en wachtwoord.\nDe link hierboven is beperkt geldig; is hij vervallen, klik dan op het portaal op \"Wachtwoord vergeten\" en je krijgt een nieuwe.\n\nTot snel,\n" + wie.name + " — BROS";
-  const html = "<div style=\"font-family:Helvetica,Arial,sans-serif;font-size:15px;line-height:1.5;color:#1B1E1C\"><p>" + aanhef + ",</p><p>Welkom in je persoonlijke <b>BROS-klantenportaal</b>. Daar volg je je project op de voet: de meetstaat, de facturatie, de planning en de documenten die we met je delen.</p>"
+  const html = "<div style=\"font-family:Helvetica,Arial,sans-serif;font-size:15px;line-height:1.5;color:#1B1E1C\"><p>" + H(aanhef) + ",</p><p>Welkom in je persoonlijke <b>BROS-klantenportaal</b>. Daar volg je je project op de voet: de meetstaat, de facturatie, de planning en de documenten die we met je delen.</p>"
     + "<p style=\"margin:24px 0\"><a href=\"" + link + "\" style=\"background:#1B1E1C;color:#fff;text-decoration:none;padding:12px 20px;border-radius:8px;font-weight:600;display:inline-block\">Kies je wachtwoord</a></p>"
     + "<p>Daarna log je altijd in op <a href=\"" + PORTAAL.URL + "\">" + PORTAAL.URL + "</a> met je e-mailadres en wachtwoord.<br><span style=\"color:#767D78;font-size:13px\">De knop hierboven is beperkt geldig; is hij vervallen, klik dan op het portaal op \"Wachtwoord vergeten\" en je krijgt een nieuwe link.</span></p>"
-    + "<p>Tot snel,<br>" + wie.name + " — BROS</p></div>";
+    + "<p>Tot snel,<br>" + H(wie.name) + " — BROS</p></div>";
   portaalMail(email, PORTAAL.ONDERWERP, tekst, html);
   return { ok: true, bestaand: bestaand, user_id: userId || null };
 }
@@ -382,6 +406,7 @@ function portaalResetIntern(body) {
   const email = String(body.email || "").trim().toLowerCase();
   if (email.length > 200 || !/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email)) return { ok: true };
   if (!eenmalig("reset:" + email, 600)) return { ok: true };          // max. één mail per 10 minuten per adres
+  if (!quotum("reset-dag:" + email, 4, 86400) || !mailRuimte(1)) return { ok: true };   // 1.48: max. 4 per dag per adres, en nooit het laatste dagquotum (reserve voor codes en uitnodigingen)
   if (!quotum("reset-alle", 30, 3600)) return { ok: true };           // en hoogstens 30 per uur in totaal
   try {
     const prof = pbAdmin("/rest/v1/profiles?email=eq." + encodeURIComponent(email) + "&role=in.(klant,aannemer)&active=eq.true&select=id,name,role", "get");
@@ -608,7 +633,8 @@ function afspraakSync(body) {
   const id = uuid(body.id);
   if (!quotum("afs:" + id, 30, 3600)) return { ok: false, error: "Deze afspraak werd het voorbije uur al heel vaak bijgewerkt; probeer het later opnieuw." };
   // één tegelijk: twee snelle bewaringen na elkaar mogen geen dubbel agenda-item of dubbele mails geven
-  const lock = LockService.getScriptLock(); if (!lock.tryLock(30000)) return { ok: false, error: "Het Drive-script is bezig; probeer het zo opnieuw." };
+  // 1.48: een eigen slot (UserLock — het script draait altijd als hetzelfde account) i.p.v. het scriptslot, zodat quotum()/eenmalig() van andere acties (codes, goedkeuringen) niet moeten wachten
+  const lock = LockService.getUserLock(); if (!lock.tryLock(30000)) return { ok: false, error: "Het Drive-script is bezig; probeer het zo opnieuw." };
   try { return afspraakSyncIn(body, id); } finally { lock.releaseLock(); }
 }
 function afspraakSyncIn(body, id) {
@@ -876,6 +902,7 @@ function werfverslagMail(body) {
 function assistentMail(body) {
   const v = (pbAdmin("/rest/v1/taak_voorstellen?id=eq." + encodeURIComponent(String(body.id || "")) + "&select=*", "get") || [])[0];
   if (!v) return { ok: false, error: "Voorstel niet gevonden." };
+  if (!quotum("am:" + v.project_id, 8, 86400)) return { ok: true, info: "Al veel meldingen vandaag voor dit project — de vraag staat wel bij Voorstellen." };   // 1.48: mailquotum beschermen
   return voorstelMail(v, null);
 }
 /** Vraag of melding van een aannemer uit zijn portaal (script 025): de aannemer stuurt zijn token mee; het voorstel moet van hem zijn. */
@@ -1144,6 +1171,95 @@ function prijsaanvraagHerinneringen() {
    de aannemers met de bestanden die sinds de vorige mail gedeeld zijn — pas als er DIGEST.WACHT_MIN minuten niets meer bijkwam,
    zodat een reeks bestanden in één mail belandt. Verstuurt enkel aan contacten met een portaallogin (de link gaat naar het portaal).
    ===================================================================== */
+/* =====================================================================
+   Onderhoud zonder omkijken (1.48) — loopt mee met de bestaande uurlijkse triggers (yukiSync, documentenDigest)
+   - hartslag: elk uur een schrijfactie in Supabase (instellingen.hartslag), zodat een gratis project nooit gepauzeerd wordt
+     na een week zonder gebruik (bv. bouwverlof); het Planbord toont beheerders een melding als de hartslag stilvalt.
+   - back-up: elke week alle tabellen als .json.gz in Drive (map "BROS Planbord back-ups"), de laatste 12 weken blijven bewaard.
+   - bewaking: elke week database- en opslaggebruik (Supabase), Drive/Gmail-opslag en het mailquotum; een mail aan
+     YUKI.REPORT_TO enkel als iets boven 80 % zit.
+   - zelfherstel: ontbreekt een van de vaste triggers, dan wordt hij opnieuw aangemaakt.
+   ===================================================================== */
+const ONDERHOUD = { BACKUP_MAP: "BROS Planbord back-ups", BACKUP_WEKEN: 12, DREMPEL: 0.8 };
+const BACKUP_TABELLEN = ["profiles", "tarieven", "fasen", "standaardtaken", "projecten", "taken", "uren", "documenten", "instellingen", "loten", "posten", "meetstaat_posten", "meetstaat_prijzen",
+  "vorderingen", "vordering_regels", "contacten", "project_contacten", "goedkeuringen", "goedkeuring_tekenaars", "notities", "werfbezoeken", "vaststellingen", "klant_timing", "werfplannen", "werfverslagen",
+  "taak_voorstellen", "assistent_gesprekken", "assistent_berichten", "prijsaanvragen", "prijsaanvraag_regels", "prijsvragen", "prijsvraag_gunningen", "tekenplannen", "plan_objecten", "plan_versies", "plan_symbolen",
+  "aannemer_meetstaten", "aannemer_meetstaat_posten", "keuzes", "keuze_opties", "meerwerk_aanvragen", "werf_fotos", "werf_updates", "woningdossier"];
+const BACKUP_ORDE = { fasen: "nr", loten: "nr", tarieven: "user_id", instellingen: "key", klant_timing: "project_id,fase_nr", prijsvraag_gunningen: "prijsvraag_id,post_id", meetstaat_prijzen: "post_id", plan_symbolen: "code" };
+function onderhoud(volledig) {
+  const cache = CacheService.getScriptCache();
+  if (!cache.get("hartslag")) { cache.put("hartslag", "1", 3000); try { hartslag(); } catch (e) { Logger.log("Hartslag: " + e); } try { triggersHerstellen(); } catch (e) { Logger.log("Triggers: " + e); } }
+  if (!volledig) return;   // yukiSync/documentenDigest: enkel de hartslag (hun eigen werk heeft de tijd nodig); back-up en bewaking via onderhoudUur
+  const props = PropertiesService.getScriptProperties(); const nu = Date.now(), WEEK = 7 * 86400000;
+  if (nu - Number(props.getProperty("BACKUP_LAATST") || 0) > WEEK) {
+    try { const f = backup(); props.setProperty("BACKUP_LAATST", String(nu)); props.setProperty("BACKUP_FOUTEN", Object.keys(f).length ? JSON.stringify(f).slice(0, 800) : ""); }
+    catch (e) { Logger.log("Back-up: " + e); props.setProperty("BACKUP_FOUTEN", String(e).slice(0, 300)); }
+    return;   // bewaking in een volgende run (elk een eigen 6-minutenvenster)
+  }
+  if (nu - Number(props.getProperty("GEZONDHEID_LAATST") || 0) > WEEK) { try { gezondheid(); props.setProperty("GEZONDHEID_LAATST", String(nu)); } catch (e) { Logger.log("Bewaking: " + e); } }
+}
+/* eigen uurtrigger voor het onderhoud — wordt automatisch aangemaakt bij het eerste gebruik van het Planbord na deze versie (doPost) */
+function onderhoudUur() { onderhoud(true); }
+function onderhoudZeker() {
+  const cache = CacheService.getScriptCache(); if (cache.get("onderhoud-trigger")) return;
+  if (!ScriptApp.getProjectTriggers().some(t => t.getHandlerFunction() === "onderhoudUur")) ScriptApp.newTrigger("onderhoudUur").timeBased().everyHours(1).create();
+  cache.put("onderhoud-trigger", "1", 21600);
+}
+function onderhoudInstall() { CacheService.getScriptCache().remove("onderhoud-trigger"); onderhoudZeker(); CacheService.getScriptCache().remove("hartslag"); onderhoud(false); Logger.log("OK — onderhoud draait elk uur (hartslag), back-up en bewaking wekelijks."); }
+function hartslag() {
+  pbAdmin("/rest/v1/instellingen?on_conflict=key", "post", { key: "hartslag", value: { drive: new Date().toISOString(), versie: "1.48.0" } }, "resolution=merge-duplicates,return=minimal");
+}
+function triggersHerstellen() {   // enkel triggers die er eerder al waren (nooit iets aanzetten dat BROS zelf niet installeerde)
+  const props = PropertiesService.getScriptProperties();
+  const er = ScriptApp.getProjectTriggers().map(t => t.getHandlerFunction());
+  const gezien = (props.getProperty("TRIGGERS_GEZIEN") || "").split(",").filter(Boolean);
+  const alle = [...new Set(gezien.concat(er.filter(h => ["yukiSync", "documentenDigest", "weekoverzicht"].indexOf(h) >= 0)))];
+  props.setProperty("TRIGGERS_GEZIEN", alle.join(","));
+  if (alle.indexOf("yukiSync") >= 0 && er.indexOf("yukiSync") < 0) ScriptApp.newTrigger("yukiSync").timeBased().everyHours(1).create();
+  if (alle.indexOf("documentenDigest") >= 0 && er.indexOf("documentenDigest") < 0) ScriptApp.newTrigger("documentenDigest").timeBased().everyHours(1).create();
+  if (alle.indexOf("weekoverzicht") >= 0 && er.indexOf("weekoverzicht") < 0) ScriptApp.newTrigger("weekoverzicht").timeBased().onWeekDay(ScriptApp.WeekDay.MONDAY).atHour(8).create();
+}
+/* alle rijen van een tabel met de service key (per 1000) */
+function pbAdminAll(tabel) {
+  let all = []; const orde = BACKUP_ORDE[tabel] || "id";
+  for (let off = 0; ; off += 1000) {
+    const d = pbAdmin("/rest/v1/" + tabel + "?select=*&order=" + orde + "&limit=1000&offset=" + off, "get") || [];
+    all = all.concat(d); if (d.length < 1000) return all;
+  }
+}
+/** Elke week automatisch (via onderhoud); mag ook met de hand uitgevoerd worden. */
+function backup() {
+  const t0 = Date.now(); const data = { gemaakt: new Date().toISOString(), tabellen: {}, fouten: {} };
+  BACKUP_TABELLEN.forEach(t => { if (Date.now() - t0 > 240000) { data.fouten[t] = "tijd op"; return; } try { data.tabellen[t] = pbAdminAll(t); } catch (e) { data.fouten[t] = String(e).slice(0, 200); } });
+  const it = DriveApp.getRootFolder().getFoldersByName(ONDERHOUD.BACKUP_MAP); const map = it.hasNext() ? it.next() : DriveApp.getRootFolder().createFolder(ONDERHOUD.BACKUP_MAP);
+  const naam = "planbord-" + Utilities.formatDate(new Date(), "Europe/Brussels", "yyyy-MM-dd") + ".json.gz";
+  map.createFile(Utilities.gzip(Utilities.newBlob(JSON.stringify(data), "application/json", naam.replace(/\.gz$/, "")), naam));
+  // oude back-ups (enkel de eigen planbord-*.json.gz in deze map) naar de prullenbak
+  const grens = Date.now() - ONDERHOUD.BACKUP_WEKEN * 7 * 86400000; const fs = map.getFiles();
+  while (fs.hasNext()) { const f = fs.next(); if (/^planbord-\d{4}-\d{2}-\d{2}\.json\.gz$/.test(f.getName()) && f.getDateCreated().getTime() < grens) f.setTrashed(true); }
+  Logger.log("Back-up " + naam + ": " + Object.keys(data.tabellen).length + " tabellen" + (Object.keys(data.fouten).length ? ", fouten: " + JSON.stringify(data.fouten) : ""));
+  return data.fouten;
+}
+/** Elke week: gebruik t.o.v. de limieten; mail enkel als iets boven 80 % zit. */
+function gezondheid(altijd) {
+  const regels = [];
+  try { const g = pbAdmin("/rest/v1/rpc/pb_gebruik", "post", {}) || {};   // script 045
+    const DB = 500 * 1048576, OPSLAG = 1024 * 1048576;   // limieten van het gratis Supabase-plan (op een betaald plan ruim hoger)
+    if (g.db != null) regels.push(["Supabase-database", g.db, DB]); if (g.storage != null) regels.push(["Supabase-opslag (foto's, plannen, pdf's)", g.storage, OPSLAG]); } catch (e) { Logger.log("pb_gebruik: " + e); }
+  try { const lim = DriveApp.getStorageLimit(); if (lim > 0) regels.push(["Google-opslag van " + scriptAccount() + " (Drive + Gmail)", DriveApp.getStorageUsed(), lim]); } catch (e) { }
+  const mb = (b) => Math.round(b / 1048576) + " MB";
+  const te = regels.filter(r => r[1] / r[2] >= ONDERHOUD.DREMPEL);
+  let back = ""; try { const f = backupFouten(); if (f) back = f; } catch (e) { }
+  Logger.log(regels.map(r => r[0] + ": " + mb(r[1]) + " / " + mb(r[2])).join(" · "));
+  if (!te.length && !back && !altijd) return;
+  const txt = "Planbord — bewaking\n\n" + regels.map(r => (r[1] / r[2] >= ONDERHOUD.DREMPEL ? "⚠ " : "") + r[0] + ": " + mb(r[1]) + " van " + mb(r[2]) + " (" + Math.round(r[1] / r[2] * 100) + " %)").join("\n")
+    + (back ? "\n\nBack-up: " + back : "") + "\n\nWat te doen: oude foto's/plannen opruimen of het plan uitbreiden (Supabase), of oude mails met grote bijlagen verwijderen (Gmail). Deze mail komt hooguit één keer per week.";
+  GmailApp.sendEmail(YUKI.REPORT_TO, "Planbord: " + (te.length ? "opslag bijna vol" : "melding"), txt);
+}
+function backupFouten() {
+  const f = PropertiesService.getScriptProperties().getProperty("BACKUP_FOUTEN") || ""; if (f) return "niet volledig — " + f;
+  const it = DriveApp.getRootFolder().getFoldersByName(ONDERHOUD.BACKUP_MAP); if (!it.hasNext()) return "nog geen back-up gemaakt"; return "";
+}
 const DIGEST = { WACHT_MIN: 45, VAN_UUR: 7, TOT_UUR: 21 };   // niet 's nachts mailen; wat 's avonds gedeeld wordt, gaat 's ochtends
 function digestInstall() {
   ScriptApp.getProjectTriggers().filter(t => t.getHandlerFunction() === "documentenDigest").forEach(t => ScriptApp.deleteTrigger(t));
@@ -1151,16 +1267,18 @@ function digestInstall() {
   Logger.log("OK — uurlijkse trigger voor documentenDigest aangemaakt (verzamelmail documenten + herinneringen prijsaanvragen). Test nu met documentenDigest().");
 }
 function documentenDigest() {
+  onderhoud(false);   // 1.48: hartslag (back-up en bewaking via de eigen uurtrigger onderhoudUur)
   const uur = new Date().getHours(); if (uur < DIGEST.VAN_UUR || uur >= DIGEST.TOT_UUR) return;
+  const dag = new Date().getDay(); if (((dag === 1 && uur >= 10) || dag === 2) && ScriptApp.getProjectTriggers().some(t => t.getHandlerFunction() === "weekoverzicht")) { try { weekoverzicht(); } catch (e) { Logger.log("Weekoverzicht inhalen: " + e); } }   // 1.48: gemiste maandagmails (quotum, storing) zelf inhalen; wie al gemaild werd, slaat het over
   try { prijsaanvraagHerinneringen(); } catch (e) { Logger.log("Herinneringen prijsaanvragen: " + e); }   // script 028
   const docs = pbAdmin("/rest/v1/documenten?or=(gemeld_klant.eq.false,gemeld_aannemers.eq.false)&select=id,project_id,naam,pad,url,gedeeld,gedeeld_aannemers,gedeeld_op,gedeeld_aannemers_op,gemeld_klant,gemeld_aannemers&limit=500", "get") || [];
   if (!docs.length) { Logger.log("Niets te melden."); return; }
   const grens = Date.now() - DIGEST.WACHT_MIN * 60000; let mails = 0;
   const projIds = [...new Set(docs.map(d => d.project_id))];
-  const projecten = pbAdmin("/rest/v1/projecten?id=in.(" + projIds.join(",") + ")&select=id,nummer,klant,naam,lead", "get") || [];
-  const pcs = pbAdmin("/rest/v1/project_contacten?project_id=in.(" + projIds.join(",") + ")&select=project_id,contact_id,rol", "get") || [];
+  const projecten = pbIn("/rest/v1/projecten?", "id", projIds, "&select=id,nummer,klant,naam,lead");
+  const pcs = pbIn("/rest/v1/project_contacten?", "project_id", projIds, "&select=project_id,contact_id,rol");
   const cIds = [...new Set(pcs.map(x => x.contact_id))];
-  const contacten = cIds.length ? (pbAdmin("/rest/v1/contacten?id=in.(" + cIds.join(",") + ")&user_id=not.is.null&actief=eq.true&select=id,naam,contactpersoon,email,user_id", "get") || []) : [];
+  const contacten = pbIn("/rest/v1/contacten?", "id", cIds, "&user_id=not.is.null&actief=eq.true&select=id,naam,contactpersoon,email,user_id");
   const profs = pbAdmin("/rest/v1/profiles?select=id,name,email&active=eq.true", "get") || [];
   const esc = H;
   projecten.forEach(p => {
@@ -1173,6 +1291,7 @@ function documentenDigest() {
       const ids = lijst.map(d => d.id);
       const naar = pcs.filter(x => x.project_id === p.id && rolOk(x)).map(x => contacten.find(c => c.id === x.contact_id)).filter(c => c && c.email);
       const uniek = [...new Map(naar.map(c => [String(c.email).toLowerCase(), c])).values()];
+      if (uniek.length && !mailRuimte(uniek.length)) { Logger.log("Dagquotum voor mails bijna op — " + proj + " volgt later."); return; }   // niet als gemeld zetten: volgend uur/morgen opnieuw
       if (uniek.length) {
         const groepen = {}; lijst.forEach(d => (groepen[d.pad || ""] = groepen[d.pad || ""] || []).push(d));
         const rows = Object.keys(groepen).sort().map(g => (g ? "<div style=\"color:#767D78;font-size:12px;margin-top:10px\">" + esc(g.replace(/\//g, " › ")) + "</div>" : "") + groepen[g].map(d => "<div style=\"padding:6px 0;border-bottom:1px solid #EEE\">" + esc(d.naam) + "</div>").join("")).join("");
@@ -1181,11 +1300,11 @@ function documentenDigest() {
           const html = "<div style=\"font-family:Helvetica,Arial,sans-serif;font-size:15px;line-height:1.5;color:#1B1E1C;max-width:640px\"><p>Beste " + esc(naam) + ",</p><p>BROS heeft " + (lijst.length === 1 ? "een nieuw document" : lijst.length + " nieuwe documenten") + " voor je klaargezet bij <b>" + esc(proj) + "</b>:</p>" + rows
             + "<p style=\"margin:24px 0\"><a href=\"" + url + "\" style=\"background:#1B1E1C;color:#fff;text-decoration:none;padding:12px 20px;border-radius:8px;font-weight:600;display:inline-block\">Bekijken in " + portaalNaam + "</a></p><p style=\"color:#767D78;font-size:13px\">Je vindt ze onder Documenten; het portaal toont altijd de laatste versie.</p><p>" + esc(lead ? lead.name : "Het team") + " — BROS</p></div>";
           const tekst = "Beste " + naam + ",\n\nBROS heeft " + lijst.length + " nieuwe document(en) voor je klaargezet bij " + proj + ":\n" + lijst.map(d => "- " + (d.pad ? d.pad + "/" : "") + d.naam).join("\n") + "\n\nBekijken: " + url + "\n\nBROS";
-          portaalMail(String(c.email).trim(), (lijst.length === 1 ? "Nieuw document" : lijst.length + " nieuwe documenten") + " · " + proj, tekst, html); mails++;
+          try { portaalMail(String(c.email).trim(), (lijst.length === 1 ? "Nieuw document" : lijst.length + " nieuwe documenten") + " · " + proj, tekst, html); mails++; } catch (e) { Logger.log("Digest " + c.email + ": " + e); }   // 1.48: één fout adres stopt de rest niet
         });
       }
       const patch = {}; patch[gemeld] = true;
-      pbAdmin("/rest/v1/documenten?id=in.(" + ids.join(",") + ")", "patch", patch);
+      chunks(ids, 25).forEach(c => pbAdmin("/rest/v1/documenten?id=in.(" + c.join(",") + ")", "patch", patch));
     });
   });
   Logger.log(mails + " mail(s) verstuurd.");
@@ -1209,24 +1328,24 @@ function weekoverzicht(proef) {
   let contacten; try { contacten = pbAdmin("/rest/v1/contacten?weekmail=eq.true&actief=eq.true&user_id=not.is.null&email=not.is.null&select=id,naam,contactpersoon,email,user_id,weekmail_laatst,taal", "get") || []; }
   catch (e) { contacten = pbAdmin("/rest/v1/contacten?weekmail=eq.true&actief=eq.true&user_id=not.is.null&email=not.is.null&select=id,naam,contactpersoon,email,user_id,weekmail_laatst", "get") || []; }   // vóór script 036 (geen kolom taal)
   if (!contacten.length) return Logger.log("Geen klanten met de weekmail aan.");
-  const klantIds = (pbAdmin("/rest/v1/profiles?role=eq.klant&active=eq.true&id=in.(" + contacten.map(c => c.user_id).join(",") + ")&select=id", "get") || []).map(x => x.id);
+  const klantIds = pbIn("/rest/v1/profiles?role=eq.klant&active=eq.true&", "id", contacten.map(c => c.user_id), "&select=id").map(x => x.id);
   const klanten = contacten.filter(c => klantIds.indexOf(c.user_id) >= 0 && (proef || !c.weekmail_laatst || nu - new Date(c.weekmail_laatst).getTime() > 5 * DAG));
   if (!klanten.length) return Logger.log("Niemand te mailen (al gemaild deze week of geen klantlogin).");
-  const pcs = pbAdmin("/rest/v1/project_contacten?contact_id=in.(" + klanten.map(c => c.id).join(",") + ")&rol=in.(bouwheer,contactpersoon)&select=project_id,contact_id", "get") || [];
+  const pcs = pbIn("/rest/v1/project_contacten?", "contact_id", klanten.map(c => c.id), "&rol=in.(bouwheer,contactpersoon)&select=project_id,contact_id");
   const pIds = [...new Set(pcs.map(x => x.project_id))]; if (!pIds.length) return Logger.log("Geen projecten.");
-  const projecten = pbAdmin("/rest/v1/projecten?id=in.(" + pIds.join(",") + ")&status=in.(lopend,offerte,on_hold)&select=id,nummer,klant,naam,lead,fase_nr,status", "get") || [];
+  const projecten = pbIn("/rest/v1/projecten?", "id", pIds, "&status=in.(lopend,offerte,on_hold)&select=id,nummer,klant,naam,lead,fase_nr,status");
   if (!projecten.length) return Logger.log("Geen lopende projecten.");
-  const ids = projecten.map(p => p.id).join(","); const vanaf = nu - 14 * DAG;
+  const pidL = projecten.map(p => p.id); const vanaf = nu - 14 * DAG;
   const fasen = pbAdmin("/rest/v1/fasen?select=nr,naam", "get") || [];
   const profs = pbAdmin("/rest/v1/profiles?select=id,name&active=eq.true", "get") || [];
-  const notities = pbAdmin("/rest/v1/notities?project_id=in.(" + ids + ")&klant_zichtbaar=eq.true&gedeeld_op=gt." + iso(vanaf) + "&select=project_id,titel,soort,datum,gedeeld_op", "get") || [];
-  const wvs = pbAdmin("/rest/v1/werfverslagen?project_id=in.(" + ids + ")&klant_zichtbaar=eq.true&verzonden_op=gt." + iso(vanaf) + "&select=project_id,nr,titel,datum,verzonden_op", "get") || [];
-  const docs = (pbAdmin("/rest/v1/documenten?project_id=in.(" + ids + ")&gedeeld=eq.true&gedeeld_op=gt." + iso(vanaf) + "&select=project_id,naam,pad,gedeeld_op", "get") || []).filter(x => x.pad !== "Documenten/Facturen");   // facturen staan al bij "Factuur …"
-  const vords = pbAdmin("/rest/v1/vorderingen?project_id=in.(" + ids + ")&status=neq.opgemaakt&select=project_id,nr,soort,omschrijving,datum,factuurnummer,bedrag_excl,btw_bedrag,status,vervaldag", "get") || [];
-  const gks = pbAdmin("/rest/v1/goedkeuringen?project_id=in.(" + ids + ")&status=eq.open&select=project_id,titel,totaal_incl,geldig_tot", "get") || [];
-  const taken = pbAdmin("/rest/v1/taken?project_id=in.(" + ids + ")&contact_id=in.(" + klanten.map(c => c.id).join(",") + ")&status=neq.done&select=project_id,contact_id,titel,eind", "get") || [];
-  let wfotos = []; try { wfotos = pbAdmin("/rest/v1/werf_fotos?project_id=in.(" + ids + ")&gedeeld_klant=eq.true&gedeeld_op=gt." + iso(vanaf) + "&select=project_id,gedeeld_op", "get") || []; } catch (e) { }   // script 036 (gedeeld_op = moment van delen met de klant)
-  let kzOpen = []; try { kzOpen = pbAdmin("/rest/v1/keuzes?project_id=in.(" + ids + ")&status=eq.open&select=project_id,onderwerp,deadline", "get") || []; } catch (e) { }   // script 035
+  const notities = pbIn("/rest/v1/notities?", "project_id", pidL, "&klant_zichtbaar=eq.true&gedeeld_op=gt." + iso(vanaf) + "&select=project_id,titel,soort,datum,gedeeld_op");
+  const wvs = pbIn("/rest/v1/werfverslagen?", "project_id", pidL, "&klant_zichtbaar=eq.true&verzonden_op=gt." + iso(vanaf) + "&select=project_id,nr,titel,datum,verzonden_op");
+  const docs = (pbIn("/rest/v1/documenten?", "project_id", pidL, "&gedeeld=eq.true&gedeeld_op=gt." + iso(vanaf) + "&select=project_id,naam,pad,gedeeld_op")).filter(x => x.pad !== "Documenten/Facturen");   // facturen staan al bij "Factuur …"
+  const vords = pbIn("/rest/v1/vorderingen?", "project_id", pidL, "&status=neq.opgemaakt&select=project_id,nr,soort,omschrijving,datum,factuurnummer,bedrag_excl,btw_bedrag,status,vervaldag");
+  const gks = pbIn("/rest/v1/goedkeuringen?", "project_id", pidL, "&status=eq.open&select=project_id,titel,totaal_incl,geldig_tot");
+  const kIds = klanten.map(c => c.id); const taken = pbIn("/rest/v1/taken?", "project_id", pidL, "&contact_id=not.is.null&status=neq.done&select=project_id,contact_id,titel,eind").filter(t => kIds.indexOf(t.contact_id) >= 0);
+  let wfotos = []; try { wfotos = pbIn("/rest/v1/werf_fotos?", "project_id", pidL, "&gedeeld_klant=eq.true&gedeeld_op=gt." + iso(vanaf) + "&select=project_id,gedeeld_op"); } catch (e) { }   // script 036 (gedeeld_op = moment van delen met de klant)
+  let kzOpen = []; try { kzOpen = pbIn("/rest/v1/keuzes?", "project_id", pidL, "&status=eq.open&select=project_id,onderwerp,deadline"); } catch (e) { }   // script 035
   const vandaag = Utilities.formatDate(new Date(), "Europe/Brussels", "yyyy-MM-dd");
   const d = (s) => s ? String(s).slice(8, 10) + "/" + String(s).slice(5, 7) + "/" + String(s).slice(0, 4) : "";
   const eu = (n) => "€ " + Number(n || 0).toFixed(2).replace(".", ",").replace(/\B(?=(\d{3})+(?!\d))/g, ".");
@@ -1236,9 +1355,9 @@ function weekoverzicht(proef) {
     nl: { beste: "Beste", week: "Je week bij BROS voor", stap: "je project zit in stap", nieuw: "Nieuw sinds de vorige keer", wacht: "Wat op je wacht", knop: "Naar je klantenportaal", voet: "Je krijgt deze samenvatting elke maandag als er iets nieuws is. Liever niet? Zet ze uit in je portaal onder Welkom › Op de hoogte blijven.", onderwerp: "Je week bij BROS", verslag: "Verslag", werfverslag: "Werfverslag", doc1: "Nieuw document", docs: "nieuwe documenten", factuur: "Factuur", incl: "incl. btw", excl: "excl. btw", akkoord: "Wacht op je akkoord", voor: "graag vóór", open: "staat open", vervallen: "vervallen sinds", tebetalen: "te betalen vóór", actie1: "Jouw actiepunt", acties: "actiepunten voor jou", tegen: "tegen", fotos: "nieuwe foto's van de werf", foto1: "nieuwe foto van de werf", keuze: "Wacht op je keuze", team: "Het team", portaal: "Portaal" },
     en: { beste: "Dear", week: "Your week with BROS for", stap: "your project is in step", nieuw: "New since last time", wacht: "Waiting for you", knop: "Go to your client portal", voet: "You receive this summary every Monday when there is something new. Prefer not to? Turn it off in your portal under Welcome › Stay informed.", onderwerp: "Your week with BROS", verslag: "Report", werfverslag: "Site report", doc1: "New document", docs: "new documents", factuur: "Invoice", incl: "incl. VAT", excl: "excl. VAT", akkoord: "Awaiting your approval", voor: "please before", open: "is open", vervallen: "overdue since", tebetalen: "due by", actie1: "Your action item", acties: "action items for you", tegen: "by", fotos: "new photos from the site", foto1: "new photo from the site", keuze: "Awaiting your choice", team: "The team", portaal: "Portal" } };
   let mails = 0; const gemaild = {};   // één mail per e-mailadres en project (ook bij twee rollen of twee contactfiches)
-  klanten.forEach(c => { try {
+  let quotumOp = false;
+  klanten.forEach(c => { if (quotumOp) return; let fout = false, verstuurd = false; try {
     const since = Math.max(nu - 14 * DAG, c.weekmail_laatst ? new Date(c.weekmail_laatst).getTime() : nu - 7 * DAG); const T = TXT[c.taal === "en" ? "en" : "nl"];
-    let verstuurd = false;
     [...new Set(pcs.filter(x => x.contact_id === c.id).map(x => x.project_id))].forEach(pid => {
       const p = projecten.find(y => y.id === pid); if (!p) return;
       const sleutel = String(c.email).trim().toLowerCase() + "|" + p.id; if (gemaild[sleutel]) return;
@@ -1264,11 +1383,12 @@ function weekoverzicht(proef) {
         + "<p>" + H(lead ? lead.name : T.team) + " — BROS</p><p style=\"color:#767D78;font-size:12px\">" + T.voet + "</p></div>";
       const tekst = T.beste + " " + naam + ",\n\n" + T.week + " " + proj + ".\n\n" + (nieuw.length ? T.nieuw + ":\n- " + nieuw.join("\n- ") + "\n\n" : "") + (wacht.length ? T.wacht + ":\n- " + wacht.join("\n- ") + "\n\n" : "") + T.portaal + ": " + PORTAAL.URL + "\n\nBROS";
       const naar = proef ? YUKI.REPORT_TO : String(c.email).trim();
+      if (!mailRuimte(1)) { quotumOp = true; fout = true; return; }   // 1.48: quotum op — deze klant (en de rest) later, niet als gemaild zetten
       gemaild[sleutel] = true;
       portaalMail(naar, (proef ? "[PROEF voor " + c.email + "] " : "") + T.onderwerp + " · " + proj, tekst.replace(/<[^>]+>/g, "").replace(/&lt;/g, "<").replace(/&gt;/g, ">").replace(/&quot;/g, '"').replace(/&#39;/g, "'").replace(/&amp;/g, "&"), html); mails++; verstuurd = true;
     });
-    } catch (e) { Logger.log("Weekoverzicht " + c.email + ": " + e); }
-    if (!proef) { try { pbAdmin("/rest/v1/contacten?id=eq." + c.id, "patch", { weekmail_laatst: new Date().toISOString() }); } catch (e) { Logger.log("weekmail_laatst " + c.email + ": " + e); } }
+    } catch (e) { fout = true; Logger.log("Weekoverzicht " + c.email + ": " + e); }
+    if (!proef && (!fout || verstuurd)) { try { pbAdmin("/rest/v1/contacten?id=eq." + c.id, "patch", { weekmail_laatst: new Date().toISOString() }); } catch (e) { Logger.log("weekmail_laatst " + c.email + ": " + e); } }   // 1.48: al iets verstuurd → als gemaild markeren (geen dubbele mails bij het inhalen)
   });
   Logger.log(mails + " weekoverzicht(en) " + (proef ? "als proef naar " + YUKI.REPORT_TO : "verstuurd") + ".");
 }
@@ -1365,24 +1485,42 @@ function yukiInstall() {
   Logger.log("OK — label en uurlijkse trigger aangemaakt. Test nu met yukiSync().");
 }
 function yukiSync() {
+  onderhoud(false);   // 1.48: hartslag — draait elk uur, ook 's nachts en in het weekend
   const label = GmailApp.getUserLabelByName(YUKI.LABEL) || GmailApp.createLabel(YUKI.LABEL);
   const labelCheck = GmailApp.getUserLabelByName(YUKI.LABEL_CHECK) || GmailApp.createLabel(YUKI.LABEL_CHECK);
   const threads = GmailApp.search(YUKI.QUERY, 0, 30);
   if (!threads.length) return Logger.log("Geen nieuwe Yuki-facturen.");
-  const facturen = [];
+  const facturen = [], verdacht = [], t0 = Date.now();
   threads.forEach(t => t.getMessages().forEach(m => {
+    if (Date.now() - t0 > 240000) return;   // 1.48: binnen de 6-minutenlimiet blijven; de rest (zonder label) volgt bij de volgende run
     // enkel mails die echt via Yuki verstuurd zijn (afzender, antwoordadres, Sender of Return-Path bij yukiworks); het onderwerp alleen volstaat niet
     const kop = [m.getFrom(), m.getReplyTo(), m.getHeader("Sender"), m.getHeader("Return-Path")].join(" ");
     if (!/yukiworks\./i.test(kop) || m.getSubject().indexOf("Factuur van BROS") < 0) { Logger.log("Overgeslagen (niet van Yuki): " + m.getFrom() + " · " + m.getSubject()); return; }
+    // 1.48: "yukiworks" in een kopregel kan iedereen zelf zetten — enkel automatisch verwerken als Gmail de handtekening (DKIM/SPF/DMARC) van yukiworks bevestigde
+    if (!yukiEcht(m)) { const body = m.getPlainBody() || ""; verdacht.push({ thread: t, factuurnummer: ((body.match(/Factuurnummer\s*:\s*([0-9A-Za-z\-\/]+)/) || [])[1] || "?").trim(), klant: (m.getSubject().match(/Factuur voor\s+(.+)$/) || [])[1] || m.getFrom(), totaal_incl: yukiNum((body.match(/Totaalbedrag\s*:\s*EUR\s*([0-9\.\s]+,\d{2})/) || [])[1] || "0,00"), resultaat: "te bekijken", reden: "afzender niet bevestigd door Gmail (geen geldige Yuki-handtekening) — niet automatisch verwerkt. Komt hij echt van Yuki, koppel hem dan zelf in het Planbord." }); return; }
     const f = yukiParse(m); if (f) { f.thread = t; facturen.push(f); }
   }));
-  if (!facturen.length) return Logger.log("Geen facturen herkend in " + threads.length + " mails.");
+  verdacht.forEach(v => v.thread.addLabel(labelCheck));
+  if (!facturen.length) { if (verdacht.length) yukiRapporteer(verdacht.map(v => { const o = Object.assign({}, v); delete o.thread; return o; })); return Logger.log("Geen facturen herkend in " + threads.length + " mails."); }
   // zelfde factuur in meerdere mails (bv. doorgestuurd én via filter): één keer verwerken, alle mails labelen
   const perNr = {}; facturen.forEach(f => { (perNr[f.factuurnummer] = perNr[f.factuurnummer] || []).push(f); });
   const uniek = Object.keys(perNr).map(nr => perNr[nr][0]);
   const rapport = yukiKoppel(uniek);
   rapport.forEach(r => { const ok = r.resultaat === "gekoppeld" || r.resultaat === "al gekoppeld"; perNr[r.factuurnummer].forEach(f => f.thread.addLabel(ok ? label : labelCheck)); });
-  yukiRapporteer(rapport);
+  yukiRapporteer(rapport.concat(verdacht.map(v => { const o = Object.assign({}, v); delete o.thread; return o; })));
+}
+/** Heeft Gmail bevestigd dat de mail echt van Yuki komt? Enkel de bovenste resultaten (door Gmail zelf toegevoegd), met een verankerd domein:
+ *  - DKIM of SPF geslaagd voor (een subdomein van) yukiworks.be/.nl, of
+ *  - Gmails ARC-samenvatting (doorgestuurd via info@bros.be e.d.) met dkim/spf geslaagd voor yukiworks, of
+ *  - DMARC geslaagd voor bros.be (Yuki verstuurt "namens" accounting@bros.be — enkel wie bros.be toelaat, haalt dat) samen met een yukiworks-spoor. */
+const YUKI_DOM = "(?:[\\w-]+\\.)*yukiworks\\.(?:be|nl)(?![\\w.-])";
+function yukiEcht(m) {
+  let ar = "", arc = ""; try { ar = String(m.getHeader("Authentication-Results") || ""); arc = String(m.getHeader("ARC-Authentication-Results") || ""); } catch (e) { }
+  const yuki = (re) => new RegExp(re.replace("YUKI", YUKI_DOM), "i");
+  const direct = yuki("dkim=pass[^;]*header\\.[di]=@?YUKI").test(ar) || yuki("spf=pass[^;]*smtp\\.mailfrom=(?:[^;\\s@]*@)?YUKI").test(ar) || yuki("dmarc=pass[^;]*header\\.from=YUKI").test(ar);
+  const viaArc = /arc=pass/i.test(ar) && (yuki("dkim=pass dkdomain=YUKI").test(ar) || yuki("spf=pass spfdomain=YUKI").test(ar));
+  const brosDmarc = /dmarc=pass[^;]*header\.from=bros\.be(?![\w.-])/i.test(ar) && (yuki("(?:dkdomain|spfdomain|header\\.[di]|mailfrom)=@?(?:[^;\\s@]*@)?YUKI").test(ar + " " + arc));
+  return direct || viaArc || brosDmarc;
 }
 /** Haalt nummer, datum, klant en bedragen uit de mail (en de pdf-bijlage als die leesbaar is). */
 function yukiParse(m) {
@@ -1403,7 +1541,7 @@ function yukiParse(m) {
       const tot2 = txt.match(/Totaal\s+€\s*([0-9\.\s]+,\d{2})\s+€\s*([0-9\.\s]+,\d{2})\s+€\s*([0-9\.\s]+,\d{2})/);
       if (tot2) { f.excl = yukiNum(tot2[1]); f.btw = yukiNum(tot2[2]); }
       const first = txt.split("\n").map(s => s.trim()).filter(Boolean)[0]; if (first && !f.klant) f.klant = first;
-      const pn = txt.match(/\b(2[5-9]\d{4})\b/); if (pn) f.projectnummer = pn[1]; } }
+      f.projectnummers = txt.match(/\b\d{6}\b/g) || []; } }
   } catch (e) { f.pdf_fout = String(e); }
   return f;
 }
@@ -1520,7 +1658,7 @@ function yukiKoppel(facturen) {
   let rows, loten = {};
   try { rows = pbAll("/rest/v1/meetstaat_posten_v?select=id,project_id,lot,status,hoeveelheid,verkoop_ep,btw", token); }
   catch (e) { rows = pbAll("/rest/v1/meetstaat_posten?select=id,project_id,lot,status,hoeveelheid,eenheidsprijs,marge,btw", token); pbAll("/rest/v1/loten?select=nr,marge", token, "nr").forEach(l => loten[l.nr] = l); }
-  const calc = {}; vorderingen.forEach(v => calc[v.id] = yukiCalc(v, rows, regels, loten));
+  const calcMemo = {}; const calcOf = (v) => calcMemo[v.id] || (calcMemo[v.id] = yukiCalc(v, rows, regels, loten));   // 1.48: enkel berekenen wat nodig is
   const bestaand = {}; vorderingen.forEach(v => { if (v.factuurnummer) bestaand[String(v.factuurnummer).trim()] = v; });
   const TOL = YUKI.TOL; const rapport = [];
   facturen.forEach(f => {
@@ -1529,19 +1667,19 @@ function yukiKoppel(facturen) {
       // factuurnummer stond er al (manueel ingevuld): de betaalgegevens wel nog aanvullen
       const bv = bestaand[nr]; if (bv.id && (!bv.mededeling || !bv.vervaldag || !bv.factuur_document)) { try { yukiBetaalgegevens(f, bv, projecten.find(x => x.id === bv.project_id) || {}, token, bv.bedrag_excl); } catch (e) { } }
       rapport.push(out); return; }
-    let proj = null; const pn = f.projectnummer || ((f.klant + " " + f.onderwerp).match(/\b(2[5-9]\d{4})\b/) || [])[1];
+    let proj = null; const pn = (f.projectnummers || []).concat((f.klant + " " + f.onderwerp).match(/\b\d{6}\b/g) || []).find(n => projecten.some(p => p.nummer === n));
     if (pn) proj = projecten.find(p => p.nummer === pn) || null;
     if (!proj) { const k = yukiNorm(f.klant); const kand = projecten.filter(p => k && [p.klant, p.bedrijf, p.naam].map(yukiNorm).some(n => n && (k.indexOf(n) >= 0 || n.indexOf(k) >= 0)));
       if (kand.length === 1) proj = kand[0];
-      else if (kand.length > 1) { const fit = kand.filter(p => vorderingen.some(v => v.project_id === p.id && v.status === "opgemaakt" && Math.abs(calc[v.id].incl - incl) <= TOL)); if (fit.length === 1) proj = fit[0]; else { out.resultaat = "twijfel"; out.reden = "meerdere projecten passen: " + kand.map(p => p.klant).join(", "); rapport.push(out); return; } } }
-    const kandV = vorderingen.filter(v => v.status === "opgemaakt" && (!proj || v.project_id === proj.id));
+      else if (kand.length > 1) { const fit = kand.filter(p => vorderingen.some(v => v.project_id === p.id && v.status === "opgemaakt" && Math.abs(calcOf(v).incl - incl) <= TOL)); if (fit.length === 1) proj = fit[0]; else { out.resultaat = "twijfel"; out.reden = "meerdere projecten passen: " + kand.map(p => p.klant).join(", "); rapport.push(out); return; } } }
+    const kandV = vorderingen.filter(v => v.status === "opgemaakt" && (!proj || v.project_id === proj.id) && Math.abs(calcOf(v).incl) > TOL);   // 1.48: nooit een lege vordering (€ 0) koppelen
     let v = null, opm = "";
-    const exact = kandV.filter(x => Math.abs(calc[x.id].incl - incl) <= TOL);
+    const exact = kandV.filter(x => Math.abs(calcOf(x).incl - incl) <= TOL);
     if (exact.length === 1) v = exact[0];
-    else if (!exact.length && f.excl != null) { const e2 = kandV.filter(x => Math.abs(calc[x.id].excl - f.excl) <= TOL); if (e2.length === 1) v = e2[0]; }
+    else if (!exact.length && f.excl != null) { const e2 = kandV.filter(x => Math.abs(calcOf(x).excl - f.excl) <= TOL); if (e2.length === 1) v = e2[0]; }
     // geen automatische koppeling meer bij een afwijkend bedrag (veiligheid: een vervalste mail kan zo niets wijzigen) — wel melden
-    if (!v) { out.resultaat = "niet gevonden"; out.project = proj ? proj.klant : null; out.reden = proj ? (kandV.length === 1 ? "bedrag wijkt af van de openstaande vordering (berekend " + calc[kandV[0].id].incl.toFixed(2) + " incl.) — koppel ze zelf in het Planbord" : "geen openstaande vordering met dit bedrag") : "project niet herkend"; rapport.push(out); return; }
-    const c = calc[v.id];
+    if (!v) { out.resultaat = "niet gevonden"; out.project = proj ? proj.klant : null; out.reden = proj ? (kandV.length === 1 ? "bedrag wijkt af van de openstaande vordering (berekend " + calcOf(kandV[0]).incl.toFixed(2) + " incl.) — koppel ze zelf in het Planbord" : "geen openstaande vordering met dit bedrag") : "project niet herkend"; rapport.push(out); return; }
+    const c = calcOf(v);
     const bedrag = f.excl != null ? f.excl : (Math.abs(c.incl - incl) <= TOL ? c.excl : Math.round(incl / (1 + (c.excl ? c.btw / c.excl : 0.06)) * 100) / 100);
     const patch = { factuurnummer: nr, datum: f.datum || v.datum, bedrag_excl: bedrag, status: "verzonden" };
     if (opm) patch.opmerking = ((v.opmerking || "") + " " + opm).trim();

@@ -4,7 +4,7 @@
    lokale wachtrij (IndexedDB) en worden verzonden zodra er weer verbinding is.
    ===================================================================== */
 if (window.top !== window.self) { try { window.top.location.replace(window.location.href); } catch (e) { document.documentElement.innerHTML = ""; } }   // niet in een vreemd frame (clickjacking)
-const WERF_VERSION = "1.45.0";
+const WERF_VERSION = "1.48.0";
 const cfg = window.PLANBORD_CONFIG || {};
 if (!window.supabase) { document.getElementById("app").innerHTML = '<main><div class="empty"><b>De werfmodus is nog niet volledig geladen.</b><br>Open ze één keer met bereik; daarna werkt ze ook offline.<br><br><button class="btn" onclick="location.reload()">Opnieuw proberen</button></div></main>'; throw new Error("supabase-js niet geladen"); }
 const sb = window.supabase.createClient(cfg.supabaseUrl, cfg.supabaseAnonKey);
@@ -55,7 +55,7 @@ async function opruimenNaUitloggen() {
   try { for (const q of (S.queue || [])) await idb.del(q.id); S.queue = []; } catch (e) { }
   try { if (window.caches) await caches.delete("bros-werf-fotos"); } catch (e) { }
 }
-async function loadQueue() { try { S.queue = await idb.all(); } catch (e) { S.queue = []; } }
+async function loadQueue() { try { S.queue = await idb.all(); } catch (e) { S.queue = []; } S.queue.forEach(q => (q.fotos || []).forEach(f => { f._url = null; })); }   // 1.48: oude blob-links zijn na een herstart ongeldig
 async function enqueue(item) {
   item.t = Date.now(); item.pid = item.pid || S.project;
   try { item.id = await idb.put(item); } catch (e) { toast("Niet bewaard op dit toestel: " + (e.message || e) + ". Probeer opnieuw met bereik.", 6000); throw e; }
@@ -150,7 +150,9 @@ function allVs() {
 function allWb() { const rows = [...S.data.werfbezoeken]; S.queue.forEach(q => { if (q.kind === "wb-new" && q.row.project_id === S.project && !rows.find(r => r.id === q.row.id)) rows.unshift({ ...q.row, _pending: true }); }); return rows; }
 
 /* ---------- synchroniseren ---------- */
-const isNetErr = (e) => !e || e.name === "TypeError" || /fetch|network|failed to|load failed|timeout/i.test(String(e.message || e));
+// 1.48: ook een tijdelijke storing van de server (5xx, 429, 408, "paused") is geen inhoudelijke fout — later opnieuw, zonder pogingen te verbruiken
+const isNetErr = (e) => { if (!e || e.name === "TypeError") return true; const st = Number(e.status || e.statusCode || 0); if (st >= 500 || st === 429 || st === 408) return true;
+  return /fetch|network|failed to|load failed|timeout|upstream|paused|gateway|503|502|504|JWT expired/i.test(String(e.message || e)); };
 async function fotosToevoegen(vid, veld, fotos) {
   // server voegt toe zonder de bestaande lijst te overschrijven (script 022); oudere database: lezen + samenvoegen
   const r = await sb.rpc("vaststelling_fotos_toevoegen", { p_id: vid, p_veld: veld, p_fotos: fotos });
@@ -161,6 +163,8 @@ async function fotosToevoegen(vid, veld, fotos) {
   const { error } = await sb.from("vaststellingen").update({ [veld]: merged }).eq("id", vid); if (error) throw error;
 }
 async function sync() {
+  // 1.48: nooit twee tabbladen tegelijk dezelfde wachtrij laten verzenden (anders dubbele foto's)
+  if (navigator.locks && !S.inLock) return navigator.locks.request("bros-werf-sync", { ifAvailable: true }, async (l) => { if (!l) return; S.inLock = true; try { await loadQueue(); await sync(); } finally { S.inLock = false; } });   // binnen het slot de wachtrij opnieuw lezen (een ander tabblad kan intussen verzonden hebben)
   if (S.syncing || !S.online || !S.queue.length) return;
   S.syncing = true; paint();
   let netfout = null, fouten = 0;
@@ -186,7 +190,7 @@ async function sync() {
           if (cfg.driveScriptUrl) { try { fetch(cfg.driveScriptUrl, { method: "POST", body: JSON.stringify({ action: "werfpuntmelding", id: r.id, token: session.access_token }), redirect: "follow" }).catch(() => { }); } catch (e) { } }   // BROS verwittigen
         }
         else if (q.kind === "vs-new") {
-          const { error } = await sb.from("vaststellingen").upsert({ ...q.row, fotos: q.done || [] }, { onConflict: "id" }); if (error) throw error;
+          if (!q.rowOk) { const { error } = await sb.from("vaststellingen").upsert({ ...q.row, fotos: q.done || [] }, { onConflict: "id" }); if (error) throw error; q.rowOk = true; await idb.put(q); }   // 1.48: bij een herhaling niet opnieuw (zou wijzigingen van kantoor overschrijven)
           while (q.fotos.length) { const f = await upload(q.row.project_id, q.row.id, q.fotos[0]); q.done = [...(q.done || []), f]; q.fotos.shift(); await idb.put(q); }
           if ((q.done || []).length) await fotosToevoegen(q.row.id, "fotos", q.done);
         } else if (q.kind === "vs-update") {
@@ -214,7 +218,7 @@ async function sync() {
       }
     }
   } finally { S.syncing = false; }
-  if (netfout) toast("Verzenden onderbroken (" + (netfout.message || netfout) + ") — probeert later opnieuw", 4000);
+  if (netfout) { toast("Verzenden onderbroken (" + (netfout.message || netfout) + ") — probeert later opnieuw", 4000); clearTimeout(S.syncT); S.syncT = setTimeout(sync, 30000); }   // 1.48: zelf opnieuw proberen
   else if (fouten) toast(fouten + " item" + (fouten === 1 ? "" : "s") + " kon niet verzonden worden — tik op de status rechtsboven voor details", 5000);
   else if (S.online) { try { await loadProject(S.project); } catch (e) { } }
   paint();
@@ -228,7 +232,7 @@ document.addEventListener("visibilitychange", () => { if (document.visibilitySta
 const syncBadge = () => { const n = S.queue.length; const nf = S.queue.filter(q => (q.tries || 0) >= 5).length; const cls = S.syncing ? "busy" : !S.online ? "off" : nf ? "off" : n ? "wait" : ""; const txt = S.syncing ? "verzenden…" : !S.online ? (n ? `offline · ${n} wacht` : "offline") : nf ? `⚠ ${nf} mislukt` : n ? `${n} te verzenden` : "gesynchroniseerd"; return `<button class="sync ${cls}" data-act="sync" title="Verbinding en wachtrij"><i></i>${txt}</button>`; };
 function render() {
   const app = $("#app");
-  if (!S.session && !(S.me && !S.online)) { app.innerHTML = vLogin(); return; }
+  if (!S.session && (!S.me || S.forceLogin)) { app.innerHTML = vLogin(); return; }   // 1.48: met een gekend toestel (S.me) blijft de app bruikbaar bij een verlopen sessie op zwak bereik
   if (!S.project || S.view === "projects") { app.innerHTML = topBar("Kies een project") + `<main>${vProjects()}</main>`; return; }
   const p = proj();
   let body = "";
@@ -239,12 +243,12 @@ function render() {
   app.innerHTML = topBar(projName(p), p ? `${p.nummer || ""}${p.gemeente ? " · " + p.gemeente : ""}` : "") + `<main>${body}</main>` + (S.view === "list" ? `<button class="fab" data-act="new">📷 ${isAan() ? "Punt melden" : "Vaststelling"}</button>` : "");
   if (S.view === "new" || S.view === "edit") bindForm();
 }
-const topBar = (title, sub) => `<div class="top"><span class="mark"></span><button class="proj" data-act="projects"><b>${esc(title)}</b>${sub ? `<small>${esc(sub)} · wijzigen</small>` : `<small>Werfmodus v${WERF_VERSION}${isAan() ? " · aannemer" : ""}</small>`}</button>${syncBadge()}</div>`;
+const topBar = (title, sub) => `<div class="top"><span class="mark"></span><button class="proj" data-act="projects"><b>${esc(title)}</b>${sub ? `<small>${esc(sub)} · wijzigen</small>` : `<small>Werfmodus v${WERF_VERSION}${isAan() ? " · aannemer" : ""}</small>`}</button>${syncBadge()}</div>${!S.session ? `<div style="display:flex;gap:10px;align-items:center;justify-content:space-between;padding:8px 14px;background:#FFF4E5;color:#7A4B00;font-size:13px"><span>Niet aangemeld${S.queue.length ? " — je wachtrij blijft bewaard" : ""}.</span><button class="btn" style="width:auto;padding:6px 12px;font-size:13px" data-act="relogin">Aanmelden</button></div>` : ""}`;
 function vLogin() {
   return `<main><div class="login"><span class="mark"></span><h1 style="text-align:center">Werfmodus</h1><p class="meta" style="text-align:center">Meld je aan met je Planbord-account of je login voor het aannemersportaal.</p>
     <form id="login"><div class="field"><label>E-mail</label><input name="email" type="email" autocomplete="username" required inputmode="email"></div>
     <div class="field"><label>Wachtwoord</label><input name="password" type="password" autocomplete="current-password" required></div>
-    ${S.loginErr ? `<div class="err">${esc(S.loginErr)}</div>` : ""}<button class="btn primary" type="submit">Aanmelden</button></form>
+    ${S.loginErr ? `<div class="err">${esc(S.loginErr)}</div>` : ""}<button class="btn primary" type="submit">Aanmelden</button></form>${S.forceLogin && S.me ? `<button class="btn" style="margin-top:10px" data-act="relogin-weg">Terug (zonder aanmelden)</button>` : ""}
     ${!S.online ? `<p class="meta" style="text-align:center;margin-top:16px">Je bent offline. Meld je aan zodra je bereik hebt; daarna werkt de werfmodus ook zonder.</p>` : ""}</div></main>`;
 }
 function vProjects() {
@@ -412,8 +416,11 @@ document.addEventListener("click", async (e) => {
   if (d.act === "bezoek-stop") { S.bezoek = null; store.del("bezoek"); toast("Werfbezoek afgesloten"); return render(); }
   if (d.act === "sync") {
     const mislukt = S.queue.filter(q => (q.tries || 0) >= 5);
-    if (mislukt.length) { const txt = mislukt.map(q => "• " + (q.kind === "vs-new" || q.kind === "aan-new" ? (q.row.titel || q.row.omschrijving || "vaststelling") : q.kind) + ": " + (q.err || "?")).join("\n"); if (confirm(mislukt.length + " item(s) konden niet verzonden worden:\n" + txt + "\n\nOK = nog eens proberen · Annuleren = niets doen")) { mislukt.forEach(q => { q.tries = 0; idb.put(q).catch(() => { }); }); return sync(); } return; }
+    if (mislukt.length) { const txt = mislukt.map(q => "• " + (q.kind === "vs-new" || q.kind === "aan-new" ? (q.row.titel || q.row.omschrijving || "vaststelling") : q.kind) + ": " + (q.err || "?")).join("\n"); if (confirm(mislukt.length + " item(s) konden niet verzonden worden:\n" + txt + "\n\nOK = nog eens proberen · Annuleren = andere keuze")) { mislukt.forEach(q => { q.tries = 0; idb.put(q).catch(() => { }); }); return sync(); }
+      if (confirm("Deze " + mislukt.length + " item(s) van dit toestel verwijderen? Ze worden dan NIET verzonden.")) { for (const q of mislukt) { await idb.del(q.id).catch(() => { }); revokeItem(q); } S.queue = S.queue.filter(q => !mislukt.includes(q)); paint(); toast("Verwijderd uit de wachtrij"); } return; }
     if (!S.online) return toast("Geen verbinding — de wachtrij wordt verzonden zodra er bereik is"); if (!S.queue.length) { refresh(); return toast("Alles is verzonden"); } return sync(); }
+  if (d.act === "relogin") { S.forceLogin = true; return render(); }
+  if (d.act === "relogin-weg") { S.forceLogin = false; return render(); }
   if (d.act === "logout") { if (S.queue.length && !confirm(S.queue.length + " item(s) zijn nog niet verzonden. Toch afmelden? Ze worden dan van dit toestel gewist.")) return; await sb.auth.signOut(); S.session = null; S.me = null; await opruimenNaUitloggen(); return render(); }
 });
 document.addEventListener("change", async (e) => {
@@ -440,7 +447,7 @@ document.addEventListener("submit", async (e) => {
   const f = new FormData(e.target); S.loginErr = "";
   const { data, error } = await sb.auth.signInWithPassword({ email: f.get("email"), password: f.get("password") });
   if (error) { S.loginErr = /invalid/i.test(error.message) ? "E-mail of wachtwoord klopt niet." : error.message; return render(); }
-  S.session = data.session; await start();
+  S.session = data.session; S.forceLogin = false; await start();
 });
 
 /* ---------- start ---------- */
@@ -457,7 +464,7 @@ async function start() {
 }
 (async () => {
   const { data: { session } } = await sb.auth.getSession(); S.session = session;
-  sb.auth.onAuthStateChange((ev, s) => { if (ev === "TOKEN_REFRESHED" || ev === "SIGNED_IN") S.session = s; if (ev === "SIGNED_OUT") { S.session = null; if (S.online) render(); } });
+  sb.auth.onAuthStateChange((ev, s) => { if (s) S.session = s; if (ev === "SIGNED_IN" || ev === "TOKEN_REFRESHED") { S.forceLogin = false; if (S.queue.length) sync(); } if (ev === "SIGNED_OUT") { S.session = null; if (S.online) render(); } });
   if ("serviceWorker" in navigator) navigator.serviceWorker.register("sw.js").catch(() => { });
   await start();
 })();

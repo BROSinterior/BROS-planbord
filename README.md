@@ -13,8 +13,10 @@ Statische webapp (geen build-stap) op een Supabase-database.
 | `index.html` | de pagina (opmaak) |
 | `app.js` | alle logica |
 | `config.js` | koppeling met de database — **hier de Project URL en anon-sleutel invullen** |
-| `version.json` | versienummer; de app meldt een nieuwe versie aan wie ze open heeft |
-| `sql/001_init.sql` … `sql/044_*.sql` | databasescripts, in volgorde uit te voeren (`versie_schema` in instellingen bewaakt de volgorde vanaf 022) |
+| `version.json` | versienummer (enkel de laatste versie); de app meldt een nieuwe versie aan wie ze open heeft |
+| `CHANGELOG.md` | versiegeschiedenis (vanaf 1.48 niet meer in version.json) |
+| `vendor/supabase-2.45.4.js` (+ `591.supabase.js`) | de Supabase-bibliotheek, zelf gehost (geen CDN nodig) |
+| `sql/001_init.sql` … `sql/045_*.sql` | databasescripts, in volgorde uit te voeren (`versie_schema` in instellingen bewaakt de volgorde vanaf 022) |
 | `drive/Code.gs` | Google Apps Script dat projectmappen aanmaakt/koppelt op Drive en de meetstaat-export wegschrijft (installatie: zie bovenaan dat bestand) |
 | `agenda.js` | gedeeld (Planbord en portalen): agendabestand (.ics) en Google Agenda-link voor afspraken (script 041) |
 | `afspraken.js` | Planbord: afspraak ter plaatse in het taakformulier, synchronisatie met de Google Agenda en de mails (script 041) |
@@ -162,6 +164,23 @@ Activeren (eenmalig):
 4. Edge Function `assistent` opnieuw plakken (weigert nu aannemerslogins) en pushen.
 
 Gebruik: Dossier › Contacten → bij een aannemer de knop **Aannemersportaal** (beheer) → hij krijgt een mail met een persoonlijke link. Instellingen → Klantenportaal toont wie toegang heeft (klant/aannemer). Een aannemer die op het Planbord of het klantenportaal inlogt, wordt doorgestuurd.
+
+## Onderhoudsvrij, robuuster en Weekritme (script 045 + nieuw drive/Code.gs, v1.48)
+
+**In gebruik nemen:** script `sql/045_onderhoud.sql` uitvoeren (controle: `1 | 0`) → pushen → `drive/Code.ingevuld.gs` plakken → in de editor één keer **onderhoudInstall** uitvoeren en de toestemming geven (nieuw recht: het mailquotum lezen) → een nieuwe versie online zetten. Daarna draait het onderhoud vanzelf. Optioneel: de Edge Function `assistent` opnieuw plakken.
+
+- **Zonder omkijken (Drive-script, functie `onderhoud`, elk uur via de trigger `onderhoudUur`, die automatisch wordt aangemaakt):**
+  - *hartslag* — elk uur een schrijfactie in `instellingen.hartslag`: een gratis Supabase-project wordt zo nooit gepauzeerd na een week zonder gebruik. Valt de hartslag langer dan 6 uur stil, dan toont het Overzicht aan beheerders wat te doen (`onderhoudInstall` uitvoeren).
+  - *back-up* — elke week alle tabellen als `planbord-JJJJ-MM-DD.json.gz` in Drive, map **BROS Planbord back-ups** (laatste 12 weken; oudere gaan naar de prullenbak). Foto's/plannen in de Supabase-opslag zitten daar niet in.
+  - *bewaking* — elke week database- en opslaggebruik (`pb_gebruik()`, enkel met de service key), Drive/Gmail-opslag; een mail naar `YUKI.REPORT_TO` enkel als iets boven 80 % zit.
+  - *zelfherstel* — een vaste trigger (`yukiSync`, `documentenDigest`, `weekoverzicht`) die er eerder was en verdween, wordt opnieuw aangemaakt. Gemiste maandagmails worden maandagnamiddag/dinsdag ingehaald.
+  - *mailquotum* (gmail.com ±100 ontvangers/dag): de digest, het weekoverzicht en wachtwoordmails houden een reserve van 20 voor codes, uitnodigingen en goedkeuringen; wat niet verstuurd kon worden, gaat later (niet als "gemaild" gemarkeerd). Lange `in.(…)`-lijsten gaan in stukken (URL-limiet van Apps Script).
+- **Fouten opgelost:** verdwenen Drive-bestanden worden echt opgeruimd (enkel bij een volledige lijst en nooit een document waar een factuur/overeenkomst/woningdossier naar verwijst); ongeldige prijzen/marges/percentages worden geweigerd i.p.v. € 0; een werfpunt bewaren in het Planbord overschrijft niet meer wat de aannemer intussen meldde; posten die al in een vordering staan, kan je niet meer verwijderen (Vervallen gebruiken); een half mislukte import wordt teruggedraaid; realtime-wijzigingen tijdens een bulkactie worden achteraf herladen; tijden in Belgische tijd; nieuwe postcodes na het hoogste nummer; CSV-export in Safari; dubbele abonnementen na opnieuw inloggen; het Planbord probeert zelf opnieuw te laden na een storing.
+- **Beveiliging:** Yuki-facturen worden enkel automatisch verwerkt als Gmail de handtekening van yukiworks bevestigt (anders label *Planbord/te bekijken* en een melding); nooit een vordering van € 0 koppelen; een login die iemand zelf aanmaakte met het adres van een klant wordt bij de uitnodiging verwijderd en vervangen; foto-adressen enkel van `*.supabase.co`; wachtwoordmails max. 4 per dag per adres.
+- **Werfmodus en portalen:** tijdelijke serverfouten verbruiken geen pogingen meer en de wachtrij probeert zelf opnieuw (30 s); geen dubbel verzenden vanuit twee tabbladen; mislukte items kan je ook verwijderen; bij een verlopen sessie blijft de app bruikbaar met een balk *Aanmelden*; een herhaalde "opgelost"-melding of reactie geeft geen fout/dubbel meer (script 045); de service workers ruimen enkel hun eigen cache op en bewaren de gedeelde scripts offline.
+- **Sneller:** de Supabase-bibliotheek staat nu in `vendor/` (geen CDN meer nodig); tabellen worden met een sleutel gebladerd i.p.v. OFFSET; realtime-updates worden per beeld gebundeld; terug naar het tabblad herlaadt alles enkel na meer dan 2 minuten weg; toegangsregels en views controleren de rol één keer per opvraging (script 045); `version.json` bevat enkel nog de laatste versie (geschiedenis in `CHANGELOG.md`).
+- **Weekritme (Overzicht en de dagring rechtsboven):** vijf dagringen voor je week, je *reeks* (werkdagen op rij met uren ingevuld; weekends tellen niet mee), en kleine onderscheidingen: *Volle week*, *Bij* (niets over de datum), *Opruimer* (10 taken afgevinkt) en *Reeks 10*. Mijlpalen bij een volle week, 5/10/20/… dagen op rij en de tiende afgevinkte taak. Uit te zetten met de animaties (klik op de dagring).
+- **Assistent (optioneel opnieuw plakken):** `supabase/functions/assistent/index.ts` — als het taalmodel niet bereikbaar is (model weg, sleutel of tegoed op), krijgt de klant toch een antwoord en BROS een voorstel i.p.v. een foutmelding.
 
 ## Afspraken in de Google Agenda: toestemming (v1.47, nieuw drive/Code.gs, geen databasescript)
 

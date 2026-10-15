@@ -137,7 +137,7 @@ async function pvDeelnemersMaken(v, cids) {
       } catch (e) { fout++; if (!e.__toasted) toast("Niet aangemaakt: " + (e.message || e), 6000); }
       finally { const half = Object.values(S.prijsaanvragen || {}).find(x => x.prijsvraag_id === v.id && x.contact_id === cid && !nieuw.some(n => n.id === x.id)); if (half) await dbDelete("prijsaanvragen", half.id).catch(() => { }); }
     }
-  } finally { S.bulk = false; }
+  } finally { if (typeof bulkKlaar === "function") bulkKlaar(); else S.bulk = false; }
   await refetch("prijsaanvraag_regels"); await refetch("prijsaanvragen");
   if (!nieuw.length) return;
   if (!driveReady()) { toast(`Prijsvraag bewaard voor ${nieuw.length} aannemer${nieuw.length === 1 ? "" : "s"} — niet gemaild: Drive-script niet ingesteld`, 7000); return; }

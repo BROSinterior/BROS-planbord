@@ -3,7 +3,7 @@
    Statische webapp op Supabase (login, live-synchronisatie, rechten)
    ===================================================================== */
 if (window.top !== window.self) { try { window.top.location.replace(window.location.href); } catch (e) { document.documentElement.innerHTML = ""; } }   // niet in een vreemd frame (clickjacking)
-const APP_VERSION = "1.47.0";
+const APP_VERSION = "1.48.0";
 const PROJ_STATUS = { offerte: "In offerte", lopend: "Lopend", on_hold: "On hold", afgerond: "Afgerond", verloren: "Verloren" };
 const KLANTTYPE = { particulier: "Particulier", zakelijk: "Zakelijk" };
 const KLANTCODE = { particulier: "PAR", zakelijk: "ZAK" };
@@ -25,6 +25,9 @@ const diffDays = (a, b) => Math.round((pd(b) - pd(a)) / DAY);
 const mondayOf = (s) => { const d = pd(s); const w = (d.getUTCDay() + 6) % 7; return addDays(s, -w); };
 const fmt = (s) => { if (!s) return "—"; const d = pd(s); return `${String(d.getUTCDate()).padStart(2, "0")}/${String(d.getUTCMonth() + 1).padStart(2, "0")}`; };
 const fmtLong = (s) => { if (!s) return "—"; const d = pd(s); return `${String(d.getUTCDate()).padStart(2, "0")}/${String(d.getUTCMonth() + 1).padStart(2, "0")}/${d.getUTCFullYear()}`; };
+/* 1.48: tijdstempels (timestamptz, in UTC opgeslagen) in Belgische tijd tonen — anders is een bericht om 00:30 "gisteren 22:30" */
+const lokDag = (ts) => { if (!ts) return ""; const d = new Date(ts); if (isNaN(d)) return String(ts).slice(0, 10); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`; };
+const lokUur = (ts) => { if (!ts) return ""; const d = new Date(ts); return isNaN(d) ? String(ts).slice(11, 16) : `${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}`; };
 const weekNr = (s) => { const t = pd(s); const day = t.getUTCDay() || 7; t.setUTCDate(t.getUTCDate() + 4 - day); const y0 = new Date(Date.UTC(t.getUTCFullYear(), 0, 1)); return Math.ceil(((t - y0) / DAY + 1) / 7); };
 const MONTHS = ["jan", "feb", "mrt", "apr", "mei", "jun", "jul", "aug", "sep", "okt", "nov", "dec"];
 const DAYS = ["ma", "di", "wo", "do", "vr", "za", "zo"];
@@ -53,6 +56,7 @@ const URL_AUTH = (() => {
   return { type: p.get("type") || "", error: err };
 })();
 const configured = cfg.supabaseUrl && !cfg.supabaseUrl.includes("VUL-IN") && cfg.supabaseAnonKey && cfg.supabaseAnonKey !== "VUL-IN";
+if (configured && !window.supabase) { document.body.innerHTML = '<div style="font-family:system-ui;padding:40px;text-align:center"><h2>Het Planbord kon niet starten</h2><p>Een onderdeel (vendor/supabase-2.45.4.js) laadde niet. Controleer je verbinding en herlaad de pagina.</p><button onclick="location.reload()">Opnieuw laden</button></div>'; throw new Error("supabase-js niet geladen"); }   // 1.48
 const sb = configured ? window.supabase.createClient(cfg.supabaseUrl, cfg.supabaseAnonKey) : null;
 
 /* ---------- helpers ---------- */
@@ -62,11 +66,11 @@ const projects = () => Object.values(S.projecten).sort((a, b) => (b.nummer || ""
 /* index per render: uren per taak/project en taken per project (vermijdt een volledige scan per rij in grote lijsten) */
 let IDX = null;
 function buildIndex() {
-  const byTask = {}, byProj = {}, tasksByProj = {};
-  for (const h of Object.values(S.uren)) { const u = Number(h.uren) || 0; byTask[h.taak_id] = (byTask[h.taak_id] || 0) + u; byProj[h.project_id] = (byProj[h.project_id] || 0) + u; }
+  const byTask = {}, byProj = {}, tasksByProj = {}, mijnDag = {}; const ik = S.me && S.me.id;
+  for (const h of Object.values(S.uren)) { const u = Number(h.uren) || 0; byTask[h.taak_id] = (byTask[h.taak_id] || 0) + u; byProj[h.project_id] = (byProj[h.project_id] || 0) + u; if (ik && h.user_id === ik && h.datum) mijnDag[h.datum] = (mijnDag[h.datum] || 0) + u; }
   for (const t of Object.values(S.taken)) (tasksByProj[t.project_id] = tasksByProj[t.project_id] || []).push(t);
   for (const k in tasksByProj) tasksByProj[k].sort((a, b) => (a.volgorde ?? 0) - (b.volgorde ?? 0) || (a.start || "9").localeCompare(b.start || "9"));
-  IDX = { byTask, byProj, tasksByProj };
+  IDX = { byTask, byProj, tasksByProj, mijnDag };
 }
 const idx = () => { if (!IDX) buildIndex(); return IDX; };
 const tasksOf = (pid) => (idx().tasksByProj[pid] || []).slice();
@@ -140,20 +144,22 @@ const srcOf = (t) => VIEW_OF[t] && S.viewsOk !== false ? VIEW_OF[t] : t;
 // Altijd sorteren op een unieke kolom: zonder vaste volgorde geeft de database bij elke pagina een andere volgorde terug
 // en vallen er rijen tussen twee pagina's weg (zo misten posten in de meetstaat zodra er > 1000 rijen waren — fix v1.33.1).
 const ORDER_OF = { fasen: ["nr"], loten: ["nr"], tarieven: ["user_id"], instellingen: ["key"], klant_timing: ["project_id", "fase_nr"], prijsvraag_gunningen: ["prijsvraag_id", "post_id"] };
-const pagina = (src, t, from, PAGE) => { let q = sb.from(src).select("*"); (ORDER_OF[t] || ["id"]).forEach(c => { q = q.order(c, { ascending: true }); }); return q.range(from, from + PAGE - 1); };
+// 1.48: tabellen gesorteerd op id bladeren met een sleutel (id > laatste) i.p.v. OFFSET — blijft even snel als de tabel groeit
+const pagina = (src, t, from, PAGE, na) => { let q = sb.from(src).select("*"); (ORDER_OF[t] || ["id"]).forEach(c => { q = q.order(c, { ascending: true }); });
+  if (!ORDER_OF[t]) { if (na != null) q = q.gt("id", na); return q.limit(PAGE); } return q.range(from, from + PAGE - 1); };
 async function fetchAllRows(t) {
-  const PAGE = 1000; let from = 0, all = []; let src = srcOf(t);
+  const PAGE = 1000; let from = 0, all = [], na = null; let src = srcOf(t);
   for (; ;) {
-    let { data, error } = await pagina(src, t, from, PAGE);
+    let { data, error } = await pagina(src, t, from, PAGE, na);
     if (error && src !== t && /does not exist|42P01|schema cache/i.test(error.message || "")) {
-      for (let i = 0; i < 2 && error; i++) { await new Promise(res => setTimeout(res, 1500)); ({ data, error } = await pagina(src, t, from, PAGE)); }   // vlak na een databasescript: even opnieuw
+      for (let i = 0; i < 2 && error; i++) { await new Promise(res => setTimeout(res, 1500)); ({ data, error } = await pagina(src, t, from, PAGE, na)); }   // vlak na een databasescript: even opnieuw
       if (error && schemaV() >= 12) return { error, prijsFout: true };   // geen prijzen → niets laden i.p.v. bedragen van € 0
-      if (error) { S.viewsOk = false; src = t; ({ data, error } = await pagina(src, t, from, PAGE)); }
+      if (error) { S.viewsOk = false; src = t; ({ data, error } = await pagina(src, t, from, PAGE, na)); }
     }
     if (error) return { error };
     all = all.concat(data || []);
     if (!data || data.length < PAGE) return { data: all };
-    from += PAGE;
+    from += PAGE; na = data[data.length - 1].id;
   }
 }
 async function loadAll() {
@@ -170,7 +176,7 @@ function subscribe() {
   ["profiles", "tarieven", "fasen", "standaardtaken", "projecten", "taken", "uren", "documenten", "loten", "posten", "meetstaat_posten", "meetstaat_prijzen", "vorderingen", "vordering_regels", "contacten", "project_contacten", "goedkeuringen", "notities", "werfbezoeken", "vaststellingen", "klant_timing", "werfplannen", "werfverslagen", "taak_voorstellen", "assistent_berichten", "prijsaanvragen", "prijsaanvraag_regels", "tekenplannen", "aannemer_meetstaten", "keuzes", "keuze_opties", "meerwerk_aanvragen", "werf_fotos", "werf_updates", "woningdossier", "prijsvragen", "prijsvraag_gunningen", "goedkeuring_tekenaars"].forEach(t => {
     const ch = sb.channel("pb-" + t);
     ch.on("postgres_changes", { event: "*", schema: "public", table: t }, (payload) => {
-      if (S.bulk) return;   // tijdens een bulkactie (import, lot wissen) niet per rij herbouwen; op het einde volgt één refetch
+      if (S.bulk) { (S.bulkGemist = S.bulkGemist || new Set()).add(t === "meetstaat_prijzen" ? "meetstaat_posten" : t); return; }   // tijdens een bulkactie niet per rij herbouwen; erna worden de gemiste tabellen herladen (bulkKlaar)
       if (t === "standaardtaken") { refetch(t); return; }
       if (t === "meetstaat_prijzen") { const pid = (payload.new || payload.old || {}).post_id; if (pid && S.meetstaat_posten[pid]) rtQueue("meetstaat_posten", pid); return; }
       if (t === "loten" && schemaV() < 33) rtQueue("meetstaat_posten", "*");   // vóór script 033: lotmarge gewijzigd → alle klantprijzen herladen
@@ -179,14 +185,22 @@ function subscribe() {
       else { S[t][rowKey(t, payload.new)] = payload.new; }
       IDX = null;
       if (t === "profiles") S.me = S.profiles[S.session.user.id] || S.me;
-      render();
+      renderSoon();   // 1.48: veel wijzigingen na elkaar (Drive-sync, nieuw project) → één keer tekenen per beeld
     });
     ch.on("system", {}, (msg) => { if (msg && msg.status === "error") console.warn("Realtime niet actief voor tabel " + t + " — voer het laatste databasescript uit.", msg.message); });
-    ch.subscribe((status) => { if (status === "CHANNEL_ERROR" || status === "TIMED_OUT") setTimeout(() => refetch(t), 3000); });
+    ch.subscribe((status) => { if (status === "CHANNEL_ERROR" || status === "TIMED_OUT" || status === "CLOSED") { S.rtGemist = true; setTimeout(() => refetch(t), 3000); } });
   });
-  // Veiligheidsnet: bij terugkeer naar het tabblad alles verversen
-  document.addEventListener("visibilitychange", () => { if (document.visibilityState === "visible") refetchAll(); });
+  // Veiligheidsnet: bij terugkeer naar het tabblad alles verversen — 1.48: enkel na meer dan 2 minuten weg (of na een realtime-fout), niet bij elke korte wissel
+  let wegSinds = 0;
+  document.addEventListener("visibilitychange", () => {
+    if (document.visibilityState === "hidden") { wegSinds = Date.now(); return; }
+    if (S.rtGemist || !wegSinds || Date.now() - wegSinds > 120000) { S.rtGemist = false; refetchAll(); }
+  });
 }
+let renderRaf = 0;
+function renderSoon() { if (renderRaf) return; renderRaf = requestAnimationFrame(() => { renderRaf = 0; render(); }); }
+/* na een bulkactie: tabellen herladen waarvan realtime-wijzigingen (van collega's) tijdens de bulk genegeerd werden */
+function bulkKlaar() { S.bulk = false; const t = S.bulkGemist; S.bulkGemist = null; if (t) t.forEach(x => refetch(x)); }
 async function refetch(t) { const { data, error } = await fetchAllRows(t); if (!error) { ingest(t, data || []); render(); } }
 /* realtime-meldingen voor views bundelen: per tabel één aanvraag (of alles herladen bij veel rijen) i.p.v. één per rij */
 const rtQ = {}; let rtT = null;
@@ -373,6 +387,7 @@ function vierTaak(t, el) {
     FX.burst(x, y, verrassing || faseRond || projRond);
     if (projRond) { setTimeout(() => FX.mijlpaal(fxPick(["Alles afgevinkt", "Alle taken afgewerkt"]), `${projTxt} · ${ts.length} taken`), 380); return; }
     if (faseRond) { setTimeout(() => FX.mijlpaal(fxPick([`Fase ${faseShort(t.fase_nr)} rond`, `${faseShort(t.fase_nr)}: afgerond`]), projTxt), 380); return; }
+    if (t.assignee === S.me?.id) setTimeout(() => vierWeekritme("taak"), 1500);   // 1.48: na het bewaren (updated_at van de server)
     const basis = fase.length ? fase : ts, n = basis.filter(klaar).length;
     FX.chip(x, y, `${verrassing ? fxPick(["Netjes.", "Goed bezig.", "Weer eentje.", "Mooi zo."]) + " " : ""}<b>${n} van ${basis.length}</b> ${fase.length ? esc(faseShort(t.fase_nr)) : "taken"}${p ? ` · ${esc(p.klant)}` : ""}`);
   } catch (e) { }
@@ -380,12 +395,60 @@ function vierTaak(t, el) {
 /* ---------- Dagring: eigen uren van vandaag t.o.v. het dagdoel ---------- */
 let RING_LAST = null;
 const mijnUrenOp = (datum) => S.me ? Object.values(S.uren).filter(h => h.user_id === S.me.id && h.datum === datum).reduce((s, h) => s + (Number(h.uren) || 0), 0) : 0;
+/* ---------- 1.48: Weekritme — je reeks (werkdagen op rij met uren), vijf dagringen per week en kleine onderscheidingen ---------- */
+const isWerkdag = (s) => { const w = pd(s).getUTCDay(); return w >= 1 && w <= 5; };
+const mijnUrenPerDag = () => (S.me ? idx().mijnDag : {}) || {};   // uit de index (één keer per render opgebouwd, samen met de andere urentotalen)
+/* reeks = werkdagen op rij waarop je uren invulde (weekends tellen niet mee; vandaag telt pas mee zodra je iets invulde) */
+function reeksInfo(per) {
+  per = per || mijnUrenPerDag(); let n = 0, d = todayIso;
+  if (!(per[d] > 0)) d = addDays(d, -1);
+  for (let i = 0; i < 800; i++) { if (isWerkdag(d)) { if (per[d] > 0) n++; else break; } d = addDays(d, -1); }
+  let best = 0; try { best = Number(localStorage.getItem("bros.fx.reeksBest")) || 0; if (n > best) { best = n; localStorage.setItem("bros.fx.reeksBest", String(n)); } } catch (e) { best = Math.max(best, n); }
+  return { n, best };
+}
+function weekInfo() {
+  const per = mijnUrenPerDag(), doel = FX.doel(), wk0 = mondayOf(todayIso);
+  const dagen = [0, 1, 2, 3, 4].map(i => { const d = addDays(wk0, i); const u = per[d] || 0; return { d, u, pct: Math.min(1, u / doel), rond: u >= doel, toekomst: d > todayIso, vandaag: d === todayIso }; });
+  const afgevinkt = S.me ? Object.values(S.taken).filter(t => t.assignee === S.me.id && t.status === "done" && t.updated_at && lokDag(t.updated_at) >= wk0).length : 0;
+  const laat = S.me ? Object.values(S.taken).filter(t => t.assignee === S.me.id && t.status !== "done" && isLate(t)).length : 0;
+  const r = reeksInfo(per);
+  const badges = [
+    { k: "week", ok: dagen.every(x => x.rond), t: "Volle week", h: "vijf dagringen rond" },
+    { k: "bij", ok: laat === 0, t: "Bij", h: laat ? `${laat} taak${laat === 1 ? "" : "en"} over de datum` : "geen taken over de datum" },
+    { k: "opruimer", ok: afgevinkt >= 10, t: "Opruimer", h: `${afgevinkt}/10 taken afgevinkt` },
+    { k: "reeks", ok: r.n >= 10, t: "Reeks 10", h: `${r.n}/10 werkdagen op rij` }];
+  return { dagen, afgevinkt, laat, reeks: r, badges, uren: dagen.reduce((s, x) => s + x.u, 0), doel };
+}
+const miniRing = (pct, cls = "") => { const C = 2 * Math.PI * 9; return `<svg class="mr ${cls}" viewBox="0 0 24 24" aria-hidden="true"><circle class="bg" cx="12" cy="12" r="9"/><circle class="fg" cx="12" cy="12" r="9" style="stroke-dasharray:${C.toFixed(2)};stroke-dashoffset:${(C * (1 - pct)).toFixed(2)}"/></svg>`; };
+const DAGKORT = ["ma", "di", "wo", "do", "vr"];
+function vWeekkaart() {
+  if (!S.me || !FX.pref("aan", true)) return "";
+  const w = weekInfo(); const behaald = w.badges.filter(b => b.ok).length;
+  return `<div class="panel weekkaart" data-act="dagring" title="Jouw week — klik voor je dagdoel">
+    <div class="wk-l"><div class="eyebrow">Jouw week</div>
+      <div class="wk-dagen">${w.dagen.map((x, i) => `<div class="wk-dag ${x.rond ? "rond" : ""} ${x.toekomst ? "later" : ""} ${x.vandaag ? "nu" : ""}">${miniRing(x.pct)}<span>${DAGKORT[i]}</span><small class="num">${x.u ? nl(x.u) : "·"}</small></div>`).join("")}</div></div>
+    <div class="wk-m"><div class="wk-reeks"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 2.5c.6 3-1.4 4.6-2.7 6.2C7.8 10.5 7 12 7 14a5 5 0 0 0 10 0c0-2.2-1.2-3.6-2-4.6-.3 1.4-1 2.3-2 2.6.6-2.8.4-6.2-1-9.5z"/></svg><b class="num">${w.reeks.n}</b><span>werkdag${w.reeks.n === 1 ? "" : "en"} op rij${w.reeks.best > w.reeks.n ? ` · beste ${w.reeks.best}` : w.reeks.n >= 2 ? " · je record" : ""}</span></div>
+      <div class="muted" style="font-size:12.5px">${nl(w.uren)} van ${nl(w.doel * 5)} u · ${w.afgevinkt} ta${w.afgevinkt === 1 ? "ak" : "ken"} afgevinkt</div></div>
+    <div class="wk-r"><div class="wk-badges">${w.badges.map(b => `<span class="wk-badge ${b.ok ? "ok" : ""}" title="${esc(b.h)}">${b.ok ? "✓ " : ""}${esc(b.t)}</span>`).join("")}</div><div class="muted" style="font-size:11.5px;margin-top:4px">${behaald} van ${w.badges.length} deze week</div></div>
+  </div>`;
+}
+/* na een volle dagring of een afgevinkte taak: grotere momenten (één keer per moment) */
+function vierWeekritme(soort) {
+  try {
+    const w = weekInfo(); const eens = (k) => { try { if (localStorage.getItem("bros.fx.m." + k)) return false; localStorage.setItem("bros.fx.m." + k, "1"); return true; } catch (e) { return true; } };
+    const wk = mondayOf(todayIso);
+    if (soort === "uren" && w.dagen.every(x => x.rond) && eens("week." + wk)) { FX.mijlpaal("Volle week", "vijf dagringen rond · week " + weekNr(todayIso)); return true; }
+    if (soort === "uren" && [5, 10, 20, 40, 60, 100].includes(w.reeks.n) && eens("reeks." + w.reeks.n + "." + todayIso)) { FX.mijlpaal(`${w.reeks.n} werkdagen op rij`, w.reeks.n >= w.reeks.best ? "je langste reeks tot nu toe" : "je uren elke dag ingevuld"); return true; }
+    if (soort === "taak" && w.afgevinkt >= 10 && eens("opruimer." + wk)) { setTimeout(() => FX.mijlpaal("Opruimer", "10 taken afgevinkt deze week"), 400); return true; }
+  } catch (e) { }
+  return false;
+}
 function dagRing() {
   if (!S.me || !S.ready) return "";
   const u = mijnUrenOp(todayIso), doel = FX.doel(), pct = Math.min(1, u / doel);
   const van = FX.reduce() ? pct : (RING_LAST == null ? 0 : RING_LAST); RING_LAST = pct;
   const C = 2 * Math.PI * 9;
-  return `<button class="dagring ${pct >= 1 ? "vol" : ""}" type="button" data-act="dagring" title="Vandaag ${nl(u)} van ${nl(doel)} u ingevuld — klik voor je dagdoel en de instellingen" aria-label="Uren vandaag: ${nl(u)} van ${nl(doel)}"><svg viewBox="0 0 24 24"><circle class="bg" cx="12" cy="12" r="9"/><circle class="fg" cx="12" cy="12" r="9" style="--c:${C.toFixed(2)};--van:${(C * (1 - van)).toFixed(2)};--naar:${(C * (1 - pct)).toFixed(2)}"/></svg><span>${nl(u)} u</span></button>`;
+  return `<button class="dagring ${pct >= 1 ? "vol" : ""}" type="button" data-act="dagring" title="Vandaag ${nl(u)} van ${nl(doel)} u ingevuld — klik voor je dagdoel en de instellingen" aria-label="Uren vandaag: ${nl(u)} van ${nl(doel)}"><svg viewBox="0 0 24 24"><circle class="bg" cx="12" cy="12" r="9"/><circle class="fg" cx="12" cy="12" r="9" style="--c:${C.toFixed(2)};--van:${(C * (1 - van)).toFixed(2)};--naar:${(C * (1 - pct)).toFixed(2)}"/></svg><span>${nl(u)} u</span>${(() => { const r = FX.pref("aan", true) ? reeksInfo() : { n: 0 }; return r.n >= 2 ? `<span class="reeks-b" title="${r.n} werkdagen op rij je uren ingevuld">${r.n}</span>` : ""; })()}</button>`;
 }
 /* na het bewaren van een (nieuwe) urenregistratie; voor = eigen uren vandaag vóór het bewaren */
 function vierUren(row, voor) {
@@ -397,7 +460,7 @@ function vierUren(row, voor) {
   FX.burst(x, y, false);
   if (voor < doel && na >= doel && !al) {
     try { localStorage.setItem("bros.fx.ring." + todayIso, "1"); } catch (e) { }
-    setTimeout(() => FX.mijlpaal(fxPick(["Je dag zit erop", "Dagring rond"]), `${nl(na)} u ingevuld vandaag`), 500); return true;
+    setTimeout(() => { if (!vierWeekritme("uren")) FX.mijlpaal(fxPick(["Je dag zit erop", "Dagring rond"]), `${nl(na)} u ingevuld vandaag`); }, 500); return true;
   }
   return FX.chip(x, y, `+${nl(row.uren)} u · <b>${nl(na)} van ${nl(doel)} u</b> vandaag`, true);
 }
@@ -406,7 +469,7 @@ function dagForm() {
   Object.values(S.uren).filter(h => h.user_id === S.me.id && h.datum === todayIso).forEach(h => { const k = h.project_id || ""; per[k] = (per[k] || 0) + (Number(h.uren) || 0); });
   const lijst = Object.entries(per).sort((a, b) => b[1] - a[1]).map(([pid, n]) => `<div style="display:flex;justify-content:space-between;padding:4px 0;border-bottom:1px solid var(--line)"><span>${esc(S.projecten[pid]?.klant || "Algemeen")}</span><span class="num">${nl(n)} u</span></div>`).join("");
   openModal("Jouw dag", `<div class="form-grid">
-    <div class="field span2"><div style="font-size:28px;font-weight:700;font-family:var(--font-display)" class="num">${nl(u)} <span class="muted" style="font-size:16px;font-weight:500">van ${nl(FX.doel())} u vandaag</span></div>${lijst ? `<div style="margin-top:8px;font-size:13px">${lijst}</div>` : `<p class="muted" style="margin:6px 0 0">Nog geen uren ingevuld vandaag.</p>`}</div>
+    <div class="field span2"><div style="font-size:28px;font-weight:700;font-family:var(--font-display)" class="num">${nl(u)} <span class="muted" style="font-size:16px;font-weight:500">van ${nl(FX.doel())} u vandaag</span></div>${(() => { const r = reeksInfo(); return r.n ? `<div class="muted" style="font-size:13px;margin-top:2px">Reeks: <b>${r.n}</b> werkdag${r.n === 1 ? "" : "en"} op rij je uren ingevuld${r.best > r.n ? ` · beste ${r.best}` : ""}</div>` : ""; })()}${lijst ? `<div style="margin-top:8px;font-size:13px">${lijst}</div>` : `<p class="muted" style="margin:6px 0 0">Nog geen uren ingevuld vandaag.</p>`}</div>
     <div class="field"><label for="fx_doel">Dagdoel (uren)</label><input id="fx_doel" name="doel" type="number" min="1" max="16" step="0.5" value="${FX.doel()}"><small class="muted">De ring sluit als je dit haalt — één keer per dag een klein feestje.</small></div>
     <div class="field"></div>
     <div class="field span2"><label class="sw-row"><input type="checkbox" class="sw" name="fx_aan" ${FX.pref("aan", true) ? "checked" : ""}><span><b>Animaties bij afvinken en uren</b><small class="muted" style="display:block">Vinkje, voortgang (x van y) en af en toe een mijlpaal: fase rond, project rond, dagring rond.</small></span></label></div>
@@ -442,7 +505,14 @@ async function driveSync(p, action, quiet) {
     await dbUpdate("projecten", p.id, { drive_folder_id: j.folder.id, drive_url: j.folder.url, drive_map: "PROJECTEN/" + j.folder.name });
     const rows = (j.files || []).filter(f => !/^\._|^Icon|^~\$|^\.DS_Store$|~\.skp$/i.test(f.name)).map(f => ({ project_id: p.id, drive_id: f.id, naam: f.name, pad: f.path || "", url: f.url, mime: f.mime || "", grootte: f.size || null, gewijzigd: f.updated || null, gesynct_op: new Date().toISOString() }));
     const { data, error } = await sb.from("documenten").upsert(rows, { onConflict: "project_id,drive_id" }).select();
-    if (error) toast("Documenten niet bewaard: " + error.message); else { Object.values(S.documenten).filter(d => d.project_id === p.id && !rows.some(r => r.drive_id === d.drive_id)).forEach(d => { sb.from("documenten").delete().eq("id", d.id); delete S.documenten[d.id]; }); (data || []).forEach(d => S.documenten[d.id] = d); }
+    if (error) toast("Documenten niet bewaard: " + error.message);
+    else {
+      (data || []).forEach(d => S.documenten[d.id] = d);
+      // 1.48: verdwenen bestanden echt opruimen — enkel als de Drive-lijst volledig was (geen limiet geraakt) en nooit een document waar een factuur, overeenkomst of woningdossier naar verwijst
+      const gebruikt = new Set([...Object.values(S.vorderingen || {}).map(v => v.factuur_document), ...Object.values(S.woningdossier || {}).map(w => w.document_id), ...Object.values(S.goedkeuringen || {}).flatMap(g => [g.document_id, g.getekend_document])].filter(Boolean));
+      const weg = j.volledig === true && rows.length ? Object.values(S.documenten).filter(d => d.project_id === p.id && !rows.some(r => r.drive_id === d.drive_id) && !gebruikt.has(d.id)) : [];
+      if (weg.length) { const { error: e2 } = await sb.from("documenten").delete().in("id", weg.map(d => d.id)); if (e2) toast("Verdwenen bestanden niet opgeruimd: " + e2.message); else weg.forEach(d => delete S.documenten[d.id]); }
+    }
     if (quiet) { render(); return; }
     loader.done("drive." + action);
     render(); toast(j.created ? `Map aangemaakt met ${rows.length} bestanden` : `Map gekoppeld · ${rows.length} bestanden`);
@@ -590,8 +660,8 @@ function portaalCel(x) {
   const c = x.c; const klantRol = KLANT_ROLLEN.includes(x.rol); const rol = klantRol ? "klant" : "aannemer";
   if (!klantRol && (schemaV() < 25 || c.soort === "klant")) return `<span class="muted">—</span>`;
   const lbl = klantRol ? "" : `<small class="muted" style="display:block">aannemersportaal</small>`;
-  const verw = x.verwittigd_op ? `<small class="muted" style="display:block">verwittigd ${fmtLong(x.verwittigd_op.slice(0, 10))}</small>` : "";
-  if (c.user_id) return `<span class="pill st-afgerond">actief</span>${lbl}<small class="muted" style="display:block">${c.portaal_login ? "laatst " + fmtLong(c.portaal_login.slice(0, 10)) : "nog niet ingelogd"}</small>${verw}${isBeheer() && driveReady() ? `<button class="btn ghost sm" data-act="portaal-invite" data-cid="${c.id}" data-pid="${x.project_id}" data-rol="${rol}" title="Nieuwe link om (opnieuw) een wachtwoord te kiezen">Link opnieuw sturen</button>` : ""}`;
+  const verw = x.verwittigd_op ? `<small class="muted" style="display:block">verwittigd ${fmtLong(lokDag(x.verwittigd_op))}</small>` : "";
+  if (c.user_id) return `<span class="pill st-afgerond">actief</span>${lbl}<small class="muted" style="display:block">${c.portaal_login ? "laatst " + fmtLong(lokDag(c.portaal_login)) : "nog niet ingelogd"}</small>${verw}${isBeheer() && driveReady() ? `<button class="btn ghost sm" data-act="portaal-invite" data-cid="${c.id}" data-pid="${x.project_id}" data-rol="${rol}" title="Nieuwe link om (opnieuw) een wachtwoord te kiezen">Link opnieuw sturen</button>` : ""}`;
   if (!c.email) return `<span class="muted">geen e-mail</span>`;
   if (!isBeheer()) return `<span class="muted">geen toegang</span>`;
   return driveReady() ? `<button class="btn sm" data-act="portaal-invite" data-cid="${c.id}" data-pid="${x.project_id}" data-rol="${rol}">${klantRol ? "Portaal-toegang geven" : "Aannemersportaal"}</button>${verw}` : `<span class="muted">Drive-script nodig</span>`;
@@ -684,7 +754,7 @@ function vMeetstaat(p) {
         <td class="r num" style="width:96px" title="Eenheidsprijs voor de klant">${eur2(msVerkoopEP(r))}</td>
         <td class="r num" style="width:104px"><b>${eur2(rowSigned(r))}</b></td>
         ${beheer ? `<td style="width:76px">${sel(r, "btw", opts([[0.06, "6 %"], [0.21, "21 %"], [0, "0 %"]], Number(r.btw)))}</td>` : ""}
-        <td style="width:104px">${sel(r, "status", opts(Object.entries(MS_STATUS), r.status))}${r.akkoord_op ? `<small class="muted" style="display:block;color:var(--ok)" title="Goedgekeurd door de klant in het portaal">✓ klant ${fmt(r.akkoord_op.slice(0, 10))}</small>` : ""}</td>
+        <td style="width:104px">${sel(r, "status", opts(Object.entries(MS_STATUS), r.status))}${r.akkoord_op ? `<small class="muted" style="display:block;color:var(--ok)" title="Goedgekeurd door de klant in het portaal">✓ klant ${fmt(lokDag(r.akkoord_op))}</small>` : ""}</td>
         <td class="r" style="width:36px"><button class="btn ghost sm danger" data-act="ms-del" data-id="${r.id}" aria-label="Verwijderen">✕</button></td></tr>`; }).join(""); }).join("");
   return kpi + (typeof vMeerwerkAanvragen === "function" ? vMeerwerkAanvragen(p) : "") + vGoedkeuringen(p) + (typeof vPrijsvragen === "function" ? vPrijsvragen(p) : vPrijsaanvragen(p)) + vAanMeetstaten(p) + `<div class="panel"><div class="panel-head"><div><h3>Meetstaat</h3><div class="muted" style="font-size:12px;margin-top:2px">${rows.length ? `${rows.length} posten in ${lots.length} loten` : "Nog leeg"} · klik in een veld om het te wijzigen, bewaard bij verlaten van het veld</div></div>
       <div class="actions">${isBeheer() && rows.length ? `<select class="btn sm" data-act="ms-btw-alles" data-pid="${p.id}" title="Het btw-tarief van alle posten van dit project in één keer zetten"><option value="">Btw alles…</option><option value="0.06">alles op 6 %</option><option value="0.21">alles op 21 %</option><option value="0">alles op 0 %</option></select>` : ""}<button class="btn sm ${S.msRuimte ? "primary" : ""}" data-act="ms-ruimte" title="Posten per lot groeperen per ruimte (alfabetisch), enkel in deze weergave — de nummering en de export veranderen niet">${S.msRuimte ? "Per ruimte ✓" : "Per ruimte"}</button>${isBeheer() ? `<button class="btn sm ${S.msKlant ? "primary" : ""}" data-act="ms-klant" title="Kostprijs, marge en btw-kolom verbergen, bv. als je de meetstaat met de klant overloopt (sneltoets: K)">${S.msKlant ? "👁 Klantweergave aan" : "Klantweergave"}</button>` : ""}${schemaV() >= 13 && rows.some(r => gkKandidaat(r)) ? `<button class="btn sm" data-act="gk-new" data-pid="${p.id}" title="Offerte of meerwerk bevroren ter goedkeuring in het klantenportaal zetten">Ter goedkeuring voorleggen</button>` : ""}${isBeheer() ? `<button class="btn sm" data-act="ms-import" data-pid="${p.id}" title="Een bestaande meetstaat (Excel, elk BROS-sjabloon) inlezen als posten">Importeren uit Excel</button>` : ""}${rows.length ? `<button class="btn sm" data-act="ms-export" data-pid="${p.id}" title="Excel in het BROS-sjabloon aanmaken in Documenten/Meetstaat van de projectmap">Exporteren naar Drive (Excel)</button><button class="btn sm" data-act="ms-pdf" data-pid="${p.id}" title="Meetstaat als pdf: klantversie of interne versie, per lot of per ruimte">Pdf</button>` : ""}<button class="btn sm" data-act="ms-add-post" data-pid="${p.id}">+ Post</button><button class="btn sm primary" data-act="ms-add-lot" data-pid="${p.id}">+ Lot toevoegen</button></div></div>
@@ -777,7 +847,7 @@ async function msBtwAlles(pid, btw) {
     const tarief = btw === 0.06 ? 6 : btw === 0.21 ? 21 : 0; if (p && p.btw_tarief !== tarief) await dbUpdate("projecten", pid, { btw_tarief: tarief }).catch(() => { });
     toast(`Btw op ${Math.round(btw * 100)} % gezet voor ${rows.length} posten`);
   } catch (e) { toast("Btw niet aangepast: " + e.message, 6000); }
-  finally { S.bulk = false; await msRefetch(rows.map(r => r.id)); }
+  finally { bulkKlaar(); await msRefetch(rows.map(r => r.id)); }
 }
 /* ---------- Meetstaat: posten verslepen binnen een lot; nummers (lot.n) en volgorde volgen automatisch ---------- */
 async function msReorder(pid, lot, movedId, targetId, before) {
@@ -795,7 +865,7 @@ async function msReorder(pid, lot, movedId, targetId, before) {
   patches.forEach(x => Object.assign(S.meetstaat_posten[x.id], x)); render();
   try { await Promise.all(patches.map(x => sb.from("meetstaat_posten").update({ code: x.code, volgorde: x.volgorde, groep: x.groep, updated_at: new Date().toISOString() }).eq("id", x.id).then(r => { if (r.error) throw r.error; }))); toast("Volgorde en nummers aangepast"); }
   catch (e) { toast("Volgorde niet bewaard: " + e.message, 6000); }
-  finally { S.bulk = false; await msRefetch(rows.map(r => r.id)); }
+  finally { bulkKlaar(); await msRefetch(rows.map(r => r.id)); }
 }
 let msDrag = null;
 document.addEventListener("dragstart", (e) => { const h = e.target.closest && e.target.closest("[data-drag]"); if (!h) return; const tr = h.closest("tr"); msDrag = { id: h.dataset.drag, lot: Number(tr.dataset.lot), pid: S.project }; tr.classList.add("dragging"); e.dataTransfer.effectAllowed = "move"; try { e.dataTransfer.setData("text/plain", h.dataset.drag); } catch (x) { } });
@@ -814,7 +884,7 @@ function vPrijsaanvragen(p) {
       <div class="actions">${as.some(a => a.status !== "afgesloten") ? `<button class="btn sm" data-act="pa-cmp" data-pid="${p.id}">Vergelijken</button>` : ""}<button class="btn sm primary" data-act="pa-new" data-pid="${p.id}" ${aannemers.length ? "" : `title="Koppel eerst een aannemer aan dit project (Dossier › Contacten)"`}>+ Prijsaanvraag</button></div></div>
     ${as.length ? `<div class="tw"><table class="t"><thead><tr><th>Aanvraag</th><th>Aannemer</th><th>Loten</th><th class="r">Ingevuld</th><th class="r">Totaal</th><th>Reageren vóór</th><th>Status</th><th></th></tr></thead><tbody>
       ${as.map(a => { const c = S.contacten[a.contact_id]; const ps = paPosten(a); const rs = paRegels(a.id).filter(r => r.eenheidsprijs != null); const byPost = Object.fromEntries(rs.map(r => [r.post_id, r])); const tot = ps.reduce((s, r) => s + (byPost[r.id] ? Number(byPost[r.id].eenheidsprijs) * Number(r.hoeveelheid || 0) : 0), 0);
-        return `<tr class="${a.status === "afgesloten" ? "ms-dead" : ""}"><td><div class="row-title">${esc(a.titel || "Prijsaanvraag")}<small>${fmtLong((a.created_at || "").slice(0, 10))}${a.ingediend_op ? " · ingediend " + fmtLong(a.ingediend_op.slice(0, 10)) : ""}${a.herinneringen ? ` · ${Math.min(a.herinneringen, 4)}× herinnerd${a.herinnerd_op ? ", laatst " + fmtLong(a.herinnerd_op.slice(0, 10)) : ""}${a.herinneringen > 4 ? " — gestopt" : ""}` : ""}${a.opmerking ? ` · “${esc(a.opmerking)}”` : ""}</small></div></td><td>${c ? `<a href="#" data-contact="${c.id}">${esc(c.naam)}</a>${c.user_id ? "" : ` <span class="pill st-offerte" title="Nog geen login voor het aannemersportaal; de uitnodiging zit in de mail">geen login</span>`}` : "—"}</td><td class="muted" style="font-size:12px">${(a.loten || []).map(l => esc(lotName(l))).join("<br>")}</td><td class="r num">${ps.filter(r => byPost[r.id]).length} / ${ps.length}</td><td class="r num">${rs.length ? eur(tot) : "—"}</td><td class="num ${a.status === "open" && a.deadline && a.deadline < todayIso ? "late" : ""}">${a.deadline ? fmtLong(a.deadline) : "—"}</td><td><span class="pill ${a.status === "gekozen" ? "done" : a.status === "ingediend" ? "st-lopend" : a.status === "open" ? "st-offerte" : "kl"}">${PA_STATUS[a.status]}</span></td>
+        return `<tr class="${a.status === "afgesloten" ? "ms-dead" : ""}"><td><div class="row-title">${esc(a.titel || "Prijsaanvraag")}<small>${fmtLong(lokDag(a.created_at))}${a.ingediend_op ? " · ingediend " + fmtLong(lokDag(a.ingediend_op)) : ""}${a.herinneringen ? ` · ${Math.min(a.herinneringen, 4)}× herinnerd${a.herinnerd_op ? ", laatst " + fmtLong(lokDag(a.herinnerd_op)) : ""}${a.herinneringen > 4 ? " — gestopt" : ""}` : ""}${a.opmerking ? ` · “${esc(a.opmerking)}”` : ""}</small></div></td><td>${c ? `<a href="#" data-contact="${c.id}">${esc(c.naam)}</a>${c.user_id ? "" : ` <span class="pill st-offerte" title="Nog geen login voor het aannemersportaal; de uitnodiging zit in de mail">geen login</span>`}` : "—"}</td><td class="muted" style="font-size:12px">${(a.loten || []).map(l => esc(lotName(l))).join("<br>")}</td><td class="r num">${ps.filter(r => byPost[r.id]).length} / ${ps.length}</td><td class="r num">${rs.length ? eur(tot) : "—"}</td><td class="num ${a.status === "open" && a.deadline && a.deadline < todayIso ? "late" : ""}">${a.deadline ? fmtLong(a.deadline) : "—"}</td><td><span class="pill ${a.status === "gekozen" ? "done" : a.status === "ingediend" ? "st-lopend" : a.status === "open" ? "st-offerte" : "kl"}">${PA_STATUS[a.status]}</span></td>
           <td class="r" style="white-space:nowrap">${a.status !== "afgesloten" && rs.length ? `<button class="btn ghost sm" data-act="pa-take" data-id="${a.id}" title="De ingevulde prijzen van deze aannemer overnemen als kostprijs in de meetstaat">Overnemen</button>` : ""}${a.status === "open" && driveReady() ? `<button class="btn ghost sm" data-act="pa-remind" data-id="${a.id}" title="Herinnering mailen">Herinneren</button>` : ""}${a.status !== "afgesloten" ? `<button class="btn ghost sm" data-act="pa-close" data-id="${a.id}" title="Afsluiten (de aannemer kan niets meer invullen)">Afsluiten</button>` : ""}<button class="btn ghost sm danger" data-act="pa-del" data-id="${a.id}" aria-label="Verwijderen">✕</button></td></tr>`; }).join("")}
     </tbody></table></div>` : `<div class="empty"><b>Nog geen prijsaanvragen</b>Stuur een aannemer de posten van zijn lot(en); hij vult de prijzen in via het aannemersportaal.</div>`}</div>`;
 }
@@ -824,7 +894,7 @@ function paForm(pid) {
   if (!aannemers.length) { toast("Koppel eerst een aannemer aan dit project (Dossier › Contacten)."); return; }
   const lots = [...new Set(msRows(pid).filter(r => r.status !== "vervallen").map(r => r.lot))].sort((a, b) => a - b);
   if (!lots.length) { toast("De meetstaat is nog leeg."); return; }
-  const d0 = new Date(); d0.setDate(d0.getDate() + 14); const dl = d0.toISOString().slice(0, 10);
+  const dl = addDays(todayIso, 14);
   openModal("Prijsaanvraag versturen", `<div class="form-grid">
     <div class="field"><label for="pa_c">Aannemer</label><select id="pa_c" name="contact_id">${aannemers.map(x => `<option value="${x.c.id}" data-loten="${(x.loten || []).length ? x.loten.join(",") : (x.c.loten || []).join(",")}">${esc(x.c.naam)}${x.c.vakgebied ? " · " + esc(x.c.vakgebied) : ""}${x.c.email ? "" : " (geen e-mail!)"}${x.c.user_id ? "" : " · nog geen portaallogin"}</option>`).join("")}</select><small class="muted">Zonder login krijgt hij in dezelfde mail een uitnodiging voor het aannemersportaal.</small></div>
     <div class="field"><label for="pa_dl">Reageren vóór</label><input id="pa_dl" name="deadline" type="date" value="${dl}"><small class="muted">Staat in de mail en in zijn portaal${schemaV() >= 28 ? "; na een week zonder indiening volgt automatisch elke week een herinnering" : ""}. Leeg = geen datum.</small></div>
@@ -914,7 +984,7 @@ function vAanMeetstaten(p) {
     return `<tr><td><a href="#" data-contact="${x.c.id}">${esc(x.c.naam)}</a>${x.c.user_id ? "" : ` <span class="pill st-offerte" title="Nog geen login voor het aannemersportaal; bij delen krijgt hij een uitnodiging">geen login</span>`}<small class="muted" style="display:block">${esc(CONTACT_ROL[x.rol] || x.rol || "")}</small></td>
       <td>${loten.length ? loten.map(l => esc(lotName(l))).join(", ") : `<span class="muted">geen loten gekoppeld</span>`}</td>
       <td class="r num">${snap.length}</td><td class="r num">${eur(tot.aan)}</td><td class="r num">${tot.klant ? nl((1 - tot.aan / tot.klant) * 100, 1) + " %" : "—"}</td>
-      <td>${st ? `<span class="pill ${AM_PILL[st] || ""}">${esc(AM_STATUS[st] || st)}${a.versie ? " · v" + a.versie : ""}</span>` : `<span class="muted">—</span>`}${a && a.beslist_op && ["akkoord", "tegenvoorstel"].includes(st) ? `<small class="muted" style="display:block">${esc(a.beslist_naam || "")} · ${fmtLong(a.beslist_op.slice(0, 10))}</small>` : ""}${gewijzigd ? `<small style="display:block;color:var(--crit)">gewijzigd sinds delen</small>` : ""}</td>
+      <td>${st ? `<span class="pill ${AM_PILL[st] || ""}">${esc(AM_STATUS[st] || st)}${a.versie ? " · v" + a.versie : ""}</span>` : `<span class="muted">—</span>`}${a && a.beslist_op && ["akkoord", "tegenvoorstel"].includes(st) ? `<small class="muted" style="display:block">${esc(a.beslist_naam || "")} · ${fmtLong(lokDag(a.beslist_op))}</small>` : ""}${gewijzigd ? `<small style="display:block;color:var(--crit)">gewijzigd sinds delen</small>` : ""}</td>
       <td class="r"><button class="btn sm ${st === "tegenvoorstel" || gewijzigd ? "primary" : ""}" data-act="am-open" data-pid="${p.id}" data-cid="${x.c.id}">${a ? "Openen" : "Prijzen opmaken"}</button></td></tr>`;
   };
   return `<div class="panel" style="margin-bottom:16px"><div class="panel-head"><div><h3>Meetstaat voor aannemers</h3><div class="muted" style="font-size:12px;margin-top:2px">Per aannemer zijn posten met zijn prijs: klantprijs min marge (standaard 10 %, per post aan te passen of een vaste prijs). Binnenschrijnwerk staat er niet in, tenzij je het aanvinkt. Na delen keurt hij goed in zijn portaal; bij akkoord worden zijn prijzen de kostprijs en blijft de klantprijs gelijk.</div></div></div>
@@ -944,13 +1014,13 @@ function amOpen(pid, cid) {
   const m = $("#mform");   // het formulier wordt bij elke modal opnieuw gemaakt: geen dubbele luisteraars
   m.addEventListener("change", (e) => {
     const t = e.target;
-    if (t.id === "am_marge") { const v = leesGetal(t.value); if (v == null || v < 0 || v >= 100) { toast("Geef een marge tussen 0 en 100 %."); t.value = nl(AM.marge * 100, 2); return; } AM.marge = v / 100; return setTimeout(() => amTekenTabel(), 0); }
+    if (t.id === "am_marge") { const v = leesGetal(t.value); if (v == null || Number.isNaN(v) || v < 0 || v >= 100) { toast("Geef een marge tussen 0 en 100 %."); t.value = nl(AM.marge * 100, 2); return; } AM.marge = v / 100; return setTimeout(() => amTekenTabel(), 0); }
     if (t.id === "am_bericht") { AM.bericht = t.value; return; }
     const post = t.dataset.amPost; if (!post) { if (t.dataset.amLot) { const lot = Number(t.dataset.amLot); msRows(pid).filter(r => r.lot === lot && r.status !== "vervallen").forEach(r => { const o = AM.ovs[r.id] = AM.ovs[r.id] || {}; const std = AM.loten.includes(r.lot) && !amBinnen(r.lot); o.tonen = t.checked === std ? null : t.checked; }); amTekenTabel(); } return; }
     const o = AM.ovs[post] = AM.ovs[post] || {}; const r = S.meetstaat_posten[post];
     if (t.dataset.f === "tonen") { const std = AM.loten.includes(r.lot) && !amBinnen(r.lot); o.tonen = t.checked === std ? null : t.checked; }
-    else if (t.dataset.f === "marge") { const v = t.value.trim() === "" ? null : leesGetal(t.value); if (v != null && (v < -100 || v >= 100)) { toast("Geef een marge tussen −100 en 100 %."); } else o.marge = v == null ? null : v / 100; }
-    else if (t.dataset.f === "prijs") { const v = t.value.trim() === "" ? null : leesGetal(t.value); if (v != null && v < 0) toast("Geef een positieve prijs."); else o.prijs = v == null ? null : amRond(v); }
+    else if (t.dataset.f === "marge") { const v = t.value.trim() === "" ? null : leesGetal(t.value); if (v != null && (Number.isNaN(v) || v < -100 || v >= 100)) { toast(Number.isNaN(v) ? `"${t.value}" is geen geldig getal.` : "Geef een marge tussen −100 en 100 %."); } else o.marge = v == null ? null : v / 100; }
+    else if (t.dataset.f === "prijs") { const v = t.value.trim() === "" ? null : leesGetal(t.value); if (v != null && (Number.isNaN(v) || v < 0)) toast(Number.isNaN(v) ? `"${t.value}" is geen geldig getal — niet bewaard.` : "Geef een positieve prijs."); else o.prijs = v == null ? null : amRond(v); }
     setTimeout(() => amTekenTabel(), 0);   // na het verplaatsen van de focus (Tab), zodat die bewaard blijft
   });
   m.addEventListener("click", async (e) => {
@@ -999,7 +1069,7 @@ function amTekenTabel(focusEl) {
     }).join("");
   }).join("");
   box.innerHTML = `<div class="tw" style="max-height:58vh;overflow:auto;margin-top:10px"><table class="t ms"><thead><tr><th></th><th>Nr</th><th>Omschrijving</th><th class="r">Hoev.</th><th class="r">Klant EP</th><th>Marge %</th><th>Aannemer EP</th><th class="r">Totaal</th><th>Reactie aannemer</th></tr></thead><tbody>${body}</tbody></table></div>`;
-  const st = $("#am_status"); if (st) { const gew = a && a.gedeeld && ["gedeeld", "akkoord", "tegenvoorstel"].includes(a.status) && amSnapKey(snap) !== amSnapKey(a.regels); st.innerHTML = a ? `<span class="pill ${AM_PILL[a.status] || ""}">${esc(AM_STATUS[a.status] || a.status)}${a.versie ? " · versie " + a.versie : ""}</span>${a.gedeeld_op ? ` <small class="muted">gedeeld ${fmtLong(a.gedeeld_op.slice(0, 10))}</small>` : ""}${a.beslist_op ? ` <small class="muted">· ${a.status === "akkoord" ? "akkoord" : "gereageerd"} door ${esc(a.beslist_naam || "")} op ${fmtLong(a.beslist_op.slice(0, 10))}</small>` : ""}${gew ? `<div style="color:var(--crit);font-size:12px;margin-top:4px">Gewijzigd sinds delen — deel opnieuw om zijn akkoord te vragen.</div>` : ""}` : `<span class="muted">Nog niet gedeeld</span>`; }
+  const st = $("#am_status"); if (st) { const gew = a && a.gedeeld && ["gedeeld", "akkoord", "tegenvoorstel"].includes(a.status) && amSnapKey(snap) !== amSnapKey(a.regels); st.innerHTML = a ? `<span class="pill ${AM_PILL[a.status] || ""}">${esc(AM_STATUS[a.status] || a.status)}${a.versie ? " · versie " + a.versie : ""}</span>${a.gedeeld_op ? ` <small class="muted">gedeeld ${fmtLong(lokDag(a.gedeeld_op))}</small>` : ""}${a.beslist_op ? ` <small class="muted">· ${a.status === "akkoord" ? "akkoord" : "gereageerd"} door ${esc(a.beslist_naam || "")} op ${fmtLong(lokDag(a.beslist_op))}</small>` : ""}${gew ? `<div style="color:var(--crit);font-size:12px;margin-top:4px">Gewijzigd sinds delen — deel opnieuw om zijn akkoord te vragen.</div>` : ""}` : `<span class="muted">Nog niet gedeeld</span>`; }
   const nul = snap.filter(x => !(Number(x.prijs) > 0) && Number(x.hoeveelheid)).length;
   const tt = $("#am_tot"); if (tt) tt.innerHTML = `${nul ? `<span style="color:var(--crit)">${nul} post${nul === 1 ? "" : "en"} zonder prijs</span> · ` : ""}<b>${snap.length}</b> posten · klant ${eur(tot.klant)} · aannemer <b>${eur(tot.aan)}</b> · marge BROS <b>${eur(tot.klant - tot.aan)}</b>${tot.klant ? ` (${nl((1 - tot.aan / tot.klant) * 100, 1)} %)` : ""} — excl. btw`;
   const terug = (k) => k && box.querySelector(`[data-am-post="${k[0]}"][data-f="${k[1]}"]`);
@@ -1215,7 +1285,7 @@ function vsForm(v = {}, pid, bezoekId) {
     <div class="field"><label for="vs_wie">Verantwoordelijke</label><select id="vs_wie" name="wie">${vsWieOpts(projectId, v.te_beoordelen && !v.contact_id && !v.assignee && v.gemeld_door_aannemer ? { ...v, contact_id: v.gemeld_door_aannemer } : v)}</select>${schemaV() >= 18 ? `<small class="muted">Wordt automatisch een taak in de takenlijst van die persoon (klant: in het portaal).</small>` : ""}</div>
     <div class="field"><label for="vs_deadline">Op te lossen tegen</label><input id="vs_deadline" name="deadline" type="date" value="${esc(v.deadline || "")}"></div>
     <div class="field"><label for="vs_prio">Prioriteit</label><select id="vs_prio" name="prioriteit">${opts(Object.entries(VS_PRIO), v.prioriteit || "normaal")}</select></div>
-    <div class="field"><label for="vs_status">Status</label><select id="vs_status" name="status">${opts(Object.entries(VS_STATUS), v.status || "open")}</select>${v.opgelost_op ? `<small class="muted">Opgelost op ${fmtLong(v.opgelost_op.slice(0, 10))}${v.opgelost_door ? " door " + esc(userById(v.opgelost_door).name) : ""}</small>` : ""}</div>
+    <div class="field"><label for="vs_status">Status</label><select id="vs_status" name="status">${opts(Object.entries(VS_STATUS), v.status || "open")}</select>${v.opgelost_op ? `<small class="muted">Opgelost op ${fmtLong(lokDag(v.opgelost_op))}${v.opgelost_door ? " door " + esc(userById(v.opgelost_door).name) : ""}</small>` : ""}</div>
     <div class="field"><label for="vs_bezoek">Werfbezoek</label><select id="vs_bezoek" name="bezoek_id"><option value="">—</option>${opts(bezoeken.map(b => [b.id, `Bezoek ${b.nr} · ${fmtLong(b.datum)}`]), v.bezoek_id || bezoekId || "")}</select></div>
     ${schemaV() >= 44 && !isNew ? `<div class="field span2"><label>Opmerkingen (gesprek met de aannemer)</label>${v.opmerking ? `<div class="vs-gesprek" style="white-space:pre-wrap;font-size:13px;padding:8px 10px;border:1px solid var(--line);border-radius:8px;background:var(--surface-2);max-height:180px;overflow:auto">${esc(v.opmerking)}</div>` : `<div class="muted" style="font-size:12px">Nog geen opmerkingen.</div>`}
       <textarea id="vs_reactie" name="reactie" rows="2" style="margin-top:6px" placeholder="${v.contact_id && S.contacten[v.contact_id] ? "Reactie aan " + esc(S.contacten[v.contact_id].naam) + " — komt in zijn werfmodus en portaal, en per mail" : "Opmerking toevoegen aan het gesprek"}"></textarea></div>`
@@ -1223,7 +1293,7 @@ function vsForm(v = {}, pid, bezoekId) {
     ${(v.opgelost_fotos || []).length ? `<div class="field span2"><label>Bewijsfoto's bij de oplossing</label><div class="vs-foto-edit">${v.opgelost_fotos.map(f => vsThumb(f)).join("")}</div></div>` : ""}
     <div class="field span2"><label class="sw-row"><input type="checkbox" class="sw" name="klant_zichtbaar" ${v.klant_zichtbaar ? "checked" : ""}><span><b>Zichtbaar voor de klant</b> — deze vaststelling verschijnt (later) in het werfverslag voor de klant in het portaal.</span></label></div>
     ${v.te_beoordelen ? `<div class="field span2"><div class="notice" style="margin:0;border-color:var(--warn)"><label class="sw-row" style="margin:0"><input type="checkbox" class="sw" name="goedkeuren" checked><span><b>Punt van ${v.gemeld_door_aannemer ? "de aannemer" : "de klant"} goedkeuren</b> — gemeld ${v.gemeld_door_aannemer ? "in de werfmodus" : "in het portaal"}${v.gemeld_door_klant && S.contacten[v.gemeld_door_klant] ? " door " + esc(S.contacten[v.gemeld_door_klant].naam) : v.gemeld_door_aannemer && S.contacten[v.gemeld_door_aannemer] ? " door " + esc(S.contacten[v.gemeld_door_aannemer].naam) : ""}. Na goedkeuring ziet de verantwoordelijke het (aannemer: in zijn portaal, met een taak). Niet terecht? Zet de status op Vervallen en schrijf je reden hieronder als antwoord.</span></label></div></div>` : ""}
-    ${schemaV() >= 43 && (v.gemeld_door_aannemer || v.gemeld_door_klant) ? `<div class="field span2"><label for="vs_antw">Antwoord aan ${v.gemeld_door_aannemer ? "de aannemer" : "de klant"} die het meldde</label><textarea id="vs_antw" name="bros_antwoord" rows="3" placeholder="bv. Goed gezien — pas het aan volgens plan T03; graag een foto als het klaar is.">${esc(v.bros_antwoord || "")}</textarea><small class="muted">Staat bij het punt in ${v.gemeld_door_aannemer ? "zijn werfmodus en aannemersportaal" : "het klantenportaal"} en gaat per mail${v.beantwoord_op ? ` · vorig antwoord ${fmtLong(v.beantwoord_op.slice(0, 10))}${v.beantwoord_door ? " door " + esc(userById(v.beantwoord_door).name) : ""}` : ""}.</small></div>` : ""}
+    ${schemaV() >= 43 && (v.gemeld_door_aannemer || v.gemeld_door_klant) ? `<div class="field span2"><label for="vs_antw">Antwoord aan ${v.gemeld_door_aannemer ? "de aannemer" : "de klant"} die het meldde</label><textarea id="vs_antw" name="bros_antwoord" rows="3" placeholder="bv. Goed gezien — pas het aan volgens plan T03; graag een foto als het klaar is.">${esc(v.bros_antwoord || "")}</textarea><small class="muted">Staat bij het punt in ${v.gemeld_door_aannemer ? "zijn werfmodus en aannemersportaal" : "het klantenportaal"} en gaat per mail${v.beantwoord_op ? ` · vorig antwoord ${fmtLong(lokDag(v.beantwoord_op))}${v.beantwoord_door ? " door " + esc(userById(v.beantwoord_door).name) : ""}` : ""}.</small></div>` : ""}
   </div>`, {
     wide: true,
     onSave: async (d) => {
@@ -1245,7 +1315,14 @@ function vsForm(v = {}, pid, bezoekId) {
       }
       const alle = [...fotos, ...geupload];
       if (isNew) { if (geupload.length) await dbUpdate("vaststellingen", saved.id, { fotos: alle }); }
-      else await dbUpdate("vaststellingen", v.id, { ...row, fotos: alle });
+      else {   // 1.48: enkel bewaren wat je in dit formulier wijzigde — intussen gemelde oplossingen/foto's van de aannemer (werfmodus/portaal) blijven staan
+        const { data: vers } = await sb.from("vaststellingen").select("*").eq("id", v.id).maybeSingle();
+        const patch = Object.fromEntries(Object.entries(row).filter(([k, x]) => JSON.stringify(x ?? null) !== JSON.stringify(v[k] ?? null)));
+        const weg = (v.fotos || []).filter(g => !fotos.some(h => h.path === g.path)).map(g => g.path);
+        if (geupload.length || weg.length) patch.fotos = [...((vers && vers.fotos) || v.fotos || []).filter(g => !weg.includes(g.path)), ...geupload];
+        if (Object.keys(patch).length) await dbUpdate("vaststellingen", v.id, patch);
+        else if (vers) { S.vaststellingen[v.id] = vers; render(); }
+      }
       if (!isNew && schemaV() >= 44 && (d.reactie || "").trim()) {   // reactie in het gesprek met de aannemer (script 044)
         const { data: nv, error: re } = await sb.rpc("werfpunt_reactie", { p_id: v.id, p_tekst: d.reactie.trim() });
         if (re) toast("Reactie niet bewaard: " + re.message, 7000);
@@ -1435,7 +1512,7 @@ async function wvBuildPdf(p, opts, progress = () => { }) {
       const y0 = y; doc.setFillColor(...(kleur[v.status] || kleur.open)); doc.roundedRect(M, y + 0.5, 13, 6, 3, 3, "F"); doc.setFont("helvetica", "bold"); doc.setFontSize(8.5); doc.setTextColor(255, 255, 255); doc.text(vsNr(v), M + 6.5, y + 4.6, { align: "center" });
       doc.setFont("helvetica", "bold"); doc.setFontSize(11); doc.setTextColor(...ink); const titel = clean(v.titel || noteExcerpt(v.omschrijving, 90) || "(zonder titel)"); doc.text(doc.splitTextToSize(titel, CW - 50)[0], M + 16, y + 4.8);
       const st = (vsLate(v) ? "TE LAAT" : VS_STATUS[v.status].toUpperCase()) + (v.prioriteit === "hoog" ? " · PRIORITEIT" : ""); doc.setFontSize(8); doc.setTextColor(...(kleur[v.status] || kleur.open)); doc.text(st, W - M, y + 4.6, { align: "right" }); y += 8;
-      const meta2 = [vsWie(v) ? "Verantwoordelijke: " + vsWie(v) : "Nog niet toegewezen", v.ruimte ? "Ruimte: " + v.ruimte : "", v.deadline ? "Tegen: " + fmtLong(v.deadline) : "", v.plan_id && S.werfplannen[v.plan_id] ? "Plan: " + S.werfplannen[v.plan_id].naam : "", v.opgelost_op ? "Opgelost op " + fmtLong(v.opgelost_op.slice(0, 10)) : ""].filter(Boolean).join("   ·   ");
+      const meta2 = [vsWie(v) ? "Verantwoordelijke: " + vsWie(v) : "Nog niet toegewezen", v.ruimte ? "Ruimte: " + v.ruimte : "", v.deadline ? "Tegen: " + fmtLong(v.deadline) : "", v.plan_id && S.werfplannen[v.plan_id] ? "Plan: " + S.werfplannen[v.plan_id].naam : "", v.opgelost_op ? "Opgelost op " + fmtLong(lokDag(v.opgelost_op)) : ""].filter(Boolean).join("   ·   ");
       text(meta2, 8.5, "normal", muted);
       if (v.omschrijving && v.titel) text(v.omschrijving, 9.5, "normal", ink);
       if (v.opmerking) text("Opmerking: " + (String(v.opmerking).split("\n").filter(Boolean).pop() || ""), 9, "italic", muted);   // enkel de laatste regel (het gesprek met de aannemer blijft intern, script 044)
@@ -1524,12 +1601,12 @@ function voorstelCard(v, withProject) {
   const p = S.projecten[v.project_id]; const wie = v.voorgestelde_user ? userById(v.voorgestelde_user).name : "—";
   const vtAntw = schemaV() >= 42 && (v.bron === "aannemer" || !!v.bericht_id);   // antwoorden (script 042): aannemer, of klant met een gesprek
   return `<div class="panel voorstel ${v.urgentie === "hoog" ? "urgent" : ""}" style="margin-bottom:12px">
-    <div class="panel-head"><div><div class="eyebrow">${v.urgentie === "hoog" ? `<span class="pill late">Dringend</span> ` : ""}${v.bron === "aannemer" ? `<span class="pill st-on_hold">Aannemer${v.contact_id && S.contacten[v.contact_id] ? " · " + esc(S.contacten[v.contact_id].naam) : ""}</span> ` : ""}${ONDERWERP[v.onderwerp] || esc(v.onderwerp)} · ${fmtLong((v.created_at || "").slice(0, 10))}${withProject && p ? ` · <a href="#" data-open="${p.id}">${esc(projName(p))}</a>` : ""}</div><h3 style="margin-top:4px">${esc(v.titel)}</h3>${v.omschrijving ? `<div class="muted" style="font-size:13px;margin-top:4px">${esc(v.omschrijving)}</div>` : ""}</div>
+    <div class="panel-head"><div><div class="eyebrow">${v.urgentie === "hoog" ? `<span class="pill late">Dringend</span> ` : ""}${v.bron === "aannemer" ? `<span class="pill st-on_hold">Aannemer${v.contact_id && S.contacten[v.contact_id] ? " · " + esc(S.contacten[v.contact_id].naam) : ""}</span> ` : ""}${ONDERWERP[v.onderwerp] || esc(v.onderwerp)} · ${fmtLong(lokDag(v.created_at))}${withProject && p ? ` · <a href="#" data-open="${p.id}">${esc(projName(p))}</a>` : ""}</div><h3 style="margin-top:4px">${esc(v.titel)}</h3>${v.omschrijving ? `<div class="muted" style="font-size:13px;margin-top:4px">${esc(v.omschrijving)}</div>` : ""}</div>
       <div class="actions" style="align-self:flex-start">${v.status === "open" ? `${vtAntw ? `<button class="btn sm primary" data-act="vt-antw" data-id="${v.id}">Beantwoorden…</button>` : ""}<button class="btn sm ${vtAntw ? "" : "primary"}" data-act="vt-ok" data-id="${v.id}">Bevestigen</button><button class="btn sm" data-act="vt-edit" data-id="${v.id}">Aanpassen…</button><button class="btn sm ghost danger" data-act="vt-nee" data-id="${v.id}">Weigeren</button>` : `<span class="pill ${v.status === "bevestigd" ? "done" : v.status === "beantwoord" ? "st-afgerond" : "kl"}">${VT_STATUS[v.status] || esc(v.status)}${v.beoordeeld_door ? " · " + esc(userById(v.beoordeeld_door).name) : ""}</span>${vtAntw ? `<button class="btn sm ghost" data-act="vt-antw" data-id="${v.id}" style="margin-left:6px">${v.bros_antwoord ? "Opnieuw antwoorden…" : "Antwoorden…"}</button>` : ""}`}</div></div>
     <div class="panel-body" style="display:grid;grid-template-columns:1fr 1fr;gap:12px;font-size:13px">
       ${v.bron === "aannemer" ? `<div style="grid-column:1/-1"><div class="eyebrow">Vraag of melding van de aannemer</div><div style="white-space:pre-wrap;margin-top:4px">${esc(v.vraag) || "<span class='muted'>(geen toelichting)</span>"}</div><div class="muted" style="font-size:12px;margin-top:6px">${vtAntw ? "Beantwoorden: je antwoord komt in zijn portaal en per mail (met of zonder taak). Bevestigen maakt er enkel een taak van." : "Bevestigen maakt er een taak van; weigeren met een reden = je antwoord aan de aannemer (hij leest het in zijn portaal)."}</div></div>` : `<div><div class="eyebrow">Vraag van de klant</div><div style="white-space:pre-wrap;margin-top:4px">${esc(v.vraag)}</div></div>
       <div><div class="eyebrow">Antwoord van de assistent</div><div style="white-space:pre-wrap;margin-top:4px;color:var(--ink-2)">${esc(v.antwoord)}</div></div>`}
-      ${v.bros_antwoord ? `<div style="grid-column:1/-1;border-left:3px solid var(--accent);padding:6px 10px;background:var(--accent-soft);border-radius:6px"><div class="eyebrow">Antwoord van BROS${v.beantwoord_door ? " · " + esc(userById(v.beantwoord_door).name) : ""}${v.beantwoord_op ? " · " + fmtLong(v.beantwoord_op.slice(0, 10)) : ""}</div><div style="white-space:pre-wrap;margin-top:4px">${esc(v.bros_antwoord)}</div></div>` : ""}
+      ${v.bros_antwoord ? `<div style="grid-column:1/-1;border-left:3px solid var(--accent);padding:6px 10px;background:var(--accent-soft);border-radius:6px"><div class="eyebrow">Antwoord van BROS${v.beantwoord_door ? " · " + esc(userById(v.beantwoord_door).name) : ""}${v.beantwoord_op ? " · " + fmtLong(lokDag(v.beantwoord_op)) : ""}</div><div style="white-space:pre-wrap;margin-top:4px">${esc(v.bros_antwoord)}</div></div>` : ""}
       <div class="muted" style="grid-column:1/-1">Voorgesteld: <b>${esc(wie)}</b>${v.eind ? ` · tegen ${fmtLong(v.eind)}` : ""}${v.taak_id && S.taken[v.taak_id] ? ` · <a href="#" data-edit-task="${v.taak_id}">taak openen</a>` : ""}${v.reden ? ` · reden: ${esc(v.reden)}` : ""}</div>
     </div></div>`;
 }
@@ -1546,7 +1623,7 @@ function vVragenProject(p) {
   const msgs = berichtenOf(p.id); const vs = Object.values(S.taak_voorstellen).filter(v => v.project_id === p.id).sort((a, b) => (b.created_at || "").localeCompare(a.created_at || ""));
   const cfg = aiCfg(); const nMaand = msgs.filter(m => m.rol === "klant" && (m.created_at || "") >= maandStart()).length; const kost = msgs.reduce((s, m) => s + (Number(m.kost) || 0), 0);
   return `<div class="panel" style="margin-bottom:16px"><div class="panel-head"><div><h3>Vragen van de klant aan de assistent</h3><div class="muted" style="font-size:12px;margin-top:2px">${msgs.length ? `${msgs.filter(m => m.rol === "klant").length} vragen · ${nMaand} deze maand${cfg.plafond_project ? ` van ${cfg.plafond_project}` : ""} · ca. € ${kost.toFixed(2)} modelkost` : "Nog geen vragen gesteld"}${p.assistent === false ? ` · <span class="pill late">assistent uit voor dit project</span>` : ""}</div></div></div>
-    ${msgs.length ? `<div class="chat">${msgs.map(m => `<div class="msg ${m.rol}"><div class="bubble">${esc(m.tekst)}</div><div class="when">${m.rol === "assistent" ? "Assistent · " : m.rol === "bros" ? "BROS" + (m.afzender ? " (" + esc(m.afzender) + ")" : "") + " · " : "Klant · "}${fmtLong((m.created_at || "").slice(0, 10))} ${(m.created_at || "").slice(11, 16)}</div></div>`).join("")}</div>` : `<div class="empty">De klant heeft nog niets gevraagd in het portaal.</div>`}</div>
+    ${msgs.length ? `<div class="chat">${msgs.map(m => `<div class="msg ${m.rol}"><div class="bubble">${esc(m.tekst)}</div><div class="when">${m.rol === "assistent" ? "Assistent · " : m.rol === "bros" ? "BROS" + (m.afzender ? " (" + esc(m.afzender) + ")" : "") + " · " : "Klant · "}${fmtLong(lokDag(m.created_at))} ${lokUur(m.created_at)}</div></div>`).join("")}</div>` : `<div class="empty">De klant heeft nog niets gevraagd in het portaal.</div>`}</div>
     ${vs.length ? `<h3 style="margin:0 0 10px">Taakvoorstellen (${vs.filter(v => v.status === "open").length} open)</h3>` + vs.map(v => voorstelCard(v)).join("") : ""}`;
 }
 async function voorstelBevestig(id, extra = {}) {
@@ -1639,7 +1716,7 @@ function vGoedkeuringen(p) {
   const klanten = contactsOf(p.id).filter(x => ["bouwheer", "contactpersoon"].includes(x.rol) && x.c.user_id);
   return `<div class="panel" style="margin-bottom:16px"><div class="panel-head"><div><h3>Goedkeuringen door de klant</h3><div class="muted" style="font-size:12px;margin-top:2px">${klanten.length ? `Zichtbaar in het portaal voor ${klanten.map(x => esc(x.c.naam)).join(", ")}.` : `<span style="color:var(--warn)">Nog niemand van dit project heeft portaal-toegang (Dossier › Contacten).</span>`}</div></div></div>
     <div class="tw"><table class="t"><thead><tr><th>Voorstel</th><th>Voorgelegd</th><th>Reageren vóór</th><th class="r">Excl. btw</th><th class="r">Incl. btw</th><th>Status</th><th>Beslist</th><th></th></tr></thead><tbody>
-    ${gs.map(g => { const verlopen = g.status === "open" && g.geldig_tot && g.geldig_tot < todayIso; return `<tr><td><b>${esc(g.titel || (g.soort === "meerwerk" ? "Meerwerk" : "Offerte"))}</b><small class="muted" style="display:block">${(g.posten || []).length} posten${g.toelichting ? " · " + esc(g.toelichting.slice(0, 80)) : ""}</small></td><td class="num">${fmtLong((g.voorgelegd_op || "").slice(0, 10))}<small class="muted" style="display:block">${esc(userById(g.voorgelegd_door).name)}</small></td><td class="num" style="${verlopen ? "color:var(--crit)" : ""}">${g.geldig_tot ? fmtLong(g.geldig_tot) : "—"}</td><td class="r num">${eur(g.totaal_excl)}</td><td class="r num">${eur(g.totaal_incl)}</td><td><span class="pill ${g.status === "akkoord" ? "st-afgerond" : verlopen ? "late" : g.status === "open" ? "st-lopend" : g.status === "geweigerd" ? "late" : "st-on_hold"}">${verlopen ? "Termijn verstreken" : GK_STATUS[g.status]}</span></td><td style="font-size:12px">${g.beslist_op ? `${fmtLong(g.beslist_op.slice(0, 10))} · ${esc(g.beslist_naam)}${g.opmerking ? `<div style="color:var(--crit)">“${esc(g.opmerking)}”</div>` : ""}` : "—"}</td>
+    ${gs.map(g => { const verlopen = g.status === "open" && g.geldig_tot && g.geldig_tot < todayIso; return `<tr><td><b>${esc(g.titel || (g.soort === "meerwerk" ? "Meerwerk" : "Offerte"))}</b><small class="muted" style="display:block">${(g.posten || []).length} posten${g.toelichting ? " · " + esc(g.toelichting.slice(0, 80)) : ""}</small></td><td class="num">${fmtLong((g.voorgelegd_op || "").slice(0, 10))}<small class="muted" style="display:block">${esc(userById(g.voorgelegd_door).name)}</small></td><td class="num" style="${verlopen ? "color:var(--crit)" : ""}">${g.geldig_tot ? fmtLong(g.geldig_tot) : "—"}</td><td class="r num">${eur(g.totaal_excl)}</td><td class="r num">${eur(g.totaal_incl)}</td><td><span class="pill ${g.status === "akkoord" ? "st-afgerond" : verlopen ? "late" : g.status === "open" ? "st-lopend" : g.status === "geweigerd" ? "late" : "st-on_hold"}">${verlopen ? "Termijn verstreken" : GK_STATUS[g.status]}</span></td><td style="font-size:12px">${g.beslist_op ? `${fmtLong(lokDag(g.beslist_op))} · ${esc(g.beslist_naam)}${g.opmerking ? `<div style="color:var(--crit)">“${esc(g.opmerking)}”</div>` : ""}` : "—"}</td>
       <td class="r" style="white-space:nowrap"><button class="btn ghost sm" data-act="gk-view" data-id="${g.id}">Bekijken</button>${g.status === "open" ? `<button class="btn ghost sm danger" data-act="gk-withdraw" data-id="${g.id}">Intrekken</button>` : ""}${g.status === "geweigerd" || g.status === "ingetrokken" || verlopen ? `<button class="btn ghost sm" data-act="gk-new" data-pid="${p.id}" data-soort="${g.soort}">Opnieuw voorleggen</button>` : ""}</td></tr>`; }).join("")}</tbody></table></div></div>`;
 }
 function gkForm(pid, soortVoorkeur) {
@@ -1672,7 +1749,7 @@ function gkForm(pid, soortVoorkeur) {
 function gkView(id) {
   const g = S.goedkeuringen[id]; if (!g) return; const ps = g.posten || [];
   openModal(`${g.titel || GK_STATUS[g.status]} — ${GK_STATUS[g.status]}`, `<div class="form-grid"><div class="field span2">
-    <p style="margin:0 0 8px">${g.toelichting ? esc(g.toelichting) + "<br>" : ""}<span class="muted" style="font-size:12px">Voorgelegd ${fmtLong((g.voorgelegd_op || "").slice(0, 10))} door ${esc(userById(g.voorgelegd_door).name)}${g.geldig_tot ? ` · reageren vóór ${fmtLong(g.geldig_tot)}` : ""}${g.beslist_op ? ` · ${GK_STATUS[g.status]} op ${fmtLong(g.beslist_op.slice(0, 10))} door ${esc(g.beslist_naam)} (${esc(g.beslist_email)})` : ""}</span>${g.opmerking ? `<p style="margin:8px 0 0;color:var(--crit)">Opmerking van de klant: “${esc(g.opmerking)}”</p>` : ""}</p>
+    <p style="margin:0 0 8px">${g.toelichting ? esc(g.toelichting) + "<br>" : ""}<span class="muted" style="font-size:12px">Voorgelegd ${fmtLong((g.voorgelegd_op || "").slice(0, 10))} door ${esc(userById(g.voorgelegd_door).name)}${g.geldig_tot ? ` · reageren vóór ${fmtLong(g.geldig_tot)}` : ""}${g.beslist_op ? ` · ${GK_STATUS[g.status]} op ${fmtLong(lokDag(g.beslist_op))} door ${esc(g.beslist_naam)} (${esc(g.beslist_email)})` : ""}</span>${g.opmerking ? `<p style="margin:8px 0 0;color:var(--crit)">Opmerking van de klant: “${esc(g.opmerking)}”</p>` : ""}</p>
     <div class="tw"><table class="t"><thead><tr><th>Nr</th><th>Omschrijving</th><th class="r">Hoev.</th><th class="r">Prijs</th><th class="r">Totaal</th></tr></thead><tbody>${ps.map(x => `<tr><td class="num muted">${esc(x.code)}</td><td>${esc(x.omschrijving)}${x.locatie ? ` <small class="muted">· ${esc(x.locatie)}</small>` : ""}</td><td class="r num">${nl(x.hoeveelheid, 2)} ${esc(x.eenheid)}</td><td class="r num">${eur2(x.prijs)}</td><td class="r num">${eur2(x.totaal)}</td></tr>`).join("")}
     <tr class="tot"><td colspan="4"><b>Totaal excl. btw</b></td><td class="r num"><b>${eur2(g.totaal_excl)}</b></td></tr><tr><td colspan="4">Btw</td><td class="r num">${eur2(g.btw)}</td></tr><tr><td colspan="4"><b>Totaal incl. btw</b></td><td class="r num"><b>${eur2(g.totaal_incl)}</b></td></tr></tbody></table></div></div></div>`, { saveLabel: "Sluiten", wide: true, onSave: async () => { } });
 }
@@ -1680,7 +1757,8 @@ async function gkWithdraw(id) {
   const g = S.goedkeuringen[id]; if (!g || g.status !== "open" || !confirm("Dit voorstel intrekken? De klant ziet het dan niet meer in het portaal.")) return;
   await dbUpdate("goedkeuringen", id, { status: "ingetrokken" }).catch(() => { });
 }
-function msNextCode(pid, lot) { const n = msRows(pid).filter(r => r.lot === lot).length + 1; return `${lot}.${n}`; }
+const msMaxNr = (pid, lot) => Math.max(0, ...msRows(pid).filter(r => r.lot === lot).map(r => { const m = String(r.code || "").match(/\.(\d+)$/); return m ? Number(m[1]) : 0; }));
+function msNextCode(pid, lot) { return `${lot}.${msMaxNr(pid, lot) + 1}`; }
 function msRowFromPost(pid, x, lot, i) {
   const sog = x.prijstype !== "EP";
   return { project_id: pid, post_id: x.id || null, lot, code: `${lot}.${i}`, groep: x.groep || "", omschrijving: x.omschrijving, eenheid: x.eenheid || (sog ? "sog" : "stk"), prijstype: x.prijstype || "EP", hoeveelheid: sog ? 1 : 0, eenheidsprijs: Number(x.richtprijs) || 0, marge: null, btw: x.btw ?? 0.06, status: "offerte", volgorde: x.volgorde ?? 0, created_by: S.me?.id || null };
@@ -1729,7 +1807,7 @@ function msAddPostForm(pid, lot) {
     saveLabel: "Toevoegen", wide: true,
     onSave: async (d) => {
       const lotNr = Number(d.lot); const ids = [...$("#mform").querySelectorAll('input[name="post"]:checked')].map(i => i.value);
-      const rows = []; const cnt = {}; const next = (l) => { cnt[l] = (cnt[l] ?? msRows(pid).filter(r => r.lot === l).length) + 1; return cnt[l]; };
+      const rows = []; const cnt = {}; const next = (l) => { cnt[l] = (cnt[l] ?? msMaxNr(pid, l)) + 1; return cnt[l]; };   // 1.48: na het hoogste bestaande nummer (geen dubbele code na een verwijderde post)
       const zoekend = !!$("#ap_q").value.trim();
       ids.forEach(id => { const x = S.posten[id]; const l = zoekend ? x.lot : lotNr; rows.push(msRowFromPost(pid, x, l, next(l))); });
       if (d.vrij && d.vrij.trim()) { const n = next(lotNr); const row = msRowFromPost(pid, { omschrijving: d.vrij.trim(), eenheid: d.eenheid, prijstype: d.eenheid === "sog" ? "SOG" : "EP", richtprijs: Number(d.prijs) || 0, btw: 0.06, volgorde: 9000 + n }, lotNr, n); row.hoeveelheid = 1; rows.push(row); }
@@ -1782,8 +1860,11 @@ async function msEdit(id, f, raw) {
   } catch (e) { return; }
   if (keep && keep.ms) { const el = document.querySelector(`[data-ms="${keep.ms}"][data-f="${keep.f}"]`); if (el) { el.focus(); try { if (keep.sel != null) el.setSelectionRange(keep.sel, keep.sel); } catch (e) { } } }
 }
+/* 1.48: posten die al in een vordering staan (vordering_regels.post_id cascade) */
+const msGefactureerd = (ids) => { const set = new Set(Object.values(S.vordering_regels || {}).map(r => r.post_id).filter(Boolean)); return ids.filter(id => set.has(id)).length; };
 async function msDelLot(pid, lot) {
   const ids = msRows(pid).filter(r => r.lot === lot).map(r => r.id);
+  const gf = msGefactureerd(ids); if (gf) { toast(`${gf} post${gf === 1 ? "" : "en"} van dit lot sta${gf === 1 ? "at" : "an"} al in een vordering — verwijderen zou die facturen wijzigen. Zet ze op Vervallen.`, 9000); return; }
   if (!confirm(`${lotName(lot)}: alle ${ids.length} posten verwijderen uit deze meetstaat?`)) return;
   const { error } = await sb.from("meetstaat_posten").delete().in("id", ids);
   if (error) return toast("Mislukt: " + error.message);
@@ -1965,7 +2046,7 @@ function vordForm(pid, soort) {
       let regels, bedrag = null, fitMsg = "";
       if (modusPost) {
         const per = {}; let fout = 0;
-        f.querySelectorAll(".pp-in").forEach(inp => { const x = ppInc(inp); if (!x) return; if (ppBad(inp, x)) { fout++; return; } (per[inp.dataset.lot] = per[inp.dataset.lot] || []).push({ id: inp.dataset.pp, pct: x }); });
+        f.querySelectorAll(".pp-in").forEach(inp => { const x = ppInc(inp); if (x === 0) return; if (ppBad(inp, x)) { fout++; return; } (per[inp.dataset.lot] = per[inp.dataset.lot] || []).push({ id: inp.dataset.pp, pct: x }); });
         if (fout) { toast(`${fout} post${fout > 1 ? "en hebben" : " heeft"} een ongeldig percentage (in het rood).`, 6000); return false; }
         regels = [];
         Object.entries(per).forEach(([l, arr]) => { const lot = Number(l), alle = rowsAll.filter(r => r.lot === lot);
@@ -2130,15 +2211,21 @@ async function msImportFile(pid, file) {
       const missing = [...new Set(rows.map(r => r.lot))].filter(l => !S.loten[l]);
       if (missing.length) { toast(`Lot ${missing.join(", ")} bestaat niet in het Planbord — voeg dat lot eerst toe onder Instellingen › Loten.`); return false; }
       loader.start("ms.import2", "Posten bewaren…", 4000);
+      let nieuwIds = [], oudWeg = 0;
       try {
         // eerst de nieuwe posten bewaren, pas daarna de oude weghalen: mislukt het bewaren, dan blijft de bestaande meetstaat staan
-        const oude = existing && d.mode === "replace" ? msRows(pid).map(r => r.id) : []; S.bulk = true;
+        const oude = existing && d.mode === "replace" ? msRows(pid).map(r => r.id) : [];
+        const gf = msGefactureerd(oude); if (gf) { loader.fail(); toast(`${gf} bestaande post${gf === 1 ? "" : "en"} sta${gf === 1 ? "at" : "an"} al in een vordering — vervangen zou die facturen wijzigen. Kies "Toevoegen aan de bestaande posten".`, 10000); return false; }
+        S.bulk = true; nieuwIds = [];
         // sinds script 012 staan kostprijs en marge in meetstaat_prijzen: msInsert splitst dat (klantprijs = prijs met marge 0 %)
-        for (let i = 0; i < rows.length; i += 200) await msInsert(rows.slice(i, i + 200));
-        for (let i = 0; i < oude.length; i += 200) { const { error } = await sb.from("meetstaat_posten").delete().in("id", oude.slice(i, i + 200)); if (error) throw error; }
-        S.bulk = false; await refetch("meetstaat_posten"); loader.done("ms.import2");
+        for (let i = 0; i < rows.length; i += 200) { const ins = await msInsert(rows.slice(i, i + 200)); nieuwIds.push(...ins.map(r => r.id)); }
+        for (let i = 0; i < oude.length; i += 200) { const { error } = await sb.from("meetstaat_posten").delete().in("id", oude.slice(i, i + 200)); if (error) throw error; oudWeg += Math.min(200, oude.length - i); }
+        bulkKlaar(); await refetch("meetstaat_posten"); loader.done("ms.import2");
         toast(`${rows.length} posten geïmporteerd uit ${file.name}`);
-      } catch (e) { S.bulk = false; loader.fail(); toast("Import mislukt: " + e.message, 6000); await refetch("meetstaat_posten"); return false; }
+      } catch (e) {
+        // half mislukt: zolang er nog geen oude post weg is, de al bewaarde nieuwe posten terug weghalen (geen verdubbeling); anders de nieuwe houden (niets kwijt)
+        if (!oudWeg) for (let i = 0; i < nieuwIds.length; i += 200) { try { await sb.from("meetstaat_posten").delete().in("id", nieuwIds.slice(i, i + 200)); } catch (x) { } }
+        bulkKlaar(); loader.fail(); toast(oudWeg ? "Import onderbroken: de nieuwe posten staan erin, maar niet alle oude posten konden weg — kijk de meetstaat na (" + e.message + ")" : "Import mislukt (niets gewijzigd): " + e.message, 9000); await refetch("meetstaat_posten"); return false; }
     },
   });
 }
@@ -2201,7 +2288,7 @@ async function lotEdit(nr, f, raw, checked) {
 async function postAdd(lot) {
   const oms = prompt("Omschrijving van de nieuwe post:"); if (!oms || !oms.trim()) return;
   const volgorde = Math.max(0, ...postenOf(lot).map(x => x.volgorde)) + 1; const code = `${String(lot).padStart(2, "0")}.${String(postenOf(lot).length + 1).padStart(2, "0")}`;
-  await dbInsert("posten", { code, lot, omschrijving: oms.trim(), eenheid: "stk", prijstype: "EP", btw: 0.06, standaard_aan: false, actief: true, volgorde }).catch(() => { }); toast("Post toegevoegd");
+  try { await dbInsert("posten", { code, lot, omschrijving: oms.trim(), eenheid: "stk", prijstype: "EP", btw: 0.06, standaard_aan: false, actief: true, volgorde }); toast("Post toegevoegd"); } catch (e) { }
 }
 async function postDel(id) {
   const x = S.posten[id]; if (!x || !confirm(`"${x.omschrijving}" verwijderen uit de bibliotheek? (Bestaande meetstaten behouden hun regels.)`)) return;
@@ -2304,6 +2391,13 @@ function renderSetPassword() {
 }
 
 /* ---------- Overzicht ---------- */
+/* 1.48: het Drive-script laat elk uur een hartslag achter (onderhoud: Supabase wakker houden, back-up, bewaking); valt die stil, dan zie je het hier */
+function hartslagMelding() {
+  if (!isBeheer()) return "";
+  const h = S.instellingen && S.instellingen.hartslag && S.instellingen.hartslag.value; if (!h || !h.drive) return "";   // nog geen script 1.48 online: niets tonen
+  const uur = (Date.now() - new Date(h.drive).getTime()) / 3600000; if (!(uur > 6)) return "";
+  return `<div class="notice" style="margin-bottom:16px;border-color:var(--warn)"><b>Het Drive-script draait niet meer</b> — laatste teken van leven ${fmtLong(lokDag(h.drive))} om ${lokUur(h.drive)}. Daardoor gebeuren mails, de back-up en het wakker houden van de database niet. Open het script (script.google.com, als brosburo@gmail.com) en voer <code>onderhoudInstall</code> uit; vraagt Google om toestemming, geef die dan opnieuw.</div>`;
+}
 function vOverzicht() {
   const ps = projects(), lopend = ps.filter(p => p.status === "lopend");
   const ts = Object.values(S.taken), open = ts.filter(t => t.status !== "done"), late = open.filter(isLate);
@@ -2319,6 +2413,7 @@ function vOverzicht() {
     <div class="panel kpi-tile ${late.length ? "crit" : ""}"><div class="eyebrow">Te laat</div><div class="v">${late.length}</div><div class="d">einddatum verstreken</div></div>
     <div class="panel kpi-tile"><div class="eyebrow">Uren deze week</div><div class="v">${nl(weekHours)}<small>u</small></div><div class="d">team, wk ${weekNr(todayIso)}</div></div>
   </div>
+  ${hartslagMelding()}${vWeekkaart()}
   <div class="grid two">
     <div class="panel"><div class="panel-head"><h3>Mijn taken</h3><button class="btn ghost sm" data-nav="taken">Alle taken →</button></div>
       ${mine.length ? `<div class="tw"><table class="t"><thead><tr><th></th><th>Taak</th><th>Project</th><th>Deadline</th><th class="r">Uren</th><th>Status</th></tr></thead><tbody>${mine.map(t => taskRow(t, true)).join("")}</tbody></table></div>` : `<div class="empty"><b>Niets open voor jou</b>Maak een taak aan of laat er een aan jou toewijzen.</div>`}
@@ -2426,7 +2521,7 @@ function vProjectDetail(p) {
     body = vProjectContacten(p) + (typeof vOvereenkomsten === "function" ? vOvereenkomsten(p) : "") + (typeof vWoningdossier === "function" ? vWoningdossier(p) : "") + `<div class="panel" style="margin-bottom:16px"><div class="panel-head"><div><h3>Projectmap op Google Drive</h3><div class="muted" style="font-size:12px;margin-top:2px"><span class="drive-path">${esc(map)}</span></div></div>
       <div class="actions">${p.drive_url ? `<a class="btn" href="${esc(safeUrl(p.drive_url))}" target="_blank" rel="noopener">Open map in Drive ↗</a><button class="btn sm" data-act="drive-list" data-pid="${p.id}">Vernieuwen</button>` : driveReady() ? `<button class="btn sm" data-act="drive-link" data-pid="${p.id}">Bestaande map koppelen</button><button class="btn sm primary" data-act="drive-create" data-pid="${p.id}">Map aanmaken uit sjabloon</button>` : `<span class="pill st-offerte">Drive-koppeling nog niet ingesteld</span>`}</div></div>
       ${docs.length ? `<div class="panel-body">${schemaV() >= 11 ? `<p class="muted" style="font-size:12px;margin:0 0 10px">Schakelaars bij een bestand: <b>klant</b> = zichtbaar in het klantenportaal${schemaV() >= 25 ? `, <b>aannemers</b> = zichtbaar voor de aannemers van dit project in hun portaal` : ""} (het bestand wordt dan leesbaar via de link). ${docs.filter(d => d.gedeeld).length} met de klant${schemaV() >= 25 ? `, ${docs.filter(d => d.gedeeld_aannemers).length} met aannemers` : ""} gedeeld.</p>` : ""}<div class="docs">${groups.map(g => `${g ? `<div style="grid-column:1/-1" class="eyebrow">${esc(g)}</div>` : ""}${docs.filter(d => (d.pad || "") === g).map(d => `<div class="doc-wrap ${d.gedeeld ? "shared" : ""}"><a class="doc" href="${esc(safeUrl(d.url))}" target="_blank" rel="noopener" style="text-decoration:none;color:inherit"><div class="ico ${docIcon(d.mime, d.naam)}">${docIcon(d.mime, d.naam) === "map" ? "DOC" : docIcon(d.mime, d.naam).toUpperCase()}</div><div style="min-width:0"><div class="n" style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(d.naam)}</div><div class="s">${d.gewijzigd ? "gewijzigd " + fmtLong(d.gewijzigd.slice(0, 10)) : ""}${d.gedeeld ? ` · <span style="color:var(--ok)">klant</span>` : ""}${d.gedeeld_aannemers ? ` · <span style="color:var(--ok)">aannemers</span>` : ""}</div></div></a>${schemaV() >= 11 ? `<label class="sw-lbl" title="${d.gedeeld ? "Gedeeld met de klant" : "Delen met de klant"}"><input type="checkbox" class="sw" data-dshare="${d.id}" ${d.gedeeld ? "checked" : ""} ${DOC_BUSY.has(d.id) ? "disabled" : ""} aria-label="Delen met de klant"><small>klant</small></label>` : ""}${schemaV() >= 25 ? `<label class="sw-lbl" title="${d.gedeeld_aannemers ? "Gedeeld met de aannemers van dit project" : "Delen met de aannemers van dit project"}"><input type="checkbox" class="sw" data-dshare-a="${d.id}" ${d.gedeeld_aannemers ? "checked" : ""} ${DOC_BUSY.has(d.id) ? "disabled" : ""} aria-label="Delen met aannemers"><small>aannemers</small></label>` : ""}</div>`).join("")}`).join("")}</div>
-        <p class="muted" style="font-size:12px;margin:12px 0 0">Laatst gesynchroniseerd ${docs[0].gesynct_op ? fmtLong(docs[0].gesynct_op.slice(0, 10)) + " " + docs[0].gesynct_op.slice(11, 16) : "—"}${S.driveAuto && S.driveAuto[p.id] && Date.now() - S.driveAuto[p.id] < 15000 ? " · wordt vernieuwd…" : ""}. Bij het openen van dit tabblad wordt de lijst automatisch vernieuwd als ze ouder is dan een uur; anders via "Vernieuwen"; foto's en video's worden niet opgesomd (die open je via de map).</p></div>` : `<div class="empty">${p.drive_url ? "Nog geen bestanden gevonden — klik op Vernieuwen." : "Nog geen map gekoppeld. \"Bestaande map koppelen\" zoekt in PROJECTEN naar een map met de naam uit het veld Drive-map (of de klantnaam)."}</div>`}</div>
+        <p class="muted" style="font-size:12px;margin:12px 0 0">Laatst gesynchroniseerd ${docs[0].gesynct_op ? fmtLong(lokDag(docs[0].gesynct_op)) + " " + lokUur(docs[0].gesynct_op) : "—"}${S.driveAuto && S.driveAuto[p.id] && Date.now() - S.driveAuto[p.id] < 15000 ? " · wordt vernieuwd…" : ""}. Bij het openen van dit tabblad wordt de lijst automatisch vernieuwd als ze ouder is dan een uur; anders via "Vernieuwen"; foto's en video's worden niet opgesomd (die open je via de map).</p></div>` : `<div class="empty">${p.drive_url ? "Nog geen bestanden gevonden — klik op Vernieuwen." : "Nog geen map gekoppeld. \"Bestaande map koppelen\" zoekt in PROJECTEN naar een map met de naam uit het veld Drive-map (of de klantnaam)."}</div>`}</div>
       <div class="panel"><div class="panel-head"><h3>Gegevens</h3></div>
       <div class="panel-body"><div class="meta">
         <div><div class="k">Adres werf</div><div class="v">${esc(p.adres || "—")}${(p.postcode || p.gemeente) ? ", " + esc([p.postcode, p.gemeente].filter(Boolean).join(" ")) : ""}</div></div>
@@ -2569,7 +2664,7 @@ function exportHours() {
   const head = ["Datum", "Week", "Van", "Tot", "Medewerker", "Projectnummer", "Klant", "Project", "Fase", "Taak", "Uren", "Zichtbaar klant", "Notitie"];
   const lines = [head.join(";")].concat(rows.map(h => { const p = S.projecten[h.project_id] || {}, t = S.taken[h.taak_id] || {}; return [fmtLong(h.datum), weekNr(h.datum), tijd(h.tijd_van), tijd(h.tijd_tot), userById(h.user_id).name, p.nummer || "", p.klant || "", p.naam || "", faseShort(t.fase_nr), t.titel || "", String(h.uren).replace(".", ","), t.uren_klant ? "ja" : "nee", (h.notitie || "").replace(/[;\r\n]/g, " ")].map(v => `"${csvVeilig(v).replace(/"/g, '""')}"`).join(";"); }));
   const blob = new Blob(["﻿" + lines.join("\r\n")], { type: "text/csv;charset=utf-8" });
-  const a = document.createElement("a"); a.href = URL.createObjectURL(blob); a.download = `bros-uren-${todayIso}.csv`; a.click(); URL.revokeObjectURL(a.href);
+  const a = document.createElement("a"); a.href = URL.createObjectURL(blob); a.download = `bros-uren-${todayIso}.csv`; document.body.appendChild(a); a.click(); a.remove(); setTimeout(() => URL.revokeObjectURL(a.href), 30000);
 }
 /* Klantversie van de gepresteerde uren: alleen taken met de schakelaar "Klant" aan, met datum en tijd. Opent als afdrukbare pagina. */
 function printKlantUren(p) {
@@ -2667,7 +2762,7 @@ function exportProjects() {
   const q = (v) => `"${csvVeilig(v).replace(/"/g, '""')}"`; const n = (v) => v == null || v === "" ? "" : String(v).replace(".", ",");
   const lines = [head.join(";")].concat(projects().map(p => [p.nummer, p.klant, KLANTTYPE[p.klanttype], p.bedrijf, p.btw_nummer, p.naam, p.adres, p.postcode, p.gemeente, p.contact, p.gsm1, p.gsm2, p.email1, p.factuur_email1 ? "ja" : "", p.email2, p.factuur_email2 ? "ja" : "", PROJ_STATUS[p.status], faseName(p.fase_nr), userById(p.lead).name, p.projecttype, p.bron, n(p.oppervlakte_m2), n(p.btw_tarief), n(p.forfait), n(projDone(p.id)), n(projPlanned(p.id)), n(Math.round(projKost(p.id, "intern"))), n(Math.round(projKost(p.id, "extern"))), fmtLong(p.start), fmtLong(p.eind), fmtLong(p.offerte_datum), fmtLong(p.contract_datum), fmtLong(p.opgeleverd_op), p.verloren_reden, p.tags, p.drive_map].map(q).join(";")));
   const blob = new Blob(["﻿" + lines.join("\r\n")], { type: "text/csv;charset=utf-8" });
-  const a = document.createElement("a"); a.href = URL.createObjectURL(blob); a.download = `bros-projecten-${todayIso}.csv`; a.click(); URL.revokeObjectURL(a.href);
+  const a = document.createElement("a"); a.href = URL.createObjectURL(blob); a.download = `bros-projecten-${todayIso}.csv`; document.body.appendChild(a); a.click(); a.remove(); setTimeout(() => URL.revokeObjectURL(a.href), 30000);
 }
 
 /* ---------- Instellingen (beheer): fasen en standaardtaken ---------- */
@@ -2725,7 +2820,7 @@ function vPortaalBeheer() {
       <div class="field"><label for="po_bic">BIC (optioneel)</label><input id="po_bic" autocomplete="off" spellcheck="false" value="${esc(c.bic || "")}"></div>
       <div class="field"><label for="po_begunstigde">Begunstigde (naam op de rekening)</label><input id="po_begunstigde" autocomplete="off" value="${esc(c.begunstigde || "")}" placeholder="bv. BROS BV"></div>` : ""}
       <div class="field span2"><div class="actions"><button class="btn primary" data-act="portaal-save">Bewaren</button><span class="muted" style="font-size:12px">Teamfoto's, functie en biografie voor "Wie is wie": Team → Bewerken.</span></div></div>
-    </div>${metLogin.length ? `<div class="tw" style="margin-top:12px"><table class="t"><thead><tr><th>Wie</th><th>Portaal</th><th>E-mail</th><th>Projecten</th><th>Uitgenodigd</th><th>Laatste bezoek</th></tr></thead><tbody>${metLogin.map(k => { const aan = rolVan(k) === "aannemer"; return `<tr class="click" data-contact="${k.id}"><td>${esc(k.naam)}</td><td><span class="pill ${aan ? "st-on_hold" : "st-lopend"}">${aan ? "aannemer" : "klant"}</span></td><td class="muted" style="font-size:12px">${esc(k.email)}</td><td class="muted" style="font-size:12px">${projectsOfContact(k.id).filter(x => aan ? !KLANT_ROLLEN.includes(x.rol) : KLANT_ROLLEN.includes(x.rol)).map(x => esc(x.p.klant)).join(", ") || "—"}</td><td class="num">${k.portaal_sinds ? fmtLong(k.portaal_sinds.slice(0, 10)) : "—"}</td><td class="num">${k.portaal_login ? fmtLong(k.portaal_login.slice(0, 10)) : "nog niet"}</td></tr>`; }).join("")}</tbody></table></div>` : ""}</div></div>`;
+    </div>${metLogin.length ? `<div class="tw" style="margin-top:12px"><table class="t"><thead><tr><th>Wie</th><th>Portaal</th><th>E-mail</th><th>Projecten</th><th>Uitgenodigd</th><th>Laatste bezoek</th></tr></thead><tbody>${metLogin.map(k => { const aan = rolVan(k) === "aannemer"; return `<tr class="click" data-contact="${k.id}"><td>${esc(k.naam)}</td><td><span class="pill ${aan ? "st-on_hold" : "st-lopend"}">${aan ? "aannemer" : "klant"}</span></td><td class="muted" style="font-size:12px">${esc(k.email)}</td><td class="muted" style="font-size:12px">${projectsOfContact(k.id).filter(x => aan ? !KLANT_ROLLEN.includes(x.rol) : KLANT_ROLLEN.includes(x.rol)).map(x => esc(x.p.klant)).join(", ") || "—"}</td><td class="num">${k.portaal_sinds ? fmtLong(lokDag(k.portaal_sinds)) : "—"}</td><td class="num">${k.portaal_login ? fmtLong(lokDag(k.portaal_login)) : "nog niet"}</td></tr>`; }).join("")}</tbody></table></div>` : ""}</div></div>`;
 }
 async function portaalSaveSettings() {
   const value = { ...portaalCfg(), welkom: $("#po_welkom").value.trim(), werkwijze: $("#po_werk").value.trim(), contact: $("#po_contact").value.trim() };
@@ -3245,7 +3340,7 @@ function zkIndex() {
   // werfpunten
   Object.values(S.vaststellingen || {}).forEach(v => { const p = proj(v.project_id); add({ k: "w:" + v.id, type: "werfpunt", ic: "📍", titel: `${vsNr(v)} ${v.titel || String(v.omschrijving || "").slice(0, 80)}`, sub: [p ? projName(p) : "", v.ruimte, v.status].filter(Boolean).join(" · "), extra: v.omschrijving || "", go: () => vsForm(v), w: v.status === "open" ? 1 : -1 }); });
   // documenten
-  Object.values(S.documenten || {}).forEach(d => { const p = proj(d.project_id); add({ k: "d:" + d.id, type: "document", ic: "📄", titel: d.naam, sub: [p ? projName(p) : "", (d.pad || "").replace(/\//g, " › ")].filter(Boolean).join(" · "), go: () => { if (d.url) window.open(d.url, "_blank", "noopener"); else zkOpenProject(d.project_id, "dossier"); }, w: -1 }); });
+  Object.values(S.documenten || {}).forEach(d => { const p = proj(d.project_id); add({ k: "d:" + d.id, type: "document", ic: "📄", titel: d.naam, sub: [p ? projName(p) : "", (d.pad || "").replace(/\//g, " › ")].filter(Boolean).join(" · "), go: () => { if (d.url) window.open(safeUrl(d.url), "_blank", "noopener"); else zkOpenProject(d.project_id, "dossier"); }, w: -1 }); });
   // meetstaatposten
   Object.values(S.meetstaat_posten || {}).forEach(r => { if (r.status === "vervallen") return; const p = proj(r.project_id);
     add({ k: "m:" + r.id, type: "post", ic: "≡", titel: `${r.code || ""} ${r.omschrijving}`.trim(), sub: [p ? projName(p) : "", lotName(r.lot), r.locatie].filter(Boolean).join(" · "), go: () => { zkOpenProject(r.project_id, "meetstaat"); setTimeout(() => { const tr = document.querySelector(`tr[data-msrow="${r.id}"]`); if (tr) { tr.scrollIntoView({ block: "center" }); tr.classList.add("zk-flash"); setTimeout(() => tr.classList.remove("zk-flash"), 2200); } }, 80); }, w: -2 }); });
@@ -3324,6 +3419,7 @@ document.addEventListener("paste", (e) => { const t = e.target; if (!t || !t.mat
 document.addEventListener("click", (e) => {
   if (e.target.closest("a[href][target=_blank]")) return; // externe links (bv. Drive-map) gewoon laten openen
   const el = e.target.closest("[data-vs],[data-nav],[data-act],[data-open],[data-back],[data-ptab],[data-edit-task],[data-edit-hours],[data-gnav],[data-wnav],[data-gtoggle],[data-close],[data-selfase],[data-sellot],[data-sort],[data-vtoggle],[data-contact]");
+  if (el && el.matches('a[href="#"]')) e.preventDefault();   // 1.48: niet naar boven springen
   if (!el) { if (e.target === $("#modalBg")) { if (MODAL.downOnBg) closeModal(); } else if (e.target.dataset && e.target.dataset.foto) fotoLightbox(e.target.dataset.foto); return; }
   if (e.target.matches(".task-check") || e.target.matches("input,select")) { if (!e.target.closest("[data-act]")) return; }
   const d = el.dataset;
@@ -3374,7 +3470,7 @@ document.addEventListener("click", (e) => {
   if (d.act === "ms-add-lot") return msAddLotForm(d.pid);
   if (d.act === "ms-open") { S.ptab = "meetstaat"; render(); if (!msRows(d.pid).length) msAddLotForm(d.pid); return; }
   if (d.act === "ms-add-post") return msAddPostForm(d.pid, d.lot ? Number(d.lot) : null);
-  if (d.act === "ms-del") { const r = S.meetstaat_posten[d.id]; if (r && confirm(`"${r.omschrijving}" verwijderen?`)) dbDelete("meetstaat_posten", d.id).catch(() => { }); return; }
+  if (d.act === "ms-del") { const r = S.meetstaat_posten[d.id]; if (r && msGefactureerd([d.id])) { toast("Deze post staat al in een vordering — verwijderen zou de factuur wijzigen. Zet hem op Vervallen.", 8000); return; } if (r && confirm(`"${r.omschrijving}" verwijderen?`)) dbDelete("meetstaat_posten", d.id).catch(() => { }); return; }
   if (d.act === "ms-del-lot") return msDelLot(d.pid, Number(d.lot));
   if (d.act && /^(kz|mwa)-/.test(d.act) && typeof kpBeheerAct === "function") return kpBeheerAct(d);
   if (d.act && /^(vg|wd)-/.test(d.act) && typeof kpFase3Act === "function" && kpFase3Act(d, el)) return;
@@ -3483,7 +3579,7 @@ document.addEventListener("keydown", (e) => { if (e.key === "Escape" && !/^(SELE
 
 /* ---------- versiecontrole: melden als er een nieuwe versie online staat ---------- */
 let updateAvailable = false;
-const APP_FILES = ["index.html", "app.js", "config.js", "postcodes.js", "meetstaat-export.js", "meetstaat-import.js", "tekenen.js", "symbolen.js", "vendor/dxf-parser.js", "version.json", "klant/index.html", "klant/portaal.js", "klant/i18n-en.js", "kp-beheer.js", "pv-beheer.js", "portaal-voorbeeld.js", "agenda.js", "afspraken.js", "logo-mark.svg", "werf/index.html", "werf/werf.js", "werf/sw.js", "aannemer/index.html", "aannemer/aannemer.js"];
+const APP_FILES = ["index.html", "app.js", "config.js", "vendor/supabase-2.45.4.js", "postcodes.js", "meetstaat-export.js", "meetstaat-import.js", "tekenen.js", "symbolen.js", "vendor/dxf-parser.js", "version.json", "klant/index.html", "klant/portaal.js", "klant/i18n-en.js", "kp-beheer.js", "pv-beheer.js", "portaal-voorbeeld.js", "agenda.js", "afspraken.js", "logo-mark.svg", "werf/index.html", "werf/werf.js", "werf/sw.js", "aannemer/index.html", "aannemer/aannemer.js"];
 /* de browser-cache omzeilen: alle bestanden van de app vers ophalen (cache: "reload" ververst de HTTP-cache) en dan herladen */
 async function hardReload() {
   try { sessionStorage.setItem("pb-state", JSON.stringify({ view: S.view, project: S.project, ptab: S.ptab })); } catch (e) { }
@@ -3523,7 +3619,14 @@ async function boot() {
 }
 async function start() {
   loader.start("app.load", "Planbord laden…", 2500);
-  try { await loadAll(); if (S.me && S.me.role === "klant") { location.replace("klant/"); return; } if (S.me && S.me.role === "aannemer") { location.replace("aannemer/"); return; } S.ready = true; S.loadError = null; render(); loader.done("app.load"); subscribe(); if (typeof ovAuto === "function") { setTimeout(ovAuto, 5000); setInterval(ovAuto, 120000); } setInterval(checkVersion, 5 * 60 * 1000); setTimeout(checkVersion, 20000); }
-  catch (e) { loader.fail(); S.loadError = e.message || String(e); render(); }
+  try { await loadAll(); if (S.me && S.me.role === "klant") { location.replace("klant/"); return; } if (S.me && S.me.role === "aannemer") { location.replace("aannemer/"); return; } S.ready = true; S.loadError = null; S.laadPoging = 0; render(); loader.done("app.load");
+    if (!S.gestart) { S.gestart = true; subscribe(); if (typeof ovAuto === "function") { setTimeout(ovAuto, 5000); setInterval(ovAuto, 120000); } setInterval(checkVersion, 5 * 60 * 1000); setTimeout(checkVersion, 20000); } }   // 1.48: na opnieuw inloggen niet dubbel abonneren
+  catch (e) {
+    loader.fail(); S.loadError = e.message || String(e); render();
+    // 1.48: even geen verbinding (Supabase/netwerk): zelf opnieuw proberen na 5 s, 15 s, 60 s, daarna elke 2 min.
+    const wacht = [5000, 15000, 60000][S.laadPoging || 0] || 120000; S.laadPoging = (S.laadPoging || 0) + 1;
+    clearTimeout(S.laadTimer); S.laadTimer = setTimeout(() => { if (!S.ready && S.session) start(); }, wacht);
+  }
 }
+window.addEventListener("online", () => { if (!S.ready && S.session && S.loadError) start(); });
 boot();

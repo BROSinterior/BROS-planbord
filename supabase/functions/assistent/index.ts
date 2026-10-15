@@ -79,16 +79,17 @@ Deno.serve(async (req) => {
     const naar = (onderwerp: string) => routering[onderwerp] || routering.overig || beheer?.id || null;
     const dagen = (n: number) => { const d = new Date(); d.setDate(d.getDate() + Math.max(1, Math.min(30, n || 7))); return d.toISOString().slice(0, 10); };
 
-    // 4. over het plafond: vriendelijk antwoord + voorstel, zonder modeloproep
-    if (overPlafond) {
-      const antwoord = "Ik geef je vraag door aan het team van BROS; iemand neemt contact met je op. (Het maandelijkse aantal vragen voor de assistent is bereikt.)";
+    // 4. over het plafond (of het model is niet bereikbaar): vriendelijk antwoord + voorstel, zonder modeloproep
+    const doorgeven = async (reden: string, omschr: string) => {
+      const antwoord = "Ik geef je vraag door aan het team van BROS; iemand neemt contact met je op." + reden;
       const { data: ba } = await admin.from("assistent_berichten").insert({ gesprek_id: g.id, project_id: projectId, rol: "assistent", tekst: antwoord }).select("id").single();
-      const vs = { project_id: projectId, bericht_id: ba?.id || bk?.id, titel: "Vraag van de klant beantwoorden: " + vraag.slice(0, 80), onderwerp: "overig", omschrijving: "De assistent stond boven zijn plafond; de klant wacht op een antwoord.", vraag, antwoord, voorgestelde_user: naar("overig"), eind: dagen(3), urgentie: "normaal" };
+      const vs = { project_id: projectId, bericht_id: ba?.id || bk?.id, titel: "Vraag van de klant beantwoorden: " + vraag.slice(0, 80), onderwerp: "overig", omschrijving: omschr, vraag, antwoord, voorgestelde_user: naar("overig"), eind: dagen(3), urgentie: "normaal" };
       const { data: v } = await admin.from("taak_voorstellen").insert(vs).select("id").single();
       mail(inst.drive, v?.id).catch(() => { });
       await admin.from("assistent_gesprekken").update({ laatste_op: new Date().toISOString() }).eq("id", g.id);
       return json({ antwoord, voorstel: true });
-    }
+    };
+    if (overPlafond) return await doorgeven(" (Het maandelijkse aantal vragen voor de assistent is bereikt.)", "De assistent stond boven zijn plafond; de klant wacht op een antwoord.");
 
     // 5. dossier samenstellen (klant-views onder het token van de klant; intern via de tabellen)
     const q = async (view: string, cols = "*") => { const r = await (isKlant ? user : admin).from(view).select(cols).eq("project_id", projectId); return r.data || []; };
@@ -159,17 +160,19 @@ ${dossier}`;
     const history = (vorige || []).reverse().map((m: any) => ({ role: m.rol === "klant" ? "user" : "assistant", content: m.tekst }));
     const messages = [{ role: "system", content: systeem }, ...history, { role: "user", content: vraag }];
     let out: any = null, tin = 0, tuit = 0;
+    try {   // 1.48: model weg, sleutel of tegoed op → de klant krijgt toch een antwoord en BROS een voorstel (geen foutmelding)
     if (/^claude/i.test(model)) {
-      const key = Deno.env.get("ANTHROPIC_API_KEY"); if (!key) return json({ error: "ANTHROPIC_API_KEY ontbreekt als secret." }, 500);
+      const key = Deno.env.get("ANTHROPIC_API_KEY"); if (!key) throw new Error("ANTHROPIC_API_KEY ontbreekt als secret.");
       const r = await fetch("https://api.anthropic.com/v1/messages", { method: "POST", headers: { "x-api-key": key, "anthropic-version": "2023-06-01", "content-type": "application/json" }, body: JSON.stringify({ model, max_tokens: 700, system: systeem, messages: messages.slice(1) }) });
       const j = await r.json(); if (!r.ok) throw new Error(j.error?.message || "Anthropic " + r.status);
       tin = j.usage?.input_tokens || 0; tuit = j.usage?.output_tokens || 0; out = parseJson(j.content?.[0]?.text || "");
     } else {
-      const key = Deno.env.get("OPENAI_API_KEY"); if (!key) return json({ error: "OPENAI_API_KEY ontbreekt als secret." }, 500);
+      const key = Deno.env.get("OPENAI_API_KEY"); if (!key) throw new Error("OPENAI_API_KEY ontbreekt als secret.");
       const r = await fetch("https://api.openai.com/v1/chat/completions", { method: "POST", headers: { Authorization: "Bearer " + key, "content-type": "application/json" }, body: JSON.stringify({ model, messages, temperature: 0.3, max_tokens: 700, response_format: { type: "json_object" } }) });
       const j = await r.json(); if (!r.ok) throw new Error(j.error?.message || "OpenAI " + r.status);
       tin = j.usage?.prompt_tokens || 0; tuit = j.usage?.completion_tokens || 0; out = parseJson(j.choices?.[0]?.message?.content || "");
     }
+    } catch (fout) { console.error("model:", fout); return await doorgeven("", "De assistent kon het taalmodel niet bereiken (" + String((fout as any)?.message || fout).slice(0, 200) + "); de klant wacht op een antwoord. Controleer het model en de API-sleutel/het tegoed (Instellingen › Assistent / Supabase-secrets)."); }
     const antwoord = String(out?.antwoord || "Ik kon je vraag niet beantwoorden; ik geef ze door aan BROS.").trim();
     const [pi, po] = PRIJS[model] || [0.5, 2]; const kost = (tin * pi + tuit * po) / 1e6 * 0.92;   // ≈ euro
     const { data: ba } = await admin.from("assistent_berichten").insert({ gesprek_id: g.id, project_id: projectId, rol: "assistent", tekst: antwoord, tokens_in: tin, tokens_uit: tuit, kost, model }).select("id").single();

@@ -3,7 +3,7 @@
    Leest uitsluitend de klant_*-views (databasescript 011): geen kostprijzen, marges of interne notities.
    ===================================================================== */
 if (window.top !== window.self) { try { window.top.location.replace(window.location.href); } catch (e) { document.documentElement.innerHTML = ""; } }   // niet in een vreemd frame (clickjacking)
-const PORTAAL_VERSION = "1.44.0";
+const PORTAAL_VERSION = "1.48.0";
 const todayLocal = () => { const n = new Date(); return `${n.getFullYear()}-${String(n.getMonth() + 1).padStart(2, "0")}-${String(n.getDate()).padStart(2, "0")}`; };
 const safeUrl = (u) => /^https?:\/\//i.test(String(u || "")) ? u : "#";
 const cfg = window.PLANBORD_CONFIG || {};
@@ -898,4 +898,6 @@ async function boot() {
   });
   if (session && !S.setPassword) start();
 }
+// 1.48: na slaap/terugkeer meteen een geldig (ververst) token, zodat mails naar BROS niet mislukken met een verlopen login
+document.addEventListener("visibilitychange", () => { if (document.visibilityState === "visible" && S.session) sb.auth.getSession().then(r => { if (r && r.data && r.data.session) S.session = r.data.session; }).catch(() => { }); });
 boot();

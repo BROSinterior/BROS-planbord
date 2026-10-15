@@ -548,6 +548,30 @@
   .dagring .fg { stroke: var(--ok); stroke-linecap: round; stroke-dasharray: var(--c); stroke-dashoffset: var(--naar); animation: ringvul .9s cubic-bezier(.2,.8,.2,1); }
   @keyframes ringvul { from { stroke-dashoffset: var(--van); } to { stroke-dashoffset: var(--naar); } }
   .dagring.vol span { color: var(--ok); font-weight: 650; }
+  /* 1.48: Weekritme — reeks in de kopring en de weekkaart op het overzicht */
+  .dagring { position: relative; }
+  .dagring .reeks-b { position: absolute; top: -2px; left: 16px; min-width: 15px; height: 15px; padding: 0 4px; border-radius: 8px; background: var(--ink); color: var(--ground); font-size: 9.5px; font-weight: 700; line-height: 15px; text-align: center; }
+  .weekkaart { display: grid; grid-template-columns: auto 1fr auto; gap: 18px; align-items: center; padding: 14px 18px; margin-bottom: 16px; cursor: pointer; }
+  .weekkaart:hover { border-color: var(--line-2); }
+  .wk-dagen { display: flex; gap: 10px; margin-top: 6px; }
+  .wk-dag { display: flex; flex-direction: column; align-items: center; gap: 1px; font-size: 11px; color: var(--muted); min-width: 30px; }
+  .wk-dag small { font-size: 10.5px; }
+  .wk-dag.nu span { color: var(--ink); font-weight: 700; }
+  .wk-dag.later { opacity: .45; }
+  .mr { width: 28px; height: 28px; transform: rotate(-90deg); }
+  .mr circle { fill: none; stroke-width: 3.2; }
+  .mr .bg { stroke: var(--line-2); } .mr .fg { stroke: var(--ok); stroke-linecap: round; transition: stroke-dashoffset .8s cubic-bezier(.2,.8,.2,1); }
+  .wk-dag.rond .mr .bg { stroke: color-mix(in srgb, var(--ok) 35%, transparent); }
+  .wk-dag.rond small { color: var(--ok); font-weight: 650; }
+  .wk-reeks { display: flex; align-items: baseline; gap: 6px; font-size: 13px; color: var(--ink-2); }
+  .wk-reeks svg { width: 16px; height: 16px; fill: var(--warn); align-self: center; }
+  .wk-reeks b { font-family: var(--font-display); font-size: 24px; font-weight: 700; letter-spacing: -.02em; color: var(--ink); }
+  .wk-badges { display: flex; flex-wrap: wrap; gap: 5px; justify-content: flex-end; }
+  .wk-badge { font-size: 11.5px; padding: 3px 9px; border-radius: 999px; border: 1px dashed var(--line-2); color: var(--muted); white-space: nowrap; }
+  .wk-badge.ok { border-style: solid; border-color: transparent; background: var(--ok-soft, color-mix(in srgb, var(--ok) 15%, transparent)); color: var(--ok); font-weight: 650; }
+  .wk-r { text-align: right; }
+  @media (max-width: 760px) { .weekkaart { grid-template-columns: 1fr; gap: 10px; } .wk-r { text-align: left; } .wk-badges { justify-content: flex-start; } }
+  @media (prefers-reduced-motion: reduce) { .mr .fg { transition: none; } }
   @media (prefers-reduced-motion: reduce) { .fx-chip { animation: none; transition: opacity .3s; } .fx-chip.weg { transform: none; } .dagring .fg { animation: none; } }
   .loader { position: fixed; inset: 0; z-index: 60; display: none; align-items: center; justify-content: center; flex-direction: column; gap: 18px; background: color-mix(in srgb, var(--ground) 88%, transparent); backdrop-filter: blur(3px); }
   .loader.show { display: flex; }
@@ -598,20 +622,20 @@
 <div class="modal-bg" id="modalBg"><div class="modal" id="modal" role="dialog" aria-modal="true"></div></div>
 <div class="toast" id="toast" role="status"></div>
 <div class="loader" id="loader" aria-live="polite"><div class="logo"><i class="base"></i><i class="fill" id="loaderFill"></i></div><div class="pct" id="loaderPct">0%</div><div class="msg" id="loaderMsg">Even geduld…</div></div>
-<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.45.4/dist/umd/supabase.min.js"></script>
-<script src="config.js?v=1.47.0"></script>
+<script src="vendor/supabase-2.45.4.js"></script>
+<script src="config.js?v=1.48.0"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
-<script src="postcodes.js?v=1.47.0"></script>
-<script src="meetstaat-export.js?v=1.47.0"></script>
-<script src="meetstaat-import.js?v=1.47.0"></script>
+<script src="postcodes.js?v=1.48.0"></script>
+<script src="meetstaat-export.js?v=1.48.0"></script>
+<script src="meetstaat-import.js?v=1.48.0"></script>
 <!-- tekenmodule: deze drie scripts horen bij het tabblad Plannen — niet verwijderen -->
-<script src="vendor/dxf-parser.js?v=1.47.0"></script>
-<script src="symbolen.js?v=1.47.0"></script>
-<script src="tekenen.js?v=1.47.0"></script>
-<script src="agenda.js?v=1.47.0"></script>
-<script src="afspraken.js?v=1.47.0"></script>
-<script src="kp-beheer.js?v=1.47.0"></script>
-<script src="pv-beheer.js?v=1.47.0"></script>
-<script src="app.js?v=1.47.0"></script>
+<script src="vendor/dxf-parser.js?v=1.48.0"></script>
+<script src="symbolen.js?v=1.48.0"></script>
+<script src="tekenen.js?v=1.48.0"></script>
+<script src="agenda.js?v=1.48.0"></script>
+<script src="afspraken.js?v=1.48.0"></script>
+<script src="kp-beheer.js?v=1.48.0"></script>
+<script src="pv-beheer.js?v=1.48.0"></script>
+<script src="app.js?v=1.48.0"></script>
 </body>
 </html>

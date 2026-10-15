@@ -1,9 +1,9 @@
 /* BROS Werf — service worker: de app-schil offline beschikbaar houden en werffoto's/plannen cachen.
    Databaseverkeer (Supabase) gaat altijd rechtstreeks; de wachtrij zit in werf.js (IndexedDB). */
-const VERSION = "1.45.0";
+const VERSION = "1.48.0";
 const SHELL = "bros-werf-" + VERSION;
 const FOTOS = "bros-werf-fotos";
-const KRITIEK = ["./", "./index.html", "./werf.js?v=" + VERSION, "../config.js?v=" + VERSION, "https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.45.4/dist/umd/supabase.min.js"];
+const KRITIEK = ["./", "./index.html", "./werf.js?v=" + VERSION, "../config.js?v=" + VERSION, "../vendor/supabase-2.45.4.js"]   // 1.48: bibliotheek zelf gehost (geen CDN meer nodig);
 const EXTRA = ["./manifest.json", "./icon-192.png", "./icon-512.png", "../logo-mark.svg"];
 const MAX_FOTOS = 400;
 const timeout = (ms) => new Promise((_, rej) => setTimeout(() => rej(new Error("timeout")), ms));
@@ -13,7 +13,7 @@ self.addEventListener("install", (e) => {
     await Promise.all(EXTRA.map(f => c.add(f).catch(() => null)));
   }).then(() => self.skipWaiting()));
 });
-self.addEventListener("activate", (e) => { e.waitUntil(caches.keys().then(ks => Promise.all(ks.filter(k => k !== SHELL && k !== FOTOS).map(k => caches.delete(k)))).then(() => self.clients.claim())); });
+self.addEventListener("activate", (e) => { e.waitUntil(caches.keys().then(ks => Promise.all(ks.filter(k => k.startsWith("bros-werf-") && k !== SHELL && k !== FOTOS).map(k => caches.delete(k)))).then(() => self.clients.claim())); });   // 1.48: enkel de eigen caches (niet die van het klantenportaal)
 async function prune(c) { const keys = await c.keys(); if (keys.length > MAX_FOTOS) await Promise.all(keys.slice(0, keys.length - MAX_FOTOS).map(k => c.delete(k))); }
 self.addEventListener("fetch", (e) => {
   const req = e.request; if (req.method !== "GET") return;
@@ -29,6 +29,7 @@ self.addEventListener("fetch", (e) => {
   // databaseverkeer: nooit onderscheppen
   if (url.pathname.includes("/rest/v1/") || url.pathname.includes("/auth/v1/") || url.pathname.includes("/realtime/") || url.pathname.includes("/storage/v1/")) return;
   // app-schil: netwerk eerst met korte timeout (updates komen zo door), anders cache
-  e.respondWith(Promise.race([fetch(req), timeout(4000)]).then(r => { if (r.ok && (url.origin === location.origin || url.hostname === "cdn.jsdelivr.net")) caches.open(SHELL).then(c => c.put(req, r.clone())); return r; })
+  // 1.48: eigen bestanden bewaren onder het adres zonder ?v= (de cache groeit niet met elke versie); de kopie meteen nemen (anders mislukt clone())
+  e.respondWith(Promise.race([fetch(req), timeout(4000)]).then(r => { if (r.ok && (url.origin === location.origin || url.hostname === "cdn.jsdelivr.net")) { const kopie = r.clone(); const sleutel = url.origin === location.origin && /^(\?v=[\w.]+)?$/.test(url.search) ? url.origin + url.pathname : req; caches.open(SHELL).then(c => c.put(sleutel, kopie)); } return r; })
     .catch(async () => (await caches.match(req)) || (await caches.match(req.url.split("?")[0])) || (req.mode === "navigate" ? caches.match("./index.html") : Response.error())));
 });
