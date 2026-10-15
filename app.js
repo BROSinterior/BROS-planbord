@@ -3,7 +3,7 @@
    Statische webapp op Supabase (login, live-synchronisatie, rechten)
    ===================================================================== */
 if (window.top !== window.self) { try { window.top.location.replace(window.location.href); } catch (e) { document.documentElement.innerHTML = ""; } }   // niet in een vreemd frame (clickjacking)
-const APP_VERSION = "1.48.0";
+const APP_VERSION = "1.48.1";
 const PROJ_STATUS = { offerte: "In offerte", lopend: "Lopend", on_hold: "On hold", afgerond: "Afgerond", verloren: "Verloren" };
 const KLANTTYPE = { particulier: "Particulier", zakelijk: "Zakelijk" };
 const KLANTCODE = { particulier: "PAR", zakelijk: "ZAK" };
@@ -757,7 +757,7 @@ function vMeetstaat(p) {
         <td style="width:104px">${sel(r, "status", opts(Object.entries(MS_STATUS), r.status))}${r.akkoord_op ? `<small class="muted" style="display:block;color:var(--ok)" title="Goedgekeurd door de klant in het portaal">✓ klant ${fmt(lokDag(r.akkoord_op))}</small>` : ""}</td>
         <td class="r" style="width:36px"><button class="btn ghost sm danger" data-act="ms-del" data-id="${r.id}" aria-label="Verwijderen">✕</button></td></tr>`; }).join(""); }).join("");
   return kpi + (typeof vMeerwerkAanvragen === "function" ? vMeerwerkAanvragen(p) : "") + vGoedkeuringen(p) + (typeof vPrijsvragen === "function" ? vPrijsvragen(p) : vPrijsaanvragen(p)) + vAanMeetstaten(p) + `<div class="panel"><div class="panel-head"><div><h3>Meetstaat</h3><div class="muted" style="font-size:12px;margin-top:2px">${rows.length ? `${rows.length} posten in ${lots.length} loten` : "Nog leeg"} · klik in een veld om het te wijzigen, bewaard bij verlaten van het veld</div></div>
-      <div class="actions">${isBeheer() && rows.length ? `<select class="btn sm" data-act="ms-btw-alles" data-pid="${p.id}" title="Het btw-tarief van alle posten van dit project in één keer zetten"><option value="">Btw alles…</option><option value="0.06">alles op 6 %</option><option value="0.21">alles op 21 %</option><option value="0">alles op 0 %</option></select>` : ""}<button class="btn sm ${S.msRuimte ? "primary" : ""}" data-act="ms-ruimte" title="Posten per lot groeperen per ruimte (alfabetisch), enkel in deze weergave — de nummering en de export veranderen niet">${S.msRuimte ? "Per ruimte ✓" : "Per ruimte"}</button>${isBeheer() ? `<button class="btn sm ${S.msKlant ? "primary" : ""}" data-act="ms-klant" title="Kostprijs, marge en btw-kolom verbergen, bv. als je de meetstaat met de klant overloopt (sneltoets: K)">${S.msKlant ? "👁 Klantweergave aan" : "Klantweergave"}</button>` : ""}${schemaV() >= 13 && rows.some(r => gkKandidaat(r)) ? `<button class="btn sm" data-act="gk-new" data-pid="${p.id}" title="Offerte of meerwerk bevroren ter goedkeuring in het klantenportaal zetten">Ter goedkeuring voorleggen</button>` : ""}${isBeheer() ? `<button class="btn sm" data-act="ms-import" data-pid="${p.id}" title="Een bestaande meetstaat (Excel, elk BROS-sjabloon) inlezen als posten">Importeren uit Excel</button>` : ""}${rows.length ? `<button class="btn sm" data-act="ms-export" data-pid="${p.id}" title="Excel in het BROS-sjabloon aanmaken in Documenten/Meetstaat van de projectmap">Exporteren naar Drive (Excel)</button><button class="btn sm" data-act="ms-pdf" data-pid="${p.id}" title="Meetstaat als pdf: klantversie of interne versie, per lot of per ruimte">Pdf</button>` : ""}<button class="btn sm" data-act="ms-add-post" data-pid="${p.id}">+ Post</button><button class="btn sm primary" data-act="ms-add-lot" data-pid="${p.id}">+ Lot toevoegen</button></div></div>
+      <div class="actions">${isBeheer() && rows.length ? `<select class="btn sm" data-act="ms-btw-alles" data-pid="${p.id}" title="Het btw-tarief van alle posten van dit project in één keer zetten"><option value="">Btw alles…</option><option value="0.06">alles op 6 %</option><option value="0.21">alles op 21 %</option><option value="0">alles op 0 %</option></select><select class="btn sm" data-act="ms-marge-alles" data-pid="${p.id}" title="De marge van alle posten van dit project in één keer zetten (goedgekeurde posten houden hun klantprijs, tenzij je kiest om ze mee te nemen)"><option value="">Marge alles…</option><option value="10">alles op 10 %</option><option value="15">alles op 15 %</option><option value="20">alles op 20 %</option><option value="ander">ander %…</option><option value="lot">lotmarge (eigen marge leegmaken)</option></select>` : ""}<button class="btn sm ${S.msRuimte ? "primary" : ""}" data-act="ms-ruimte" title="Posten per lot groeperen per ruimte (alfabetisch), enkel in deze weergave — de nummering en de export veranderen niet">${S.msRuimte ? "Per ruimte ✓" : "Per ruimte"}</button>${isBeheer() ? `<button class="btn sm ${S.msKlant ? "primary" : ""}" data-act="ms-klant" title="Kostprijs, marge en btw-kolom verbergen, bv. als je de meetstaat met de klant overloopt (sneltoets: K)">${S.msKlant ? "👁 Klantweergave aan" : "Klantweergave"}</button>` : ""}${schemaV() >= 13 && rows.some(r => gkKandidaat(r)) ? `<button class="btn sm" data-act="gk-new" data-pid="${p.id}" title="Offerte of meerwerk bevroren ter goedkeuring in het klantenportaal zetten">Ter goedkeuring voorleggen</button>` : ""}${isBeheer() ? `<button class="btn sm" data-act="ms-import" data-pid="${p.id}" title="Een bestaande meetstaat (Excel, elk BROS-sjabloon) inlezen als posten">Importeren uit Excel</button>` : ""}${rows.length ? `<button class="btn sm" data-act="ms-export" data-pid="${p.id}" title="Excel in het BROS-sjabloon aanmaken in Documenten/Meetstaat van de projectmap">Exporteren naar Drive (Excel)</button><button class="btn sm" data-act="ms-pdf" data-pid="${p.id}" title="Meetstaat als pdf: klantversie of interne versie, per lot of per ruimte">Pdf</button>` : ""}<button class="btn sm" data-act="ms-add-post" data-pid="${p.id}">+ Post</button><button class="btn sm primary" data-act="ms-add-lot" data-pid="${p.id}">+ Lot toevoegen</button></div></div>
     ${rows.length ? `<div class="tw"><table class="t ms"><thead><tr><th></th><th>Nr</th><th>Omschrijving</th><th>Locatie</th><th>Hoev.</th><th>Eenh.</th>${beheer ? `<th title="Kostprijs / aannemersprijs excl. btw">Kost EP</th><th>Marge</th>` : ""}<th class="r">Klant EP</th><th class="r">Totaal excl.</th>${beheer ? `<th>Btw</th>` : ""}<th>Status</th><th></th></tr></thead><tbody>${body}</tbody></table></div>` : `<div class="empty"><b>Nog geen posten</b>Voeg een lot toe (met de standaardposten) of kies losse posten uit de bibliotheek.</div>`}</div>`;
 }
 /* ---------- Meetstaat als pdf (jsPDF): klantversie (verkoopprijzen) of interne versie (kost, marge, verkoop) ---------- */
@@ -847,6 +847,31 @@ async function msBtwAlles(pid, btw) {
     const tarief = btw === 0.06 ? 6 : btw === 0.21 ? 21 : 0; if (p && p.btw_tarief !== tarief) await dbUpdate("projecten", pid, { btw_tarief: tarief }).catch(() => { });
     toast(`Btw op ${Math.round(btw * 100)} % gezet voor ${rows.length} posten`);
   } catch (e) { toast("Btw niet aangepast: " + e.message, 6000); }
+  finally { bulkKlaar(); await msRefetch(rows.map(r => r.id)); }
+}
+/* 1.48.1: marge van alle posten van een project in één keer (bv. na een import uit Excel, waar elke post 0 % kreeg) */
+async function msMargeAlles(pid, keuze) {
+  const p = S.projecten[pid]; let pct = null;
+  if (keuze === "ander") { const t = prompt("Marge voor alle posten van " + p.klant + " (in %):", "10"); if (t == null) return; pct = leesGetal(t); if (pct == null || Number.isNaN(pct) || pct <= -100 || pct > 1000) { toast("Geef een geldig % (bv. 10)."); return; } }
+  else if (keuze !== "lot") pct = Number(keuze);
+  const marge = pct == null ? null : Math.round(pct * MARGE_DEC / 100) / MARGE_DEC;
+  const alle = msRows(pid).filter(r => r.status !== "vervallen");
+  const goed = alle.filter(r => ["akkoord", "meerwerk", "minwerk"].includes(r.status));
+  const label = pct == null ? "de lotmarge" : nl(pct, 2) + " %";
+  const open = alle.length - goed.length;
+  if (open && !confirm(`Marge van ${open} post${open === 1 ? "" : "en"} van ${p.klant} op ${label} zetten?${goed.length ? `\n\n${goed.length} goedgekeurde post${goed.length === 1 ? "" : "en"} (akkoord, meer- of minwerk) blijven op hun klantprijs.` : ""}`)) return;
+  let rows = alle.filter(r => !goed.includes(r));
+  if (goed.length && confirm(`Ook de ${goed.length} goedgekeurde post${goed.length === 1 ? "" : "en"} op ${label} zetten?\n\nLet op: hun klantprijs verandert dan, terwijl de klant een andere prijs goedkeurde.\n\nOK = ook die · Annuleren = enkel de andere posten`)) rows = alle;
+  rows = rows.filter(r => !((r.marge == null || r.marge === "") && marge == null) && !(r.marge != null && r.marge !== "" && marge != null && Math.abs(Number(r.marge) - marge) < 1e-9));
+  if (!rows.length) { toast("Alle posten staan al op " + label); return; }
+  S.bulk = true;
+  try {
+    for (let i = 0; i < rows.length; i += 100) {
+      const chunk = rows.slice(i, i + 100).map(r => ({ post_id: r.id, marge }));
+      const { error } = await sb.from("meetstaat_prijzen").upsert(chunk, { onConflict: "post_id" }); if (error) throw error;
+    }
+    toast(`Marge op ${label} gezet voor ${rows.length} posten — klantprijzen herrekend`, 5000);
+  } catch (e) { toast("Marge niet aangepast: " + e.message, 6000); }
   finally { bulkKlaar(); await msRefetch(rows.map(r => r.id)); }
 }
 /* ---------- Meetstaat: posten verslepen binnen een lot; nummers (lot.n) en volgorde volgen automatisch ---------- */
@@ -3557,6 +3582,7 @@ document.addEventListener("change", (e) => {
   if (el.dataset.kt && el.type === "date") { const cur = ktOf(el.dataset.pid, Number(el.dataset.kt)); if ((cur?.[el.dataset.f] || "") !== el.value) ktSave(el.dataset.pid, Number(el.dataset.kt), { [el.dataset.f]: el.value || null }); return; }
   if (el.dataset.ttoggle) { const t = S.taken[el.dataset.ttoggle]; if (t) dbUpdate("taken", t.id, { timing_klant: el.checked }).then(() => toast(el.checked ? "Timing van deze taak staat in de klantplanning" : "Timing niet meer gedeeld")).catch(() => { }); return; }
   if (el.dataset.ktoggle) { const t = S.taken[el.dataset.ktoggle]; if (t) dbUpdate("taken", t.id, { uren_klant: el.checked }).then(() => toast(el.checked ? "Uren van deze taak zijn zichtbaar voor de klant" : "Uren verborgen voor de klant")).catch(() => { }); }
+  if (el.dataset.act === "ms-marge-alles") { const v = el.value; el.value = ""; if (v === "") return; return msMargeAlles(el.dataset.pid, v); }
   if (el.dataset.act === "ms-btw-alles") { const v = el.value; el.value = ""; if (v === "") return; return msBtwAlles(el.dataset.pid, Number(v)); }
   if (el.dataset.ms && el.tagName === "SELECT") return msEdit(el.dataset.ms, el.dataset.f, el.value);
   if (el.dataset.post && (el.type === "checkbox" || el.tagName === "SELECT")) return postEdit(el.dataset.post, el.dataset.f, el.value, el.checked);

@@ -2,6 +2,10 @@
 
 De nieuwste versie staat bovenaan. (Vanaf 1.48 houdt `version.json` enkel de laatste versie bij; het Planbord vraagt dat bestand elke 5 minuten op.)
 
+## 1.48.1 — 2026-10-15
+
+Meetstaat: 'Marge alles…' naast 'Btw alles…' — de marge van alle posten van een project in één keer op 10, 15, 20 % of een ander %, of terug naar de lotmarge (handig na een import uit Excel, waar elke post 0 % kreeg). Goedgekeurde posten houden hun klantprijs, tenzij je kiest om ze mee te nemen.
+
 ## 1.48.0 — 2026-10-14
 
 Onderhoudsvrij en robuuster (script 045 + nieuw drive/Code.gs): elk uur een hartslag die de database wakker houdt, elke week een automatische back-up naar Drive en een bewaking van opslag en mailquotum; foutoplossingen (verdwenen Drive-bestanden, ongeldige prijzen/percentages, werfpunten die wijzigingen van de aannemer overschreven, posten die al gefactureerd zijn, half mislukte import, tijden in Belgische tijd), beveiliging (Yuki-facturen enkel met geldige handtekening, geen overname van een zelf aangemaakte login), werfmodus en portalen die zichzelf herstellen na een storing, snellere toegangsregels. Nieuw: Weekritme — je reeks werkdagen, vijf dagringen per week en kleine onderscheidingen op het overzicht.
