@@ -3,7 +3,7 @@
    Statische webapp op Supabase (login, live-synchronisatie, rechten)
    ===================================================================== */
 if (window.top !== window.self) { try { window.top.location.replace(window.location.href); } catch (e) { document.documentElement.innerHTML = ""; } }   // niet in een vreemd frame (clickjacking)
-const APP_VERSION = "1.48.2";
+const APP_VERSION = "1.48.3";
 const PROJ_STATUS = { offerte: "In offerte", lopend: "Lopend", on_hold: "On hold", afgerond: "Afgerond", verloren: "Verloren" };
 const KLANTTYPE = { particulier: "Particulier", zakelijk: "Zakelijk" };
 const KLANTCODE = { particulier: "PAR", zakelijk: "ZAK" };
@@ -2023,6 +2023,14 @@ function vFacturatie(p) {
     <div class="tw"><table class="t"><thead><tr><th>Nr</th><th>Datum</th><th>Omschrijving</th><th>Loten</th><th class="r">Excl. btw</th><th class="r">Btw</th><th class="r">Incl. btw</th><th>Status</th></tr></thead><tbody>
       ${vs.map(v => { const c = calcs[v.id]; const excl = c.excl; const btw = c.btw; const lotsTxt = v.soort === "voorschot" ? "alle loten" : Object.keys(c.perLot).filter(l => Math.abs(c.perLot[l].excl) > 0.005).map(l => lotName(Number(l))).join(", ");
         return `<tr><td class="num">${v.nr === 0 ? "V" : v.nr}</td><td class="num">${fmtLong(v.datum)}</td><td>${esc(v.omschrijving || VORD_SOORT[v.soort])}${v.factuurnummer ? `<small class="muted" style="display:block">factuur ${esc(v.factuurnummer)}</small>` : ""}</td><td class="muted" style="font-size:12px;max-width:260px">${esc(lotsTxt)}</td><td class="r num">${eur2(excl)}</td><td class="r num">${eur2(btw)}</td><td class="r num"><b>${eur2(excl + btw)}</b></td><td><span class="pill st-${v.status === "betaald" ? "afgerond" : v.status === "verzonden" ? "lopend" : "offerte"}">${VORD_STATUS[v.status]}</span></td></tr>`; }).join("") || `<tr><td class="muted" colspan="8">Nog geen facturen.</td></tr>`}
+      ${(() => {   // 1.48.3: ook wat al gefactureerd en betaald is (niet enkel wat nog moet)
+        const som = (lijst) => lijst.reduce((t, v) => { const c = calcs[v.id]; t.excl += c.excl; t.btw += c.btw; t.incl += c.incl; return t; }, { excl: 0, btw: 0, incl: 0 });
+        const rij = (label, t, extra = "") => `<tr class="tot"><td colspan="4"><b>${label}</b>${extra}</td><td class="r num"><b>${eur2(t.excl)}</b></td><td class="r num">${eur2(t.btw)}</td><td class="r num"><b>${eur2(t.incl)}</b></td><td></td></tr>`;
+        const verst = vs.filter(vordLocked), betaaldL = vs.filter(v => v.status === "betaald"), opg = vs.filter(v => !vordLocked(v));
+        return (verst.length ? rij("Gefactureerd (verzonden en betaald)", som(verst), ` <span class="muted" style="font-weight:400">· ${verst.length} factu${verst.length === 1 ? "ur" : "ren"} · ${contract + meerwerk ? nl(gefact / (contract + meerwerk) * 100, 0) : 0} % van contract + meerwerk</span>`) : "")
+          + (betaaldL.length ? rij("waarvan betaald", som(betaaldL)) : "")
+          + (verst.length - betaaldL.length > 0 ? rij("Nog te betalen (verzonden)", som(verst.filter(v => v.status !== "betaald"))) : "")
+          + (opg.length ? rij("Opgemaakt, nog niet verzonden", som(opg)) : ""); })()}
       <tr class="tot"><td colspan="4"><b>Nog te factureren (contract + meerwerk − gefactureerd/opgemaakt)</b></td><td class="r num"><b>${eur2(contract + meerwerk - gefact - open)}</b></td><td></td><td></td><td></td></tr></tbody></table></div></div>`;
   return kpi + waarschuwing + grid + klant;
 }
@@ -2343,6 +2351,8 @@ function render() {
   if (!S.ready) { app.innerHTML = `<div class="login"><div class="card"><h1>BROS Planbord</h1><p>Gegevens laden…</p></div></div>`; return; }
   if (!S.me) { app.innerHTML = `<div class="login"><div class="card"><h1>Nog geen profiel</h1><p>Je login werkt, maar er is nog geen medewerkersprofiel gekoppeld. Vraag de beheerder om je uit te nodigen, of herlaad de pagina.</p><button class="btn" data-act="logout">Uitloggen</button> <button class="btn primary" data-act="reload">Herladen</button></div></div>`; return; }
   const views = { overzicht: vOverzicht, projecten: vProjecten, taken: vTaken, planning: vPlanning, uren: vUren, contacten: vContacten, notities: vNotitiesAlle, voorstellen: vVoorstellen, team: vTeam, rapporten: vRapporten, instellingen: vInstellingen };
+  // 1.48.3: horizontale/verticale scrollpositie van tabellen (.tw, bv. de vorderingsstaat) bewaren bij het hertekenen — anders springt de tabel terug naar links
+  const scrollSleutel = [S.view, S.project, S.ptab].join("|"); const scrolls = app.dataset.scroll === scrollSleutel ? [...app.querySelectorAll(".tw")].map(e => [e.scrollLeft, e.scrollTop]) : [];
   app.innerHTML = `
   <header class="top">
     <div class="top-in">
@@ -2354,6 +2364,8 @@ function render() {
   </header>
   <main>${(views[S.view] || vOverzicht)()}</main>
   <footer>BROS Planbord v${APP_VERSION}</footer>`;
+  app.dataset.scroll = scrollSleutel;
+  if (scrolls.length) app.querySelectorAll(".tw").forEach((e, i) => { const k = scrolls[i]; if (k && (k[0] || k[1])) { e.scrollLeft = k[0]; e.scrollTop = k[1]; } });
   if (updateAvailable) $("#updateBar").classList.add("show");
 }
 let loginMode = "password";

@@ -2,6 +2,10 @@
 
 De nieuwste versie staat bovenaan. (Vanaf 1.48 houdt `version.json` enkel de laatste versie bij; het Planbord vraagt dat bestand elke 5 minuten op.)
 
+## 1.48.3 — 2026-10-18
+
+Facturatie: de vorderingsstaat springt niet meer terug naar links als je ernaast klikt of iets bewaart (scrollpositie blijft); het overzicht onderaan toont nu ook wat al gefactureerd is (verzonden en betaald), waarvan betaald, nog te betalen en wat opgemaakt maar nog niet verzonden is.
+
 ## 1.48.2 — 2026-10-18 (script 046 + nieuw drive/Code.gs)
 
 Nakijkronde: script 046 — een uitnodiging op een nieuw e-mailadres koppelt de contactfiche aan die nieuwe login (anders bleef de klant op 'Nog geen project gekoppeld'); een fiche met een login van een andere rol (klant ↔ aannemer) wordt niet stil omgezet. Import: waarschuwing als je dezelfde meetstaat nog eens toevoegt (dubbele posten). Drive-script: een mislukte back-up (bv. Drive vol) wordt meteen gemeld en dagelijks opnieuw geprobeerd i.p.v. elk uur; Yuki-controle strenger. Planbord: de hartslag van het Drive-script wordt elk half uur ververst (geen valse melding als het Planbord lang openstaat). Werfmodus: geen dubbele verzending bij gelijktijdige oproepen, geen geheugenlek van fotovoorbeelden. Agenda: begint het onderwerp van een afspraak zelf al met initialen ("PB/ …", "PB + NDK/ …"), dan wordt de titel "PB + NDK/Klant, onderwerp" (niet meer dubbel) en staan de initialen niet in de mail aan de klant.
