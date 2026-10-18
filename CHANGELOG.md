@@ -2,6 +2,10 @@
 
 De nieuwste versie staat bovenaan. (Vanaf 1.48 houdt `version.json` enkel de laatste versie bij; het Planbord vraagt dat bestand elke 5 minuten op.)
 
+## 1.48.2 — 2026-10-18 (script 046 + nieuw drive/Code.gs)
+
+Nakijkronde: script 046 — een uitnodiging op een nieuw e-mailadres koppelt de contactfiche aan die nieuwe login (anders bleef de klant op 'Nog geen project gekoppeld'); een fiche met een login van een andere rol (klant ↔ aannemer) wordt niet stil omgezet. Import: waarschuwing als je dezelfde meetstaat nog eens toevoegt (dubbele posten). Drive-script: een mislukte back-up (bv. Drive vol) wordt meteen gemeld en dagelijks opnieuw geprobeerd i.p.v. elk uur; Yuki-controle strenger. Planbord: de hartslag van het Drive-script wordt elk half uur ververst (geen valse melding als het Planbord lang openstaat). Werfmodus: geen dubbele verzending bij gelijktijdige oproepen, geen geheugenlek van fotovoorbeelden. Agenda: begint het onderwerp van een afspraak zelf al met initialen ("PB/ …", "PB + NDK/ …"), dan wordt de titel "PB + NDK/Klant, onderwerp" (niet meer dubbel) en staan de initialen niet in de mail aan de klant.
+
 ## 1.48.1 — 2026-10-15
 
 Meetstaat: 'Marge alles…' naast 'Btw alles…' — de marge van alle posten van een project in één keer op 10, 15, 20 % of een ander %, of terug naar de lotmarge (handig na een import uit Excel, waar elke post 0 % kreeg). Goedgekeurde posten houden hun klantprijs, tenzij je kiest om ze mee te nemen.

@@ -642,7 +642,10 @@ function afspraakSyncIn(body, id) {
   if (!t) return { ok: false, error: "Taak niet gevonden." };
   const p = (pbAdmin("/rest/v1/projecten?id=eq." + t.project_id + "&select=nummer,klant,naam", "get") || [])[0] || {};
   const actief = !body.weg && !!t.afspraak && !!t.start && !!t.afspraak_van;
-  const onderwerp = String(t.afspraak_onderwerp || "").trim() || t.titel;
+  const onderwerpRuw = String(t.afspraak_onderwerp || "").trim() || t.titel;
+  // 1.48.2: begint het onderwerp al met initialen ("PB/ …", "PB + NDK/ …"): die gebruiken in de agendatitel, en ze weglaten in de mail aan de klant
+  const voor = String(onderwerpRuw).match(/^\s*([A-Z]{1,4}(?:\s*\+\s*[A-Z]{1,4})*)\s*\/\s*/);
+  const onderwerp = voor ? String(onderwerpRuw).slice(voor[0].length).trim() || onderwerpRuw : onderwerpRuw;
   const prof = t.assignee ? ((pbAdmin("/rest/v1/profiles?id=eq." + t.assignee + "&select=name,initials,email", "get") || [])[0] || null) : null;
   const ini = prof ? String(prof.initials || String(prof.name || "").slice(0, 2)).toUpperCase() : "BROS";
   const ids = (t.afspraak_contacten || []).filter(x => UUID_RE.test(String(x)));
@@ -659,7 +662,7 @@ function afspraakSyncIn(body, id) {
     const begin = Utilities.parseDate(t.start + " " + van, "Europe/Brussels", "yyyy-MM-dd HH:mm");
     let einde = tot ? Utilities.parseDate(t.start + " " + tot, "Europe/Brussels", "yyyy-MM-dd HH:mm") : new Date(begin.getTime() + 3600000);
     if (einde <= begin) einde = new Date(begin.getTime() + 3600000);
-    const titel = ini + "/" + (p.klant || "") + ", " + onderwerp;
+    const titel = (voor ? voor[1].replace(/\s*\+\s*/g, " + ") : ini) + "/" + (p.klant || "") + ", " + onderwerp;   // "PB/Klant, onderwerp" (of "PB + NDK/…")
     const besch = [(p.nummer ? p.nummer + " · " : "") + (p.klant || "") + (p.naam && p.naam !== p.klant ? " · " + p.naam : ""),
       prof ? "BROS: " + prof.name : "", cs.length ? "Deelnemers: " + cs.map(c => c.naam).join(", ") : "", t.notitie ? "Notitie: " + t.notitie : "", "(Aangemaakt vanuit het BROS Planbord — wijzig de afspraak in het Planbord, niet hier.)"].filter(Boolean).join("\n");
     if (ev) { ev.setTitle(titel); ev.setTime(begin, einde); ev.setLocation(t.afspraak_adres || ""); ev.setDescription(besch); res.agenda = "gewijzigd"; }
@@ -675,7 +678,7 @@ function afspraakSyncIn(body, id) {
   const mailen = t.afspraak_mailen !== false && t.start >= Utilities.formatDate(new Date(), "Europe/Brussels", "yyyy-MM-dd");
   const ontvangers = actief ? cs.filter(c => c.actief !== false && /^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(String(c.email || "").trim())) : [];
   const aan = ontvangers.map(c => String(c.email).trim().toLowerCase());
-  const hash = actief ? JSON.stringify([t.start, van, tot, t.afspraak_adres || "", onderwerp]) : "";
+  const hash = actief ? JSON.stringify([t.start, van, tot, t.afspraak_adres || "", onderwerpRuw]) : "";   // ruw: bestaande afspraken worden niet opnieuw gemaild
   let seq = Number(vorig.seq) || 0; const gewijzigd = !!vorig.hash && hash !== vorig.hash;
   const datumTxt = (en) => { const d = Utilities.parseDate(t.start + " 12:00", "Europe/Brussels", "yyyy-MM-dd HH:mm"); const dagen = en ? ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"] : ["zondag", "maandag", "dinsdag", "woensdag", "donderdag", "vrijdag", "zaterdag"]; return dagen[Number(Utilities.formatDate(d, "Europe/Brussels", "u")) % 7] + " " + Utilities.formatDate(d, "Europe/Brussels", "dd/MM/yyyy") + ", " + van + (tot ? "–" + tot : ""); };
   const wrap = (inner) => "<div style=\"font-family:Helvetica,Arial,sans-serif;font-size:15px;line-height:1.5;color:#1B1E1C;max-width:640px\">" + inner + "</div>";
@@ -1192,11 +1195,12 @@ function onderhoud(volledig) {
   if (!volledig) return;   // yukiSync/documentenDigest: enkel de hartslag (hun eigen werk heeft de tijd nodig); back-up en bewaking via onderhoudUur
   const props = PropertiesService.getScriptProperties(); const nu = Date.now(), WEEK = 7 * 86400000;
   if (nu - Number(props.getProperty("BACKUP_LAATST") || 0) > WEEK) {
-    try { const f = backup(); props.setProperty("BACKUP_LAATST", String(nu)); props.setProperty("BACKUP_FOUTEN", Object.keys(f).length ? JSON.stringify(f).slice(0, 800) : ""); }
-    catch (e) { Logger.log("Back-up: " + e); props.setProperty("BACKUP_FOUTEN", String(e).slice(0, 300)); }
-    return;   // bewaking in een volgende run (elk een eigen 6-minutenvenster)
+    try { const f = backup(); props.setProperty("BACKUP_LAATST", String(nu)); props.setProperty("BACKUP_GEMELD", ""); props.setProperty("BACKUP_FOUTEN", Object.keys(f).length ? JSON.stringify(f).slice(0, 800) : ""); return; }   // bewaking in een volgende run (elk een eigen 6-minutenvenster)
+    catch (e) { Logger.log("Back-up: " + e); const fout = String(e).slice(0, 300); if (props.getProperty("BACKUP_FOUTEN") !== fout) props.setProperty("BACKUP_GEMELD", ""); props.setProperty("BACKUP_FOUTEN", fout); props.setProperty("BACKUP_LAATST", String(nu - WEEK + 86400000)); }   // mislukt (bv. Drive vol): morgen opnieuw, en de bewaking hieronder meldt het meteen   // (zelfde fout: geen nieuwe mail)
   }
-  if (nu - Number(props.getProperty("GEZONDHEID_LAATST") || 0) > WEEK) { try { gezondheid(); props.setProperty("GEZONDHEID_LAATST", String(nu)); } catch (e) { Logger.log("Bewaking: " + e); } }
+  if (nu - Number(props.getProperty("GEZONDHEID_LAATST") || 0) > WEEK || (props.getProperty("BACKUP_FOUTEN") && !props.getProperty("BACKUP_GEMELD"))) {
+    try { gezondheid(); props.setProperty("GEZONDHEID_LAATST", String(nu)); props.setProperty("BACKUP_GEMELD", props.getProperty("BACKUP_FOUTEN") ? "1" : ""); } catch (e) { Logger.log("Bewaking: " + e); }
+  }
 }
 /* eigen uurtrigger voor het onderhoud — wordt automatisch aangemaakt bij het eerste gebruik van het Planbord na deze versie (doPost) */
 function onderhoudUur() { onderhoud(true); }
@@ -1207,7 +1211,7 @@ function onderhoudZeker() {
 }
 function onderhoudInstall() { CacheService.getScriptCache().remove("onderhoud-trigger"); onderhoudZeker(); CacheService.getScriptCache().remove("hartslag"); onderhoud(false); Logger.log("OK — onderhoud draait elk uur (hartslag), back-up en bewaking wekelijks."); }
 function hartslag() {
-  pbAdmin("/rest/v1/instellingen?on_conflict=key", "post", { key: "hartslag", value: { drive: new Date().toISOString(), versie: "1.48.0" } }, "resolution=merge-duplicates,return=minimal");
+  pbAdmin("/rest/v1/instellingen?on_conflict=key", "post", { key: "hartslag", value: { drive: new Date().toISOString(), versie: "1.48.2" } }, "resolution=merge-duplicates,return=minimal");
 }
 function triggersHerstellen() {   // enkel triggers die er eerder al waren (nooit iets aanzetten dat BROS zelf niet installeerde)
   const props = PropertiesService.getScriptProperties();
@@ -1253,7 +1257,7 @@ function gezondheid(altijd) {
   Logger.log(regels.map(r => r[0] + ": " + mb(r[1]) + " / " + mb(r[2])).join(" · "));
   if (!te.length && !back && !altijd) return;
   const txt = "Planbord — bewaking\n\n" + regels.map(r => (r[1] / r[2] >= ONDERHOUD.DREMPEL ? "⚠ " : "") + r[0] + ": " + mb(r[1]) + " van " + mb(r[2]) + " (" + Math.round(r[1] / r[2] * 100) + " %)").join("\n")
-    + (back ? "\n\nBack-up: " + back : "") + "\n\nWat te doen: oude foto's/plannen opruimen of het plan uitbreiden (Supabase), of oude mails met grote bijlagen verwijderen (Gmail). Deze mail komt hooguit één keer per week.";
+    + (back ? "\n\nBack-up: " + back : "") + "\n\nWat te doen: oude foto's/plannen opruimen of het plan uitbreiden (Supabase), of oude mails met grote bijlagen verwijderen (Gmail). Deze mail komt hooguit één keer per week (en één keer per nieuwe back-upfout).";
   GmailApp.sendEmail(YUKI.REPORT_TO, "Planbord: " + (te.length ? "opslag bijna vol" : "melding"), txt);
 }
 function backupFouten() {
@@ -1511,16 +1515,15 @@ function yukiSync() {
 }
 /** Heeft Gmail bevestigd dat de mail echt van Yuki komt? Enkel de bovenste resultaten (door Gmail zelf toegevoegd), met een verankerd domein:
  *  - DKIM of SPF geslaagd voor (een subdomein van) yukiworks.be/.nl, of
- *  - Gmails ARC-samenvatting (doorgestuurd via info@bros.be e.d.) met dkim/spf geslaagd voor yukiworks, of
- *  - DMARC geslaagd voor bros.be (Yuki verstuurt "namens" accounting@bros.be — enkel wie bros.be toelaat, haalt dat) samen met een yukiworks-spoor. */
+ *  - DMARC geslaagd voor bros.be (Yuki verstuurt "namens" accounting@bros.be — enkel wie bros.be toelaat, haalt dat) samen met een yukiworks-spoor
+ *    (zo komt ook een via info@bros.be doorgestuurde factuur door). */
 const YUKI_DOM = "(?:[\\w-]+\\.)*yukiworks\\.(?:be|nl)(?![\\w.-])";
 function yukiEcht(m) {
   let ar = "", arc = ""; try { ar = String(m.getHeader("Authentication-Results") || ""); arc = String(m.getHeader("ARC-Authentication-Results") || ""); } catch (e) { }
   const yuki = (re) => new RegExp(re.replace("YUKI", YUKI_DOM), "i");
   const direct = yuki("dkim=pass[^;]*header\\.[di]=@?YUKI").test(ar) || yuki("spf=pass[^;]*smtp\\.mailfrom=(?:[^;\\s@]*@)?YUKI").test(ar) || yuki("dmarc=pass[^;]*header\\.from=YUKI").test(ar);
-  const viaArc = /arc=pass/i.test(ar) && (yuki("dkim=pass dkdomain=YUKI").test(ar) || yuki("spf=pass spfdomain=YUKI").test(ar));
   const brosDmarc = /dmarc=pass[^;]*header\.from=bros\.be(?![\w.-])/i.test(ar) && (yuki("(?:dkdomain|spfdomain|header\\.[di]|mailfrom)=@?(?:[^;\\s@]*@)?YUKI").test(ar + " " + arc));
-  return direct || viaArc || brosDmarc;
+  return direct || brosDmarc;   // (viaArc alleen volstaat niet: de samenvatting kan door een vreemde ARC-server beweerd worden)
 }
 /** Haalt nummer, datum, klant en bedragen uit de mail (en de pdf-bijlage als die leesbaar is). */
 function yukiParse(m) {

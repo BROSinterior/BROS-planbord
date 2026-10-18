@@ -3,7 +3,7 @@
    Statische webapp op Supabase (login, live-synchronisatie, rechten)
    ===================================================================== */
 if (window.top !== window.self) { try { window.top.location.replace(window.location.href); } catch (e) { document.documentElement.innerHTML = ""; } }   // niet in een vreemd frame (clickjacking)
-const APP_VERSION = "1.48.1";
+const APP_VERSION = "1.48.2";
 const PROJ_STATUS = { offerte: "In offerte", lopend: "Lopend", on_hold: "On hold", afgerond: "Afgerond", verloren: "Verloren" };
 const KLANTTYPE = { particulier: "Particulier", zakelijk: "Zakelijk" };
 const KLANTCODE = { particulier: "PAR", zakelijk: "ZAK" };
@@ -1788,7 +1788,7 @@ function msRowFromPost(pid, x, lot, i) {
   const sog = x.prijstype !== "EP";
   return { project_id: pid, post_id: x.id || null, lot, code: `${lot}.${i}`, groep: x.groep || "", omschrijving: x.omschrijving, eenheid: x.eenheid || (sog ? "sog" : "stk"), prijstype: x.prijstype || "EP", hoeveelheid: sog ? 1 : 0, eenheidsprijs: Number(x.richtprijs) || 0, marge: null, btw: x.btw ?? 0.06, status: "offerte", volgorde: x.volgorde ?? 0, created_by: S.me?.id || null };
 }
-async function msInsert(rows) {
+async function msInsert(rows, strikt) {
   if (!rows.length) return [];
   const v12 = schemaV() >= 12;
   const clean = v12 ? rows.map(({ eenheidsprijs, marge, ...r }) => r) : rows;
@@ -1798,7 +1798,7 @@ async function msInsert(rows) {
   if (v12 && data) {
     // vrije posten en geïmporteerde regels: prijs expliciet bewaren (bibliotheekposten krijgen hun richtprijs via de trigger)
     const prijzen = !isBeheer() ? [] : data.map((r, i) => ({ post_id: r.id, eenheidsprijs: Number(rows[i].eenheidsprijs) || 0, marge: rows[i].marge == null || rows[i].marge === "" ? null : Number(rows[i].marge) })).filter((p, i) => !rows[i].post_id || Number(rows[i].eenheidsprijs) > 0 && isBeheer());
-    for (let i = 0; i < prijzen.length; i += 200) { const chunk = prijzen.slice(i, i + 200); const { error: e2 } = await (isBeheer() ? sb.from("meetstaat_prijzen").upsert(chunk) : sb.from("meetstaat_prijzen").insert(chunk)); if (e2) toast("Prijzen niet bewaard: " + e2.message); }
+    for (let i = 0; i < prijzen.length; i += 200) { const chunk = prijzen.slice(i, i + 200); const { error: e2 } = await (isBeheer() ? sb.from("meetstaat_prijzen").upsert(chunk) : sb.from("meetstaat_prijzen").insert(chunk)); if (e2) { toast("Prijzen niet bewaard: " + e2.message); if (strikt) { e2.ids = data.map(r => r.id); throw e2; } } }
     await msRefetch(data.map(r => r.id));
   }
   render(); return data || [];
@@ -2235,6 +2235,11 @@ async function msImportFile(pid, file) {
       const rows = window.MeetstaatImport.toRows(parsed, pid, { status: d.status, budget21: !!d.budget21, opmerking: `Import uit ${file.name} · ${fmtLong(todayIso)}` });
       const missing = [...new Set(rows.map(r => r.lot))].filter(l => !S.loten[l]);
       if (missing.length) { toast(`Lot ${missing.join(", ")} bestaat niet in het Planbord — voeg dat lot eerst toe onder Instellingen › Loten.`); return false; }
+      if (existing && d.mode !== "replace") {   // 1.48.2: dezelfde meetstaat nog eens toevoegen verdubbelt alles — eerst vragen
+        const sleutel = (r) => r.lot + "|" + String(r.omschrijving || "").trim().toLowerCase().slice(0, 80) + "|" + (Number(r.hoeveelheid) || 0);
+        const al = new Set(msRows(pid).filter(r => r.status !== "vervallen").map(sleutel)); const dubbel = rows.filter(r => al.has(sleutel(r))).length;
+        if (dubbel >= 5 && dubbel >= rows.length * 0.3 && !confirm(`${dubbel} van de ${rows.length} posten in dit bestand staan al in de meetstaat (zelfde lot, omschrijving en hoeveelheid).\n\nToevoegen maakt ze dubbel. Wil je de meetstaat vervangen, kies dan "Bestaande posten vervangen".\n\nOK = toch toevoegen · Annuleren = terug`)) return false;
+      }
       loader.start("ms.import2", "Posten bewaren…", 4000);
       let nieuwIds = [], oudWeg = 0;
       try {
@@ -2243,12 +2248,13 @@ async function msImportFile(pid, file) {
         const gf = msGefactureerd(oude); if (gf) { loader.fail(); toast(`${gf} bestaande post${gf === 1 ? "" : "en"} sta${gf === 1 ? "at" : "an"} al in een vordering — vervangen zou die facturen wijzigen. Kies "Toevoegen aan de bestaande posten".`, 10000); return false; }
         S.bulk = true; nieuwIds = [];
         // sinds script 012 staan kostprijs en marge in meetstaat_prijzen: msInsert splitst dat (klantprijs = prijs met marge 0 %)
-        for (let i = 0; i < rows.length; i += 200) { const ins = await msInsert(rows.slice(i, i + 200)); nieuwIds.push(...ins.map(r => r.id)); }
+        for (let i = 0; i < rows.length; i += 200) { const ins = await msInsert(rows.slice(i, i + 200), true); nieuwIds.push(...ins.map(r => r.id)); }
         for (let i = 0; i < oude.length; i += 200) { const { error } = await sb.from("meetstaat_posten").delete().in("id", oude.slice(i, i + 200)); if (error) throw error; oudWeg += Math.min(200, oude.length - i); }
         bulkKlaar(); await refetch("meetstaat_posten"); loader.done("ms.import2");
         toast(`${rows.length} posten geïmporteerd uit ${file.name}`);
       } catch (e) {
         // half mislukt: zolang er nog geen oude post weg is, de al bewaarde nieuwe posten terug weghalen (geen verdubbeling); anders de nieuwe houden (niets kwijt)
+        if (e && e.ids) nieuwIds.push(...e.ids.filter(id => !nieuwIds.includes(id)));   // posten van de mislukte reeks (prijzen niet bewaard) ook opruimen
         if (!oudWeg) for (let i = 0; i < nieuwIds.length; i += 200) { try { await sb.from("meetstaat_posten").delete().in("id", nieuwIds.slice(i, i + 200)); } catch (x) { } }
         bulkKlaar(); loader.fail(); toast(oudWeg ? "Import onderbroken: de nieuwe posten staan erin, maar niet alle oude posten konden weg — kijk de meetstaat na (" + e.message + ")" : "Import mislukt (niets gewijzigd): " + e.message, 9000); await refetch("meetstaat_posten"); return false; }
     },
@@ -3646,7 +3652,7 @@ async function boot() {
 async function start() {
   loader.start("app.load", "Planbord laden…", 2500);
   try { await loadAll(); if (S.me && S.me.role === "klant") { location.replace("klant/"); return; } if (S.me && S.me.role === "aannemer") { location.replace("aannemer/"); return; } S.ready = true; S.loadError = null; S.laadPoging = 0; render(); loader.done("app.load");
-    if (!S.gestart) { S.gestart = true; subscribe(); if (typeof ovAuto === "function") { setTimeout(ovAuto, 5000); setInterval(ovAuto, 120000); } setInterval(checkVersion, 5 * 60 * 1000); setTimeout(checkVersion, 20000); } }   // 1.48: na opnieuw inloggen niet dubbel abonneren
+    if (!S.gestart) { S.gestart = true; subscribe(); if (typeof ovAuto === "function") { setTimeout(ovAuto, 5000); setInterval(ovAuto, 120000); } setInterval(checkVersion, 5 * 60 * 1000); setTimeout(checkVersion, 20000); setInterval(() => { if (document.visibilityState === "visible") refetch("instellingen"); }, 30 * 60000); } }   // 1.48.2: instellingen (o.a. de hartslag van het Drive-script) elk half uur vers   // 1.48: na opnieuw inloggen niet dubbel abonneren
   catch (e) {
     loader.fail(); S.loadError = e.message || String(e); render();
     // 1.48: even geen verbinding (Supabase/netwerk): zelf opnieuw proberen na 5 s, 15 s, 60 s, daarna elke 2 min.

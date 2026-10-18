@@ -16,7 +16,7 @@ Statische webapp (geen build-stap) op een Supabase-database.
 | `version.json` | versienummer (enkel de laatste versie); de app meldt een nieuwe versie aan wie ze open heeft |
 | `CHANGELOG.md` | versiegeschiedenis (vanaf 1.48 niet meer in version.json) |
 | `vendor/supabase-2.45.4.js` (+ `591.supabase.js`) | de Supabase-bibliotheek, zelf gehost (geen CDN nodig) |
-| `sql/001_init.sql` … `sql/045_*.sql` | databasescripts, in volgorde uit te voeren (`versie_schema` in instellingen bewaakt de volgorde vanaf 022) |
+| `sql/001_init.sql` … `sql/046_*.sql` | databasescripts, in volgorde uit te voeren (`versie_schema` in instellingen bewaakt de volgorde vanaf 022) |
 | `drive/Code.gs` | Google Apps Script dat projectmappen aanmaakt/koppelt op Drive en de meetstaat-export wegschrijft (installatie: zie bovenaan dat bestand) |
 | `agenda.js` | gedeeld (Planbord en portalen): agendabestand (.ics) en Google Agenda-link voor afspraken (script 041) |
 | `afspraken.js` | Planbord: afspraak ter plaatse in het taakformulier, synchronisatie met de Google Agenda en de mails (script 041) |
@@ -164,6 +164,13 @@ Activeren (eenmalig):
 4. Edge Function `assistent` opnieuw plakken (weigert nu aannemerslogins) en pushen.
 
 Gebruik: Dossier › Contacten → bij een aannemer de knop **Aannemersportaal** (beheer) → hij krijgt een mail met een persoonlijke link. Instellingen → Klantenportaal toont wie toegang heeft (klant/aannemer). Een aannemer die op het Planbord of het klantenportaal inlogt, wordt doorgestuurd.
+
+## Opnieuw uitnodigen op een ander e-mailadres (script 046)
+
+- Had een contact al een login en nodigde je hem opnieuw uit op een ander adres, dan kreeg hij een nieuwe login maar bleef de contactfiche aan de oude login hangen → in het portaal "Nog geen project gekoppeld". Sinds script 046 koppelt een uitnodiging de contactfiche altijd aan de login van het adres waarnaar je uitnodigt; de oude login wordt inactief als hij aan geen andere fiche meer hangt (een teamlid nooit).
+- Heeft de fiche al een actieve login met een ándere rol (iemand die aannemer én bouwheer is), dan stopt de uitnodiging met een melding: maak voor die rol een aparte contactfiche met een eigen e-mailadres.
+- Controle 2 van het script toont klant- en aannemerslogins zonder contactfiche (die zien geen project).
+- **1.48.2 (zelfde ronde):** import waarschuwt als dezelfde posten al in de meetstaat staan (geen dubbele meetstaat meer bij "Toevoegen"); een mislukte back-up wordt meteen gemeld en dagelijks opnieuw geprobeerd; de hartslagmelding ververst elk half uur; werfmodus verzendt nooit twee keer tegelijk.
 
 ## Onderhoudsvrij, robuuster en Weekritme (script 045 + nieuw drive/Code.gs, v1.48)
 

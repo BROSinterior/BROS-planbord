@@ -4,7 +4,7 @@
    lokale wachtrij (IndexedDB) en worden verzonden zodra er weer verbinding is.
    ===================================================================== */
 if (window.top !== window.self) { try { window.top.location.replace(window.location.href); } catch (e) { document.documentElement.innerHTML = ""; } }   // niet in een vreemd frame (clickjacking)
-const WERF_VERSION = "1.48.0";
+const WERF_VERSION = "1.48.2";
 const cfg = window.PLANBORD_CONFIG || {};
 if (!window.supabase) { document.getElementById("app").innerHTML = '<main><div class="empty"><b>De werfmodus is nog niet volledig geladen.</b><br>Open ze één keer met bereik; daarna werkt ze ook offline.<br><br><button class="btn" onclick="location.reload()">Opnieuw proberen</button></div></main>'; throw new Error("supabase-js niet geladen"); }
 const sb = window.supabase.createClient(cfg.supabaseUrl, cfg.supabaseAnonKey);
@@ -55,7 +55,14 @@ async function opruimenNaUitloggen() {
   try { for (const q of (S.queue || [])) await idb.del(q.id); S.queue = []; } catch (e) { }
   try { if (window.caches) await caches.delete("bros-werf-fotos"); } catch (e) { }
 }
-async function loadQueue() { try { S.queue = await idb.all(); } catch (e) { S.queue = []; } S.queue.forEach(q => (q.fotos || []).forEach(f => { f._url = null; })); }   // 1.48: oude blob-links zijn na een herstart ongeldig
+async function loadQueue() {
+  const oud = new Map((S.queue || []).map(q => [q.id, q]));
+  try { S.queue = await idb.all(); } catch (e) { S.queue = []; }
+  // 1.48.2: voorbeeldlinks van items die er nog zijn behouden (ze staan misschien op het scherm); enkel die van verdwenen items vrijgeven
+  S.queue.forEach(q => { const o = oud.get(q.id); const zelfde = o && (o.fotos || []).length === (q.fotos || []).length;
+    (q.fotos || []).forEach((f, i) => { f._url = zelfde && o.fotos[i]._url ? o.fotos[i]._url : null; if (zelfde) o.fotos[i]._url = null; }); });
+  oud.forEach(revokeItem);
+}   // 1.48: oude blob-links zijn na een herstart ongeldig
 async function enqueue(item) {
   item.t = Date.now(); item.pid = item.pid || S.project;
   try { item.id = await idb.put(item); } catch (e) { toast("Niet bewaard op dit toestel: " + (e.message || e) + ". Probeer opnieuw met bereik.", 6000); throw e; }
@@ -162,9 +169,19 @@ async function fotosToevoegen(vid, veld, fotos) {
   const cur = (data && data[veld]) || []; const merged = [...cur, ...fotos.filter(f => !cur.some(c => c.path === f.path))];
   const { error } = await sb.from("vaststellingen").update({ [veld]: merged }).eq("id", vid); if (error) throw error;
 }
+// 1.48: nooit twee tabbladen tegelijk dezelfde wachtrij laten verzenden (anders dubbele foto's) — één slot over alle tabbladen;
+// binnen het slot eerst de wachtrij opnieuw lezen (een ander tabblad kan intussen verzonden hebben). Een oproep tijdens het verzenden
+// wacht niet maar vraagt een extra ronde (1.48.2: geen tweede verzending naast de eerste).
 async function sync() {
-  // 1.48: nooit twee tabbladen tegelijk dezelfde wachtrij laten verzenden (anders dubbele foto's)
-  if (navigator.locks && !S.inLock) return navigator.locks.request("bros-werf-sync", { ifAvailable: true }, async (l) => { if (!l) return; S.inLock = true; try { await loadQueue(); await sync(); } finally { S.inLock = false; } });   // binnen het slot de wachtrij opnieuw lezen (een ander tabblad kan intussen verzonden hebben)
+  if (!navigator.locks) return syncIn();
+  if (S.inLock) { S.nogEens = true; return; }
+  return navigator.locks.request("bros-werf-sync", { ifAvailable: true }, async (l) => {
+    if (!l) return; S.inLock = true;
+    try { let n = 0; do { S.nogEens = false; await loadQueue(); await syncIn(); } while (S.nogEens && S.online && ++n < 5); }
+    finally { S.inLock = false; }
+  });
+}
+async function syncIn() {
   if (S.syncing || !S.online || !S.queue.length) return;
   S.syncing = true; paint();
   let netfout = null, fouten = 0;
