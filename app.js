@@ -3,7 +3,7 @@
    Statische webapp op Supabase (login, live-synchronisatie, rechten)
    ===================================================================== */
 if (window.top !== window.self) { try { window.top.location.replace(window.location.href); } catch (e) { document.documentElement.innerHTML = ""; } }   // niet in een vreemd frame (clickjacking)
-const APP_VERSION = "1.50.1";
+const APP_VERSION = "1.51.0";
 const PROJ_STATUS = { offerte: "In offerte", lopend: "Lopend", on_hold: "On hold", afgerond: "Afgerond", verloren: "Verloren" };
 const KLANTTYPE = { particulier: "Particulier", zakelijk: "Zakelijk" };
 const KLANTCODE = { particulier: "PAR", zakelijk: "ZAK" };
@@ -2415,6 +2415,7 @@ const docIcon = (m, n) => /spreadsheet|excel/.test(m) ? "xls" : /word|document/.
 
 /* ---------- render root ---------- */
 const TABS = [["overzicht", "Overzicht"], ["projecten", "Projecten"], ["aankoop", "Facturen", "beheer"], ["taken", "Taken"], ["planning", "Planning"], ["uren", "Uren"], ["contacten", "Contacten"], ["notities", "Notities"], ["voorstellen", "Voorstellen"], ["team", "Team"], ["rapporten", "Rapporten"], ["instellingen", "Instellingen", "beheer"]];
+const ACCT_TABS = ["team", "instellingen"];   // 1.51: in het accountmenu (wacht.js) i.p.v. de bovenbalk
 const factTeDoen = () => (typeof afbTeDoen === "function" ? afbTeDoen().length : 0) + (typeof debTeDoen === "function" ? debTeDoen().length : 0);   // 1.50: badge op Facturen
 let renderPending = false;
 function render() {
@@ -2431,13 +2432,14 @@ function render() {
   if (!S.me) { app.innerHTML = `<div class="login"><div class="card"><h1>Nog geen profiel</h1><p>Je login werkt, maar er is nog geen medewerkersprofiel gekoppeld. Vraag de beheerder om je uit te nodigen, of herlaad de pagina.</p><button class="btn" data-act="logout">Uitloggen</button> <button class="btn primary" data-act="reload">Herladen</button></div></div>`; return; }
   const views = { overzicht: vOverzicht, projecten: vProjecten, taken: vTaken, planning: vPlanning, uren: vUren, contacten: vContacten, notities: vNotitiesAlle, voorstellen: vVoorstellen, aankoop: (typeof vFactuurTab === "function" ? vFactuurTab : typeof vAankoop === "function" ? vAankoop : vOverzicht), team: vTeam, rapporten: vRapporten, instellingen: vInstellingen };   // 1.50: aankoop = tabblad Facturen (klanten + aannemers)
   // 1.48.3: horizontale/verticale scrollpositie van tabellen (.tw, bv. de vorderingsstaat) bewaren bij het hertekenen — anders springt de tabel terug naar links
+  const acctI = typeof acctFocusIndex === "function" ? acctFocusIndex() : -1;   // 1.51: focus in het accountmenu bewaren
   const scrollSleutel = [S.view, S.project, S.ptab].join("|"); const scrolls = app.dataset.scroll === scrollSleutel ? [...app.querySelectorAll(".tw")].map(e => [e.scrollLeft, e.scrollTop]) : [];
   app.innerHTML = `
   <header class="top">
     <div class="top-in">
       <div class="brand"><span class="mark">BROS</span><span class="name">Planbord</span></div>
-      <nav class="tabs" aria-label="Hoofdnavigatie">${TABS.filter(([, , r]) => !r || isBeheer()).filter(([k]) => k !== "voorstellen" || schemaV() >= 23).filter(([k]) => k !== "aankoop" || (schemaV() >= 47 && typeof vAankoop === "function")).map(([k, l]) => `<button data-nav="${k}" ${S.view === k ? 'aria-current="page"' : ""}>${l}${k === "voorstellen" && voorstellenOpen().length ? ` <span class="cnt" style="background:var(--crit);color:#fff">${voorstellenOpen().length}</span>` : ""}${k === "aankoop" && factTeDoen() ? ` <span class="cnt" style="background:var(--crit);color:#fff">${factTeDoen()}</span>` : ""}</button>`).join("")}</nav>
-      <div class="who"><button class="zk-knop" type="button" data-act="zoek" title="Snel zoeken — ⌘K of /"><span>⌕</span><span class="zk-lbl">Zoeken</span><kbd>${/Mac|iPhone|iPad/.test(navigator.platform || navigator.userAgent) ? "⌘" : "Ctrl "}K</kbd></button>${dagRing()}<span class="who-cell">${avatar(S.me.id)}<span style="font-weight:600">${esc(S.me.name)}</span></span>${typeof tmKnop === "function" ? tmKnop() : ""}<button class="btn ghost sm" data-act="change-password" title="Wachtwoord wijzigen">Wachtwoord</button><button class="btn ghost sm" data-act="logout" title="Uitloggen">Uitloggen</button></div>
+      <nav class="tabs" aria-label="Hoofdnavigatie">${TABS.filter(([, , r]) => !r || isBeheer()).filter(([k]) => typeof acctMenu !== "function" || !ACCT_TABS.includes(k)).filter(([k]) => k !== "voorstellen" || schemaV() >= 23).filter(([k]) => k !== "aankoop" || (schemaV() >= 47 && typeof vAankoop === "function")).map(([k, l]) => `<button data-nav="${k}" ${S.view === k ? 'aria-current="page"' : ""}>${l}${k === "voorstellen" && voorstellenOpen().length ? ` <span class="cnt" style="background:var(--crit);color:#fff">${voorstellenOpen().length}</span>` : ""}${k === "aankoop" && factTeDoen() ? ` <span class="cnt" style="background:var(--crit);color:#fff">${factTeDoen()}</span>` : ""}</button>`).join("")}</nav>
+      <div class="who"><button class="zk-knop" type="button" data-act="zoek" title="Snel zoeken — ⌘K of /"><span>⌕</span><span class="zk-lbl">Zoeken</span><kbd>${/Mac|iPhone|iPad/.test(navigator.platform || navigator.userAgent) ? "⌘" : "Ctrl "}K</kbd></button>${dagRing()}${typeof acctMenu === "function" ? acctMenu() : `<span class="who-cell">${avatar(S.me.id)}<span style="font-weight:600">${esc(S.me.name)}</span></span>${typeof tmKnop === "function" ? tmKnop() : ""}<button class="btn ghost sm" data-act="change-password" title="Wachtwoord wijzigen">Wachtwoord</button><button class="btn ghost sm" data-act="logout" title="Uitloggen">Uitloggen</button>`}</div>
     </div>
     <div class="update" id="updateBar"><span>Er is een nieuwe versie van het Planbord.</span><button class="btn sm primary" data-act="reload">Nu herladen</button><button class="btn sm ghost" data-act="update-later">Later</button></div>
   </header>
@@ -2446,6 +2448,7 @@ function render() {
   app.dataset.scroll = scrollSleutel;
   if (scrolls.length) app.querySelectorAll(".tw").forEach((e, i) => { const k = scrolls[i]; if (k && (k[0] || k[1])) { e.scrollLeft = k[0]; e.scrollTop = k[1]; } });
   if (updateAvailable) $("#updateBar").classList.add("show");
+  if (acctI >= 0 && typeof acctFocus === "function") acctFocus(acctI);
 }
 let loginMode = "password";
 let loginNotice = URL_AUTH.error ? (/expired|invalid|otp/i.test(URL_AUTH.error) ? "Deze link is vervallen of al gebruikt. Log in met je wachtwoord, of vraag hieronder een nieuwe link aan." : "Inloggen via de link lukte niet: " + URL_AUTH.error.replace(/\+/g, " ")) : "";
@@ -2525,20 +2528,22 @@ function vOverzicht() {
   const ts = Object.values(S.taken), open = ts.filter(t => t.status !== "done"), late = open.filter(isLate);
   const wk0 = mondayOf(todayIso), wk1 = addDays(wk0, 6);
   const weekHours = hoursOf(h => h.datum >= wk0 && h.datum <= wk1);
-  const mine = open.filter(t => t.assignee === S.me.id).sort((a, b) => (a.eind || "9").localeCompare(b.eind || "9")).slice(0, 10);
+  const wj = typeof vWachtOpJou === "function";   // 1.51: wat al in "Wacht op jou" staat (te laat, vandaag en morgen) niet nog eens tonen
+  const mine = open.filter(t => t.assignee === S.me.id && !(wj && wjInLijst(t))).sort((a, b) => (a.eind || "9").localeCompare(b.eind || "9")).slice(0, 10);
   return `
   <div class="page-head"><div><div class="eyebrow">Week ${weekNr(todayIso)} · ${fmtLong(todayIso)}</div><h1>Overzicht</h1></div>
     <div class="actions"><button class="btn" data-act="new-task">+ Taak</button><button class="btn" data-act="log-hours">+ Uren</button>${isBeheer() ? `<button class="btn primary" data-act="new-project">+ Project</button>` : ""}</div></div>
+  ${typeof vWachtOpJou === "function" ? vWachtOpJou() : ""}
   <div class="grid kpi" style="margin-bottom:16px">
-    <div class="panel kpi-tile"><div class="eyebrow">Lopende projecten</div><div class="v">${lopend.length}<small>/ ${ps.length}</small></div><div class="d">${ps.filter(p => p.status === "offerte").length} in offerte</div></div>
-    <div class="panel kpi-tile"><div class="eyebrow">Open taken</div><div class="v">${open.length}</div><div class="d">${open.filter(t => t.status === "busy").length} bezig</div></div>
-    <div class="panel kpi-tile ${late.length ? "crit" : ""}"><div class="eyebrow">Te laat</div><div class="v">${late.length}</div><div class="d">einddatum verstreken</div></div>
-    <div class="panel kpi-tile"><div class="eyebrow">Uren deze week</div><div class="v">${nl(weekHours)}<small>u</small></div><div class="d">team, wk ${weekNr(todayIso)}</div></div>
+    <div class="panel kpi-tile kpi-klik" data-nav="projecten" role="button" tabindex="0" title="Naar Projecten"><div class="eyebrow">Lopende projecten</div><div class="v">${lopend.length}<small>/ ${ps.length}</small></div><div class="d">${ps.filter(p => p.status === "offerte").length} in offerte</div></div>
+    <div class="panel kpi-tile kpi-klik" data-nav="taken" role="button" tabindex="0" title="Naar Taken"><div class="eyebrow">Open taken</div><div class="v">${open.length}</div><div class="d">${open.filter(t => t.status === "busy").length} bezig</div></div>
+    <div class="panel kpi-tile ${late.length ? "crit" : ""}${typeof vWachtOpJou === "function" ? " kpi-klik" : ""}" ${typeof vWachtOpJou === "function" ? `data-wj-act="naar-laat" role="button" tabindex="0" title="Naar de te late taken"` : ""}><div class="eyebrow">Te laat</div><div class="v">${late.length}</div><div class="d">einddatum verstreken</div></div>
+    <div class="panel kpi-tile kpi-klik" data-nav="uren" role="button" tabindex="0" title="Naar Uren"><div class="eyebrow">Uren deze week</div><div class="v">${nl(weekHours)}<small>u</small></div><div class="d">team, wk ${weekNr(todayIso)}</div></div>
   </div>
   ${hartslagMelding()}${vWeekkaart()}
   <div class="grid two">
-    <div class="panel"><div class="panel-head"><h3>Mijn taken</h3><button class="btn ghost sm" data-nav="taken">Alle taken →</button></div>
-      ${mine.length ? `<div class="tw"><table class="t"><thead><tr><th></th><th>Taak</th><th>Project</th><th>Deadline</th><th class="r">Uren</th><th>Status</th></tr></thead><tbody>${mine.map(t => taskRow(t, true)).join("")}</tbody></table></div>` : `<div class="empty"><b>Niets open voor jou</b>Maak een taak aan of laat er een aan jou toewijzen.</div>`}
+    <div class="panel"><div class="panel-head"><h3>${wj ? "Mijn volgende taken" : "Mijn taken"}</h3><button class="btn ghost sm" data-nav="taken">Alle taken →</button></div>
+      ${mine.length ? `<div class="tw"><table class="t"><thead><tr><th></th><th>Taak</th><th>Project</th><th>Deadline</th><th class="r">Uren</th><th>Status</th></tr></thead><tbody>${mine.map(t => taskRow(t, true)).join("")}</tbody></table></div>` : `<div class="empty"><b>${wj ? "Niets meer gepland voor jou" : "Niets open voor jou"}</b>${wj ? "Wat te laat is of vandaag en morgen valt, staat hierboven bij Wacht op jou." : "Maak een taak aan of laat er een aan jou toewijzen."}</div>`}
     </div>
     <div class="panel"><div class="panel-head"><h3>Uren per project</h3><span class="muted" style="font-size:12px">gepresteerd / gepland</span></div>
       <div class="panel-body" style="display:grid;gap:12px">
@@ -3550,6 +3555,8 @@ document.addEventListener("click", (e) => {
   if (e.target.closest("a[href][target=_blank]")) return; // externe links (bv. Drive-map) gewoon laten openen
   const el = e.target.closest("[data-vs],[data-nav],[data-act],[data-open],[data-back],[data-ptab],[data-edit-task],[data-edit-hours],[data-gnav],[data-wnav],[data-gtoggle],[data-close],[data-selfase],[data-sellot],[data-sort],[data-vtoggle],[data-contact]");
   if (el && el.matches('a[href="#"]')) e.preventDefault();   // 1.48: niet naar boven springen
+  if (S.acctOpen && !(el && el.dataset.act === "acct") && typeof acctSluit === "function") acctSluit();   // 1.51: accountmenu dicht bij elke andere klik
+  if (el && el.dataset.act === "acct") { S.acctOpen = !S.acctOpen; render(); if (S.acctOpen && e.detail === 0 && typeof acctFocus === "function") acctFocus(); return; }   // met het toetsenbord geopend: focus op het eerste menu-item
   if (!el) { if (e.target === $("#modalBg")) { if (MODAL.downOnBg) closeModal(); } else if (e.target.dataset && e.target.dataset.foto) fotoLightbox(e.target.dataset.foto); return; }
   if (e.target.matches(".task-check") || e.target.matches("input,select")) { if (!e.target.closest("[data-act]")) return; }
   const d = el.dataset;
@@ -3710,7 +3717,7 @@ document.addEventListener("keydown", (e) => { if (e.key === "Escape" && !/^(SELE
 
 /* ---------- versiecontrole: melden als er een nieuwe versie online staat ---------- */
 let updateAvailable = false;
-const APP_FILES = ["index.html", "app.js", "config.js", "vendor/supabase-2.45.4.js", "postcodes.js", "meetstaat-export.js", "meetstaat-import.js", "tekenen.js", "symbolen.js", "vendor/dxf-parser.js", "version.json", "klant/index.html", "klant/portaal.js", "klant/i18n-en.js", "kp-beheer.js", "pv-beheer.js", "portaal-voorbeeld.js", "agenda.js", "afspraken.js", "logo-mark.svg", "werf/index.html", "werf/werf.js", "werf/sw.js", "aannemer/index.html", "aannemer/aannemer.js", "aannemer/handleiding.json", "af-beheer.js", "deb-beheer.js"];
+const APP_FILES = ["index.html", "app.js", "config.js", "vendor/supabase-2.45.4.js", "postcodes.js", "meetstaat-export.js", "meetstaat-import.js", "tekenen.js", "symbolen.js", "vendor/dxf-parser.js", "version.json", "klant/index.html", "klant/portaal.js", "klant/i18n-en.js", "kp-beheer.js", "pv-beheer.js", "portaal-voorbeeld.js", "agenda.js", "afspraken.js", "logo-mark.svg", "werf/index.html", "werf/werf.js", "werf/sw.js", "aannemer/index.html", "aannemer/aannemer.js", "aannemer/handleiding.json", "af-beheer.js", "deb-beheer.js", "wacht.js"];
 /* de browser-cache omzeilen: alle bestanden van de app vers ophalen (cache: "reload" ververst de HTTP-cache) en dan herladen */
 async function hardReload() {
   try { sessionStorage.setItem("pb-state", JSON.stringify({ view: S.view, project: S.project, ptab: S.ptab })); } catch (e) { }

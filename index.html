@@ -619,6 +619,59 @@
   .tk-keys td:first-child { font-family: var(--font-mono); white-space: nowrap; color: var(--ink-2); }
   .tk-noimg { aspect-ratio: 4 / 3; display: grid; place-items: center; color: var(--muted); background: var(--surface-2); font-size: 13px; }
   @media (max-width: 760px) { .tk-main { grid-template-columns: 46px minmax(0, 1fr); } .tk-side { display: none; } .tk-naam { width: 140px; } .tk-badges { display: none; } }
+  /* ---- 1.51: accountmenu en "Wacht op jou" (wacht.js) ---- */
+  .acct { position: relative; }
+  .acct-knop { display: inline-flex; align-items: center; gap: 8px; padding: 3px 10px 3px 3px; border: 1px solid transparent; border-radius: 999px; background: none; font: inherit; color: var(--ink); cursor: pointer; }
+  .acct-knop:hover, .acct-knop[aria-expanded="true"] { background: var(--surface-2); }
+  .acct-knop.on { border-color: var(--line-2); }
+  .acct-naam { font-weight: 600; }
+  .acct-pijl { color: var(--muted); font-size: 11px; }
+  .acct-menu { position: absolute; right: 0; top: calc(100% + 8px); min-width: 240px; padding: 6px; background: var(--surface); border: 1px solid var(--line); border-radius: 14px; box-shadow: var(--shadow); z-index: 40; }
+  .acct-kop { padding: 8px 10px 10px; margin-bottom: 4px; border-bottom: 1px solid var(--line); display: grid; gap: 2px; }
+  .acct-kop small { color: var(--muted); font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .acct-menu button { display: flex; align-items: center; gap: 10px; width: 100%; padding: 8px 10px; border: 0; border-radius: 9px; background: none; font: inherit; color: var(--ink); text-align: left; cursor: pointer; }
+  .acct-menu button:hover, .acct-menu button:focus-visible { background: var(--surface-2); }
+  .acct-menu button[aria-current] { font-weight: 600; background: var(--surface-2); }
+  .acct-ic { width: 20px; text-align: center; }
+  .acct-menu hr { border: 0; border-top: 1px solid var(--line); margin: 4px 0; }
+  .kpi-klik { cursor: pointer; transition: transform .12s, box-shadow .12s; }
+  .kpi-klik:hover { transform: translateY(-1px); box-shadow: var(--shadow); }
+  .wj { margin-bottom: 16px; }
+  .wj-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 440px), 1fr)); gap: 0 28px; padding: 4px 20px 16px; }
+  .wj-g { padding-top: 12px; scroll-margin-top: 90px; }
+  .wj-gk { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin-bottom: 4px; }
+  .wj-gk h4 { margin: 0; font-size: 12px; font-weight: 600; letter-spacing: .04em; text-transform: uppercase; color: var(--muted); }
+  .wj-it { display: grid; grid-template-columns: 22px minmax(0, 1fr) auto; align-items: center; gap: 10px; padding: 7px 8px; margin: 0 -8px; border-radius: 10px; }
+  .wj-it:hover { background: var(--surface-2); }
+  .wj-it .task-check { margin: 0; }
+  .wj-ic { width: 22px; height: 22px; border-radius: 7px; display: grid; place-items: center; font-size: 12px; font-weight: 700; background: var(--accent-soft); color: var(--accent); }
+  .wj-warn .wj-ic { background: var(--warn-soft); color: var(--warn); }
+  .wj-crit .wj-ic { background: var(--crit-soft); color: var(--crit); }
+  .wj-ok .wj-ic { background: var(--ok-soft); color: var(--ok); }
+  .wj-tx { min-width: 0; }
+  .wj-t { display: block; max-width: 100%; padding: 0; border: 0; background: none; font: inherit; font-weight: 500; color: var(--ink); text-align: left; cursor: pointer; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .wj-t:hover { text-decoration: underline; }
+  .wj-tx small { display: block; color: var(--muted); font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .wj-acts { display: flex; gap: 4px; flex-wrap: nowrap; }
+  .wj-acts .btn { white-space: nowrap; }
+  .wj-meer { margin-top: 4px; padding: 4px 0; border: 0; background: none; font: inherit; font-size: 13px; color: var(--accent); cursor: pointer; }
+  .wj-leeg { padding: 8px 0; color: var(--muted); font-size: 13px; }
+  .wj-seg { display: inline-flex; padding: 2px; border-radius: 999px; background: var(--surface-2); }
+  .wj-seg button { padding: 3px 10px; border: 0; border-radius: 999px; background: none; font: inherit; font-size: 12px; color: var(--muted); cursor: pointer; }
+  .wj-seg button.on { background: var(--surface); color: var(--ink); font-weight: 600; box-shadow: 0 1px 2px rgba(0,0,0,.08); }
+  .wj-bulk { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin-top: 8px; font-size: 12px; }
+  .wj-undo { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; margin: 6px 0; padding: 6px 10px; border-radius: 10px; background: var(--accent-soft); font-size: 13px; }
+  .wj-klaar { display: flex; gap: 14px; align-items: center; padding: 14px 20px 18px; }
+  .wj-klaar > span { width: 34px; height: 34px; flex: 0 0 34px; border-radius: 50%; display: grid; place-items: center; background: var(--ok-soft); color: var(--ok); font-weight: 700; }
+  @media (max-width: 640px) {
+    .acct-naam { display: none; }
+    .acct-knop { padding: 2px 6px 2px 2px; }
+    .wj-grid { padding: 0 14px 12px; }
+    .wj .panel-head .muted { display: none; }
+    .wj .panel-head h3 { white-space: nowrap; }
+    .wj-it { grid-template-columns: 22px minmax(0, 1fr); }
+    .wj-acts { grid-column: 2; }
+  }
 </style>
 </head>
 <body>
@@ -627,21 +680,22 @@
 <div class="toast" id="toast" role="status"></div>
 <div class="loader" id="loader" aria-live="polite"><div class="logo"><i class="base"></i><i class="fill" id="loaderFill"></i></div><div class="pct" id="loaderPct">0%</div><div class="msg" id="loaderMsg">Even geduld…</div></div>
 <script src="vendor/supabase-2.45.4.js"></script>
-<script src="config.js?v=1.50.1"></script>
+<script src="config.js?v=1.51.0"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
-<script src="postcodes.js?v=1.50.1"></script>
-<script src="meetstaat-export.js?v=1.50.1"></script>
-<script src="meetstaat-import.js?v=1.50.1"></script>
+<script src="postcodes.js?v=1.51.0"></script>
+<script src="meetstaat-export.js?v=1.51.0"></script>
+<script src="meetstaat-import.js?v=1.51.0"></script>
 <!-- tekenmodule: deze drie scripts horen bij het tabblad Plannen — niet verwijderen -->
-<script src="vendor/dxf-parser.js?v=1.50.1"></script>
-<script src="symbolen.js?v=1.50.1"></script>
-<script src="tekenen.js?v=1.50.1"></script>
-<script src="agenda.js?v=1.50.1"></script>
-<script src="afspraken.js?v=1.50.1"></script>
-<script src="kp-beheer.js?v=1.50.1"></script>
-<script src="pv-beheer.js?v=1.50.1"></script>
-<script src="af-beheer.js?v=1.50.1"></script>
-<script src="deb-beheer.js?v=1.50.1"></script>
-<script src="app.js?v=1.50.1"></script>
+<script src="vendor/dxf-parser.js?v=1.51.0"></script>
+<script src="symbolen.js?v=1.51.0"></script>
+<script src="tekenen.js?v=1.51.0"></script>
+<script src="agenda.js?v=1.51.0"></script>
+<script src="afspraken.js?v=1.51.0"></script>
+<script src="kp-beheer.js?v=1.51.0"></script>
+<script src="pv-beheer.js?v=1.51.0"></script>
+<script src="af-beheer.js?v=1.51.0"></script>
+<script src="deb-beheer.js?v=1.51.0"></script>
+<script src="wacht.js?v=1.51.0"></script>
+<script src="app.js?v=1.51.0"></script>
 </body>
 </html>

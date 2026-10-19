@@ -2,6 +2,10 @@
 
 De nieuwste versie staat bovenaan. (Vanaf 1.48 houdt `version.json` enkel de laatste versie bij; het Planbord vraagt dat bestand elke 5 minuten op.)
 
+## 1.51.0 — 2026-10-19 (geen databasescript)
+
+Overzichtelijker: Team, Instellingen, Testmodus, Wachtwoord en Uitloggen zitten nu onder je naam rechtsboven (accountmenu) — de bovenbalk toont enkel nog de werkschermen. Nieuw bovenaan het Overzicht: 'Wacht op jou' — één lijst met alles wat een actie van jou vraagt, uit alle projecten: te late taken (afvinken of in één klik verzetten naar morgen, +1 week of allemaal naar maandag, met ongedaan maken; beheer kan het hele team bekijken), vandaag en morgen, werfpunten te beoordelen, meerwerk en keuzes van klanten, prijzen van aannemers, vragen via de assistent, beslissingen over offertes, en facturen die op je wachten. Openen gaat meteen naar het juiste tabblad; 'Later' verbergt een melding 3 dagen. De tegels op het Overzicht zijn klikbaar.
+
 ## 1.50.1 — 2026-10-19 (nieuw drive/Code.gs + nieuw drive/YukiArchief.gs)
 
 Yuki-mails uit archief@bros.be: een klein apart script (drive/YukiArchief.gs) in het account archief@bros.be leest daar elk uur de Yuki-factuurmails (met handtekeningcontrole) en stuurt ze met de pdf naar het Drive-script, dat ze verwerkt zoals voorheen (koppelen bij exact bedrag, pdf en betaalgegevens in het klantenportaal). Het zoekt ook de facturen op die in het Planbord als verzonden staan maar nog geen pdf hebben (pdf enkel gedeeld als bedrag, factuurnummer en rekening kloppen). Eigen secret (ARCHIEF_SECRET), los van het Drive-secret van het team; droogloop archiefTest vóór de installatie. Brosburo stopt met lezen bij de eerste echte Yuki-mail via archief@; een storing bij één factuur houdt de rest niet tegen (opnieuw proberen, na 3 keer 'te bekijken'); één meldingsmail per run; staat het archief-script 2 dagen stil, dan staat dat in de overzichtsmail.

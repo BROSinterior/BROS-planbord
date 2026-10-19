@@ -26,6 +26,7 @@ Statische webapp (geen build-stap) op een Supabase-database.
 | `werf/` | de werfmodus voor op de smartphone (vaststellingen met foto's, werkt ook zonder bereik; installeerbaar als app) — ook voor aannemers, beperkt tot hun eigen punten |
 | `aannemer/` | het aannemersportaal (index.html + aannemer.js): werfpunten afwerken, plannen, verslagen, documenten, planning, prijsaanvragen, facturen, vragen aan BROS; `handleiding.json` = de handleiding (ook de bron van de hulp-assistent) |
 | `af-beheer.js` | Planbord: facturen van aannemers opvolgen (Facturatie per project en tabblad Facturen › Aannemers, script 047) |
+| `wacht.js` | Planbord: *Wacht op jou* bovenaan het Overzicht en het accountmenu onder je naam (v1.51) |
 | `deb-beheer.js` | Planbord: tabblad Facturen › Klanten — openstaande facturen, betalingen uit Yuki, betalingsherinneringen goedkeuren (script 048) |
 | `supabase/functions/assistent/` | Edge Function van de AI-assistent (in Supabase te deployen, sleutel als secret) |
 | `next/` | (later) testversie van een volgende update |
@@ -42,7 +43,7 @@ Statische webapp (geen build-stap) op een Supabase-database.
    De genodigde klikt op *Accept invitation* in de mail, komt in de app en kiest daar een wachtwoord (sinds v1.10.1).
    Komt hij op een 404 terecht, dan klopt de Site URL uit stap 3 niet (hoofdletters!). Een uitnodigingslink is beperkt geldig;
    is ze vervallen, dan volstaat *Wachtwoord vergeten?* op het loginscherm (of in Supabase: *Send password recovery*).
-   Wachtwoord kwijt → *Wachtwoord vergeten?* op het loginscherm; wachtwoord wijzigen → knop *Wachtwoord* in de kopbalk.
+   Wachtwoord kwijt → *Wachtwoord vergeten?* op het loginscherm; wachtwoord wijzigen → klik rechtsboven op je naam › *Wachtwoord wijzigen*.
 5. `config.js` invullen met Project URL + anon public key (Settings → API).
 6. **GitHub Desktop** → deze map publiceren als repository `BROS-planbord` → op github.com: Settings → Pages → Branch `main` / root → Save.
    Na een minuut staat de app op `https://brosinterior.github.io/BROS-planbord/` (let op: hoofdletters tellen mee).
@@ -168,6 +169,16 @@ Activeren (eenmalig):
 
 Gebruik: Dossier › Contacten → bij een aannemer de knop **Aannemersportaal** (beheer) → hij krijgt een mail met een persoonlijke link. Instellingen → Klantenportaal toont wie toegang heeft (klant/aannemer). Een aannemer die op het Planbord of het klantenportaal inlogt, wordt doorgestuurd.
 
+## Wacht op jou en accountmenu (v1.51, geen databasescript)
+
+- **Accountmenu:** *Team*, *Instellingen* (beheer), *Testmodus*, *Wachtwoord wijzigen* en *Uitloggen* staan niet meer in de bovenbalk maar onder je naam rechtsboven (klik erop; Esc of ernaast klikken sluit het). Met het toetsenbord: Enter opent, pijltjes kiezen. Snel zoeken (⌘K) vindt Team en Instellingen ook.
+- **Wacht op jou** (bovenaan het Overzicht): één lijst met alles wat een actie van jou vraagt, uit alle projecten samen.
+  - *Te laat* — je taken met een verstreken einddatum, oudste eerst. Afvinken, of in één klik verzetten naar de volgende werkdag of +1 week (weekends worden overgeslagen), of allemaal tegelijk naar volgende maandag. De start schuift even ver mee, zodat de taak haar duur houdt (nooit vóór vandaag); een taak die al *bezig* is, start vandaag. Ongedaan maken kan meteen. *Alles naar maandag* laat taken van aannemers of klanten staan. Taken met een afspraak worden hier nooit verzet (dat gaat via de taak zelf: agenda en mail aan de deelnemers). Beheer kan wisselen tussen *Mijn* en *Team* (alle te late taken, met wie ze heeft); de tegel *Te laat* opent meteen de teamweergave.
+  - *Vandaag en morgen* — je taken en afspraken (met uur) tot en met de volgende werkdag (op vrijdag dus ook het weekend en maandag).
+  - *Van klanten en aannemers* — werfpunten te beoordelen, meerwerk aangevraagd, keuzes gemaakt (te bevestigen) of over de deadline, prijzen ontvangen van aannemers, vragen en klachten via de assistent (ook als jij als verantwoordelijke voorgesteld bent), offertes waarover de klant de laatste 7 dagen besliste en ondertekende overeenkomsten. Beheer ziet alle projecten, medewerkers de projecten waarvan ze lead zijn. *Openen* gaat meteen naar het juiste tabblad van het project; *Later* verbergt een melding 3 dagen, *Gezien* tot ze verandert (enkel in die browser).
+  - *Facturen* (beheer) — betalingsherinneringen ter goedkeuring en aannemersfacturen te behandelen.
+- De tegels op het Overzicht zijn klikbaar (Projecten, Taken, de te late taken, Uren). *Mijn taken* heet nu *Mijn volgende taken* en toont enkel wat niet al in *Wacht op jou* staat.
+
 ## Klantfacturen opvolgen: betalingen uit Yuki en betalingsherinneringen (script 048, v1.50)
 
 **In gebruik nemen:**
@@ -285,7 +296,7 @@ Gebruik: Dossier › Contacten → bij een aannemer de knop **Aannemersportaal**
 ## Testmodus — de portalen bekijken als klant of aannemer (script 038, v1.39)
 
 - **Wie:** enkel een beheerder met `profiles.testmodus` = aan. Script 038 zet dat aan voor de beheerder wiens naam of e-mail met "phil" begint (de controle onderaan toont voor wie). Via de app kan niemand het aan- of uitzetten (trigger `profiles_testmodus_guard`), enkel in de SQL-editor.
-- **Gebruik:** Planbord › knop **🧪 Testmodus** bovenaan › klanten- of aannemersportaal, project, contact (een bouwheer of contactpersoon voor de klant; voor de aannemer ook contacten die niet gekoppeld zijn: die zien enkel hun prijsvragen) › *Portaal openen*. Het portaal opent in een nieuw tabblad met een oranje balk *TESTMODUS*; ook zonder login van dat contact.
+- **Gebruik:** Planbord › klik rechtsboven op je naam › **🧪 Testmodus** › klanten- of aannemersportaal, project, contact (een bouwheer of contactpersoon voor de klant; voor de aannemer ook contacten die niet gekoppeld zijn: die zien enkel hun prijsvragen) › *Portaal openen*. Het portaal opent in een nieuw tabblad met een oranje balk *TESTMODUS*; ook zonder login van dat contact.
 - **Alleen bekijken:** de databank geeft de gegevens van het contact enkel bij **lezen** (PostgREST voert GET-aanvragen read-only uit) en enkel voor aanvragen met de header `X-Client-Info: bros-voorbeeld=<rol>:<contact>` (alleen het portaal in testmodus stuurt die; het Planbord niet). Elke schrijfactie (akkoord geven, prijzen invullen, opladen…) loopt onder je eigen rol en wordt geweigerd; het portaal houdt ze bovendien zelf tegen (`portaal-voorbeeld.js`), net als mails via het Drive-script en de assistent. *Uitloggen* of *Testmodus stoppen* beëindigt de testmodus (je blijft ingelogd in het Planbord). Na 12 uur vervalt ze vanzelf.
 - **Technisch:** tabel `portaal_voorbeeld` (één rij per beheerder), RPC's `voorbeeld_start` / `voorbeeld_stop`, view `mijn_voorbeeld`, functie `voorbeeld_contact(rol)`. `is_klant`, `is_aannemer`, `mijn_contacten`, `klant_projecten`, `aannemer_projecten` en de views `klant_ik`, `klant_taken`, `klant_notitie_taken`, `klant_assistent_berichten` houden er rekening mee. In de testmodus is live bijwerken uit (herladen toont nieuwe gegevens). Het gekozen contact zit mee in de link en de header: start je een ander contact, dan toont een ouder tabblad niets meer.
 

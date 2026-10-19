@@ -53,7 +53,7 @@
     d.appendChild(t); d.appendChild(b); document.body.prepend(d);
   };
   VB.foutHtml = function (portaal) {
-    return `<div class="login"><div class="card"><div class="brand" style="margin-bottom:14px"><span class="mark">BROS</span><span class="name">${portaal}</span></div><h1>Testmodus niet actief</h1><p>Start de testmodus opnieuw vanuit het Planbord (knop Testmodus bovenaan). Ze vervalt na 12 uur, en een nieuw gekozen contact vervangt het vorige (dit tabblad hoort bij een vorig contact).</p><p><a class="btn primary" href="../">Naar het Planbord</a></p></div></div>`;
+    return `<div class="login"><div class="card"><div class="brand" style="margin-bottom:14px"><span class="mark">BROS</span><span class="name">${portaal}</span></div><h1>Testmodus niet actief</h1><p>Start de testmodus opnieuw vanuit het Planbord (klik rechtsboven op je naam › Testmodus). Ze vervalt na 12 uur, en een nieuw gekozen contact vervangt het vorige (dit tabblad hoort bij een vorig contact).</p><p><a class="btn primary" href="../">Naar het Planbord</a></p></div></div>`;
   };
   window.BROS_VOORBEELD = VB;
 })();
