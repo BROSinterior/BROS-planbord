@@ -2,6 +2,10 @@
 
 De nieuwste versie staat bovenaan. (Vanaf 1.48 houdt `version.json` enkel de laatste versie bij; het Planbord vraagt dat bestand elke 5 minuten op.)
 
+## 1.48.4 — 2026-10-18
+
+Facturatie: 'Percentages herrekenen' kan nu het volledige factuurbedrag toekennen. Volstaan de loten van de vordering niet (wat er nog openstaat is minder dan de factuur), dan kies je in een venster over welke andere loten het verschil gaat; de loten van de vordering worden eerst tot hun maximum gevuld, de rest naar verhouding van wat er per lot openstaat. Een lot kan je er ook uit halen. Botst een post op zijn maximum, dan gaat het verschil voortaan naar de andere posten (bleef vroeger steken). Ook bij een nieuwe vordering met een te hoog bedrag opent die keuze meteen.
+
 ## 1.48.3 — 2026-10-18
 
 Facturatie: de vorderingsstaat springt niet meer terug naar links als je ernaast klikt of iets bewaart (scrollpositie blijft); het overzicht onderaan toont nu ook wat al gefactureerd is (verzonden en betaald), waarvan betaald, nog te betalen en wat opgemaakt maar nog niet verzonden is.

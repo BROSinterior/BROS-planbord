@@ -3,7 +3,7 @@
    Statische webapp op Supabase (login, live-synchronisatie, rechten)
    ===================================================================== */
 if (window.top !== window.self) { try { window.top.location.replace(window.location.href); } catch (e) { document.documentElement.innerHTML = ""; } }   // niet in een vreemd frame (clickjacking)
-const APP_VERSION = "1.48.3";
+const APP_VERSION = "1.48.4";
 const PROJ_STATUS = { offerte: "In offerte", lopend: "Lopend", on_hold: "On hold", afgerond: "Afgerond", verloren: "Verloren" };
 const KLANTTYPE = { particulier: "Particulier", zakelijk: "Zakelijk" };
 const KLANTCODE = { particulier: "PAR", zakelijk: "ZAK" };
@@ -1934,32 +1934,105 @@ function cumPost(pid, calcs, r) { return vordOf(pid).filter(v => (v.soort === "m
    Elke regel wordt begrensd op wat er voor die post(en) nog openstaat; lukt het niet volledig, dan geeft `tekort` het verschil. */
 const regelsExcl = (rows, regels) => { const lot = {}, post = {}; regels.forEach(g => { if (g.post_id) post[g.post_id] = g; else lot[g.lot] = g; }); return rows.reduce((s, r) => { const g = post[r.id] || lot[r.lot]; return s + (g ? Number(g.pct) * rowSigned(r) : 0); }, 0); };
 function fitRegels(pid, soort, regels, bedrag, calcs) {
-  const rows = vordRows(pid, soort); const post = {}; regels.forEach(g => { if (g.post_id) post[g.post_id] = g; });
+  const rows = vordRows(pid, soort); const restOf = (r) => Math.max(0, 1 - cumPost(pid, calcs, r));
+  let r1 = fitKern(pid, rows, regels, bedrag, restOf); if (!(r1.tekort > 0.005)) return { ...r1, weg: [] };
+  // 1.48.4: een lot-% is begrensd door de post met het minst open; staan de posten van dat lot ongelijk, dan per post verdelen (alleen als het nodig is)
+  const post = {}; regels.forEach(g => { if (g.post_id) post[g.post_id] = g; });
+  const split = [], weg = [];
+  r1.regels.forEach(g => { if (g.post_id) return split.push(g); const rs = rows.filter(r => r.lot === g.lot && !post[r.id] && Math.abs(rowSigned(r)) > 0.005); const rests = rs.map(restOf);
+    if (rs.length > 1 && Math.max(...rests) - Math.min(...rests) > 1e-6) { if (g.id) weg.push(g); rs.forEach(r => split.push({ lot: g.lot, post_id: r.id, pct: g.pct })); } else split.push(g); });
+  if (!weg.length && split.length === r1.regels.length) return { ...r1, weg: [] };
+  const r2 = fitKern(pid, rows, split, bedrag, restOf); return r2.tekort < r1.tekort - 0.005 ? { ...r2, weg } : { ...r1, weg: [] };
+}
+function fitKern(pid, rows, regels, bedrag, restOf) {
+  const post = {}; regels.forEach(g => { if (g.post_id) post[g.post_id] = g; });
   let base = regels.map(g => ({ ...g, pct: Number(g.pct) })); let excl0 = regelsExcl(rows, base);
   if (!(Math.abs(excl0) > 0.005)) { base = base.map(g => ({ ...g, pct: 1 })); excl0 = regelsExcl(rows, base); }
   if (!(Math.abs(excl0) > 0.005)) return { regels: base, excl: 0, tekort: bedrag };
-  const f = bedrag / excl0;
-  const capOf = (g) => { const rs = g.post_id ? rows.filter(r => r.id === g.post_id) : rows.filter(r => r.lot === g.lot && !post[r.id]); return rs.length ? Math.max(0, Math.min(...rs.map(r => 1 - cumPost(pid, calcs, r)))) : 1; };
-  const out = base.map(g => ({ ...g, pct: Math.max(0, Math.min(capOf(g), g.pct * f)) }));
+  const capOf = (g) => { const rs = g.post_id ? rows.filter(r => r.id === g.post_id) : rows.filter(r => r.lot === g.lot && !post[r.id]); return rs.length ? Math.min(...rs.map(restOf)) : 1; };
+  // 1.48.4: bijvullen — botst een regel op zijn maximum, dan gaat het verschil naar de regels die nog ruimte hebben (vroeger bleef het daar steken)
+  const caps = base.map(capOf); const unit = base.map(g => regelsExcl(rows, [{ ...g, pct: 1 }].concat(g.post_id ? [] : base.filter(x => x.post_id).map(x => ({ ...x, pct: 0 })))));
+  const f0 = bedrag / excl0;   // minwerk (negatief bedrag) niet mee omhoog trekken als er meer gefactureerd moet worden
+  let out = base.map((g, i) => ({ ...g, pct: Math.max(0, Math.min(caps[i], unit[i] < 0 && bedrag > excl0 && f0 > 1 ? g.pct : g.pct * f0)) }));
+  for (let k = 0; k < 25; k++) {
+    const excl = out.reduce((s, g, i) => s + g.pct * unit[i], 0), nodig = bedrag - excl; if (Math.abs(nodig) < 0.005) break;
+    const vrij = out.map((g, i) => i).filter(i => unit[i] > 0.005 && (nodig > 0 ? out[i].pct < caps[i] - 1e-9 : out[i].pct > 1e-9));
+    if (!vrij.length) {   // geen ruimte meer bij de gewone posten: minwerk in deze factuur verlagen
+      const neg = nodig > 0 ? out.map((g, i) => i).filter(i => unit[i] < -0.005 && out[i].pct > 1e-9) : []; if (!neg.length) break;
+      const kan = neg.reduce((s, i) => s - out[i].pct * unit[i], 0); const f = Math.min(1, nodig / kan); neg.forEach(i => out[i].pct = Math.max(0, out[i].pct * (1 - f))); continue; }
+    const som = vrij.reduce((s, i) => s + out[i].pct * unit[i], 0);
+    if (som > 0.005) { const f = (som + nodig) / som; vrij.forEach(i => out[i].pct = Math.max(0, Math.min(caps[i], out[i].pct * f))); }
+    else if (nodig > 0) { const ruimte = vrij.reduce((s, i) => s + (caps[i] - out[i].pct) * unit[i], 0); if (!(ruimte > 0.005)) break; const f = Math.min(1, nodig / ruimte); vrij.forEach(i => out[i].pct = Math.max(0, Math.min(caps[i], out[i].pct + (caps[i] - out[i].pct) * f))); }
+    else break;
+  }
   const excl = regelsExcl(rows, out); return { regels: out, excl, tekort: bedrag - excl };
 }
+/* 1.48.4: wat er per lot nog openstaat buiten deze vordering (calcs zonder de vordering zelf) */
+const lotOpen = (pid, soort, lot, calcs) => regelsExcl(vordRows(pid, soort), restRegels(pid, soort, [lot], calcs));
 /* bestaande, nog open vordering: percentages afleiden uit het ingevulde factuurbedrag */
-async function vordFit(vid) {
+async function vordFit(vid, naFormulier) {
   const v = S.vorderingen[vid]; if (!v || v.bedrag_excl == null || v.bedrag_excl === "") return;
-  if (vordLocked(v) && !confirm("Deze vordering is al verzonden of betaald. Het factuurbedrag blijft hetzelfde; enkel de verdeling in percentages over de loten en posten wordt herrekend zodat de vorderingsstaat (ook voor de klant) weer precies op het factuurbedrag uitkomt. Doorgaan?")) return;
+  if (!naFormulier && vordLocked(v) && !confirm("Deze vordering is al verzonden of betaald. Het factuurbedrag blijft hetzelfde; enkel de verdeling in percentages over de loten en posten wordt herrekend zodat de vorderingsstaat (ook voor de klant) weer precies op het factuurbedrag uitkomt. Doorgaan?")) return;
   const bedrag = Number(v.bedrag_excl); const pid = v.project_id;
   const calcs = {}; vordOf(pid).filter(x => x.id !== vid).forEach(x => calcs[x.id] = vordCalc(x));
   let regels = Object.values(S.vordering_regels).filter(r => r.vordering_id === vid).map(r => ({ id: r.id, lot: r.lot, post_id: r.post_id, pct: Number(r.pct) }));
   if (!regels.length) { const basis = lotBasis(pid); const lots = Object.keys(basis).map(Number).filter(l => Math.abs(vordBase(basis, l, v.soort)) > 0.005); regels = restRegels(pid, v.soort, lots, calcs); }
-  if (!regels.length) return toast("Er staat niets meer open om te verdelen.");
-  const fit = fitRegels(pid, v.soort, regels, bedrag, calcs);
-  for (const g of fit.regels) {
-    if (g.id) { const { data, error } = await sb.from("vordering_regels").update({ pct: g.pct }).eq("id", g.id).select().single(); if (error) return toast("Mislukt: " + error.message); S.vordering_regels[rowKey("vordering_regels", data)] = data; }
-    else { const { data, error } = await sb.from("vordering_regels").insert({ vordering_id: vid, lot: g.lot, post_id: g.post_id || null, pct: g.pct }).select().single(); if (error) return toast("Mislukt: " + error.message); S.vordering_regels[rowKey("vordering_regels", data)] = data; }
+  const fit = regels.length ? fitRegels(pid, v.soort, regels, bedrag, calcs) : { regels: [], excl: 0, tekort: bedrag };
+  // 1.48.4: volstaan de loten van deze vordering niet voor het factuurbedrag, dan kies je over welke andere loten de rest gaat
+  const soortR = v.soort === "meerwerk" ? "meerwerk" : "vordering"; const basis = lotBasis(pid);
+  const eigenLots = [...new Set(regels.map(g => g.lot))];
+  const andere = Object.keys(basis).map(Number).sort((a, b) => a - b).filter(l => !eigenLots.includes(l) && Math.abs(vordBase(basis, l, soortR)) > 0.005).map(l => ({ l, open: lotOpen(pid, soortR, l, calcs) })).filter(x => x.open > 0.5);
+  if (fit.tekort > 0.5 && andere.length) { vordFitKies(v, regels, fit, calcs, andere, eigenLots); if (naFormulier) toast(`${eur(fit.tekort)} meer dan er nog openstaat voor de gekozen loten — kies over welke andere loten de rest gaat`, 7000); return; }
+  if (naFormulier) return;   // nieuwe vordering: de regels zijn net bewaard, er valt niets te kiezen
+  if (!fit.regels.length) return toast("Er staat niets meer open om te verdelen.");
+  await vordFitBewaar(v, fit.regels, fit.weg || [], fit.tekort);
+}
+async function vordFitBewaar(v, nieuw, weg, tekort) {
+  const vid = v.id, bedrag = Number(v.bedrag_excl);
+  const mis = (e) => { render(); toast("Mislukt: " + e.message + " — kijk de verdeling van deze vordering na", 8000); };
+  for (const g of nieuw) {   // eerst bewaren/toevoegen, pas daarna weghalen (een fout halverwege laat geen loten weg)
+    if (g.id) { const { data, error } = await sb.from("vordering_regels").update({ pct: g.pct }).eq("id", g.id).select().single(); if (error) return mis(error); S.vordering_regels[rowKey("vordering_regels", data)] = data; }
+    else { const { data, error } = await sb.from("vordering_regels").insert({ vordering_id: vid, lot: g.lot, post_id: g.post_id || null, pct: g.pct }).select().single(); if (error) return mis(error); S.vordering_regels[rowKey("vordering_regels", data)] = data; }
   }
+  if (weg.length) { const { error } = await sb.from("vordering_regels").delete().in("id", weg.map(g => g.id)); if (error) return mis(error); const ids = new Set(weg.map(g => g.id)); Object.keys(S.vordering_regels).forEach(k => { if (ids.has(S.vordering_regels[k].id)) delete S.vordering_regels[k]; }); }
   // verstuurde factuur zonder (geldige) bevroren btw: de databank berekent ze nu opnieuw op de nieuwe verdeling
   if (vordLocked(v) && schemaV() >= 33 && (v.btw_bedrag == null || (Number(v.btw_bedrag) === 0 && Math.abs(bedrag) > 0.005))) await dbUpdate("vorderingen", vid, { btw_bedrag: null }).catch(() => { });
-  render(); toast(Math.abs(fit.tekort) > 0.5 ? `Percentages op het maximum gezet — ${eur(fit.tekort)} meer dan er nog openstaat voor deze loten` : `Percentages afgeleid uit ${eur(bedrag)}`);
+  render(); toast(Math.abs(tekort) > 0.5 ? `Percentages op het maximum gezet — ${eur(tekort)} meer dan er nog openstaat voor deze loten` : `Percentages afgeleid uit ${eur(bedrag)}`, Math.abs(tekort) > 0.5 ? 8000 : undefined);
+}
+/* 1.48.4: kiezer — eerst de aangevinkte loten van de vordering tot hun maximum, het verschil over de gekozen andere loten (naar wat er per lot openstaat) */
+function vordFitKies(v, regels, fit, calcs, andere, eigenLots) {
+  const pid = v.project_id, bedrag = Number(v.bedrag_excl), soortR = v.soort === "meerwerk" ? "meerwerk" : "vordering";
+  const eigen = eigenLots.sort((a, b) => a - b).map(l => ({ l, open: lotOpen(pid, soortR, l, calcs) }));
+  const rij = (x, aan, naam) => `<label class="chk"><input type="checkbox" name="${naam}" value="${x.l}" ${aan ? "checked" : ""}> <span>${esc(lotName(x.l))}<small class="muted" style="display:block">nog open ${eur2(x.open)}</small></span></label>`;
+  openModal(`Factuurbedrag verdelen — ${v.nr === 0 ? "voorschot" : "#" + v.nr}${v.omschrijving ? " " + v.omschrijving : ""}`, `<div class="form-grid">
+    <div class="field span2"><p style="margin:0">De factuur is <b>${eur2(bedrag)}</b> excl. btw, maar in ${eigen.length ? `de loten van deze vordering staat nog maar <b>${eur2(eigen.reduce((s, x) => s + x.open, 0))}</b>` : "deze vordering staan nog geen loten"} open. Kies over welke andere loten het verschil gaat. De loten van de vordering worden eerst tot hun maximum gevuld, de rest wordt over de gekozen loten verdeeld naar verhouding van wat er per lot nog openstaat. Nadien kan je per lot of per post bijsturen in de tabel.</p>${vordLocked(v) ? `<p style="margin:8px 0 0;color:var(--warn)">Deze factuur is al ${v.status === "betaald" ? "betaald" : "verzonden"}: ook de klant ziet dan deze nieuwe verdeling over de loten.</p>` : ""}</div>
+    ${eigen.length ? `<div class="field span2"><label>Loten van deze vordering (vink af om ze eruit te halen)</label><div class="fase-list">${eigen.map(x => rij(x, true, "fk_eigen")).join("")}</div></div>` : ""}
+    <div class="field span2"><label>Andere loten met een open bedrag</label><div class="fase-list">${andere.map(x => rij(x, false, "fk_lot")).join("")}</div></div>
+    <div class="field span2"><div id="fk_sam" class="muted"></div></div></div>`, {
+    saveLabel: "Verdelen", wide: true,
+    onSave: async () => {
+      const f = $("#mform"); const kies = (n) => [...f.querySelectorAll(`input[name="${n}"]:checked`)].map(i => Number(i.value));
+      const houd = kies("fk_eigen"), extra = kies("fk_lot");
+      const r = vordFitPlan(v, regels, calcs, houd, extra);
+      if (!r.nieuw.length) { toast("Vink minstens één lot aan."); return false; }
+      await vordFitBewaar(v, r.nieuw, r.weg, r.tekort);
+    },
+  });
+  const f = $("#mform");
+  const sam = () => { const kies = (n) => [...f.querySelectorAll(`input[name="${n}"]:checked`)].map(i => Number(i.value)); const houd = kies("fk_eigen"), extra = kies("fk_lot");
+    const open = eigen.filter(x => houd.includes(x.l)).concat(andere.filter(x => extra.includes(x.l))).reduce((s, x) => s + x.open, 0);
+    $("#fk_sam").innerHTML = open + 0.5 >= bedrag ? `Gekozen loten: ${eur2(open)} open — volstaat voor ${eur2(bedrag)}.` : `<span style="color:var(--warn)">Gekozen loten: ${eur2(open)} open — nog ${eur2(bedrag - open)} te kort voor ${eur2(bedrag)}.</span>`; };
+  f.addEventListener("change", sam); sam();
+}
+/* plan: behouden regels eerst tot het bedrag (bijvullen tot hun maximum), het tekort over de nieuwe loten */
+function vordFitPlan(v, regels, calcs, houd, extra) {
+  const pid = v.project_id, bedrag = Number(v.bedrag_excl), soortR = v.soort === "meerwerk" ? "meerwerk" : "vordering";
+  const blijft = regels.filter(g => houd.includes(g.lot)), weg = regels.filter(g => g.id && !houd.includes(g.lot));
+  let nieuw = [], tekort = bedrag;
+  if (blijft.length) { const a = fitRegels(pid, v.soort, blijft, bedrag, calcs); nieuw = a.regels; tekort = a.tekort; weg.push(...a.weg); }
+  // nieuwe loten: enkel wat echt gebruikt wordt (geen regels van 0 %)
+  if (extra.length && tekort > 0.005) { const rr = restRegels(pid, soortR, extra, calcs); if (rr.length) { const b = fitRegels(pid, v.soort, rr, tekort, calcs); nieuw = nieuw.concat(b.regels.filter(g => g.pct > 1e-9)); tekort = b.tekort; } }
+  return { nieuw, weg, tekort };
 }
 function vFacturatie(p) {
   if (S.prijsFout) return `<div class="panel"><div class="empty"><b>Prijzen niet correct geladen</b>Herlaad de pagina (⌘⌥R) — tot dan worden er geen bedragen getoond om fouten te vermijden.</div></div>`;
@@ -2076,7 +2149,7 @@ function vordForm(pid, soort) {
     saveLabel: "Aanmaken", wide: !isVoorschot,
     onSave: async (d) => {
       const f = $("#mform"); const modusPost = perPost && f.dataset.mode === "post";
-      let regels, bedrag = null, fitMsg = "";
+      let regels, bedrag = null, fitMsg = "", kiesNa = false;
       if (modusPost) {
         const per = {}; let fout = 0;
         f.querySelectorAll(".pp-in").forEach(inp => { const x = ppInc(inp); if (x === 0) return; if (ppBad(inp, x)) { fout++; return; } (per[inp.dataset.lot] = per[inp.dataset.lot] || []).push({ id: inp.dataset.pp, pct: x }); });
@@ -2092,14 +2165,15 @@ function vordForm(pid, soort) {
       regels = isVoorschot ? sel.map(l => ({ lot: l, post_id: null, pct: (Number(d.pct) || 0) / 100 })) : restRegels(pid, isSlot ? "vordering" : soort, sel, calcs);
       if (!regels.length) { toast("Er staat niets meer open voor deze loten."); return false; }
       bedrag = d.bedrag == null || String(d.bedrag).trim() === "" ? null : Number(String(d.bedrag).replace(",", "."));
-      if (bedrag != null && !isSlot) { if (!(bedrag > 0)) { toast("Vul een bedrag groter dan 0 in, of laat het veld leeg."); return false; } const fit = fitRegels(pid, soort, regels, bedrag, calcs); regels = fit.regels; if (Math.abs(fit.tekort) > 0.5) fitMsg = ` — let op: ${eur(fit.tekort)} meer dan er nog openstaat voor deze loten; percentages op het maximum gezet`; else fitMsg = ` — percentages afgeleid uit ${eur(bedrag)}`; }
+      if (bedrag != null && !isSlot) { if (!(bedrag > 0)) { toast("Vul een bedrag groter dan 0 in, of laat het veld leeg."); return false; } const fit = fitRegels(pid, soort, regels, bedrag, calcs); regels = fit.regels; if (Math.abs(fit.tekort) > 0.5) { fitMsg = ` — let op: ${eur(fit.tekort)} meer dan er nog openstaat voor deze loten; percentages op het maximum gezet`; kiesNa = fit.tekort > 0.5; } else fitMsg = ` — percentages afgeleid uit ${eur(bedrag)}`; }
       }
       const { data: v, error } = await sb.from("vorderingen").insert({ project_id: pid, nr: nextNr, soort, omschrijving: d.omschrijving.trim(), datum: d.datum || null, status: "opgemaakt", bedrag_excl: bedrag }).select().single();
       if (error) { toast("Mislukt: " + error.message); return false; }
       S.vorderingen[v.id] = v;
       const r2 = await sb.from("vordering_regels").insert(regels.map(r => ({ vordering_id: v.id, lot: r.lot, post_id: r.post_id, pct: r.pct }))).select();
       if (r2.error) { toast("Regels niet bewaard: " + r2.error.message + (/post_id/.test(r2.error.message) ? " — voer sql/008_vordering_posten.sql uit" : "")); } else (r2.data || []).forEach(r => S.vordering_regels[rowKey("vordering_regels", r)] = r);
-      render(); toast(`${VORD_SOORT[soort]} aangemaakt${fitMsg}`);
+      render(); toast(`${VORD_SOORT[soort]} aangemaakt${fitMsg}`, kiesNa ? 7000 : undefined);
+      if (kiesNa && !r2.error) setTimeout(() => vordFit(v.id, true), 80);   // 1.48.4: meteen de lotkiezer (na het sluiten van dit formulier)
     },
   });
   if (!perPost) return;
