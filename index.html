@@ -672,6 +672,39 @@
     .wj-it { grid-template-columns: 22px minmax(0, 1fr); }
     .wj-acts { grid-column: 2; }
   }
+  /* ---- 1.52: financiële planning (fin-planning.js) — reeksen: gefactureerd (blauw)/gepland (oranje) en binnen (groen)/buiten (geel), gevalideerde paren ---- */
+  :root { --fin-1: #2a78d6; --fin-2: #eb6834; --fin-3: #1baf7a; --fin-4: #eda100; }
+  @media (prefers-color-scheme: dark) { :root { --fin-1: #3987e5; --fin-2: #d95926; --fin-3: #199e70; --fin-4: #c98500; } }
+  .fin-tabs { display: inline-flex; gap: 2px; padding: 3px; margin-bottom: 14px; border-radius: 999px; background: var(--surface-2); }
+  .fin-tabs button { padding: 6px 14px; border: 0; border-radius: 999px; background: none; font: inherit; font-size: 13.5px; color: var(--muted); cursor: pointer; }
+  .fin-tabs button.on { background: var(--surface); color: var(--ink); font-weight: 600; box-shadow: 0 1px 2px rgba(0,0,0,.08); }
+  .fin-svg { display: block; width: 100%; height: auto; }
+  .fin-grid { stroke: var(--line); stroke-width: 1; }
+  .fin-base, .fin-nul { stroke: var(--line-2); stroke-width: 1; }
+  .fin-as { fill: var(--muted); font-size: 11px; font-family: var(--font-body); }
+  .fin-lbl { fill: var(--ink); font-size: 11px; font-weight: 600; font-family: var(--font-body); }
+  .fin-s1 { fill: var(--fin-1); } .fin-s2 { fill: var(--fin-2); } .fin-s3 { fill: var(--fin-3); } .fin-s4 { fill: var(--fin-4); }
+  .fin-hit { fill: transparent; }
+  .fin-kol:hover .fin-hit, .fin-kol:focus .fin-hit { fill: var(--surface-2); }
+  .fin-kol:focus { outline: none; }
+  .fin-leg { display: flex; gap: 14px; flex-wrap: wrap; font-size: 12px; color: var(--muted); }
+  .fin-sw { display: inline-block; width: 10px; height: 10px; margin-right: 6px; border-radius: 3px; vertical-align: -1px; }
+  .fin-sw.s1 { background: var(--fin-1); } .fin-sw.s2 { background: var(--fin-2); } .fin-sw.s3 { background: var(--fin-3); } .fin-sw.s4 { background: var(--fin-4); }
+  .fin-muted td { color: var(--muted); }
+  .fin-mt { font-size: 12.5px; } .fin-mt td:first-child { white-space: nowrap; }
+  .fin-kop td { background: var(--surface-2); color: var(--muted); font-size: 11.5px; font-weight: 600; letter-spacing: .04em; text-transform: uppercase; }
+  .fin-sub td { font-weight: 600; }
+  .fin-mt .neg, .fin-pt .neg, .fin-kpi .neg { color: var(--crit); }
+  .fin-pt td { vertical-align: top; } .fin-pt small { display: block; font-size: 11.5px; }
+  .fin-pn { max-width: 300px; }
+  .fin-kans { width: 44px; text-align: right; }
+  .fin-datum { width: 132px; }
+  .fin-w { color: var(--warn); }
+  .fin-kpi .kpi-tile .v { font-size: 26px; }
+  .fin-twee { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+  .fin-onder { display: grid; grid-template-columns: 1fr; gap: 16px; align-items: start; }
+  .fin-vk select.inline { min-width: 118px; } .fin-vk input[data-fvk="omschrijving"] { min-width: 130px; }
+  @media (max-width: 980px) { .fin-twee { grid-template-columns: 1fr; } }
 </style>
 </head>
 <body>
@@ -680,22 +713,23 @@
 <div class="toast" id="toast" role="status"></div>
 <div class="loader" id="loader" aria-live="polite"><div class="logo"><i class="base"></i><i class="fill" id="loaderFill"></i></div><div class="pct" id="loaderPct">0%</div><div class="msg" id="loaderMsg">Even geduld…</div></div>
 <script src="vendor/supabase-2.45.4.js"></script>
-<script src="config.js?v=1.51.0"></script>
+<script src="config.js?v=1.52.1"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
-<script src="postcodes.js?v=1.51.0"></script>
-<script src="meetstaat-export.js?v=1.51.0"></script>
-<script src="meetstaat-import.js?v=1.51.0"></script>
+<script src="postcodes.js?v=1.52.1"></script>
+<script src="meetstaat-export.js?v=1.52.1"></script>
+<script src="meetstaat-import.js?v=1.52.1"></script>
 <!-- tekenmodule: deze drie scripts horen bij het tabblad Plannen — niet verwijderen -->
-<script src="vendor/dxf-parser.js?v=1.51.0"></script>
-<script src="symbolen.js?v=1.51.0"></script>
-<script src="tekenen.js?v=1.51.0"></script>
-<script src="agenda.js?v=1.51.0"></script>
-<script src="afspraken.js?v=1.51.0"></script>
-<script src="kp-beheer.js?v=1.51.0"></script>
-<script src="pv-beheer.js?v=1.51.0"></script>
-<script src="af-beheer.js?v=1.51.0"></script>
-<script src="deb-beheer.js?v=1.51.0"></script>
-<script src="wacht.js?v=1.51.0"></script>
-<script src="app.js?v=1.51.0"></script>
+<script src="vendor/dxf-parser.js?v=1.52.1"></script>
+<script src="symbolen.js?v=1.52.1"></script>
+<script src="tekenen.js?v=1.52.1"></script>
+<script src="agenda.js?v=1.52.1"></script>
+<script src="afspraken.js?v=1.52.1"></script>
+<script src="kp-beheer.js?v=1.52.1"></script>
+<script src="pv-beheer.js?v=1.52.1"></script>
+<script src="af-beheer.js?v=1.52.1"></script>
+<script src="deb-beheer.js?v=1.52.1"></script>
+<script src="wacht.js?v=1.52.1"></script>
+<script src="fin-planning.js?v=1.52.1"></script>
+<script src="app.js?v=1.52.1"></script>
 </body>
 </html>

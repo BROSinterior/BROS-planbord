@@ -2,6 +2,14 @@
 
 De nieuwste versie staat bovenaan. (Vanaf 1.48 houdt `version.json` enkel de laatste versie bij; het Planbord vraagt dat bestand elke 5 minuten op.)
 
+## 1.52.1 — 2026-10-19
+
+Financiële planning zonder kaspositie: in plaats van een banksaldo en een kaspositie toont het Planbord per maand wat er binnenkomt (betalingen van klanten) en wat er gepland buitengaat (aannemers en vaste kosten), op scherm, in de pdf en in de Excel. De velden voor het saldo zijn weg uit de uitgangspunten.
+
+## 1.52.0 — 2026-10-19 (script 049 + nieuw drive/Code.gs, optioneel voor de back-up)
+
+Financiële planning (script 049, enkel beheer): nieuw onder Rapporten. Jaarplanning en meerjarenoverzicht met omzet, brutomarge, vaste kosten, bedrijfsresultaat en kaspositie per maand, in drie scenario's (voorzichtig, verwacht, optimistisch). Omzet, kostprijs en marge per project komen uit de meetstaat (marge per post of lot), anders uit het forfait of een budget. Start en geplande einde per project, slaagkans voor offertes, en geraamde projecten voor opdrachten die er nog niet zijn. Facturatie: wat al gefactureerd is telt zoals het is; voor de rest een automatisch voorstel (voorschot, maandelijkse vorderingen, slotfactuur) of een eigen plan per project. Aankopen gespreid over de uitvoering met de aannemersfacturen verrekend, betaaltermijnen voor klanten en aannemers, vaste kosten met indexatie. Pdf voor de bank (BROS-huisstijl) en Excel met formules.
+
 ## 1.51.0 — 2026-10-19 (geen databasescript)
 
 Overzichtelijker: Team, Instellingen, Testmodus, Wachtwoord en Uitloggen zitten nu onder je naam rechtsboven (accountmenu) — de bovenbalk toont enkel nog de werkschermen. Nieuw bovenaan het Overzicht: 'Wacht op jou' — één lijst met alles wat een actie van jou vraagt, uit alle projecten: te late taken (afvinken of in één klik verzetten naar morgen, +1 week of allemaal naar maandag, met ongedaan maken; beheer kan het hele team bekijken), vandaag en morgen, werfpunten te beoordelen, meerwerk en keuzes van klanten, prijzen van aannemers, vragen via de assistent, beslissingen over offertes, en facturen die op je wachten. Openen gaat meteen naar het juiste tabblad; 'Later' verbergt een melding 3 dagen. De tegels op het Overzicht zijn klikbaar.

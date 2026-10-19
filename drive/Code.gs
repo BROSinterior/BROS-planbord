@@ -1193,8 +1193,8 @@ const BACKUP_TABELLEN = ["profiles", "tarieven", "fasen", "standaardtaken", "pro
   "vorderingen", "vordering_regels", "contacten", "project_contacten", "goedkeuringen", "goedkeuring_tekenaars", "notities", "werfbezoeken", "vaststellingen", "klant_timing", "werfplannen", "werfverslagen",
   "taak_voorstellen", "assistent_gesprekken", "assistent_berichten", "prijsaanvragen", "prijsaanvraag_regels", "prijsvragen", "prijsvraag_gunningen", "tekenplannen", "plan_objecten", "plan_versies", "plan_symbolen",
   "aannemer_meetstaten", "aannemer_meetstaat_posten", "keuzes", "keuze_opties", "meerwerk_aanvragen", "werf_fotos", "werf_updates", "woningdossier",
-  "aannemer_facturen", "aannemer_hulp", "betaalherinneringen"];   // 1.49 (script 047), 1.50 (048)
-const BACKUP_OPTIONEEL = ["aannemer_facturen", "aannemer_hulp", "betaalherinneringen"];   // bestaan pas na script 047: ontbreken is dan geen back-upfout
+  "aannemer_facturen", "aannemer_hulp", "betaalherinneringen", "fin_plan", "fin_vaste_kosten", "fin_instellingen"];   // 1.49 (script 047), 1.50 (048), 1.52 (049)
+const BACKUP_OPTIONEEL = ["aannemer_facturen", "aannemer_hulp", "betaalherinneringen", "fin_plan", "fin_vaste_kosten", "fin_instellingen"];   // bestaan pas na script 047/049: ontbreken is dan geen back-upfout
 const BACKUP_ORDE = { fasen: "nr", loten: "nr", tarieven: "user_id", instellingen: "key", klant_timing: "project_id,fase_nr", prijsvraag_gunningen: "prijsvraag_id,post_id", meetstaat_prijzen: "post_id", plan_symbolen: "code" };
 function onderhoud(volledig) {
   const cache = CacheService.getScriptCache();
@@ -1218,7 +1218,7 @@ function onderhoudZeker() {
 }
 function onderhoudInstall() { CacheService.getScriptCache().remove("onderhoud-trigger"); onderhoudZeker(); CacheService.getScriptCache().remove("hartslag"); onderhoud(false); Logger.log("OK — onderhoud draait elk uur (hartslag), back-up en bewaking wekelijks."); }
 function hartslag() {
-  pbAdmin("/rest/v1/instellingen?on_conflict=key", "post", { key: "hartslag", value: { drive: new Date().toISOString(), versie: "1.50.1" } }, "resolution=merge-duplicates,return=minimal");
+  pbAdmin("/rest/v1/instellingen?on_conflict=key", "post", { key: "hartslag", value: { drive: new Date().toISOString(), versie: "1.52.0" } }, "resolution=merge-duplicates,return=minimal");
 }
 function triggersHerstellen() {   // enkel triggers die er eerder al waren (nooit iets aanzetten dat BROS zelf niet installeerde)
   const props = PropertiesService.getScriptProperties();

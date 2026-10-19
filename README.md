@@ -26,6 +26,7 @@ Statische webapp (geen build-stap) op een Supabase-database.
 | `werf/` | de werfmodus voor op de smartphone (vaststellingen met foto's, werkt ook zonder bereik; installeerbaar als app) — ook voor aannemers, beperkt tot hun eigen punten |
 | `aannemer/` | het aannemersportaal (index.html + aannemer.js): werfpunten afwerken, plannen, verslagen, documenten, planning, prijsaanvragen, facturen, vragen aan BROS; `handleiding.json` = de handleiding (ook de bron van de hulp-assistent) |
 | `af-beheer.js` | Planbord: facturen van aannemers opvolgen (Facturatie per project en tabblad Facturen › Aannemers, script 047) |
+| `fin-planning.js` | Planbord: Rapporten › Financiële planning — jaarplanning, businessplan, pdf en Excel voor de bank (script 049, enkel beheer) |
 | `wacht.js` | Planbord: *Wacht op jou* bovenaan het Overzicht en het accountmenu onder je naam (v1.51) |
 | `deb-beheer.js` | Planbord: tabblad Facturen › Klanten — openstaande facturen, betalingen uit Yuki, betalingsherinneringen goedkeuren (script 048) |
 | `supabase/functions/assistent/` | Edge Function van de AI-assistent (in Supabase te deployen, sleutel als secret) |
@@ -168,6 +169,48 @@ Activeren (eenmalig):
 4. Edge Function `assistent` opnieuw plakken (weigert nu aannemerslogins) en pushen.
 
 Gebruik: Dossier › Contacten → bij een aannemer de knop **Aannemersportaal** (beheer) → hij krijgt een mail met een persoonlijke link. Instellingen → Klantenportaal toont wie toegang heeft (klant/aannemer). Een aannemer die op het Planbord of het klantenportaal inlogt, wordt doorgestuurd.
+
+## Financiële planning (script 049, v1.52) — enkel beheer
+
+**Rapporten › Financiële planning**: jaarplanning, meerjarenoverzicht voor een businessplan en een dossier voor de bank (pdf + Excel). Alle bedragen excl. btw.
+
+- **Installeren:** `sql/049_financiele_planning.sql` uitvoeren (controle: `3 | 3 | 1`). Daarna *Uitgangspunten*: standaard voorschot/slotfactuur, betaaltermijnen, standaardmarge en -kans, indexatie, scenario's. Vaste kosten invullen (lonen, huur, wagens, verzekeringen…). Voor de back-up van de nieuwe tabellen: het nieuwe `drive/Code.gs` plakken en een nieuwe versie online zetten (optioneel; de planning werkt ook zonder).
+- **Per project:**
+  - Omzet, kostprijs en marge komen uit de **meetstaat**: de marge stel je per post of per lot in, in de meetstaat zelf.
+  - Zonder meetstaat rekent het model met het **forfait**, of met een **budget** dat je in het planvenster invult, plus een marge op de kostprijs.
+  - **Start en geplande einde** zijn de datums van het project zelf; je kan ze in de tabel aanpassen.
+  - **Slaagkans** vul je in bij offertes.
+  - **Geraamde projecten** zijn verwachte opdrachten die nog niet in het Planbord staan, met een omschrijving, budget, marge, periode en kans. Ze tonen de groei die je in een businessplan verwacht.
+- **Facturatiemomenten** (klik op een project):
+  - Wat al gefactureerd is (vorderingen verzonden of betaald) en wat klaarstaat (op te maken) telt mee zoals het is.
+  - Voor de rest maakt het model een **automatisch voorstel**: voorschot bij de start (als er nog geen voorschot is), gelijke vorderingen per maand en een slotfactuur bij het geplande einde.
+  - Per project kan je het voorschot- en slotpercentage aanpassen, of een **eigen plan** maken (datums + percentages van wat nog te factureren is; voorbije momenten vallen weg en de rest wordt herschaald).
+- **Aankopen:**
+  - De kostprijs wordt gelijk gespreid over de uitvoering (start → einde).
+  - Aannemersfacturen uit het portaal worden eerst verrekend.
+  - Aannemers worden betaald na de betaaltermijn, klanten betalen na de klanttermijn. Een verzonden maar nog niet betaalde factuur wordt verwacht vanaf vandaag.
+- **Scenario's** (altijd voorzichtig ≤ verwacht ≤ optimistisch):
+  - *Verwacht:* offertes en geraamde projecten tellen mee in verhouding tot hun kans.
+  - *Voorzichtig:* idem, maar enkel offertes vanaf 75 % kans, en 1 maand later gestart.
+  - *Optimistisch:* alles vanaf 25 % kans telt volledig, de rest in verhouding tot de kans.
+
+  De drempels zijn instelbaar.
+- **Regels die je moet kennen:**
+  - Een voorschot wordt enkel voorgesteld zolang er nog geen enkele vordering is.
+  - Afgeronde projecten tellen enkel met hun echte facturen en aannemersfacturen.
+  - Nog niet betaalde facturen worden verwacht vanaf vandaag; is een factuur volgens Yuki deels betaald, dan enkel het openstaande deel.
+  - Binnen en buiten zijn exclusief btw; er wordt geen kaspositie of banksaldo berekend (v1.52.1).
+  - Voor voorbije maanden tellen bij binnen/buiten enkel de feiten (betaalde en openstaande facturen, aannemersfacturen in het Planbord); geplande aankopen met een betaaldatum in het verleden tellen in het resultaat maar niet bij buiten.
+- **Scherm:**
+  - KPI's: omzet, brutomarge, bedrijfsresultaat (na vaste kosten, vóór afschrijvingen, intresten en belastingen) en wat er dat jaar binnenkomt (met wat er gepland buitengaat).
+  - Grafieken: omzet per maand (gefactureerd/gepland) en **binnen en buiten per maand** (ontvangsten van klanten tegenover geplande betalingen aan aannemers en vaste kosten).
+  - Een maandtabel met het resultaat en met binnen/buiten per maand (plus het verschil van die maand).
+  - De projectentabel met waarschuwingen (geen bedrag, geen datum, meer gefactureerd dan de meetstaat…).
+  - Een meerjarenoverzicht (3 jaar) en de vaste kosten.
+- **Voor de bank:**
+  - *Pdf voor de bank*: A4 liggend in BROS-huisstijl, met samenvatting, meerjarenoverzicht, grafieken, maandtabel, projecten, vaste kosten en de uitgangspunten en methode.
+  - *Excel*: werkt met formules, zodat de bank kan narekenen. Tabbladen: samenvatting, per maand, projecten, facturatieplanning, aankopen en vaste kosten.
+- Alleen beheer ziet en bewerkt dit; voor medewerkers, klanten en aannemers is het afgeschermd in de database (RLS).
 
 ## Wacht op jou en accountmenu (v1.51, geen databasescript)
 
