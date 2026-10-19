@@ -470,7 +470,8 @@ function klantMelding(body) {
 /** Goedkeuringsmails: "voorgelegd" (team → klant: er wacht een voorstel) en "beslist" (klant → BROS-melding + bevestiging aan de klant). */
 function goedkeuringMail(body) {
   const wie = callerAny(body.token); const soort = String(body.soort || "");
-  if (soort !== "voorgelegd" && soort !== "beslist") return { ok: false, error: "Onbekende soort." };
+  if (soort !== "voorgelegd" && soort !== "beslist" && soort !== "geannuleerd") return { ok: false, error: "Onbekende soort." };
+  if (soort === "geannuleerd" && wie.role !== "beheer") return { ok: false, error: "Geen toegang." };   // 1.53: enkel beheer annuleert
   if (soort === "voorgelegd" && wie.role !== "beheer" && wie.role !== "medewerker") return { ok: false, error: "Geen toegang." };
   if (soort === "beslist" && wie.role !== "klant") return { ok: false, error: "Geen toegang." };
   const g = (pbAdmin("/rest/v1/goedkeuringen?id=eq." + uuid(body.id) + "&select=*", "get") || [])[0];
@@ -478,6 +479,8 @@ function goedkeuringMail(body) {
   if (soort === "beslist" && g.beslist_door !== wie.id) return { ok: false, error: "Geen toegang." };
   if (soort === "beslist" && !eenmalig("gk:" + g.id + ":" + g.status + ":" + (g.beslist_op || ""), 21600)) return { ok: true };   // één mail per beslissing
   if (soort === "voorgelegd" && !quotum("gkv:" + g.id, 3, 3600)) return { ok: false, error: "Dit voorstel werd net al gemaild; probeer het later opnieuw." };
+  if (soort === "geannuleerd" && g.status !== "geannuleerd") return { ok: false, error: "Dit voorstel is niet geannuleerd." };
+  if (soort === "geannuleerd" && !eenmalig("gka:" + g.id, 21600)) return { ok: false, error: "De klant kreeg over deze annulering al een mail." };
   const p = (pbAdmin("/rest/v1/projecten?id=eq." + g.project_id + "&select=nummer,klant,naam,lead", "get") || [])[0] || {};
   const pcs = pbAdmin("/rest/v1/project_contacten?project_id=eq." + g.project_id + "&rol=in.(bouwheer,contactpersoon)&select=contact_id", "get") || [];
   const klanten = pcs.length ? (pbAdmin("/rest/v1/contacten?id=in.(" + pcs.map(x => x.contact_id).join(",") + ")&user_id=not.is.null&select=naam,email", "get") || []).filter(c => c.email) : [];
@@ -494,6 +497,12 @@ function goedkeuringMail(body) {
       const tot = g.geldig_tot ? " Graag je reactie vóór <b>" + g.geldig_tot.split("-").reverse().join("/") + "</b>." : "";
       const html = wrap("<p>Beste " + H(c.naam || "") + ",</p><p>Er staat een voorstel voor je klaar in je BROS-klantenportaal: <b>" + H(g.titel) + "</b>." + tot + (g.toelichting ? "</p><p style=\"white-space:pre-line\">" + H(g.toelichting) : "") + "</p><p style=\"margin:24px 0\"><a href=\"" + PORTAAL.URL + "\" style=\"background:#1B1E1C;color:#fff;text-decoration:none;padding:12px 20px;border-radius:8px;font-weight:600;display:inline-block\">Bekijken en goedkeuren</a></p>" + tabel + "<p style=\"margin-top:20px\">Vragen? Antwoord gerust op deze mail.<br>" + H(wie.name) + " — BROS</p>");
       portaalMail(c.email, "Voorstel ter goedkeuring: " + g.titel, "Beste " + (c.naam || "") + ",\n\nEr staat een voorstel voor je klaar in je BROS-klantenportaal: " + g.titel + " (" + eur(g.totaal_incl) + " incl. btw).\nBekijken en goedkeuren: " + PORTAAL.URL + "\n\n" + wie.name + " — BROS", html); naar.push(c.email);
+    });
+  } else if (soort === "geannuleerd") {
+    const reden = String(g.annuleer_reden || "");
+    klanten.forEach(c => {
+      const html = wrap("<p>Beste " + H(c.naam || "") + ",</p><p>Het voorstel <b>" + H(g.titel) + "</b> (" + eur(g.totaal_incl) + " incl. btw) dat je eerder goedkeurde, werd door BROS <b>geannuleerd</b>." + (reden ? "</p><p style=\"white-space:pre-line\">" + H(reden) : "") + "</p><p>Je akkoord blijft bewaard als historiek in je klantenportaal; als er een nieuw voorstel komt, krijg je opnieuw een mail.</p><p style=\"margin:24px 0\"><a href=\"" + PORTAAL.URL + "\" style=\"background:#1B1E1C;color:#fff;text-decoration:none;padding:12px 20px;border-radius:8px;font-weight:600;display:inline-block\">Naar je portaal</a></p><p style=\"margin-top:20px\">Vragen? Antwoord gerust op deze mail.<br>" + H(wie.name) + " — BROS</p>");
+      portaalMail(c.email, "Voorstel geannuleerd: " + g.titel, "Beste " + (c.naam || "") + ",\n\nHet voorstel " + g.titel + " (" + eur(g.totaal_incl) + " incl. btw) dat je eerder goedkeurde, werd door BROS geannuleerd." + (reden ? "\n\n" + reden : "") + "\n\nJe portaal: " + PORTAAL.URL + "\n\n" + wie.name + " — BROS", html); naar.push(c.email);
     });
   } else {
     const ok = g.status === "akkoord"; const wanneer = g.beslist_op ? new Date(g.beslist_op).toLocaleString("nl-BE", { timeZone: "Europe/Brussels" }) : "";
@@ -1218,7 +1227,7 @@ function onderhoudZeker() {
 }
 function onderhoudInstall() { CacheService.getScriptCache().remove("onderhoud-trigger"); onderhoudZeker(); CacheService.getScriptCache().remove("hartslag"); onderhoud(false); Logger.log("OK — onderhoud draait elk uur (hartslag), back-up en bewaking wekelijks."); }
 function hartslag() {
-  pbAdmin("/rest/v1/instellingen?on_conflict=key", "post", { key: "hartslag", value: { drive: new Date().toISOString(), versie: "1.52.0" } }, "resolution=merge-duplicates,return=minimal");
+  pbAdmin("/rest/v1/instellingen?on_conflict=key", "post", { key: "hartslag", value: { drive: new Date().toISOString(), versie: "1.53.0" } }, "resolution=merge-duplicates,return=minimal");
 }
 function triggersHerstellen() {   // enkel triggers die er eerder al waren (nooit iets aanzetten dat BROS zelf niet installeerde)
   const props = PropertiesService.getScriptProperties();

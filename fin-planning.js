@@ -123,11 +123,14 @@ function finProject(p, f, I, scen) {
   if (A > K + 0.5 && K > 0.5) waarsch.push("aannemersfacturen (" + eur(A) + ") hoger dan de kostprijs in de meetstaat (" + eur(K) + ")");
   return { key: p ? p.id : "f:" + f.id, p, f, geraamd, naam: p ? (p.nummer ? p.nummer + " · " : "") + projName(p) : f.naam, status, getekend, kans, gewicht, start, eind, echtStart, O, K, marge: r2(O - K), bron, R, inkomsten, kosten, waarsch, eigenPlan: !!(f && Array.isArray(f.plan) && f.plan.length) };
 }
-function finModel(scen) {
+/* 1.53: een project dat je zelf uitzet (fin_plan.meetellen = false) telt nergens mee — enkel de projectlijst toont het (ook = true) */
+const finTeltMee = (f) => !(f && f.meetellen === false);
+function finModel(scen, ook) {
   const I = finInst(); const uit = [];
   projects().filter(p => p.status !== "verloren").forEach(p => uit.push(finProject(p, finPlanVan(p.id), I, scen)));
   Object.values(S.fin_plan || {}).filter(x => !x.project_id).forEach(f => uit.push(finProject(null, f, I, scen)));
-  return uit;
+  uit.forEach(x => x.uit = !finTeltMee(x.f));
+  return ook ? uit : uit.filter(x => !x.uit);
 }
 /* vaste kosten: per maand de kost (gespreid: jaarbedrag/12) en de betaling (in de maand dat ze valt) */
 function finVast(I, ym) {
@@ -199,7 +202,7 @@ function vFinPlanning() {
   if (schemaV() < 49 || !S.fin_plan) return tabs + `<div class="page-head"><div><div class="eyebrow">Rapporten</div><h1>Financiële planning</h1></div></div><div class="panel"><div class="empty"><b>Nog niet beschikbaar</b>Voer databasescript <code>sql/049_financiele_planning.sql</code> uit in Supabase (SQL Editor) en herlaad.</div></div>`;
   if (S.prijsFout) return tabs + `<div class="page-head"><div><div class="eyebrow">Rapporten</div><h1>Financiële planning</h1></div></div><div class="panel"><div class="empty"><b>Prijzen niet correct geladen</b>Herlaad de pagina (⌘⌥R) — tot dan wordt er niets berekend, om foute cijfers te vermijden.</div></div>`;
   const I = finInst(); const jaar = S.finJaar || todayIso.slice(0, 4); const scen = S.finScen || "verwacht";
-  const model = finModel(scen); const R = finReeks(model, I, jaar + "-01", jaar + "-12");
+  const alle = finModel(scen, true); const model = alle.filter(x => !x.uit); const R = finReeks(model, I, jaar + "-01", jaar + "-12");
   const omzet = finTot(R.omzet), gef = finTot(R.gef), kost = finTot(R.kost), marge = r2(omzet - kost), vast = finTot(R.vast), res = r2(marge - vast);
   const inT = finTot(R.in), uitT = finTot(R.uit);
   const jaren = [...new Set([Number(todayIso.slice(0, 4)) - 1, Number(todayIso.slice(0, 4)), Number(todayIso.slice(0, 4)) + 1, Number(todayIso.slice(0, 4)) + 2, Number(todayIso.slice(0, 4)) + 3, Number(jaar)])].sort();
@@ -222,18 +225,21 @@ function vFinPlanning() {
     </tbody></table></div>`; };
   // projecten
   const inJaar = (x) => ({ o: r2(finSom(x.inkomsten.filter(i => i.datum.slice(0, 4) === jaar), i => i.bedrag)), k: r2(finSom(x.kosten.filter(c => c.datum.slice(0, 4) === jaar), c => c.bedrag)) });
-  const relevant = model.filter(x => x.status !== "afgerond" || inJaar(x).o || inJaar(x).k);
+  const relevant = alle.filter(x => x.status !== "afgerond" || inJaar(x).o || inJaar(x).k);
+  const kanUit = schemaV() >= 50; const nUit = relevant.filter(x => x.uit).length;
   const groepen = [["Getekend", relevant.filter(x => x.getekend)], ["Offertes", relevant.filter(x => x.status === "offerte")], ["Geraamde projecten (nog niet in het Planbord)", relevant.filter(x => x.geraamd)]];
   const datumVeld = (x, f) => `<input class="inline fin-datum" type="date" data-fin-d="${f}" data-k="${esc(x.key)}" value="${esc(x.geraamd ? (x.f[f] || "") : (x.p[f] || ""))}" aria-label="${f === "start" ? "Start" : "Geplande einde"} ${esc(x.naam)}">`;
   const projRij = (x) => { const j = inJaar(x); const gefT = r2(finSom(x.inkomsten.filter(i => i.soort === "gefactureerd"), i => i.bruto));
-    return `<tr><td><button type="button" class="wj-t fin-pn" data-fin-act="plan" data-k="${esc(x.key)}" title="Facturatieplan en uitgangspunten van dit project">${esc(x.naam)}</button><small class="muted">${x.bron === "meetstaat" ? "meetstaat" : x.bron === "budget" ? "budget" : x.bron === "forfait" ? "forfait" : "geen bedrag"}${x.eigenPlan ? " · eigen plan" : ""}${x.waarsch.length ? ` · <span class="fin-w" title="${esc(x.waarsch.join(" · "))}">⚠ ${esc(x.waarsch[0])}${x.waarsch.length > 1 ? " (+" + (x.waarsch.length - 1) + ")" : ""}</span>` : ""}</small></td>
-      <td>${x.geraamd ? `<span class="pill">Geraamd</span>` : `<span class="pill st-${x.status}">${PROJ_STATUS[x.status]}</span>`}</td>
+    const schakel = kanUit ? `<td class="fin-in"><input type="checkbox" class="sw" data-fin-in data-k="${esc(x.key)}" ${x.uit ? "" : "checked"} aria-label="${esc(x.naam)} meetellen in de planning" title="${x.uit ? "Telt niet mee — aanvinken om mee te tellen" : "Telt mee — uitvinken om dit project buiten de planning te laten"}"></td>` : "";
+    return `<tr class="${x.uit ? "fin-uit" : ""}">${schakel}<td><button type="button" class="wj-t fin-pn" data-fin-act="plan" data-k="${esc(x.key)}" title="Facturatieplan en uitgangspunten van dit project">${esc(x.naam)}</button><small class="muted">${x.bron === "meetstaat" ? "meetstaat" : x.bron === "budget" ? "budget" : x.bron === "forfait" ? "forfait" : "geen bedrag"}${x.eigenPlan ? " · eigen plan" : ""}${x.waarsch.length ? ` · <span class="fin-w" title="${esc(x.waarsch.join(" · "))}">⚠ ${esc(x.waarsch[0])}${x.waarsch.length > 1 ? " (+" + (x.waarsch.length - 1) + ")" : ""}</span>` : ""}</small></td>
+      <td>${x.geraamd ? `<span class="pill">Geraamd</span>` : typeof projStatusKnop === "function" ? projStatusKnop(x.p) : `<span class="pill st-${x.status}">${PROJ_STATUS[x.status]}</span>`}</td>
       <td class="r" style="white-space:nowrap">${x.getekend ? `<span class="muted">100 %</span>` : `<input class="inline num fin-kans" data-fin-kans data-k="${esc(x.key)}" type="text" inputmode="numeric" value="${x.f && x.f.kans != null ? x.f.kans : ""}" placeholder="${finInst().kans}" aria-label="Slaagkans ${esc(x.naam)}">%`}</td>
       <td>${datumVeld(x, "start")}</td><td>${datumVeld(x, "eind")}</td>
       <td class="r num">${eur(x.O)}</td><td class="r num" title="Marge op kostprijs: ${x.K ? finPct(x.marge / x.K) : "—"}">${eur(x.marge)}<small class="muted">${x.O ? finPct(x.marge / x.O) : ""}</small></td>
-      <td class="r num">${gefT ? eur(gefT) : "—"}</td><td class="r num">${x.R > 0.5 ? eur(x.R) : "—"}</td><td class="r num"><b>${j.o ? eur(j.o) : "—"}</b>${!x.getekend && x.gewicht < 1 && x.gewicht > 0 ? `<small class="muted">gewogen ${Math.round(x.gewicht * 100)} %</small>` : !x.getekend && x.gewicht === 0 ? `<small class="muted">telt niet mee</small>` : ""}</td></tr>`; };
-  const projTabel = `<div class="tw"><table class="t fin-pt"><thead><tr><th>Project</th><th>Status</th><th class="r">Kans</th><th>Start</th><th>Geplande einde</th><th class="r">Omzet</th><th class="r">Marge</th><th class="r">Gefactureerd</th><th class="r">Nog te factureren</th><th class="r">In ${jaar}</th></tr></thead><tbody>
-    ${groepen.map(([t, l]) => `<tr class="fin-kop"><td colspan="10">${t} <span class="muted" style="font-weight:400">${l.length}</span></td></tr>` + (l.length ? l.sort((a, b) => (a.start || "").localeCompare(b.start || "")).map(projRij).join("") : `<tr><td colspan="10" class="muted">—</td></tr>`)).join("")}
+      <td class="r num">${gefT ? eur(gefT) : "—"}</td><td class="r num">${x.R > 0.5 ? eur(x.R) : "—"}</td><td class="r num">${x.uit ? `<span class="muted">—</span><small class="muted">zelf uitgezet</small>` : `<b>${j.o ? eur(j.o) : "—"}</b>`}${x.uit ? "" : !x.getekend && x.gewicht < 1 && x.gewicht > 0 ? `<small class="muted">gewogen ${Math.round(x.gewicht * 100)} %</small>` : !x.getekend && x.gewicht === 0 ? `<small class="muted">telt niet mee</small>` : ""}</td></tr>`; };
+  const nk = kanUit ? 11 : 10;
+  const projTabel = `<div class="tw"><table class="t fin-pt"><thead><tr>${kanUit ? `<th class="fin-in" title="Zelf kiezen welke projecten meetellen">Telt mee</th>` : ""}<th>Project</th><th>Status</th><th class="r">Kans</th><th>Start</th><th>Geplande einde</th><th class="r">Omzet</th><th class="r">Marge</th><th class="r">Gefactureerd</th><th class="r">Nog te factureren</th><th class="r">In ${jaar}</th></tr></thead><tbody>
+    ${groepen.map(([t, l]) => { const u = l.filter(x => x.uit).length; return `<tr class="fin-kop"><td colspan="${nk}">${t} <span class="muted" style="font-weight:400">${l.length}${u ? " · " + u + " uitgezet" : ""}</span></td></tr>` + (l.length ? l.sort((a, b) => (a.uit === b.uit ? 0 : a.uit ? 1 : -1) || (a.start || "").localeCompare(b.start || "")).map(projRij).join("") : `<tr><td colspan="${nk}" class="muted">—</td></tr>`); }).join("")}
   </tbody></table></div>`;
   // vaste kosten
   const vk = Object.values(S.fin_vaste_kosten || {}).sort((a, b) => (a.volgorde || 0) - (b.volgorde || 0) || (a.categorie || "").localeCompare(b.categorie || "") || (a.created_at || "").localeCompare(b.created_at || ""));
@@ -255,8 +261,8 @@ function vFinPlanning() {
     <div class="panel"><div class="panel-head"><h3>Binnen en buiten per maand</h3><div class="fin-leg"><span><i class="fin-sw s3"></i>Binnen (ontvangsten)</span><span><i class="fin-sw s4"></i>Buiten (aannemers + vaste kosten)</span></div></div><div class="panel-body">${finGrafiekKasstroom(R)}</div></div>
   </div>
   <div class="panel" style="margin-bottom:16px"><div class="panel-head"><h3>Per maand · ${jaar}</h3><span class="muted" style="font-size:12px">bedragen in euro (k = duizend)</span></div>${maandTabel()}</div>
-  <div class="panel" style="margin-bottom:16px"><div class="panel-head"><h3>Projecten</h3><div class="actions"><span class="muted" style="font-size:12px">klik op een project voor het facturatieplan · marges per post in de meetstaat</span><button class="btn sm" data-fin-act="geraamd">+ Geraamd project</button></div></div>${projTabel}
-    <div class="panel-body muted" style="font-size:12px;border-top:1px solid var(--line)">Pijplijn (offertes en geraamde projecten, gewogen met hun kans): <b>${eur(pipeline)}</b> nog te factureren.</div></div>
+  <div class="panel" style="margin-bottom:16px"><div class="panel-head"><h3>Projecten</h3><div class="actions"><span class="muted" style="font-size:12px">klik op een project voor het facturatieplan · marges per post in de meetstaat${kanUit ? " · vink uit wat niet mag meetellen" : ""}</span><button class="btn sm" data-fin-act="geraamd">+ Geraamd project</button></div></div>${projTabel}
+    <div class="panel-body muted" style="font-size:12px;border-top:1px solid var(--line)">Pijplijn (offertes en geraamde projecten, gewogen met hun kans): <b>${eur(pipeline)}</b> nog te factureren.${nUit ? ` · <b>${nUit}</b> ${nUit === 1 ? "project staat" : "projecten staan"} zelf uitgezet en ${nUit === 1 ? "telt" : "tellen"} nergens mee (ook niet in Excel en pdf).` : ""}</div></div>
   <div class="fin-onder" style="margin-bottom:16px">
     <div class="panel"><div class="panel-head"><h3>Meerjarenoverzicht</h3><span class="muted" style="font-size:12px">voor een businessplan · scenario ${FIN_SCEN[scen].toLowerCase()}</span></div>
       <div class="tw"><table class="t"><thead><tr><th></th>${drie.map(d => `<th class="r">${d.j}</th>`).join("")}</tr></thead><tbody>
@@ -377,6 +383,8 @@ document.addEventListener("click", async (e) => {
 document.addEventListener("change", async (e) => {
   const el = e.target; if (!el || !el.dataset) return;
   if (el.matches("[data-fin-jaar]")) { S.finJaar = el.value; render(); return; }
+  if (el.matches("[data-fin-in]")) { if (schemaV() < 50) return; const aan = el.checked; el.disabled = true;
+    try { const r = await finZetPlan(el.dataset.k, { meetellen: aan }); if (!r) { toast("Dit project bestaat niet meer."); render(); return; } toast(aan ? "Telt weer mee in de planning" : "Telt niet meer mee in de planning"); } catch (x) { render(); } return; }
   if (el.matches("[data-fin-kans]")) { const raw = el.value.trim(); const n = raw === "" ? null : leesGetal(raw); if (n != null && (!isFinite(n) || n < 0 || n > 100)) { toast("Kans tussen 0 en 100 %."); el.value = ""; return; } try { await finZetPlan(el.dataset.k, { kans: n == null ? null : Math.round(n) }); } catch (x) { } return; }
   if (el.matches("[data-fin-d]")) { const f = el.dataset.finD, k = el.dataset.k, v = el.value || null; const { p, f: fp } = finZoek(k);
     if (v && !/^(19|20)\d\d-\d\d-\d\d$/.test(v)) return;   /* jaar nog aan het typen (Chrome stuurt 0002-…): niet bewaren */

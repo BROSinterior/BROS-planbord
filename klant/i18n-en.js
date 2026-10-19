@@ -41,7 +41,7 @@
     "Niets dat op je akkoord wacht": "Nothing awaiting your approval", "Zodra BROS je een offerte of meerwerk voorlegt, verschijnt het hier en krijg je een mail.": "As soon as BROS submits a quotation or extra work to you, it appears here and you receive an email.",
     "Eerdere beslissingen": "Earlier decisions", "Voorstel": "Proposal", "Voorgelegd": "Submitted", "Beslist": "Decided", "Details": "Details", "Akkoord geven": "Approve", "Ik heb een vraag / niet akkoord": "I have a question / do not agree",
     "Wat wil je aanpassen of vragen?": "What would you like to change or ask?", "Verstuur naar BROS": "Send to BROS", "Je naam": "Your name", "Wacht op je akkoord": "Awaiting your approval", "Goedgekeurd": "Approved", "Niet akkoord": "Not approved",
-    "Ingetrokken door BROS": "Withdrawn by BROS", "Termijn verstreken": "Deadline passed", "vraag BROS om het opnieuw voor te leggen": "ask BROS to submit it again",
+    "Ingetrokken door BROS": "Withdrawn by BROS", "Geannuleerd door BROS": "Cancelled by BROS", "Geannuleerd": "Cancelled", "Termijn verstreken": "Deadline passed", "vraag BROS om het opnieuw voor te leggen": "ask BROS to submit it again",
     "Bedankt — je akkoord is vastgelegd. Je krijgt een bevestiging per mail.": "Thank you — your approval has been recorded. You will receive a confirmation by email.", "Verstuurd — BROS neemt contact met je op.": "Sent — BROS will contact you.",
     "Je akkoord is vastgelegd. We gaan ermee aan de slag.": "Your approval has been recorded. We'll get to work.", "Vink aan dat je akkoord gaat.": "Tick the box to confirm you agree.", "Schrijf kort wat je wil aanpassen of vragen.": "Briefly write what you would like to change or ask.",
     "Iets extra nodig?": "Need something extra?", "Meerwerk aanvragen": "Request extra work", "Vraag hier een meerwerk aan: beschrijf wat je wil (eventueel met foto's). BROS maakt er een prijsvoorstel van dat je hierboven goedkeurt.": "Request extra work here: describe what you want (with photos if you like). BROS turns it into a price proposal that you approve above.",
@@ -154,6 +154,7 @@
     [/Deze foto kan niet gelezen worden\./, "This photo cannot be read."], [/Foto uploaden mislukte: /, "Photo upload failed: "],
   ];
   const rules = [
+    [/^(\s*)Geannuleerd op (.+)$/, "$1Cancelled on $2"],
     [/^(\s*)(\d+) van (\d+) taken klaar(\s*)$/, "$1$2 of $3 tasks done$4"],
     [/^(\s*)(\d+) post(?:en)?(\s*)$/, (m, a, n, b) => a + n + (n === "1" ? " item" : " items") + b],
     [/^(\s*)(\d+) foto('s)?(\s*)$/, (m, a, n, s, b) => a + n + (n === "1" ? " photo" : " photos") + b],

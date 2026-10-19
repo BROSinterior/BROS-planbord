@@ -3,7 +3,7 @@
    Statische webapp op Supabase (login, live-synchronisatie, rechten)
    ===================================================================== */
 if (window.top !== window.self) { try { window.top.location.replace(window.location.href); } catch (e) { document.documentElement.innerHTML = ""; } }   // niet in een vreemd frame (clickjacking)
-const APP_VERSION = "1.52.1";
+const APP_VERSION = "1.53.0";
 const PROJ_STATUS = { offerte: "In offerte", lopend: "Lopend", on_hold: "On hold", afgerond: "Afgerond", verloren: "Verloren" };
 const KLANTTYPE = { particulier: "Particulier", zakelijk: "Zakelijk" };
 const KLANTCODE = { particulier: "PAR", zakelijk: "ZAK" };
@@ -1733,7 +1733,7 @@ async function aiSaveSettings() {
   if (error) { toast("Bewaren mislukt: " + error.message, 5000); return; } S.instellingen.assistent = data; render(); toast("Assistent-instellingen bewaard");
 }
 /* ---------- Goedkeuringen: BROS legt de offerte of een meerwerkvoorstel voor, de klant beslist in het portaal ---------- */
-const GK_STATUS = { open: "Wacht op klant", akkoord: "Goedgekeurd", geweigerd: "Niet akkoord", ingetrokken: "Ingetrokken" };
+const GK_STATUS = { open: "Wacht op klant", akkoord: "Goedgekeurd", geweigerd: "Niet akkoord", ingetrokken: "Ingetrokken", geannuleerd: "Geannuleerd" };
 const gkOf = (pid) => Object.values(S.goedkeuringen).filter(g => g.project_id === pid).sort((a, b) => (b.voorgelegd_op || "").localeCompare(a.voorgelegd_op || ""));
 const gkOpenIds = (pid) => new Set(gkOf(pid).filter(g => g.status === "open" && !(g.geldig_tot && g.geldig_tot < todayIso)).flatMap(g => (g.posten || []).map(x => x.id)));
 /* post die nog voorgelegd kan worden: offerte zonder akkoord, of meer-/minwerk zonder akkoord, en niet in een open voorstel */
@@ -1745,8 +1745,8 @@ function vGoedkeuringen(p) {
   const klanten = contactsOf(p.id).filter(x => ["bouwheer", "contactpersoon"].includes(x.rol) && x.c.user_id);
   return `<div class="panel" style="margin-bottom:16px"><div class="panel-head"><div><h3>Goedkeuringen door de klant</h3><div class="muted" style="font-size:12px;margin-top:2px">${klanten.length ? `Zichtbaar in het portaal voor ${klanten.map(x => esc(x.c.naam)).join(", ")}.` : `<span style="color:var(--warn)">Nog niemand van dit project heeft portaal-toegang (Dossier › Contacten).</span>`}</div></div></div>
     <div class="tw"><table class="t"><thead><tr><th>Voorstel</th><th>Voorgelegd</th><th>Reageren vóór</th><th class="r">Excl. btw</th><th class="r">Incl. btw</th><th>Status</th><th>Beslist</th><th></th></tr></thead><tbody>
-    ${gs.map(g => { const verlopen = g.status === "open" && g.geldig_tot && g.geldig_tot < todayIso; return `<tr><td><b>${esc(g.titel || (g.soort === "meerwerk" ? "Meerwerk" : "Offerte"))}</b><small class="muted" style="display:block">${(g.posten || []).length} posten${g.toelichting ? " · " + esc(g.toelichting.slice(0, 80)) : ""}</small></td><td class="num">${fmtLong((g.voorgelegd_op || "").slice(0, 10))}<small class="muted" style="display:block">${esc(userById(g.voorgelegd_door).name)}</small></td><td class="num" style="${verlopen ? "color:var(--crit)" : ""}">${g.geldig_tot ? fmtLong(g.geldig_tot) : "—"}</td><td class="r num">${eur(g.totaal_excl)}</td><td class="r num">${eur(g.totaal_incl)}</td><td><span class="pill ${g.status === "akkoord" ? "st-afgerond" : verlopen ? "late" : g.status === "open" ? "st-lopend" : g.status === "geweigerd" ? "late" : "st-on_hold"}">${verlopen ? "Termijn verstreken" : GK_STATUS[g.status]}</span></td><td style="font-size:12px">${g.beslist_op ? `${fmtLong(lokDag(g.beslist_op))} · ${esc(g.beslist_naam)}${g.opmerking ? `<div style="color:var(--crit)">“${esc(g.opmerking)}”</div>` : ""}` : "—"}</td>
-      <td class="r" style="white-space:nowrap"><button class="btn ghost sm" data-act="gk-view" data-id="${g.id}">Bekijken</button>${g.status === "open" ? `<button class="btn ghost sm danger" data-act="gk-withdraw" data-id="${g.id}">Intrekken</button>` : ""}${g.status === "geweigerd" || g.status === "ingetrokken" || verlopen ? `<button class="btn ghost sm" data-act="gk-new" data-pid="${p.id}" data-soort="${g.soort}">Opnieuw voorleggen</button>` : ""}</td></tr>`; }).join("")}</tbody></table></div></div>`;
+    ${gs.map(g => { const verlopen = g.status === "open" && g.geldig_tot && g.geldig_tot < todayIso; return `<tr><td><b>${esc(g.titel || (g.soort === "meerwerk" ? "Meerwerk" : "Offerte"))}</b><small class="muted" style="display:block">${(g.posten || []).length} posten${g.toelichting ? " · " + esc(g.toelichting.slice(0, 80)) : ""}</small></td><td class="num">${fmtLong((g.voorgelegd_op || "").slice(0, 10))}<small class="muted" style="display:block">${esc(userById(g.voorgelegd_door).name)}</small></td><td class="num" style="${verlopen ? "color:var(--crit)" : ""}">${g.geldig_tot ? fmtLong(g.geldig_tot) : "—"}</td><td class="r num">${eur(g.totaal_excl)}</td><td class="r num">${eur(g.totaal_incl)}</td><td><span class="pill ${g.status === "akkoord" ? "st-afgerond" : verlopen ? "late" : g.status === "open" ? "st-lopend" : g.status === "geweigerd" ? "late" : "st-on_hold"}">${verlopen ? "Termijn verstreken" : GK_STATUS[g.status] || g.status}</span></td><td style="font-size:12px">${g.beslist_op ? `${fmtLong(lokDag(g.beslist_op))} · ${esc(g.beslist_naam)}${g.opmerking ? `<div style="color:var(--crit)">“${esc(g.opmerking)}”</div>` : ""}` : "—"}${g.status === "geannuleerd" ? `<div class="muted" title="${esc(g.annuleer_reden || "")}">geannuleerd ${g.geannuleerd_op ? fmtLong(lokDag(g.geannuleerd_op)) : ""}${g.geannuleerd_door ? " door " + esc(userById(g.geannuleerd_door).name) : ""}${g.annuleer_reden ? ` · “${esc(g.annuleer_reden.slice(0, 120))}”` : ""}</div>` : ""}</td>
+      <td class="r" style="white-space:nowrap"><button class="btn ghost sm" data-act="gk-view" data-id="${g.id}">Bekijken</button>${g.status === "open" ? `<button class="btn ghost sm danger" data-act="gk-withdraw" data-id="${g.id}">Intrekken</button>` : ""}${g.status === "akkoord" && gkKanAnnuleren(g) ? `<button class="btn ghost sm danger" data-act="gk-annuleer" data-id="${g.id}" title="Het akkoord van de klant ongedaan maken: de posten gaan terug naar Offerte en kunnen opnieuw voorgelegd worden">Annuleren</button>` : ""}${g.status === "geweigerd" || g.status === "ingetrokken" || g.status === "geannuleerd" || verlopen ? `<button class="btn ghost sm" data-act="gk-new" data-pid="${p.id}" data-soort="${g.soort}">Opnieuw voorleggen</button>` : ""}</td></tr>`; }).join("")}</tbody></table></div></div>`;
 }
 function gkForm(pid, soortVoorkeur) {
   const p = S.projecten[pid]; const rows = msRows(pid).filter(gkKandidaat);
@@ -1778,9 +1778,43 @@ function gkForm(pid, soortVoorkeur) {
 function gkView(id) {
   const g = S.goedkeuringen[id]; if (!g) return; const ps = g.posten || [];
   openModal(`${g.titel || GK_STATUS[g.status]} — ${GK_STATUS[g.status]}`, `<div class="form-grid"><div class="field span2">
-    <p style="margin:0 0 8px">${g.toelichting ? esc(g.toelichting) + "<br>" : ""}<span class="muted" style="font-size:12px">Voorgelegd ${fmtLong((g.voorgelegd_op || "").slice(0, 10))} door ${esc(userById(g.voorgelegd_door).name)}${g.geldig_tot ? ` · reageren vóór ${fmtLong(g.geldig_tot)}` : ""}${g.beslist_op ? ` · ${GK_STATUS[g.status]} op ${fmtLong(lokDag(g.beslist_op))} door ${esc(g.beslist_naam)} (${esc(g.beslist_email)})` : ""}</span>${g.opmerking ? `<p style="margin:8px 0 0;color:var(--crit)">Opmerking van de klant: “${esc(g.opmerking)}”</p>` : ""}</p>
+    <p style="margin:0 0 8px">${g.toelichting ? esc(g.toelichting) + "<br>" : ""}<span class="muted" style="font-size:12px">Voorgelegd ${fmtLong((g.voorgelegd_op || "").slice(0, 10))} door ${esc(userById(g.voorgelegd_door).name)}${g.geldig_tot ? ` · reageren vóór ${fmtLong(g.geldig_tot)}` : ""}${g.beslist_op ? ` · ${g.status === "geannuleerd" ? "Goedgekeurd" : GK_STATUS[g.status]} op ${fmtLong(lokDag(g.beslist_op))} door ${esc(g.beslist_naam)} (${esc(g.beslist_email)})` : ""}</span>${g.status === "geannuleerd" ? `<p style="margin:8px 0 0;color:var(--crit)">Geannuleerd${g.geannuleerd_op ? " op " + fmtLong(lokDag(g.geannuleerd_op)) : ""}${g.geannuleerd_door ? " door " + esc(userById(g.geannuleerd_door).name) : ""}${g.annuleer_reden ? `: “${esc(g.annuleer_reden)}”` : ""}</p>` : ""}${g.opmerking ? `<p style="margin:8px 0 0;color:var(--crit)">Opmerking van de klant: “${esc(g.opmerking)}”</p>` : ""}</p>
     <div class="tw"><table class="t"><thead><tr><th>Nr</th><th>Omschrijving</th><th class="r">Hoev.</th><th class="r">Prijs</th><th class="r">Totaal</th></tr></thead><tbody>${ps.map(x => `<tr><td class="num muted">${esc(x.code)}</td><td>${esc(x.omschrijving)}${x.locatie ? ` <small class="muted">· ${esc(x.locatie)}</small>` : ""}</td><td class="r num">${nl(x.hoeveelheid, 2)} ${esc(x.eenheid)}</td><td class="r num">${eur2(x.prijs)}</td><td class="r num">${eur2(x.totaal)}</td></tr>`).join("")}
     <tr class="tot"><td colspan="4"><b>Totaal excl. btw</b></td><td class="r num"><b>${eur2(g.totaal_excl)}</b></td></tr><tr><td colspan="4">Btw</td><td class="r num">${eur2(g.btw)}</td></tr><tr><td colspan="4"><b>Totaal incl. btw</b></td><td class="r num"><b>${eur2(g.totaal_incl)}</b></td></tr></tbody></table></div></div></div>`, { saveLabel: "Sluiten", wide: true, onSave: async () => { } });
+}
+/* 1.53 (script 050): een goedgekeurde offerte of goedgekeurd meerwerk annuleren — enkel beheer, via de databankfunctie
+   (die zet het voorstel op geannuleerd én haalt het akkoord van de posten: Akkoord → Offerte, meer-/minwerk houdt zijn status) */
+const gkKanAnnuleren = (g) => !!g && g.status === "akkoord" && g.soort !== "overeenkomst" && isBeheer() && schemaV() >= 50;
+function gkAnnuleerForm(id) {
+  const g = S.goedkeuringen[id]; if (!gkKanAnnuleren(g)) return;
+  const posten = Object.values(S.meetstaat_posten).filter(r => r.akkoord_goedkeuring === g.id && r.project_id === g.project_id);
+  const naarOfferte = posten.filter(r => r.status === "akkoord").length, mw = posten.filter(isMw).length;
+  const facturen = Object.values(S.vorderingen || {}).filter(v => v.project_id === g.project_id && (v.status === "verzonden" || v.status === "betaald"));
+  const klanten = contactsOf(g.project_id).filter(x => ["bouwheer", "contactpersoon"].includes(x.rol) && x.c.user_id && x.c.email);
+  const kanMailen = driveReady() && klanten.length;
+  openModal("Goedgekeurd voorstel annuleren — " + (g.titel || GK_STATUS[g.status]), `<div class="form-grid">
+    <div class="field span2"><p style="margin:0">Goedgekeurd op ${fmtLong(lokDag(g.beslist_op))} door ${esc(g.beslist_naam || "de klant")} · ${eur(g.totaal_incl)} incl. btw.</p>
+      <ul style="margin:8px 0 0;padding-left:18px;font-size:13px">
+        <li>Het voorstel krijgt de status <b>Geannuleerd</b>; het akkoord van de klant blijft zichtbaar als historiek.</li>
+        <li>${posten.length ? `${posten.length} ${posten.length === 1 ? "post verliest" : "posten verliezen"} het akkoord${naarOfferte ? ` — ${naarOfferte} ${naarOfferte === 1 ? "gaat" : "gaan"} terug naar <b>Offerte</b>` : ""}${mw ? `${naarOfferte ? ";" : " —"} ${mw} meer-/minwerk${mw === 1 ? "post houdt zijn" : "posten houden hun"} status` : ""}. Daarna kan je ze opnieuw voorleggen.` : "Geen posten meer gekoppeld aan dit akkoord."}</li>
+        <li>De klant ziet in het portaal dat het voorstel geannuleerd werd, met je reden.</li>
+      </ul>
+      ${facturen.length ? `<div class="notice" style="margin:10px 0 0;border-color:var(--warn)"><b>Let op:</b> voor dit project ${facturen.length === 1 ? "is al 1 factuur" : "zijn al " + facturen.length + " facturen"} verstuurd of betaald. Die blijven ongewijzigd — maak zo nodig een creditnota in Yuki.</div>` : ""}</div>
+    <div class="field span2"><label for="gka_reden">Reden (ziet de klant)</label><textarea id="gka_reden" name="reden" rows="3" required minlength="3" placeholder="bv. Zoals telefonisch besproken: de keuken wordt opnieuw uitgewerkt; je krijgt een nieuw voorstel."></textarea></div>
+    ${kanMailen ? `<div class="field span2"><label class="sw-row"><input type="checkbox" class="sw" name="mail" checked><span><b>De klant verwittigen per mail</b><small class="muted" style="display:block">naar ${klanten.map(x => esc(x.c.naam)).join(", ")}</small></span></label></div>` : `<div class="field span2"><p class="muted" style="font-size:12px;margin:0">Er gaat geen mail naar de klant (${driveReady() ? "niemand van dit project heeft portaal-toegang" : "Drive-script niet ingesteld"}); laat het hem zelf weten.</p></div>`}
+  </div>`, {
+    saveLabel: "Voorstel annuleren", wide: true,
+    onSave: async (d) => {
+      const reden = String(d.reden || "").trim(); if (reden.length < 3) { toast("Schrijf kort waarom je het voorstel annuleert."); return false; }
+      const { data, error } = await sb.rpc("goedkeuring_annuleer", { p_id: g.id, p_reden: reden });
+      if (error) { toast("Annuleren mislukt: " + error.message, 7000); return false; }
+      if (data && data.id) S.goedkeuringen[data.id] = data;
+      await msRefetch(posten.map(r => r.id));
+      render(); toast("Voorstel geannuleerd — de posten kunnen opnieuw voorgelegd worden", 5000);
+      if (kanMailen && d.mail) driveCall("gkmail", { id: g.id, soort: "geannuleerd", token: S.session?.access_token || "" }).then(j => toast(`Mail gestuurd naar ${(j.naar || []).join(", ") || "de klant"}`)).catch(e => toast("Geannuleerd, maar de mail is niet verstuurd: " + e.message, 7000));
+    },
+  });
+  const terug = $("#mform [data-close]"); if (terug) terug.textContent = "Terug";   // niet verwarren met "Voorstel annuleren"
 }
 async function gkWithdraw(id) {
   const g = S.goedkeuringen[id]; if (!g || g.status !== "open" || !confirm("Dit voorstel intrekken? De klant ziet het dan niet meer in het portaal.")) return;
@@ -2581,7 +2615,7 @@ function vProjecten() {
   ${ps.map(({ p, ts, pl, dn, st, en }) => `<tr class="click" data-open="${p.id}">
     <td class="num muted">${esc(p.nummer || "")}</td>
     <td><div class="row-title">${esc(p.klant)}${p.drive_url ? ` <a class="drive-ico" href="${esc(safeUrl(p.drive_url))}" target="_blank" rel="noopener" title="Projectmap openen in Google Drive">📁</a>` : ""}<small>${KLANTCODE[p.klanttype] || ""}${p.naam && p.naam !== p.klant ? " · " + esc(p.naam) : ""}${p.gemeente ? " · " + esc(p.gemeente) : ""}</small></div></td>
-    <td><span class="pill st-${p.status}">${PROJ_STATUS[p.status] || p.status}</span></td>
+    <td>${projStatusKnop(p)}</td>
     <td><span class="pill phase">${esc(faseName(p.fase_nr) || "—")}</span></td>
     <td>${p.lead ? avatar(p.lead) : "—"}</td>
     <td class="num">${fmt(st)} → ${fmt(en)}</td>
@@ -2666,7 +2700,7 @@ function vProjectDetail(p) {
   return `
   <div class="crumb"><button data-back="1">Projecten</button><span>›</span><span>${esc(p.klant)}</span></div>
   <div class="page-head"><div>${projCode(p) ? `<div class="eyebrow">${esc(projCode(p))}${p.projecttype ? " · " + esc(p.projecttype) : ""}</div>` : ""}<h1>${esc(projName(p))}</h1><div class="sub">${esc(p.adres || "")}${(p.postcode || p.gemeente) ? (p.adres ? ", " : "") + esc([p.postcode, p.gemeente].filter(Boolean).join(" ")) : ""}</div></div>
-    <div class="actions"><span class="pill st-${p.status}">${PROJ_STATUS[p.status] || p.status}</span>${p.drive_url ? `<a class="btn" href="${esc(safeUrl(p.drive_url))}" target="_blank" rel="noopener" title="Projectmap openen in Google Drive">📁 Drive-map ↗</a>` : (driveReady() ? `<button class="btn" data-act="drive-link" data-pid="${p.id}" title="Bestaande map op Drive koppelen of zoeken">📁 Drive-map koppelen</button>` : "")}${isBeheer() ? `<button class="btn" data-act="edit-project" data-pid="${p.id}">Bewerken</button>` : ""}<button class="btn" data-act="log-hours" data-pid="${p.id}">+ Uren</button>${msReady() ? `<button class="btn" data-act="ms-open" data-pid="${p.id}" title="${msRows(p.id).length ? "Meetstaat openen" : "Meetstaat aanmaken: loten en posten kiezen"}">${msRows(p.id).length ? "Meetstaat" : "+ Meetstaat"}</button>` : ""}<button class="btn primary" data-act="new-task" data-pid="${p.id}">+ Taak</button></div></div>
+    <div class="actions">${projStatusKnop(p)}${p.drive_url ? `<a class="btn" href="${esc(safeUrl(p.drive_url))}" target="_blank" rel="noopener" title="Projectmap openen in Google Drive">📁 Drive-map ↗</a>` : (driveReady() ? `<button class="btn" data-act="drive-link" data-pid="${p.id}" title="Bestaande map op Drive koppelen of zoeken">📁 Drive-map koppelen</button>` : "")}${isBeheer() ? `<button class="btn" data-act="edit-project" data-pid="${p.id}">Bewerken</button>` : ""}<button class="btn" data-act="log-hours" data-pid="${p.id}">+ Uren</button>${msReady() ? `<button class="btn" data-act="ms-open" data-pid="${p.id}" title="${msRows(p.id).length ? "Meetstaat openen" : "Meetstaat aanmaken: loten en posten kiezen"}">${msRows(p.id).length ? "Meetstaat" : "+ Meetstaat"}</button>` : ""}<button class="btn primary" data-act="new-task" data-pid="${p.id}">+ Taak</button></div></div>
   <div class="panel" style="margin-bottom:16px"><div class="panel-body meta">
     <div><div class="k">Fase</div><div class="v">${esc(faseName(p.fase_nr) || "—")}</div></div>
     <div><div class="k">Lead</div><div class="v"><span class="who-cell">${p.lead ? avatar(p.lead) : ""}${esc(userById(p.lead).name)}</span></div></div>
@@ -3221,6 +3255,57 @@ const projOpts = (sel) => {
 };
 const faseOpts = (sel, allowEmpty) => (allowEmpty ? `<option value="">— geen fase —</option>` : "") + opts(fasenList().map(f => [f.nr, `${f.nr} · ${f.naam}`]), sel);
 
+/* 1.53: de status van een project wijzigen met een klik op de statusknop (projectenlijst, projectkop, financiële planning) — beheer,
+   zoals het projectformulier. Verloren vraagt de reden; een andere status maakt die reden leeg (zoals het formulier). */
+function projStatusKnop(p) {
+  const lbl = esc(PROJ_STATUS[p.status] || p.status || "—");
+  if (!isBeheer()) return `<span class="pill st-${esc(p.status)}">${lbl}</span>`;
+  return `<button type="button" class="pill st-${esc(p.status)} pst-knop" data-act="pst-menu" data-pid="${p.id}" aria-haspopup="menu" aria-expanded="false" title="Status wijzigen">${lbl}<span class="pst-pijl" aria-hidden="true">▾</span></button>`;
+}
+function pstSluit(terug) {
+  const m = document.getElementById("pstMenu"); if (!m) return false;
+  const pid = m.dataset.pid; m.remove();
+  document.querySelectorAll(".pst-knop[aria-expanded='true']").forEach(b => b.setAttribute("aria-expanded", "false"));
+  if (terug) { const k = document.querySelector(`.pst-knop[data-pid="${pid}"]`); if (k) k.focus(); }
+  return true;
+}
+function pstMenu(knop) {
+  const open = document.getElementById("pstMenu"); const zelfde = open && open.dataset.pid === knop.dataset.pid; pstSluit(); if (zelfde) return;
+  const p = S.projecten[knop.dataset.pid]; if (!p || !isBeheer()) return;
+  const m = document.createElement("div"); m.id = "pstMenu"; m.className = "pst-menu"; m.setAttribute("role", "menu"); m.setAttribute("aria-label", "Status van " + (p.klant || "het project")); m.dataset.pid = p.id;
+  m.innerHTML = Object.entries(PROJ_STATUS).map(([k, l]) => `<button type="button" role="menuitemradio" aria-checked="${p.status === k}" data-act="pst-zet" data-pid="${p.id}" data-st="${k}"><span class="pill st-${k}">${esc(l)}</span>${p.status === k ? `<span class="pst-v" aria-hidden="true">✓</span>` : ""}</button>`).join("");
+  document.body.appendChild(m); knop.setAttribute("aria-expanded", "true");
+  const r = knop.getBoundingClientRect(); const h = m.offsetHeight, w = m.offsetWidth;
+  m.style.left = Math.max(8, Math.min(r.left, innerWidth - w - 8)) + "px";
+  m.style.top = (r.bottom + 4 + h > innerHeight - 8 && r.top - 4 - h > 8 ? r.top - 4 - h : r.bottom + 4) + "px";
+  (m.querySelector('[aria-checked="true"]') || m.querySelector("button")).focus();
+}
+async function pstZet(pid, st) {
+  const viaToets = !!(document.getElementById("pstMenu") && document.getElementById("pstMenu").contains(document.activeElement));
+  pstSluit(viaToets); const p = S.projecten[pid]; if (!p || !PROJ_STATUS[st] || p.status === st || !isBeheer()) return;
+  if (st === "verloren") {
+    openModal("Project verloren — " + (p.klant || ""), `<div class="form-grid"><div class="field span2"><label for="pst_vr">Reden verloren</label><input id="pst_vr" name="verloren_reden" value="${esc(p.verloren_reden || "")}" placeholder="bv. prijs, timing, ander bureau"><small class="muted">Optioneel — handig voor de rapporten.</small></div></div>`, {
+      saveLabel: "Op verloren zetten",
+      onSave: async (d) => { await dbUpdate("projecten", pid, { status: "verloren", verloren_reden: (d.verloren_reden || "").trim() }); toast("Status: Verloren"); },
+    });
+    return;
+  }
+  const vorig = p.status;
+  try { await dbUpdate("projecten", pid, { status: st, verloren_reden: "" }); } catch (e) { return; }
+  if (viaToets && (!document.activeElement || document.activeElement === document.body)) { const k = document.querySelector(`.pst-knop[data-pid="${pid}"]`); if (k) k.focus(); }   // na render: focus terug op de (nieuwe) knop
+  toast(`Status: ${PROJ_STATUS[st]} (was ${PROJ_STATUS[vorig] || vorig})`, 4000);
+}
+document.addEventListener("keydown", (e) => {
+  const m = document.getElementById("pstMenu"); if (!m) return;
+  if (!m.contains(document.activeElement)) { pstSluit(); return; }   // focus elders (bv. snel zoeken): menu dicht, toets niet afvangen
+  if (e.key === "Escape") { e.preventDefault(); e.stopPropagation(); pstSluit(true); return; }
+  if (e.key === "Tab") { pstSluit(true); return; }   // focus terug op de knop, Tab gaat van daar verder
+  if (!["ArrowDown", "ArrowUp", "Enter", " "].includes(e.key)) { pstSluit(true); return; }   // bv. ⌘K of /: menu dicht, de sneltoets werkt gewoon
+  if (e.key === "ArrowDown" || e.key === "ArrowUp") { e.preventDefault(); const bs = [...m.querySelectorAll("button")]; const i = bs.indexOf(document.activeElement); bs[(i + (e.key === "ArrowDown" ? 1 : -1) + bs.length) % bs.length].focus(); }
+}, true);
+document.addEventListener("click", (e) => { const m = document.getElementById("pstMenu"); if (m && !m.contains(e.target) && !(e.target.closest && e.target.closest(".pst-knop"))) pstSluit(); }, true);
+window.addEventListener("resize", () => pstSluit());
+document.addEventListener("scroll", () => pstSluit(), true);
 function projectForm(p = {}) {
   const isNew = !p.id;
   const klanten = Object.values(S.contacten).filter(c => c.soort === "klant" && c.actief !== false).sort((a, b) => a.naam.localeCompare(b.naam));
@@ -3645,6 +3730,9 @@ document.addEventListener("click", (e) => {
   if (d.act === "note-open") { e.stopPropagation(); const n = S.notities[d.id]; if (!n) return toast("Dit verslag bestaat niet meer."); if (!closeModal()) return; return noteForm(n); }
   if (d.act === "gk-view") return gkView(d.id);
   if (d.act === "gk-withdraw") return gkWithdraw(d.id);
+  if (d.act === "gk-annuleer") return gkAnnuleerForm(d.id);
+  if (d.act === "pst-menu") return pstMenu(el);
+  if (d.act === "pst-zet") return pstZet(d.pid, d.st);
   if (d.act === "ms-export") return exportMeetstaat(S.projecten[d.pid]).catch(err => { loader.fail(); toast("Export: " + err.message); });
   if (d.act === "post-new") return postAdd(Number(d.lot));
   if (d.act === "vord-new") return vordForm(d.pid, d.soort);

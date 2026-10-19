@@ -697,6 +697,12 @@
   .fin-mt .neg, .fin-pt .neg, .fin-kpi .neg { color: var(--crit); }
   .fin-pt td { vertical-align: top; } .fin-pt small { display: block; font-size: 11.5px; }
   .fin-pn { max-width: 300px; }
+  .pst-knop { border: 0; font-family: inherit; cursor: pointer; } .pst-knop:hover { filter: brightness(.96); } .pst-knop:focus-visible { outline: 2px solid var(--accent, #2a78d6); outline-offset: 2px; }
+  .pst-pijl { font-size: 9px; opacity: .65; margin-left: 1px; }
+  .pst-menu { position: fixed; z-index: 60; min-width: 170px; padding: 6px; background: var(--surface); border: 1px solid var(--line); border-radius: 12px; box-shadow: var(--shadow); display: flex; flex-direction: column; gap: 2px; }
+  .pst-menu button { display: flex; align-items: center; justify-content: space-between; gap: 10px; width: 100%; padding: 6px 8px; border: 0; border-radius: 8px; background: none; font: inherit; color: var(--ink); text-align: left; cursor: pointer; }
+  .pst-menu button:hover, .pst-menu button:focus-visible { background: var(--surface-2); outline: none; } .pst-menu button[aria-checked="true"] { background: var(--surface-2); } .pst-v { color: var(--ok); font-weight: 700; }
+  .fin-pt .fin-in { width: 44px; text-align: center; } .fin-pt tr.fin-uit > td:not(.fin-in) { opacity: .5; } .fin-pt tr.fin-uit .fin-pn { text-decoration: line-through; text-decoration-color: var(--muted); }
   .fin-kans { width: 44px; text-align: right; }
   .fin-datum { width: 132px; }
   .fin-w { color: var(--warn); }
@@ -713,23 +719,23 @@
 <div class="toast" id="toast" role="status"></div>
 <div class="loader" id="loader" aria-live="polite"><div class="logo"><i class="base"></i><i class="fill" id="loaderFill"></i></div><div class="pct" id="loaderPct">0%</div><div class="msg" id="loaderMsg">Even geduld…</div></div>
 <script src="vendor/supabase-2.45.4.js"></script>
-<script src="config.js?v=1.52.1"></script>
+<script src="config.js?v=1.53.0"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
-<script src="postcodes.js?v=1.52.1"></script>
-<script src="meetstaat-export.js?v=1.52.1"></script>
-<script src="meetstaat-import.js?v=1.52.1"></script>
+<script src="postcodes.js?v=1.53.0"></script>
+<script src="meetstaat-export.js?v=1.53.0"></script>
+<script src="meetstaat-import.js?v=1.53.0"></script>
 <!-- tekenmodule: deze drie scripts horen bij het tabblad Plannen — niet verwijderen -->
-<script src="vendor/dxf-parser.js?v=1.52.1"></script>
-<script src="symbolen.js?v=1.52.1"></script>
-<script src="tekenen.js?v=1.52.1"></script>
-<script src="agenda.js?v=1.52.1"></script>
-<script src="afspraken.js?v=1.52.1"></script>
-<script src="kp-beheer.js?v=1.52.1"></script>
-<script src="pv-beheer.js?v=1.52.1"></script>
-<script src="af-beheer.js?v=1.52.1"></script>
-<script src="deb-beheer.js?v=1.52.1"></script>
-<script src="wacht.js?v=1.52.1"></script>
-<script src="fin-planning.js?v=1.52.1"></script>
-<script src="app.js?v=1.52.1"></script>
+<script src="vendor/dxf-parser.js?v=1.53.0"></script>
+<script src="symbolen.js?v=1.53.0"></script>
+<script src="tekenen.js?v=1.53.0"></script>
+<script src="agenda.js?v=1.53.0"></script>
+<script src="afspraken.js?v=1.53.0"></script>
+<script src="kp-beheer.js?v=1.53.0"></script>
+<script src="pv-beheer.js?v=1.53.0"></script>
+<script src="af-beheer.js?v=1.53.0"></script>
+<script src="deb-beheer.js?v=1.53.0"></script>
+<script src="wacht.js?v=1.53.0"></script>
+<script src="fin-planning.js?v=1.53.0"></script>
+<script src="app.js?v=1.53.0"></script>
 </body>
 </html>

@@ -2,6 +2,10 @@
 
 De nieuwste versie staat bovenaan. (Vanaf 1.48 houdt `version.json` enkel de laatste versie bij; het Planbord vraagt dat bestand elke 5 minuten op.)
 
+## 1.53.0 — 2026-10-19 (script 050 + nieuw drive/Code.gs voor de mail)
+
+Goedgekeurde offertes en meerwerken annuleren (script 050, beheer): bij een goedgekeurd voorstel staat nu de knop Annuleren. Met een reden die de klant ziet; de posten verliezen het akkoord (Akkoord → Offerte, meer-/minwerk houdt zijn status) en kunnen opnieuw voorgelegd worden. Het akkoord van de klant blijft als historiek bewaard, het klantenportaal toont 'Geannuleerd door BROS' met de reden, en de klant kan per mail verwittigd worden (nieuw drive/Code.gs). Een getekende overeenkomst blijft altijd bewaard. Financiële planning: in de projectenlijst zet je zelf per project (en geraamd project) aan of uit of het meetelt — uitgezette projecten blijven zichtbaar maar tellen nergens mee (ook niet in Excel en pdf). Projectstatus: klik op de statusknop (projectenlijst, projectkop, financiële planning) om de status meteen te wijzigen; bij Verloren vraagt het Planbord de reden.
+
 ## 1.52.1 — 2026-10-19
 
 Financiële planning zonder kaspositie: in plaats van een banksaldo en een kaspositie toont het Planbord per maand wat er binnenkomt (betalingen van klanten) en wat er gepland buitengaat (aannemers en vaste kosten), op scherm, in de pdf en in de Excel. De velden voor het saldo zijn weg uit de uitgangspunten.

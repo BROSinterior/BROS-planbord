@@ -16,7 +16,7 @@ Statische webapp (geen build-stap) op een Supabase-database.
 | `version.json` | versienummer (enkel de laatste versie); de app meldt een nieuwe versie aan wie ze open heeft |
 | `CHANGELOG.md` | versiegeschiedenis (vanaf 1.48 niet meer in version.json) |
 | `vendor/supabase-2.45.4.js` (+ `591.supabase.js`) | de Supabase-bibliotheek, zelf gehost (geen CDN nodig) |
-| `sql/001_init.sql` … `sql/048_*.sql` | databasescripts, in volgorde uit te voeren (`versie_schema` in instellingen bewaakt de volgorde vanaf 022) |
+| `sql/001_init.sql` … `sql/050_*.sql` | databasescripts, in volgorde uit te voeren (`versie_schema` in instellingen bewaakt de volgorde vanaf 022) |
 | `drive/Code.gs` | Google Apps Script dat projectmappen aanmaakt/koppelt op Drive en de meetstaat-export wegschrijft (installatie: zie bovenaan dat bestand) |
 | `drive/YukiArchief.gs` | klein Apps Script voor het account archief@bros.be: leest daar de Yuki-factuurmails en stuurt ze naar het Drive-script (v1.50.1, zie *Yuki-mails uit archief@bros.be*) |
 | `agenda.js` | gedeeld (Planbord en portalen): agendabestand (.ics) en Google Agenda-link voor afspraken (script 041) |
@@ -26,7 +26,7 @@ Statische webapp (geen build-stap) op een Supabase-database.
 | `werf/` | de werfmodus voor op de smartphone (vaststellingen met foto's, werkt ook zonder bereik; installeerbaar als app) — ook voor aannemers, beperkt tot hun eigen punten |
 | `aannemer/` | het aannemersportaal (index.html + aannemer.js): werfpunten afwerken, plannen, verslagen, documenten, planning, prijsaanvragen, facturen, vragen aan BROS; `handleiding.json` = de handleiding (ook de bron van de hulp-assistent) |
 | `af-beheer.js` | Planbord: facturen van aannemers opvolgen (Facturatie per project en tabblad Facturen › Aannemers, script 047) |
-| `fin-planning.js` | Planbord: Rapporten › Financiële planning — jaarplanning, businessplan, pdf en Excel voor de bank (script 049, enkel beheer) |
+| `fin-planning.js` | Planbord: Rapporten › Financiële planning — jaarplanning, businessplan, pdf en Excel voor de bank (script 049, enkel beheer; projecten in/uit: script 050) |
 | `wacht.js` | Planbord: *Wacht op jou* bovenaan het Overzicht en het accountmenu onder je naam (v1.51) |
 | `deb-beheer.js` | Planbord: tabblad Facturen › Klanten — openstaande facturen, betalingen uit Yuki, betalingsherinneringen goedkeuren (script 048) |
 | `supabase/functions/assistent/` | Edge Function van de AI-assistent (in Supabase te deployen, sleutel als secret) |
@@ -169,6 +169,21 @@ Activeren (eenmalig):
 4. Edge Function `assistent` opnieuw plakken (weigert nu aannemerslogins) en pushen.
 
 Gebruik: Dossier › Contacten → bij een aannemer de knop **Aannemersportaal** (beheer) → hij krijgt een mail met een persoonlijke link. Instellingen → Klantenportaal toont wie toegang heeft (klant/aannemer). Een aannemer die op het Planbord of het klantenportaal inlogt, wordt doorgestuurd.
+
+## Goedgekeurd voorstel annuleren (script 050, v1.53) — enkel beheer
+
+- **Installeren:** `sql/050_goedkeuring_annuleren.sql` uitvoeren (controle: `1 | 1 | 1 | 1`). Voor de mail aan de klant: het nieuwe `drive/Code.gs` plakken en een nieuwe versie online zetten (actie `gkmail`, soort `geannuleerd`).
+- **Gebruik:** project › Meetstaat › *Goedkeuringen door de klant* → bij een goedgekeurde offerte of goedgekeurd meerwerk **Annuleren**. Je schrijft een reden (de klant ziet die) en kiest of de klant een mail krijgt.
+- **Wat er gebeurt** (in één keer, in de databank — functie `goedkeuring_annuleer`):
+  - het voorstel krijgt de status *Geannuleerd* met tijdstip, wie en de reden; het akkoord van de klant (naam, tijdstip) blijft bewaard als historiek;
+  - de posten die met dit akkoord goedgekeurd werden verliezen hun akkoord: *Akkoord* → *Offerte*, meer-/minwerk houdt zijn status, vervallen posten blijven vervallen. Ze kunnen daarna opnieuw voorgelegd worden (*Opnieuw voorleggen*).
+  - al verstuurde of betaalde facturen veranderen niet (het venster waarschuwt; maak zo nodig een creditnota in Yuki).
+- **Bewaking:** met een gewone login kan niemand nog rechtstreeks een status zetten (enkel een open voorstel intrekken), de beslissing van de klant wijzigen of een beslist voorstel verwijderen. Goedkeuren/weigeren gaat enkel via het portaal, annuleren enkel via de knop (zodat de posten altijd mee terugspringen). Een project verwijderen ruimt zijn voorstellen nog altijd mee op. Een getekende overeenkomst kan niet geannuleerd worden: die blijft bewaard als bewijs.
+
+## Projecten in/uit de financiële planning en status met één klik (v1.53)
+
+- **Financiële planning:** in de projectentabel staat vooraan een schakelaar *Telt mee*. Uitgevinkt (`fin_plan.meetellen`, script 050) blijft het project zichtbaar (grijs, onderaan zijn groep) maar telt het nergens mee: niet in de KPI's, grafieken, maandtabel, meerjarenoverzicht, pijplijn, Excel of pdf.
+- **Projectstatus:** klik op de statusknop in de projectenlijst, in de kop van een project of in de financiële planning en kies de nieuwe status (beheer, zoals het projectformulier). Bij *Verloren* vraagt het Planbord de reden; een andere status maakt die reden leeg.
 
 ## Financiële planning (script 049, v1.52) — enkel beheer
 
