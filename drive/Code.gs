@@ -44,6 +44,10 @@ function doPost(e) {
     if (body.action === "werfpuntmelding") return json(werfpuntMelding(body));
     if (body.action === "werfpuntfeedback") return json(werfpuntFeedback(body));   // aannemer (script 044): opmerking/foto bij een toegewezen werfpunt zonder het op te lossen → mail aan de projectverantwoordelijke   // aannemer (script 043): nieuw werfpunt gemeld in de werfmodus → mail aan de projectverantwoordelijke (token-gecontroleerd)
     if (body.action === "bestand") return json(portaalBestand(body)); // klant/aannemer: een gedeeld document ophalen om er een pdf-dossier van te maken (login + toegang gecontroleerd) // team (token): aannemer verwittigen dat hij aan een project gekoppeld is (met uitnodiging als hij nog geen login heeft)
+    if (body.action === "yukimails" || body.action === "yukizoeklijst") {   // 1.50.1: het archief-script (archief@bros.be) — met een EIGEN secret (ARCHIEF_SECRET), niet het Drive-secret van het team
+      if (!archiefSecretOk(body.archief_secret)) return json({ ok: false, error: "Geen toegang (ARCHIEF_SECRET klopt niet)." });
+      return json(body.action === "yukimails" ? yukiMailsVanArchief(body) : { ok: true, nummers: yukiZoeklijst() });
+    }
     if (!body.secret || body.secret !== CONFIG.SECRET) return json({ ok: false, error: "Geen toegang (secret klopt niet)." });
     if (body.action === "ping") return json({ ok: true, info: "Verbinding en secret in orde.", projecten: DriveApp.getFolderById(CONFIG.PROJECTEN_FOLDER_ID).getName(), sjabloon: DriveApp.getFolderById(CONFIG.SJABLOON_FOLDER_ID).getName() });
     // Drive-acties: naast het secret ook een geldig teamlogin vereist (het secret alleen volstaat niet meer), en enkel mappen onder PROJECTEN
@@ -59,6 +63,7 @@ function doPost(e) {
     if (body.action === "werfverslagmail") return json(werfverslagMail(body));
     if (body.action === "afspraak") return json(afspraakSync(body));
     if (body.action === "agendatest") return json(agendaStatus(body));   // Instellingen › Agenda testen (1.47)
+    if (body.action === "herinneringen") { try { caller(body.token, true); } catch (x) { return json({ ok: false, error: "Alleen beheerders kunnen herinneringen versturen." }); } return json(Object.assign({ ok: true }, herinneringenVersturen())); }   // 1.50 (script 048): goedgekeurde betalingsherinneringen nu versturen (enkel beheer)
     if (body.action === "antwoordmail") return json(antwoordMail(body));
     if (body.action === "werfpuntantwoord") return json(werfpuntAntwoord(body));
     if (body.action === "werfpuntreactie") return json(werfpuntReactie(body));   // werfpunt (script 044): reactie van BROS → mail aan de toegewezen aannemer   // werfpunt (script 043): antwoord van BROS aan de aannemer of klant die het meldde   // vragen beantwoorden (script 042): mail met het antwoord aan de aannemer of klant   // afspraken ter plaatse (script 041): Google Agenda van brosburo + mail met agendabestand aan de deelnemers
@@ -1188,8 +1193,8 @@ const BACKUP_TABELLEN = ["profiles", "tarieven", "fasen", "standaardtaken", "pro
   "vorderingen", "vordering_regels", "contacten", "project_contacten", "goedkeuringen", "goedkeuring_tekenaars", "notities", "werfbezoeken", "vaststellingen", "klant_timing", "werfplannen", "werfverslagen",
   "taak_voorstellen", "assistent_gesprekken", "assistent_berichten", "prijsaanvragen", "prijsaanvraag_regels", "prijsvragen", "prijsvraag_gunningen", "tekenplannen", "plan_objecten", "plan_versies", "plan_symbolen",
   "aannemer_meetstaten", "aannemer_meetstaat_posten", "keuzes", "keuze_opties", "meerwerk_aanvragen", "werf_fotos", "werf_updates", "woningdossier",
-  "aannemer_facturen", "aannemer_hulp"];   // 1.49 (script 047)
-const BACKUP_OPTIONEEL = ["aannemer_facturen", "aannemer_hulp"];   // bestaan pas na script 047: ontbreken is dan geen back-upfout
+  "aannemer_facturen", "aannemer_hulp", "betaalherinneringen"];   // 1.49 (script 047), 1.50 (048)
+const BACKUP_OPTIONEEL = ["aannemer_facturen", "aannemer_hulp", "betaalherinneringen"];   // bestaan pas na script 047: ontbreken is dan geen back-upfout
 const BACKUP_ORDE = { fasen: "nr", loten: "nr", tarieven: "user_id", instellingen: "key", klant_timing: "project_id,fase_nr", prijsvraag_gunningen: "prijsvraag_id,post_id", meetstaat_prijzen: "post_id", plan_symbolen: "code" };
 function onderhoud(volledig) {
   const cache = CacheService.getScriptCache();
@@ -1213,7 +1218,7 @@ function onderhoudZeker() {
 }
 function onderhoudInstall() { CacheService.getScriptCache().remove("onderhoud-trigger"); onderhoudZeker(); CacheService.getScriptCache().remove("hartslag"); onderhoud(false); Logger.log("OK — onderhoud draait elk uur (hartslag), back-up en bewaking wekelijks."); }
 function hartslag() {
-  pbAdmin("/rest/v1/instellingen?on_conflict=key", "post", { key: "hartslag", value: { drive: new Date().toISOString(), versie: "1.49.0" } }, "resolution=merge-duplicates,return=minimal");
+  pbAdmin("/rest/v1/instellingen?on_conflict=key", "post", { key: "hartslag", value: { drive: new Date().toISOString(), versie: "1.50.1" } }, "resolution=merge-duplicates,return=minimal");
 }
 function triggersHerstellen() {   // enkel triggers die er eerder al waren (nooit iets aanzetten dat BROS zelf niet installeerde)
   const props = PropertiesService.getScriptProperties();
@@ -1278,6 +1283,8 @@ function documentenDigest() {
   const dag = new Date().getDay(); if (((dag === 1 && uur >= 10) || dag === 2) && ScriptApp.getProjectTriggers().some(t => t.getHandlerFunction() === "weekoverzicht")) { try { weekoverzicht(); } catch (e) { Logger.log("Weekoverzicht inhalen: " + e); } }   // 1.48: gemiste maandagmails (quotum, storing) zelf inhalen; wie al gemaild werd, slaat het over
   try { prijsaanvraagHerinneringen(); } catch (e) { Logger.log("Herinneringen prijsaanvragen: " + e); }   // script 028
   try { aannemerFacturenMelden(); } catch (e) { Logger.log("Aannemersfacturen melden: " + e); }   // 1.49 (script 047)
+  try { debiteurenDagelijks(); } catch (e) { Logger.log("Opvolging klantfacturen: " + e); }   // 1.50 (script 048): één keer per werkdag
+  try { herinneringenVersturen(); } catch (e) { Logger.log("Herinneringen versturen: " + e); }   // vangnet: goedgekeurde herinneringen die nog niet vertrokken
   const docs = pbAdmin("/rest/v1/documenten?or=(gemeld_klant.eq.false,gemeld_aannemers.eq.false)&select=id,project_id,naam,pad,url,gedeeld,gedeeld_aannemers,gedeeld_op,gedeeld_aannemers_op,gemeld_klant,gemeld_aannemers&limit=500", "get") || [];
   if (!docs.length) { Logger.log("Niets te melden."); return; }
   const grens = Date.now() - DIGEST.WACHT_MIN * 60000; let mails = 0;
@@ -1330,15 +1337,429 @@ function aannemerFacturenMelden() {
   const d = (x) => x ? String(x).slice(8, 10) + "/" + String(x).slice(5, 7) + "/" + String(x).slice(0, 4) : "";
   const pn = (id) => { const p = projecten.find(x => x.id === id); return p ? (p.nummer ? p.nummer + " · " : "") + (p.klant || "") + (p.naam && p.naam !== p.klant ? " · " + p.naam : "") : ""; };
   const incl = (r) => Number(r.bedrag_excl || 0) + Number(r.btw_bedrag || 0); const tot = rijen.reduce((s, r) => s + incl(r), 0);
-  const url = PORTAAL.URL.replace(/klant\/?$/, "") + "#aankoop";
+  const url = PORTAAL.URL.replace(/klant\/?$/, "") + "#aankoop-aannemers";
   const html = "<div style=\"font-family:Helvetica,Arial,sans-serif;font-size:14px;line-height:1.5;color:#1B1E1C;max-width:760px\"><p>" + (rijen.length === 1 ? "Een aannemer laadde een factuur op" : rijen.length + " facturen van aannemers opgeladen of verbeterd") + " in het aannemersportaal (samen " + eu(tot) + " incl. btw):</p>"
     + "<table style=\"border-collapse:collapse;width:100%\"><tr style=\"color:#767D78;font-size:12px;text-align:left\"><th style=\"padding:4px 6px\">Project</th><th style=\"padding:4px 6px\">Aannemer</th><th style=\"padding:4px 6px\">Factuur</th><th style=\"padding:4px 6px;text-align:right\">Incl. btw</th><th style=\"padding:4px 6px\">Vervalt</th></tr>"
     + rijen.map(r => "<tr style=\"border-top:1px solid #EEE\"><td style=\"padding:6px\">" + H(pn(r.project_id)) + "</td><td style=\"padding:6px\">" + H(r.aannemer_naam || "") + "</td><td style=\"padding:6px\"><b>" + H(r.nummer || "") + "</b>" + (r.omschrijving ? "<div style=\"color:#767D78;font-size:12px\">" + H(String(r.omschrijving).slice(0, 140)) + "</div>" : "") + "</td><td style=\"padding:6px;text-align:right;white-space:nowrap\">" + eu(incl(r)) + "</td><td style=\"padding:6px;white-space:nowrap\">" + d(r.vervaldag) + "</td></tr>").join("") + "</table>"
-    + "<p style=\"margin:22px 0\"><a href=\"" + url + "\" style=\"background:#1B1E1C;color:#fff;text-decoration:none;padding:10px 18px;border-radius:8px;font-weight:600;display:inline-block\">Opvolgen in het Planbord (Aankoop)</a></p><p style=\"color:#767D78;font-size:12px\">Deze mail komt hooguit één keer per dag, enkel als er iets nieuws is.</p></div>";
+    + "<p style=\"margin:22px 0\"><a href=\"" + url + "\" style=\"background:#1B1E1C;color:#fff;text-decoration:none;padding:10px 18px;border-radius:8px;font-weight:600;display:inline-block\">Opvolgen in het Planbord (Facturen › Aannemers)</a></p><p style=\"color:#767D78;font-size:12px\">Deze mail komt hooguit één keer per dag, enkel als er iets nieuws is.</p></div>";
   const tekst = rijen.length + " factuur/facturen van aannemers:\n" + rijen.map(r => "- " + pn(r.project_id) + " · " + (r.aannemer_naam || "") + " · " + (r.nummer || "") + " · " + eu(incl(r)) + (r.vervaldag ? " · vervalt " + d(r.vervaldag) : "")).join("\n") + "\n\nOpvolgen: " + url;
   portaalMail(YUKI.REPORT_TO, (rijen.length === 1 ? "Nieuwe aannemersfactuur" : rijen.length + " nieuwe aannemersfacturen") + " · " + eu(tot), tekst, html);
   props.setProperty("AF_MAIL_DAG", vandaag);   // eerst noteren: mislukt het markeren hieronder, dan vandaag geen tweede mail
   chunks(rijen.map(r => r.id), 25).forEach(c => { try { pbAdmin("/rest/v1/aannemer_facturen?id=in.(" + c.join(",") + ")", "patch", { gemeld: true }); } catch (e) { Logger.log("gemeld zetten: " + e); } });
+}
+/* =====================================================================
+   Yuki-mails uit archief@bros.be (v1.50.1) — het kleine script drive/YukiArchief.gs draait in het account archief@bros.be,
+   leest daar de Yuki-factuurmails (met handtekeningcontrole) en stuurt ze met een eigen secret (ARCHIEF_SECRET) naar dit script.
+   Vanaf de eerste echte Yuki-mail die het doorstuurt, leest dit script de mailbox van brosburo niet meer voor Yuki (scripteigenschap
+   YUKI_MAILBOX = "archief"; terugzetten = eerst de trigger in archief@ wissen, dan die eigenschap verwijderen).
+   ===================================================================== */
+/** Eenmalig in de editor uitvoeren: maakt het aparte secret voor het archief-script (scripteigenschap ARCHIEF_SECRET) en toont het in het logboek
+ *  om over te nemen in het archief-script. Bestaat het al, dan wordt hetzelfde getoond (opnieuw maken: eerst de eigenschap verwijderen). */
+function archiefSecretMaken() {
+  const p = PropertiesService.getScriptProperties(); let s = p.getProperty("ARCHIEF_SECRET");
+  if (!s || s.length < 32) { s = (Utilities.getUuid() + Utilities.getUuid()).replace(/-/g, ""); p.setProperty("ARCHIEF_SECRET", s); }
+  Logger.log("ARCHIEF_SECRET = " + s + "\nZet deze waarde in het archief-script (archief@bros.be) als scripteigenschap ARCHIEF_SECRET. Deel ze met niemand.");
+}
+function archiefSecretOk(x) {
+  const s = PropertiesService.getScriptProperties().getProperty("ARCHIEF_SECRET"); x = String(x || "");
+  if (!s || s.length < 32 || x.length !== s.length) return false;
+  let d = 0; for (let i = 0; i < s.length; i++) d |= s.charCodeAt(i) ^ x.charCodeAt(i); return d === 0;
+}
+const yukiMailbox = () => PropertiesService.getScriptProperties().getProperty("YUKI_MAILBOX") || "brosburo";
+const ARCH_RAPPORT = "YUKI_ARCH_RAPPORT";
+/** Een doorgestuurde mail zo verpakken dat yukiParse/yukiPdfText ze lezen zoals een Gmail-bericht. */
+function yukiBerichtShim(x) {
+  let pdf = null;
+  if (x.pdf && x.pdf.b64) { const b = Utilities.newBlob(Utilities.base64Decode(String(x.pdf.b64)), "application/pdf", String(x.pdf.naam || "factuur.pdf").slice(0, 120)); pdf = { getName: () => b.getName(), getBytes: () => b.getBytes(), copyBlob: () => b.copyBlob() }; }
+  return { getId: () => "archief:" + String(x.id || ""), getPlainBody: () => String(x.tekst || ""), getSubject: () => String(x.onderwerp || ""), getFrom: () => String(x.van || ""), getAttachments: () => pdf ? [pdf] : [] };
+}
+/** Meldingen van één run van het archief-script bundelen: één rapportmail per run (bij de afsluitende oproep, of uiterlijk de volgende ochtend). */
+function yukiRapportBewaren(lijnen) {
+  if (!lijnen.length) return;
+  const lock = LockService.getUserLock(); if (!lock.tryLock(10000)) return yukiRapporteer(lijnen);   // geen slot: meteen versturen (liever een mail te veel dan een melding kwijt)
+  try { yukiRapportBewarenZonderSlot(lijnen); } finally { lock.releaseLock(); }
+}
+function yukiRapportBewarenZonderSlot(lijnen) {
+  const props = PropertiesService.getScriptProperties(); let oud = []; try { oud = JSON.parse(props.getProperty(ARCH_RAPPORT) || "[]"); } catch (e) { }
+  const keep = ["factuurnummer", "klant", "totaal_incl", "resultaat", "project", "projectnummer", "vordering_nr", "vordering_soort", "bedrag_excl", "opmerking", "reden", "pdf_fout"];
+  lijnen.forEach(r => { const o = {}; keep.forEach(k => { if (r[k] != null) o[k] = typeof r[k] === "string" ? r[k].slice(0, 300) : r[k]; }); oud.push(o); });
+  const s = JSON.stringify(oud);
+  if (Utilities.newBlob(s).getBytes().length > 6000) { props.deleteProperty(ARCH_RAPPORT); yukiRapporteer(oud); } else props.setProperty(ARCH_RAPPORT, s);   // limiet 9 kB per eigenschap
+}
+function yukiRapportVersturen() {
+  const lock = LockService.getUserLock(); if (!lock.tryLock(10000)) return;   // volgende keer
+  let l = [];
+  try { const props = PropertiesService.getScriptProperties(); const s = props.getProperty(ARCH_RAPPORT); if (!s) return; props.deleteProperty(ARCH_RAPPORT); try { l = JSON.parse(s); } catch (e) { } }
+  finally { lock.releaseLock(); }
+  if (l.length) yukiRapporteer(l);
+}
+function yukiMailsVanArchief(body) {
+  const props = PropertiesService.getScriptProperties(); props.setProperty("YUKI_ARCHIEF_LAATST", new Date().toISOString());
+  if (body.einde) { yukiRapportVersturen(); return { ok: true, resultaten: {} }; }
+  const mails = (Array.isArray(body.mails) ? body.mails : []).slice(0, 10); const res = {}; const facturen = [], melden = [];
+  // pas omschakelen bij de eerste echte Yuki-mail die in archief@ aankomt (tot dan blijft brosburo ook lezen; dubbel is onschadelijk: "al gekoppeld")
+  if (yukiMailbox() !== "archief" && mails.some(x => x && x.echt === true && String(x.onderwerp || "").indexOf("Factuur van BROS") >= 0)) { props.setProperty("YUKI_MAILBOX", "archief"); props.setProperty("YUKI_MAILBOX_SINDS", brusselsDag()); }
+  const sinds = props.getProperty("YUKI_MAILBOX_SINDS") || "";
+  const oud = (datum) => !!(sinds && datum && dagenTussen(datum, sinds) > 3);   // factuur van vóór de omschakeling: een probleem ermee werd al vanuit brosburo gemeld
+  mails.forEach(x => {
+    const id = String(x.id || "");
+    if (String(x.onderwerp || "").indexOf("Factuur van BROS") < 0) { res[id] = "overgeslagen"; return; }
+    if (x.echt !== true) {   // handtekening niet bevestigd in archief@: nooit automatisch verwerken
+      const t = String(x.tekst || ""); const dat = t.match(/Datum\s*:\s*(\d{2})-(\d{2})-(\d{4})/); res[id] = "verdacht"; const vnr = ((t.match(/Factuurnummer\s*:\s*([0-9A-Za-z\-\/]+)/) || [])[1] || "").trim();
+      if (body.zoek && vnr) yukiZoekResultaat(vnr, "verdacht");   // gevonden maar handtekening niet bevestigd: niet elke 6 uur opnieuw zoeken, apart melden
+      if (!body.zoek && !oud(dat ? dat[3] + "-" + dat[2] + "-" + dat[1] : null) && meldEenmaal("archrap-" + (vnr || id) + "-verdacht", 7)) melden.push({ factuurnummer: ((t.match(/Factuurnummer\s*:\s*([0-9A-Za-z\-\/]+)/) || [])[1] || "?").trim(), klant: (String(x.onderwerp).match(/Factuur voor\s+(.+)$/) || [])[1] || String(x.van || ""), totaal_incl: yukiNum((t.match(/Totaalbedrag\s*:\s*EUR\s*([0-9\.\s]+,\d{2})/) || [])[1] || "0,00"), resultaat: "te bekijken", reden: "afzender niet bevestigd door Gmail in archief@bros.be (geen geldige Yuki-handtekening) — niet automatisch verwerkt. Komt hij echt van Yuki, koppel hem dan zelf in het Planbord." });
+      return; }
+    let f = null; try { f = yukiParse(yukiBerichtShim(x)); } catch (e) { }
+    if (!f) { res[id] = "niet herkend"; return; }
+    f.mailId = id; facturen.push(f);
+  });
+  if (body.zoek) { facturen.forEach(f => { try { res[f.mailId] = yukiPdfAanvullen(f); } catch (e) { res[f.mailId] = "fout: " + String(e.message || e).slice(0, 120); } }); return { ok: true, resultaten: res }; }
+  // per factuur apart koppelen: een fout bij één factuur houdt de andere niet tegen (de mail blijft zonder label en wordt opnieuw geprobeerd)
+  const perNr = {}; facturen.forEach(f => { (perNr[f.factuurnummer] = perNr[f.factuurnummer] || []).push(f); });
+  Object.keys(perNr).forEach(nr => {
+    const f = perNr[nr][0];
+    try {
+      const r = (yukiKoppel([f]) || [])[0] || { factuurnummer: nr, resultaat: "niet herkend" };
+      perNr[nr].forEach(g => { res[g.mailId] = r.resultaat; });
+      if (r.resultaat === "gekoppeld" || (!oud(f.datum) && meldEenmaal("archrap-" + nr + "-" + r.resultaat, 7))) melden.push(r);   // zelfde probleem hooguit één keer per week
+    } catch (e) {
+      const fout = String(e.message || e).slice(0, 160); perNr[nr].forEach(g => { res[g.mailId] = "fout: " + fout; });
+      if (meldEenmaal("archfout-" + nr, 1)) melden.push({ factuurnummer: nr, klant: f.klant, totaal_incl: f.totaal_incl, resultaat: "fout", reden: fout + " — het archief-script probeert het opnieuw (na 3 pogingen: label Planbord/te bekijken)." });
+    }
+  });
+  try { yukiRapportBewaren(melden); } catch (e) { try { yukiRapporteer(melden); } catch (x) { console.error("rapport: " + x); } }
+  return { ok: true, resultaten: res };
+}
+/** Verzonden facturen zonder pdf (laatste 120 dagen, minstens een dag oud) die het archief-script in archief@bros.be moet opzoeken.
+ *  Een factuur die al gevonden werd (bedrag wijkt af, geen Drive-map, …) wordt pas na 7 dagen opnieuw gezocht. */
+function yukiZoeklijst() {
+  const props = PropertiesService.getScriptProperties(); props.setProperty("YUKI_ARCHIEF_LAATST", new Date().toISOString());
+  const vandaag = brusselsDag(); const grens = Utilities.formatDate(new Date(Date.now() - 120 * 86400000), "Europe/Brussels", "yyyy-MM-dd");
+  const alle = props.getProperties(); Object.keys(alle).filter(k => k.indexOf("YZ_") === 0).forEach(k => { let d = ""; try { d = JSON.parse(alle[k]).d; } catch (e) { } if (!d || dagenTussen(d, vandaag) > 30) { try { props.deleteProperty(k); } catch (e) { } } });
+  let rijen = []; try { rijen = pbAdmin("/rest/v1/vorderingen?status=in.(verzonden,betaald)&factuurnummer=neq.&factuur_document=is.null&datum=gte." + grens + "&select=factuurnummer,datum&order=datum.desc&limit=30", "get") || []; } catch (e) { return []; }
+  return rijen.filter(v => v.datum && dagenTussen(v.datum, vandaag) >= DEBITEUREN.MAIL_ZOEKEN_NA_DAGEN).map(v => String(v.factuurnummer).trim())
+    .filter(nr => { if (!nr) return false; const z = yukiZoekResultaat(nr); return !z || dagenTussen(z.d, vandaag) >= 7; });
+}
+function yukiZoekResultaat(nr, r) {
+  const props = PropertiesService.getScriptProperties(); const k = "YZ_" + String(nr).slice(0, 60);
+  if (r === undefined) { try { return JSON.parse(props.getProperty(k) || "null"); } catch (e) { return null; } }
+  try { props.setProperty(k, JSON.stringify({ d: brusselsDag(), r: String(r).slice(0, 200) })); } catch (e) { }
+  return r;
+}
+/** Pdf en betaalgegevens van een gevonden Yuki-mail bij een factuur zonder pdf zetten — enkel als bedrag, factuurnummer en rekening kloppen. */
+function yukiPdfAanvullen(f) {
+  const nr = f.factuurnummer;
+  const v = (pbAdmin("/rest/v1/vorderingen?factuurnummer=eq." + encodeURIComponent(nr) + "&status=in.(verzonden,betaald)&select=id,project_id,nr,factuurnummer,datum,bedrag_excl,btw_bedrag,mededeling,vervaldag,factuur_document&limit=2", "get") || []);
+  if (v.length !== 1) return v.length ? "meerdere facturen met dit nummer" : "geen factuur met dit nummer";
+  const r = v[0]; if (r.factuur_document && r.mededeling && r.vervaldag) return "al in orde";
+  const incl = Number(r.bedrag_excl || 0) + Number(r.btw_bedrag || 0); const melden = (res, reden) => { if (meldEenmaal("afw-" + nr, 7)) yukiRapportBewaren([{ factuurnummer: nr, klant: f.klant, totaal_incl: f.totaal_incl || 0, resultaat: "niet aangevuld", reden: reden }]); return yukiZoekResultaat(nr, res); };
+  if (r.bedrag_excl == null || r.btw_bedrag == null || f.totaal_incl == null) return melden("bedrag niet te vergelijken", "het bedrag kon niet vergeleken worden (geen bedrag of btw in het Planbord). Vul het aan of zet de pdf zelf bij de factuur.");
+  if (Math.abs(Number(f.totaal_incl) - incl) > YUKI.TOL) return melden("bedrag wijkt af", "de Yuki-factuur is € " + Number(f.totaal_incl).toFixed(2) + " incl., het Planbord € " + incl.toFixed(2) + ". Kijk het factuurnummer of het bedrag na.");
+  const pdfNiet = f.pdfBlob ? yukiPdfVerdacht(f) : "";   // extra zekerheid: ander nummer of andere rekening in de pdf → niets aanvullen, melden
+  if (pdfNiet) return melden(/rekening/.test(pdfNiet) ? "andere rekening in pdf" : "pdf zonder dit nummer", pdfNiet + " — niet gedeeld met de klant. Kijk de mail na in archief@bros.be.");
+  const token = pbLogin(); const p = (pbAll("/rest/v1/projecten?select=id,nummer,klant,drive_folder_id&id=eq." + r.project_id, token) || [])[0] || {};
+  const opm = yukiBetaalgegevens(f, r, p, token, r.bedrag_excl);
+  return yukiZoekResultaat(nr, "aangevuld" + (!f.pdfBlob ? " zonder pdf (mail zonder factuur-pdf of pdf te groot)" : !p.drive_folder_id ? " zonder pdf (project heeft geen Drive-map)" : "") + (opm ? " (" + opm + ")" : ""));
+}
+/* =====================================================================
+   Opvolging van klantfacturen (script 048, v1.50) — loopt mee met de uurlijkse trigger van documentenDigest
+   Elke werkdag één keer (vanaf DEBITEUREN.VAN_UUR):
+   1. Betalingen uit Yuki (webservice, CheckOutstandingItemAdmin per verzonden factuur). Een factuur gaat pas naar 'betaald' als
+      Yuki ze eerder als openstaand toonde en daarna op TWEE verschillende dagen niet meer; kantelen er in één ronde opvallend
+      veel facturen tegelijk (storing, ander antwoord), dan wordt niets aangepast en enkel gemeld.
+   2. Controle mailbox: een factuur die in het Planbord als verzonden staat maar waarvan de Yuki-mail (pdf, mededeling, vervaldag)
+      nog niet verwerkt is, wordt opgezocht in Gmail en — enkel als het bedrag klopt — alsnog verwerkt; anders gemeld.
+   3. Herinneringen VOORSTELLEN (DEBITEUREN.H1 en .H2 dagen na de vervaldag). Ze vertrekken pas als BROS ze goedkeurt in het
+      Planbord (tabblad Facturen › Klanten). Na de tweede herinnering: één melding aan BROS om zelf op te volgen.
+   4. Eén overzichtsmail aan YUKI.REPORT_TO (enkel als er iets nieuws te melden is; dezelfde melding hooguit één keer per week).
+   Installatie: scripteigenschap YUKI_API_KEY (toegangscode van de Yuki-webservice; optioneel YUKI_ADMIN_NAAM of YUKI_ADMIN_ID)
+   → in de editor één keer yukiApiTest() uitvoeren (verandert niets, toont wat Yuki teruggeeft).
+   ===================================================================== */
+const DEBITEUREN = { VAN_UUR: 8, H1: 3, H2: 7, MELDING_NA_H2: 7, OPGEMAAKT_DAGEN: 7, MAIL_ZOEKEN_NA_DAGEN: 1, BULK_MAX: 3,
+  YUKI_URLS: ["https://api.yukiworks.be/ws/Accounting.asmx", "https://api.yukiworks.nl/ws/Accounting.asmx"], YUKI_NS: "http://www.theyukicompany.com/" };
+const brusselsDag = (d) => Utilities.formatDate(d ? new Date(d) : new Date(), "Europe/Brussels", "yyyy-MM-dd");
+const dagenTussen = (a, b) => Math.round((new Date(b + "T12:00:00Z").getTime() - new Date(a + "T12:00:00Z").getTime()) / 86400000);
+function yukiSoap(methode, params, url) {
+  url = url || PropertiesService.getScriptProperties().getProperty("YUKI_API_URL") || DEBITEUREN.YUKI_URLS[0];
+  const x = (s) => String(s == null ? "" : s).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+  const body = '<?xml version="1.0" encoding="utf-8"?><soap:Envelope xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xmlns:xsd="http://www.w3.org/2001/XMLSchema" xmlns:soap="http://schemas.xmlsoap.org/soap/envelope/"><soap:Body>'
+    + "<" + methode + ' xmlns="' + DEBITEUREN.YUKI_NS + '">' + params.map(p => "<" + p[0] + ">" + x(p[1]) + "</" + p[0] + ">").join("") + "</" + methode + "></soap:Body></soap:Envelope>";
+  const r = UrlFetchApp.fetch(url, { method: "post", contentType: "text/xml; charset=utf-8", payload: body, headers: { SOAPAction: '"' + DEBITEUREN.YUKI_NS + methode + '"' }, muteHttpExceptions: true });
+  const t = r.getContentText();
+  if (r.getResponseCode() !== 200) { const f = (t.match(/<faultstring>([\s\S]*?)<\/faultstring>/) || [])[1]; throw new Error("Yuki " + methode + ": " + (f || "HTTP " + r.getResponseCode()).slice(0, 300)); }
+  if (new RegExp("<(?:\\w+:)?" + methode + "Result\\s*/>").test(t)) return "";
+  let res = (t.match(new RegExp("<(?:\\w+:)?" + methode + "Result[^>]*>([\\s\\S]*?)</(?:\\w+:)?" + methode + "Result>")) || [])[1];
+  if (res == null) throw new Error("Yuki " + methode + ": onverwacht antwoord");
+  if (/&lt;/.test(res)) res = res.replace(/&lt;/g, "<").replace(/&gt;/g, ">").replace(/&quot;/g, '"').replace(/&apos;/g, "'").replace(/&amp;/g, "&");   // xml als tekst
+  return res;
+}
+/** Parameternamen van een methode uit de WSDL (bv. administrationID of adminID) — één keer opgezocht en bewaard. */
+function yukiParams(methode, standaard) {
+  const props = PropertiesService.getScriptProperties(); const sleutel = "YUKI_P_" + methode; const bewaard = props.getProperty(sleutel);
+  if (bewaard) { try { return JSON.parse(bewaard); } catch (e) { } }
+  const cache = CacheService.getScriptCache(); if (cache.get("WSDL_MIS_" + methode)) return standaard;   // WSDL onlangs onbereikbaar: niet per factuur opnieuw proberen
+  try {
+    const url = (props.getProperty("YUKI_API_URL") || DEBITEUREN.YUKI_URLS[0]) + "?WSDL"; const w = UrlFetchApp.fetch(url, { muteHttpExceptions: true }).getContentText();
+    const blok = (w.match(new RegExp('<(?:\\w+:)?element name="' + methode + '">([\\s\\S]*?)</(?:\\w+:)?element>\\s*<(?:\\w+:)?element name="' + methode + 'Response"')) || [])[1] || "";
+    const namen = []; const re = /<(?:\w+:)?element[^>]*\bname="([^"]+)"/g; let m; while ((m = re.exec(blok))) namen.push(m[1]);
+    if (namen.length === standaard.length) { props.setProperty(sleutel, JSON.stringify(namen)); return namen; }
+  } catch (e) { }
+  cache.put("WSDL_MIS_" + methode, "1", 21600);
+  return standaard;
+}
+function yukiApiSessie() {
+  const props = PropertiesService.getScriptProperties(); const key = props.getProperty("YUKI_API_KEY");
+  if (!key) return null;
+  const cache = CacheService.getScriptCache(); let sid = cache.get("YUKI_SID");
+  if (!sid) {
+    let fout = null;
+    const urls = props.getProperty("YUKI_API_URL") ? [props.getProperty("YUKI_API_URL")] : DEBITEUREN.YUKI_URLS;
+    for (const u of urls) { try { sid = yukiSoap("Authenticate", [["accessKey", key]], u).trim(); if (sid) { if (!props.getProperty("YUKI_API_URL")) props.setProperty("YUKI_API_URL", u); break; } } catch (e) { fout = e; } }
+    if (!sid) throw new Error("Yuki: aanmelden met YUKI_API_KEY lukte niet" + (fout ? " (" + fout.message + ")" : "") + ".");
+    cache.put("YUKI_SID", sid, 1200);
+  }
+  let admin = props.getProperty("YUKI_ADMIN_ID");
+  if (!admin) {
+    const xml = yukiSoap("Administrations", [["sessionID", sid]]);
+    const lijst = []; const re = /<(?:\w+:)?Administration\b[^>]*\bID="([^"]+)"[^>]*>([\s\S]*?)<\/(?:\w+:)?Administration>/g; let m;
+    while ((m = re.exec(xml))) lijst.push({ id: m[1], naam: ((m[2].match(/<(?:\w+:)?Name>([\s\S]*?)<\/(?:\w+:)?Name>/) || [])[1] || "").trim() });
+    const wil = (props.getProperty("YUKI_ADMIN_NAAM") || "").toLowerCase();
+    const keuze = wil ? lijst.filter(a => a.naam.toLowerCase().indexOf(wil) >= 0) : lijst;
+    if (keuze.length !== 1) throw new Error("Yuki: " + lijst.length + " administratie(s) gevonden (" + lijst.map(a => a.naam).join(", ") + ") — zet de scripteigenschap YUKI_ADMIN_NAAM (of YUKI_ADMIN_ID).");
+    admin = keuze[0].id; props.setProperty("YUKI_ADMIN_ID", admin);
+  }
+  return { sid: sid, admin: admin };
+}
+/** Openstaand in Yuki voor één factuurnummer. { open: bedrag } of { open: 0 } (niets openstaand) of { onbekend: reden }. Werpt een fout bij een onleesbaar antwoord. */
+function yukiOpen(s, nr) {
+  const namen = yukiParams("CheckOutstandingItemAdmin", ["sessionID", "administrationID", "Reference"]);
+  const xml = yukiSoap("CheckOutstandingItemAdmin", [[namen[0], s.sid], [namen[1], s.admin], [namen[2], nr]]);
+  const items = []; const re = /<(?:\w+:)?Item\b[^>]*>([\s\S]*?)<\/(?:\w+:)?Item>/g; let m;
+  const veld = (b, n) => ((b.match(new RegExp("<(?:\\w+:)?" + n + "\\b[^>]*>([\\s\\S]*?)</(?:\\w+:)?" + n + ">")) || [])[1] || "").trim();
+  while ((m = re.exec(xml))) {
+    const ruw = veld(m[1], "OpenAmount"); if (!/^-?\d+(\.\d+)?$/.test(ruw)) throw new Error("Yuki gaf een onleesbaar bedrag (" + ruw.slice(0, 30) + ")");
+    items.push({ open: Number(ruw), ref: veld(m[1], "Reference") });
+  }
+  if (!items.length) {
+    const leeg = !xml.trim() || /^\s*<(?:\w+:)?OutstandingItems\s*(\/>|>\s*<\/(?:\w+:)?OutstandingItems>)\s*$/.test(xml);
+    if (!leeg) throw new Error("Yuki gaf een onverwacht antwoord voor factuur " + nr);
+    return { open: 0 };
+  }
+  const eigen = items.filter(i => i.ref.replace(/\s/g, "") === nr.replace(/\s/g, ""));   // enkel exact dit factuurnummer
+  if (!eigen.length) return { onbekend: "Yuki toont openstaande posten, maar geen met nummer " + nr };
+  return { open: Math.round(eigen.reduce((t, i) => t + i.open, 0) * 100) / 100 };
+}
+/** Eénmalig in de editor: verbinding met Yuki testen. Verandert NIETS — toont voor de laatste verzonden facturen wat Yuki teruggeeft. */
+function yukiApiTest() {
+  CacheService.getScriptCache().remove("YUKI_SID"); PropertiesService.getScriptProperties().deleteProperty("YUKI_P_CheckOutstandingItemAdmin");
+  const s = yukiApiSessie(); if (!s) throw new Error("Zet eerst de scripteigenschap YUKI_API_KEY (Yuki-webservice-toegangscode).");
+  Logger.log("Aangemeld bij Yuki (" + PropertiesService.getScriptProperties().getProperty("YUKI_API_URL") + ") — administratie " + s.admin + " · parameters: " + yukiParams("CheckOutstandingItemAdmin", ["sessionID", "administrationID", "Reference"]).join(", "));
+  const vs = pbAdmin("/rest/v1/vorderingen?status=in.(verzonden,betaald)&factuurnummer=neq.&select=factuurnummer,status,bedrag_excl,btw_bedrag,vervaldag&order=datum.desc.nullslast&limit=8", "get") || [];
+  vs.forEach(v => { try { const r = yukiOpen(s, String(v.factuurnummer).trim()); Logger.log("Factuur " + v.factuurnummer + " (Planbord: " + v.status + ") → Yuki: " + (r.onbekend ? r.onbekend : r.open > 0.01 ? "open € " + r.open.toFixed(2) : "niets openstaand")); } catch (e) { Logger.log("Factuur " + v.factuurnummer + ": " + e.message); } });
+  Logger.log("Klopt dit (openstaande facturen tonen een bedrag, betaalde 'niets openstaand')? Dan draait de opvolging vanaf nu elke werkdag vanzelf.");
+}
+/** Dezelfde melding hooguit één keer per 'dagen' (standaard 7) in de overzichtsmail. */
+function meldEenmaal(sleutel, dagen) {   // één scripteigenschap per sleutel (kort, gehasht): geen limiet van 9 kB per eigenschap
+  const props = PropertiesService.getScriptProperties(); const vandaag = brusselsDag();
+  const k = "DEBM_" + Utilities.base64EncodeWebSafe(Utilities.computeDigest(Utilities.DigestAlgorithm.MD5, sleutel)).slice(0, 16);
+  const vorig = props.getProperty(k); if (vorig && dagenTussen(vorig, vandaag) < (dagen || 7)) return false;
+  try { props.setProperty(k, vandaag); } catch (e) { }
+  return true;
+}
+function meldOpruimen() {   // eens per dag: oude meldsleutels (> 45 dagen) weg
+  const props = PropertiesService.getScriptProperties(); const vandaag = brusselsDag(); const alle = props.getProperties();
+  Object.keys(alle).filter(k => k.indexOf("DEBM_") === 0 && dagenTussen(alle[k], vandaag) > 45).forEach(k => { try { props.deleteProperty(k); } catch (e) { } });
+}
+function yukiBetalingen(rapport) {
+  let s; try { s = yukiApiSessie(); } catch (e) { if (meldEenmaal("yuki-sessie", 3)) rapport.aandacht.push("Yuki-webservice: " + e.message); return; }
+  if (!s) { rapport.geenYuki = true; return; }
+  const vs = (pbAdmin("/rest/v1/vorderingen?status=eq.verzonden&factuurnummer=neq.&select=id,project_id,nr,factuurnummer,datum,bedrag_excl,btw_bedrag,open_bedrag,yuki_open_op,yuki_niet_open_sinds,yuki_gecheckt_op&order=yuki_gecheckt_op.asc.nullsfirst&limit=300", "get") || [])
+    .filter(v => Number(v.bedrag_excl || 0) > 0);   // creditnota's niet opvolgen
+  const t0 = Date.now(), nu = new Date().toISOString(), vandaag = brusselsDag(); let fouten = 0;
+  const naarBetaald = [];
+  for (const v of vs) {
+    if (Date.now() - t0 > 120000 || fouten >= 3) break;   // tijdslimiet; bij herhaalde fouten stoppen (één melding)
+    const nr = String(v.factuurnummer).trim(); if (!nr) continue; let r;
+    try { r = yukiOpen(s, nr); } catch (e) { fouten++; if (fouten >= 3) { CacheService.getScriptCache().remove("YUKI_SID"); if (meldEenmaal("yuki-fout", 3)) rapport.aandacht.push("Betalingen uit Yuki: " + e.message + " — vandaag niets op betaald gezet."); } else if (meldEenmaal("yuki-fout-" + nr, 7)) rapport.aandacht.push("Yuki-check factuur " + nr + ": " + e.message); continue; }
+    if (r.onbekend) { pbAdmin("/rest/v1/vorderingen?id=eq." + v.id, "patch", { yuki_gecheckt_op: nu }, "return=minimal"); if (meldEenmaal("yuki-onbekend-" + nr, 30)) rapport.aandacht.push("Factuur " + nr + ": " + r.onbekend + " — niets aangepast."); continue; }
+    if (r.open > 0.01) { pbAdmin("/rest/v1/vorderingen?id=eq." + v.id, "patch", { yuki_open_op: nu, yuki_niet_open_sinds: null, yuki_gecheckt_op: nu, open_bedrag: r.open }, "return=minimal"); continue; }
+    if (!v.yuki_open_op) {   // nooit als openstaand gezien: niets aannemen (ander nummer in Yuki, of al betaald vóór de eerste controle)
+      pbAdmin("/rest/v1/vorderingen?id=eq." + v.id, "patch", { yuki_gecheckt_op: nu }, "return=minimal");
+      if (v.datum && dagenTussen(v.datum, vandaag) > 3 && meldEenmaal("yuki-nooit-" + nr, 30)) rapport.aandacht.push("Factuur " + nr + " staat als verzonden in het Planbord, maar Yuki toont ze niet als openstaand (al betaald, of een ander nummer in Yuki?). Zet ze zelf op betaald als dat klopt.");
+      continue;
+    }
+    if (!v.yuki_niet_open_sinds) { pbAdmin("/rest/v1/vorderingen?id=eq." + v.id, "patch", { yuki_niet_open_sinds: nu, yuki_gecheckt_op: nu }, "return=minimal"); continue; }   // eerste keer niet open: morgen bevestigen
+    if (brusselsDag(v.yuki_niet_open_sinds) < vandaag) naarBetaald.push(v);   // bevestigd op een volgende dag
+  }
+  if (fouten >= 3) return;   // herhaalde fouten: vandaag niets op betaald zetten
+  const gezienOpen = vs.filter(v => v.yuki_open_op).length;
+  if (naarBetaald.length > Math.max(DEBITEUREN.BULK_MAX, Math.ceil(gezienOpen * 0.3)) || (naarBetaald.length >= 2 && naarBetaald.length >= gezienOpen)) {   // te veel tegelijk, of alles wat openstond in één keer   // te veel tegelijk: niets aanpassen, enkel melden
+    rapport.aandacht.push(naarBetaald.length + " facturen zouden volgens Yuki tegelijk betaald zijn (" + naarBetaald.slice(0, 8).map(v => v.factuurnummer).join(", ") + (naarBetaald.length > 8 ? ", …" : "") + "). Uit voorzorg is niets aangepast — kijk ze na in Yuki en zet ze zelf op betaald.");
+    return;
+  }
+  naarBetaald.forEach(v => {
+    pbAdmin("/rest/v1/vorderingen?id=eq." + v.id + "&status=eq.verzonden", "patch", { status: "betaald", open_bedrag: 0, yuki_gecheckt_op: nu }, "return=minimal");
+    pbAdmin("/rest/v1/betaalherinneringen?vordering_id=eq." + v.id + "&status=in.(voorgesteld,goedgekeurd,mislukt)", "patch", { status: "geannuleerd", fout: "intussen betaald" }, "return=minimal");
+    rapport.betaald.push({ v: v, bedrag: Number(v.bedrag_excl || 0) + Number(v.btw_bedrag || 0) });
+  });
+}
+/** Planbord ⇄ mailbox: verzonden facturen zonder verwerkte Yuki-mail opzoeken in Gmail (enkel verwerken als het bedrag klopt); lang 'op te maken' melden. */
+function factuurControle(rapport) {
+  const vandaag = brusselsDag(), t0 = Date.now(); const grens = Utilities.formatDate(new Date(Date.now() - 120 * 86400000), "Europe/Brussels", "yyyy-MM-dd");
+  const zonder = pbAdmin("/rest/v1/vorderingen?status=in.(verzonden,betaald)&factuurnummer=neq.&factuur_document=is.null&datum=gte." + grens + "&select=id,project_id,nr,factuurnummer,datum,bedrag_excl,btw_bedrag,mededeling,vervaldag,factuur_document&order=datum.desc&limit=30", "get") || [];
+  let token = null, projecten = null;
+  if (yukiMailbox() === "archief") {   // 1.50.1: het archief-script zoekt elk uur; staat de pdf er na 2 dagen nog niet, dan melden
+    const laatst = PropertiesService.getScriptProperties().getProperty("YUKI_ARCHIEF_LAATST");
+    if (!laatst || Date.now() - new Date(laatst).getTime() > 2 * 86400000) { if (meldEenmaal("archief-stil", 3)) rapport.aandacht.push("Het archief-script (Yuki-mails in archief@bros.be) heeft " + (laatst ? "sinds " + brusselsDag(laatst).split("-").reverse().join("/") : "nog nooit") + " niets meer doorgestuurd. Kijk na of het nog draait (script.google.com als archief@bros.be, functie archiefInstall)."); }
+    try { yukiRapportVersturen(); } catch (e) { }   // meldingen van een run die niet netjes afsloot
+    zonder.filter(v => v.datum && dagenTussen(v.datum, vandaag) >= 2 && dagenTussen(v.datum, vandaag) <= 45).forEach(v => {
+      const nr = String(v.factuurnummer).trim(); const z = yukiZoekResultaat(nr);
+      if (z && /^(bedrag|pdf zonder|andere rekening)/.test(z.r)) return;   // gevonden maar niet aangevuld: al apart gemeld
+      if (!meldEenmaal("geenmail-" + nr, 7)) return;
+      rapport.aandacht.push(z && z.r === "verdacht" ? "Factuur " + nr + ": de factuurmail staat in archief@bros.be, maar Gmail bevestigde niet dat ze van Yuki komt — niet automatisch verwerkt. Kijk ze na en zet de pdf zelf bij de factuur."
+        : z && /^aangevuld/.test(z.r) ? "Factuur " + nr + ": mail gevonden in archief@bros.be en betaalgegevens aangevuld, maar nog geen pdf voor de klant (" + z.r + ")."
+        : "Factuur " + nr + " staat in het Planbord als verzonden, maar de factuurmail van Yuki is niet gevonden in archief@bros.be (geen pdf voor de klant). Is ze echt verstuurd vanuit Yuki, en klopt het nummer?");
+    });
+  } else
+  zonder.filter(v => v.datum && dagenTussen(v.datum, vandaag) >= DEBITEUREN.MAIL_ZOEKEN_NA_DAGEN).forEach(v => {
+    if (Date.now() - t0 > 60000) return;
+    const nr = String(v.factuurnummer).trim(); if (!nr || !meldEenmaal("zoek-" + nr, 3)) return;   // per factuur hooguit om de 3 dagen zoeken
+    let gevonden = false, afwijking = "";
+    try {
+      GmailApp.search('subject:"Factuur van BROS" "' + nr.replace(/"/g, "") + '" newer_than:180d', 0, 5).forEach(t => t.getMessages().forEach(m => {
+        if (gevonden || !yukiEcht(m)) return; const f = yukiParse(m); if (!f || f.factuurnummer !== nr) return;
+        const incl = Number(v.bedrag_excl || 0) + Number(v.btw_bedrag || 0);
+        if (v.bedrag_excl == null || v.btw_bedrag == null || f.totaal_incl == null || Math.abs(Number(f.totaal_incl) - incl) > YUKI.TOL) { afwijking = v.btw_bedrag == null || f.totaal_incl == null ? "het bedrag kon niet vergeleken worden" : "de Yuki-factuur " + nr + " is € " + Number(f.totaal_incl).toFixed(2) + " incl., het Planbord € " + incl.toFixed(2); return; }   // ander bedrag: nooit een pdf delen met (mogelijk) de verkeerde klant
+        token = token || pbLogin(); projecten = projecten || pbAll("/rest/v1/projecten?select=id,nummer,klant,drive_folder_id", token);
+        const opm = yukiBetaalgegevens(f, v, projecten.find(p => p.id === v.project_id) || {}, token, v.bedrag_excl); gevonden = true;
+        rapport.verwerkt.push("Factuur " + nr + ": pdf en betaalgegevens alsnog uit de mailbox gehaald" + (opm ? " (" + opm + ")" : ""));
+      }));
+    } catch (e) { rapport.aandacht.push("Mailbox doorzoeken voor factuur " + nr + ": " + e.message); return; }
+    if (afwijking && !gevonden) { if (meldEenmaal("afw-" + nr, 7)) rapport.aandacht.push("Factuur " + nr + ": niet automatisch gekoppeld — " + afwijking + ". Kijk het factuurnummer of het bedrag na."); return; }
+    if (!gevonden && dagenTussen(v.datum, vandaag) <= 45 && meldEenmaal("geenmail-" + nr, 7)) rapport.aandacht.push("Factuur " + nr + " staat in het Planbord als verzonden, maar de factuurmail van Yuki is niet gevonden in de mailbox (geen pdf voor de klant). Is ze echt verstuurd vanuit Yuki, en klopt het nummer?");
+  });
+  const op = pbAdmin("/rest/v1/vorderingen?status=eq.opgemaakt&datum=not.is.null&select=id,project_id,nr,omschrijving,datum,bedrag_excl&limit=200", "get") || [];
+  op.filter(v => v.datum <= vandaag && dagenTussen(v.datum, vandaag) >= DEBITEUREN.OPGEMAAKT_DAGEN && meldEenmaal("opgemaakt-" + v.id, 7)).forEach(v => rapport.opgemaakt.push(v));
+}
+/** Herinneringen voorstellen (niet versturen): H1 en H2 dagen na de vervaldag; daarna één melding aan BROS. */
+function herinneringenVoorstellen(rapport) {
+  const vandaag = brusselsDag();
+  // opruimen: voorstellen bij facturen die intussen betaald zijn of waarvoor herinneren uit staat
+  const hangend = pbAdmin("/rest/v1/betaalherinneringen?status=in.(voorgesteld,mislukt)&select=id,vordering_id", "get") || [];
+  if (hangend.length) { const hv = pbIn("/rest/v1/vorderingen?", "id", hangend.map(h => h.vordering_id), "&select=id,status,herinneren");
+    hangend.filter(h => { const v = hv.find(x => x.id === h.vordering_id); return !v || v.status !== "verzonden" || v.herinneren === false; }).forEach(h => pbAdmin("/rest/v1/betaalherinneringen?id=eq." + h.id + "&status=in.(voorgesteld,mislukt)", "patch", { status: "geannuleerd", fout: "factuur betaald of herinneren uitgezet" }, "return=minimal")); }
+  const vs = (pbAdmin("/rest/v1/vorderingen?status=eq.verzonden&herinneren=eq.true&vervaldag=lt." + vandaag + "&select=id,project_id,nr,soort,omschrijving,factuurnummer,datum,vervaldag,bedrag_excl,btw_bedrag,open_bedrag,mededeling,opvolging_gemeld_op&limit=300", "get") || [])
+    .filter(v => Number(v.bedrag_excl || 0) > 0 && (v.open_bedrag == null || Number(v.open_bedrag) > 0.01));   // geen creditnota's, niets wat al betaald is
+  if (!vs.length) return;
+  const ids = vs.map(v => v.id); const bestaand = pbIn("/rest/v1/betaalherinneringen?", "vordering_id", ids, "&select=vordering_id,niveau,status,verstuurd_op");
+  const pIds = [...new Set(vs.map(v => v.project_id))];
+  const projecten = pbIn("/rest/v1/projecten?", "id", pIds, "&select=id,nummer,klant,naam,lead");
+  const pcs = pbIn("/rest/v1/project_contacten?", "project_id", pIds, "&rol=in.(bouwheer,contactpersoon)&select=project_id,contact_id,rol");
+  let contacten = []; try { contacten = pbIn("/rest/v1/contacten?", "id", pcs.map(x => x.contact_id), "&actief=eq.true&select=id,naam,contactpersoon,email,taal"); } catch (e) { contacten = pbIn("/rest/v1/contacten?", "id", pcs.map(x => x.contact_id), "&actief=eq.true&select=id,naam,contactpersoon,email"); }
+  const profs = pbAdmin("/rest/v1/profiles?select=id,name&active=eq.true", "get") || [];
+  vs.forEach(v => {
+    const d = dagenTussen(v.vervaldag, vandaag); const h = bestaand.filter(x => x.vordering_id === v.id); const n1 = h.find(x => x.niveau === 1), n2 = h.find(x => x.niveau === 2);
+    const p = projecten.find(x => x.id === v.project_id) || {};
+    let niveau = 0;
+    if (d >= DEBITEUREN.H1 && !n1) niveau = 1;
+    else if (d >= DEBITEUREN.H2 && n1 && !n2 && (n1.status === "geannuleerd" || (n1.status === "verstuurd" && dagenTussen(brusselsDag(n1.verstuurd_op), vandaag) >= 2))) niveau = 2;
+    else if (n2 && n2.status === "verstuurd" && !v.opvolging_gemeld_op && dagenTussen(brusselsDag(n2.verstuurd_op), vandaag) >= DEBITEUREN.MELDING_NA_H2) {
+      rapport.bellen.push({ v: v, p: p, d: d, id: v.id }); return;   // wordt pas als gemeld gezet nadat de overzichtsmail vertrok
+    }
+    if (!niveau) return;
+    const cs = pcs.filter(x => x.project_id === v.project_id).sort((a, b) => (a.rol === "bouwheer" ? 0 : 1) - (b.rol === "bouwheer" ? 0 : 1)).map(x => contacten.find(c => c.id === x.contact_id)).filter(c => c && String(c.email || "").trim());
+    const gezien = {}; const uniek = cs.filter(c => { const k = String(c.email).trim().toLowerCase(); if (gezien[k]) return false; gezien[k] = true; return true; });   // één keer per adres; de bouwheer eerst
+    const taal = uniek.length && uniek.every(c => c.taal === "en") ? "en" : "nl";
+    const naam = uniek.length === 1 ? (uniek[0].contactpersoon || uniek[0].naam) : (p.klant || "");
+    const open = v.open_bedrag != null ? Number(v.open_bedrag) : Number(v.bedrag_excl || 0) + Number(v.btw_bedrag || 0);
+    const lead = profs.find(u => u.id === p.lead);
+    const tekstNiveau = niveau === 2 && n1 && n1.status === "geannuleerd" ? 1 : niveau;   // eerste herinnering niet verstuurd → de klant krijgt de vriendelijke tekst
+    const t = herinneringTekst(tekstNiveau, taal, { naam: naam, nr: v.factuurnummer, datum: v.datum, verval: v.vervaldag, open: open, d: d, wie: lead ? lead.name : "" });
+    try {
+      pbAdmin("/rest/v1/betaalherinneringen", "post", { vordering_id: v.id, project_id: v.project_id, niveau: niveau, aan: uniek.map(c => String(c.email).trim()).join(", "), taal: taal, onderwerp: t.onderwerp, tekst: t.tekst, dagen_te_laat: d, open_bedrag: Math.round(open * 100) / 100 }, "return=minimal");
+      rapport.voorgesteld.push({ v: v, p: p, niveau: niveau, d: d, open: open, zonderAdres: !uniek.length });
+    } catch (e) { if (!/duplicate|23505|409/i.test(String(e))) rapport.aandacht.push("Herinnering voor factuur " + v.factuurnummer + ": " + e.message); }
+  });
+}
+function herinneringTekst(niveau, taal, x) {
+  const d = (s) => s ? String(s).slice(8, 10) + "/" + String(s).slice(5, 7) + "/" + String(s).slice(0, 4) : "";
+  const eu = (n) => "€ " + Number(n || 0).toFixed(2).replace(".", ",").replace(/\B(?=(\d{3})+(?!\d))/g, ".");
+  const wie = x.wie || (taal === "en" ? "The BROS team" : "het team van BROS");
+  if (taal === "en") return niveau === 1
+    ? { onderwerp: "Payment reminder · invoice " + x.nr, tekst: "Dear " + x.naam + ",\n\nAccording to our records, invoice " + x.nr + " of " + d(x.datum) + " (" + eu(x.open) + ", due on " + d(x.verval) + ") has not been paid yet. It may have slipped through, or your payment may have crossed this message.\n\nCould you please arrange payment? You will find the payment details below, and the invoice in your client portal (with a QR code to scan).\n\nIf you have already paid, please disregard this reminder.\n\nKind regards,\n" + wie }
+    : { onderwerp: "Second reminder · invoice " + x.nr + " overdue", tekst: "Dear " + x.naam + ",\n\nWe have not yet received payment for invoice " + x.nr + " of " + d(x.datum) + " (" + eu(x.open) + "), which was due on " + d(x.verval) + " — now " + x.d + " days ago — despite our earlier reminder.\n\nWe kindly ask you to pay the amount within 5 days. If there is a problem or a question about this invoice, please let us know right away so we can find a solution together.\n\nKind regards,\n" + wie };
+  return niveau === 1
+    ? { onderwerp: "Herinnering · factuur " + x.nr, tekst: "Beste " + x.naam + ",\n\nVolgens onze gegevens staat factuur " + x.nr + " van " + d(x.datum) + " (" + eu(x.open) + ", te betalen tegen " + d(x.verval) + ") nog open. Misschien is ze er even tussen geglipt, of heeft je betaling deze mail gekruist.\n\nWil je de betaling in orde brengen? De betaalgegevens vind je hieronder, de factuur in je klantenportaal (daar ook met een QR-code om te scannen).\n\nHeb je intussen al betaald, dan mag je deze herinnering als niet verzonden beschouwen.\n\nMet vriendelijke groeten,\n" + wie }
+    : { onderwerp: "Tweede herinnering · factuur " + x.nr + " vervallen", tekst: "Beste " + x.naam + ",\n\nOndanks onze eerdere herinnering hebben we de betaling van factuur " + x.nr + " van " + d(x.datum) + " (" + eu(x.open) + ") nog niet ontvangen. De vervaldag was " + d(x.verval) + ", intussen " + x.d + " dagen geleden.\n\nWe vragen je vriendelijk maar dringend om het bedrag binnen de 5 dagen over te maken. Is er een probleem of een vraag over deze factuur, laat het ons dan meteen weten, dan zoeken we samen een oplossing.\n\nMet vriendelijke groeten,\n" + wie };
+}
+/** Goedgekeurde herinneringen versturen (actie "herinneringen" vanuit het Planbord, en elk uur als vangnet).
+ *  Met een slot (nooit twee rondes tegelijk) en per herinnering eerst 'claimen' (goedgekeurd → verstuurd) vóór de mail vertrekt:
+ *  zo kan een herinnering nooit twee keer vertrekken. Mislukt de mail, dan → 'mislukt' (opnieuw te proberen in het Planbord). */
+function herinneringenVersturen() {
+  const lock = LockService.getUserLock(); if (!lock.tryLock(20000)) return { verstuurd: 0, mislukt: 0, bezig: true };   // eigen slot (zoals afspraakSync): blokkeert de andere mails van het script niet
+  try {
+    let rijen; try { rijen = pbAdmin("/rest/v1/betaalherinneringen?status=eq.goedgekeurd&select=*&limit=50", "get") || []; } catch (e) { return { verstuurd: 0, mislukt: 0, fout: "script 048 nog niet uitgevoerd?" }; }
+    if (!rijen.length) return { verstuurd: 0, mislukt: 0 };
+    const vs = pbIn("/rest/v1/vorderingen?", "id", rijen.map(r => r.vordering_id), "&select=id,project_id,status,herinneren,factuurnummer,mededeling,vervaldag,bedrag_excl,btw_bedrag,open_bedrag");
+    const inst = ((pbAdmin("/rest/v1/instellingen?key=eq.portaal&select=value", "get") || [])[0] || {}).value || {};
+    const ibanF = (x) => String(x || "").replace(/\s+/g, "").toUpperCase().replace(/(.{4})/g, "$1 ").trim();
+    const eu = (n) => "€ " + Number(n || 0).toFixed(2).replace(".", ",").replace(/\B(?=(\d{3})+(?!\d))/g, ".");
+    let ok = 0, nok = 0;
+    rijen.forEach(r => {
+      const v = vs.find(x => x.id === r.vordering_id);
+      if (!v || v.status !== "verzonden" || v.herinneren === false) { pbAdmin("/rest/v1/betaalherinneringen?id=eq." + r.id + "&status=eq.goedgekeurd", "patch", { status: "geannuleerd", fout: "factuur intussen betaald, gewijzigd of herinneren uitgezet" }, "return=minimal"); return; }
+      const aan = String(r.aan || "").split(/[,;]/).map(a => a.trim()).filter(Boolean);
+      if (!aan.length || !mailRuimte(aan.length + 1)) { nok++; return; }   // quotum: blijft goedgekeurd, volgend uur
+      const claim = pbAdmin("/rest/v1/betaalherinneringen?id=eq." + r.id + "&status=eq.goedgekeurd", "patch", { status: "verstuurd", verstuurd_op: new Date().toISOString(), fout: "" }, "return=representation") || [];
+      if (!claim.length) return;   // al door een andere ronde opgepikt
+      const en = r.taal === "en"; const open = r.open_bedrag != null ? Number(r.open_bedrag) : Number(v.bedrag_excl || 0) + Number(v.btw_bedrag || 0);
+      const betaal = [[en ? "Amount" : "Bedrag", eu(open)], inst.iban ? [en ? "Account" : "Rekening", ibanF(inst.iban) + (inst.bic ? " · BIC " + String(inst.bic).replace(/\s+/g, "") : "")] : null, inst.begunstigde ? [en ? "Beneficiary" : "Begunstigde", inst.begunstigde] : null,
+        [en ? "Reference" : "Mededeling", v.mededeling || (en ? "invoice " : "factuur ") + v.factuurnummer]].filter(Boolean);
+      const html = "<div style=\"font-family:Helvetica,Arial,sans-serif;font-size:15px;line-height:1.5;color:#1B1E1C;max-width:640px\">" + H(r.tekst).replace(/\n/g, "<br>")
+        + "<table style=\"margin:18px 0;border-collapse:collapse;font-size:14px\">" + betaal.map(b => "<tr><td style=\"padding:4px 14px 4px 0;color:#767D78\">" + H(b[0]) + "</td><td style=\"padding:4px 0\"><b>" + H(b[1]) + "</b></td></tr>").join("") + "</table>"
+        + "<p style=\"margin:20px 0\"><a href=\"" + PORTAAL.URL + "\" style=\"background:#1B1E1C;color:#fff;text-decoration:none;padding:12px 20px;border-radius:8px;font-weight:600;display:inline-block\">" + (en ? "Open your client portal" : "Naar je klantenportaal") + "</a></p></div>";
+      const tekst = r.tekst + "\n\n" + betaal.map(b => b[0] + ": " + b[1]).join("\n") + "\n\n" + (en ? "Client portal: " : "Klantenportaal: ") + PORTAAL.URL;
+      try {
+        const opt = { htmlBody: html, name: PORTAAL.AFZENDER, bcc: YUKI.REPORT_TO };
+        if (PORTAAL.VAN) { const al = GmailApp.getAliases(); if (al.indexOf(PORTAAL.VAN) >= 0) opt.from = PORTAAL.VAN; else opt.replyTo = PORTAAL.VAN; }
+        GmailApp.sendEmail(aan.join(","), String(r.onderwerp || "").replace(/[\r\n]+/g, " ").slice(0, 240), tekst, opt); ok++;
+      } catch (e) { nok++; try { pbAdmin("/rest/v1/betaalherinneringen?id=eq." + r.id, "patch", { status: "mislukt", verstuurd_op: null, fout: String(e.message || e).slice(0, 300) }, "return=minimal"); } catch (x) { } }
+    });
+    return { verstuurd: ok, mislukt: nok };
+  } finally { lock.releaseLock(); }
+}
+/** Elke werkdag één keer: betalingen, mailboxcontrole, voorstellen, overzicht. */
+function debiteurenDagelijks(forceer) {
+  const props = PropertiesService.getScriptProperties(); const nu = new Date(); const vandaag = brusselsDag(nu);
+  const dag = Number(Utilities.formatDate(nu, "Europe/Brussels", "u")), uur = Number(Utilities.formatDate(nu, "Europe/Brussels", "H"));
+  if (!forceer && (dag > 5 || uur < DEBITEUREN.VAN_UUR || props.getProperty("DEB_DAG") === vandaag)) return;
+  try { pbAdmin("/rest/v1/betaalherinneringen?select=id&limit=1", "get"); } catch (e) { return; }   // vóór script 048: niets doen
+  if (!mailRuimte(3)) return;   // mailquotum bijna op: volgend uur opnieuw (dan pas als gedaan noteren)
+  props.setProperty("DEB_DAG", vandaag);   // eerst noteren: een fout halverwege geeft geen tweede ronde vandaag
+  try { meldOpruimen(); } catch (e) { }
+  const rapport = { betaald: [], aandacht: [], verwerkt: [], opgemaakt: [], voorgesteld: [], bellen: [], geenYuki: false };
+  try { yukiBetalingen(rapport); } catch (e) { rapport.aandacht.push("Betalingen uit Yuki: " + e.message); }
+  try { factuurControle(rapport); } catch (e) { rapport.aandacht.push("Controle mailbox: " + e.message); }
+  try { herinneringenVoorstellen(rapport); } catch (e) { rapport.aandacht.push("Herinneringen voorstellen: " + e.message); }
+  let wacht = 0; try { wacht = (pbAdmin("/rest/v1/betaalherinneringen?status=in.(voorgesteld,mislukt)&select=id", "get") || []).length; } catch (e) { }
+  if (!rapport.betaald.length && !rapport.aandacht.length && !rapport.verwerkt.length && !rapport.opgemaakt.length && !rapport.voorgesteld.length && !rapport.bellen.length) return;   // enkel nieuws (wat al gemeld werd en nog wacht, staat in het Planbord)
+  const pIds = [...new Set([].concat(rapport.betaald.map(x => x.v.project_id), rapport.opgemaakt.map(v => v.project_id)))];
+  const projecten = pIds.length ? pbIn("/rest/v1/projecten?", "id", pIds, "&select=id,nummer,klant,naam") : [];
+  const pn = (p) => p ? (p.nummer ? p.nummer + " · " : "") + (p.klant || "") : "";
+  const eu = (n) => "€ " + Number(n || 0).toFixed(2).replace(".", ",").replace(/\B(?=(\d{3})+(?!\d))/g, ".");
+  const link = PORTAAL.URL.replace(/klant\/?$/, "") + "#aankoop";
+  const blok = (titel, regels) => regels.length ? "<h3 style=\"font-size:15px;margin:18px 0 4px\">" + titel + "</h3><ul style=\"padding-left:18px;margin:4px 0\">" + regels.map(r => "<li style=\"margin:3px 0\">" + r + "</li>").join("") + "</ul>" : "";
+  const html = "<div style=\"font-family:Helvetica,Arial,sans-serif;font-size:14px;line-height:1.5;color:#1B1E1C;max-width:720px\"><p>Opvolging klantfacturen — " + vandaag.split("-").reverse().join("/") + "</p>"
+    + (wacht ? "<p style=\"padding:10px 14px;background:#F8EBD2;border-radius:8px\"><b>" + wacht + " herinnering" + (wacht === 1 ? "" : "en") + " wacht" + (wacht === 1 ? "" : "en") + " op je goedkeuring</b> — niets vertrekt zonder jouw klik. <a href=\"" + link + "\">Nakijken in het Planbord</a></p>" : "")
+    + blok("Betaald (volgens Yuki)", rapport.betaald.map(x => "Factuur " + H(x.v.factuurnummer) + " · " + H(pn(projecten.find(p => p.id === x.v.project_id))) + " · " + eu(x.bedrag)))
+    + blok("Zelf opvolgen (twee herinneringen, nog niet betaald)", rapport.bellen.map(x => "Factuur " + H(x.v.factuurnummer) + " · " + H(pn(x.p)) + " · " + x.d + " dagen na de vervaldag"))
+    + blok("Nieuw voorgesteld", rapport.voorgesteld.map(x => (x.niveau === 1 ? "1e" : "2e") + " herinnering factuur " + H(x.v.factuurnummer) + " · " + H(pn(x.p)) + " · " + eu(x.open) + " · " + x.d + " dagen te laat" + (x.zonderAdres ? " — <b>geen e-mailadres gevonden</b>" : "")))
+    + blok("Aandacht", rapport.aandacht.map(H).concat(rapport.opgemaakt.map(v => "Vordering " + (v.nr === 0 ? "voorschot" : "#" + v.nr) + (v.omschrijving ? " (" + H(v.omschrijving) + ")" : "") + " · " + H(pn(projecten.find(p => p.id === v.project_id))) + " staat sinds " + H(String(v.datum).split("-").reverse().join("/")) + " op 'Op te maken' — nog niet gefactureerd in Yuki?")))
+    + blok("Automatisch verwerkt", rapport.verwerkt.map(H))
+    + (rapport.geenYuki ? "<p style=\"color:#767D78;font-size:12px\">Betalingen worden nog niet uit Yuki gehaald: zet de scripteigenschap YUKI_API_KEY en voer yukiApiTest() uit.</p>" : "")
+    + "<p style=\"margin:22px 0\"><a href=\"" + link + "\" style=\"background:#1B1E1C;color:#fff;text-decoration:none;padding:10px 18px;border-radius:8px;font-weight:600;display:inline-block\">Openen in het Planbord (Facturen)</a></p></div>";
+  portaalMail(YUKI.REPORT_TO, "Facturen opvolgen" + (wacht ? " · " + wacht + " herinnering" + (wacht === 1 ? "" : "en") + " ter goedkeuring" : "") + (rapport.betaald.length ? " · " + rapport.betaald.length + " betaald" : ""), html.replace(/<[^>]+>/g, " ").replace(/\s+/g, " "), html);
+  rapport.bellen.forEach(x => { try { pbAdmin("/rest/v1/vorderingen?id=eq." + x.id, "patch", { opvolging_gemeld_op: new Date().toISOString() }, "return=minimal"); } catch (e) { } });   // pas na het versturen als gemeld noteren
 }
 /* =====================================================================
    Wekelijkse samenvatting voor klanten (script 034) — elke maandag rond 8 uur
@@ -1517,6 +1938,7 @@ function yukiInstall() {
 }
 function yukiSync() {
   onderhoud(false);   // 1.48: hartslag — draait elk uur, ook 's nachts en in het weekend
+  if (yukiMailbox() === "archief") return Logger.log("Yuki-mails worden gelezen door het archief-script (archief@bros.be) — hier niets te doen.");   // 1.50.1
   const label = GmailApp.getUserLabelByName(YUKI.LABEL) || GmailApp.createLabel(YUKI.LABEL);
   const labelCheck = GmailApp.getUserLabelByName(YUKI.LABEL_CHECK) || GmailApp.createLabel(YUKI.LABEL_CHECK);
   const threads = GmailApp.search(YUKI.QUERY, 0, 30);
@@ -1566,7 +1988,7 @@ function yukiParse(m) {
   try {
     const pdf = m.getAttachments().find(a => /\.pdf$/i.test(a.getName()) && /factuur/i.test(a.getName()));
     if (pdf) f.pdfBlob = pdf.copyBlob();
-    if (pdf) { const txt = yukiPdfText(pdf); if (txt) { f.pdf_tekst = txt.slice(0, 4000);
+    if (pdf) { const txt = yukiPdfText(pdf); if (txt) { f.pdf_tekst = txt.slice(0, 4000); f.pdf_vol = txt.slice(0, 40000);
       if (!f.mededeling) f.mededeling = yukiOgm(txt); if (!f.vervaldag) f.vervaldag = yukiVervaldag(txt);
       const tot2 = txt.match(/Totaal\s+€\s*([0-9\.\s]+,\d{2})\s+€\s*([0-9\.\s]+,\d{2})\s+€\s*([0-9\.\s]+,\d{2})/);
       if (tot2) { f.excl = yukiNum(tot2[1]); f.btw = yukiNum(tot2[2]); }
@@ -1576,6 +1998,17 @@ function yukiParse(m) {
   return f;
 }
 /** Belgische gestructureerde mededeling (+++123/4567/89012+++), enkel met een geldig controlegetal (modulo 97). */
+/** Extra zekerheid vóór een factuur-pdf bij de klant komt: vermeldt de pdf het factuurnummer niet, of een geldige Belgische rekening
+ *  die niet die van BROS is (Instellingen › Klantenportaal), dan niet delen. Geeft de reden terug, of "" als alles klopt of de pdf niet leesbaar was. */
+function yukiPdfVerdacht(f) {
+  const t = String(f.pdf_vol || f.pdf_tekst || ""); if (!t.trim()) return "";
+  if (t.replace(/\s+/g, "").indexOf(String(f.factuurnummer || "").replace(/\s+/g, "")) < 0) return "de factuur-pdf vermeldt het factuurnummer niet";
+  let eigen = ""; try { eigen = String((((pbAdmin("/rest/v1/instellingen?key=eq.portaal&select=value", "get") || [])[0] || {}).value || {}).iban || "").replace(/\s+/g, "").toUpperCase(); } catch (e) { }
+  if (!eigen) return "";
+  const geldig = (x) => { const r = (x.slice(4) + x.slice(0, 4)).replace(/[A-Z]/g, c => String(c.charCodeAt(0) - 55)); let m = 0; for (let i = 0; i < r.length; i++) m = (m * 10 + Number(r[i])) % 97; return m === 1; };
+  const vreemd = (t.toUpperCase().match(/\bBE\d{2}(?:[ \u00A0]?\d{4}){3}\b/g) || []).map(x => x.replace(/\s+/g, "")).filter(x => geldig(x) && x !== eigen);
+  return vreemd.length ? "de factuur-pdf vermeldt een andere rekening (" + vreemd[0].slice(0, 4) + "…" + vreemd[0].slice(-4) + ") dan die van BROS" : "";
+}
 function yukiOgm(txt) {
   const re = /(?:\+{3}|\*{3})\s*(\d{3})\s*\/\s*(\d{4})\s*\/\s*(\d{5})\s*(?:\+{3}|\*{3})/g; let m;
   while ((m = re.exec(String(txt || "")))) { const d = m[1] + m[2] + m[3]; if ((Number(d.slice(0, 10)) % 97 || 97) === Number(d.slice(10))) return "+++" + m[1] + "/" + m[2] + "/" + m[3] + "+++"; }
@@ -1610,7 +2043,8 @@ function yukiBetaalgegevens(f, v, p, token, bedrag) {
   if (bedrag != null && f.totaal_incl != null && v.btw_bedrag == null) { const b = yukiR2(Number(f.totaal_incl) - Number(bedrag)); if (Math.abs(b) < Math.abs(Number(f.totaal_incl))) extra.btw_bedrag = b; }
   if (f.mededeling && !v.mededeling) extra.mededeling = f.mededeling;
   if (f.vervaldag && !v.vervaldag) extra.vervaldag = f.vervaldag;
-  try { if (f.pdfBlob && !v.factuur_document) { const doc = yukiPdfBewaren(f, p, token); if (doc) extra.factuur_document = doc; } } catch (e) { opm += "factuur-pdf niet bewaard (" + String(e.message || e).slice(0, 120) + ") "; }
+  const pdfNiet = f.pdfBlob && !v.factuur_document ? yukiPdfVerdacht(f) : ""; if (pdfNiet) opm += "pdf niet gedeeld met de klant: " + pdfNiet + " — kijk de mail na ";
+  try { if (f.pdfBlob && !v.factuur_document && !pdfNiet) { const doc = yukiPdfBewaren(f, p, token); if (doc) extra.factuur_document = doc; } } catch (e) { opm += "factuur-pdf niet bewaard (" + String(e.message || e).slice(0, 120) + ") "; }
   if (Object.keys(extra).length) { try { pbReq("/rest/v1/vorderingen?id=eq." + v.id, "patch", extra, token, "return=minimal"); } catch (e) { opm += "betaalgegevens niet bewaard — is script 034 uitgevoerd? "; } }
   if (!f.mededeling && !v.mededeling) opm += "geen gestructureerde mededeling gevonden ";
   return opm.trim();
@@ -1726,7 +2160,7 @@ function yukiRapporteer(rapport) {
   const lijn = r => "• Factuur " + r.factuurnummer + " (" + (r.klant || "?") + ", € " + (r.totaal_incl || 0).toFixed(2) + " incl.): " + r.resultaat +
     (r.resultaat === "gekoppeld" ? " → " + r.project + " (" + r.projectnummer + "), " + (r.vordering_nr === 0 ? "voorschot" : r.vordering_soort + " #" + r.vordering_nr) + ", bedrag excl. € " + r.bedrag_excl.toFixed(2) + (r.opmerking ? " — LET OP: " + r.opmerking : "") : r.reden ? " — " + r.reden : "") + (r.pdf_fout ? " (pdf niet gelezen)" : "");
   const nieuw = rapport.filter(r => r.resultaat !== "al gekoppeld"); if (!nieuw.length) return;
-  const txt = "Yuki-facturen verwerkt in het Planbord:\n\n" + nieuw.map(lijn).join("\n") + "\n\nNiet-gekoppelde facturen koppel je manueel (projectfiche → Facturatie → factuurnummer en bedrag bij de juiste vordering), of je maakt eerst de vordering aan en haalt in Gmail het label \"Planbord/te bekijken\" van de mail — dan probeert het script het volgende uur opnieuw.";
+  const txt = "Yuki-facturen verwerkt in het Planbord:\n\n" + nieuw.map(lijn).join("\n") + "\n\nNiet-gekoppelde facturen koppel je manueel (projectfiche → Facturatie → factuurnummer en bedrag bij de juiste vordering), of je maakt eerst de vordering aan en haalt " + (yukiMailbox() === "archief" ? "in de mailbox van archief@bros.be" : "in Gmail") + " het label \"Planbord/te bekijken\" van de mail — dan probeert het script het volgende uur opnieuw.";
   GmailApp.sendEmail(YUKI.REPORT_TO, "Planbord: " + nieuw.filter(r => r.resultaat === "gekoppeld").length + " factuur/facturen gekoppeld" + (nieuw.some(r => r.resultaat !== "gekoppeld") ? " — " + nieuw.filter(r => r.resultaat !== "gekoppeld").length + " te bekijken" : ""), txt);
   Logger.log(txt);
 }

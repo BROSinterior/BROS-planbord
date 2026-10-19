@@ -2,6 +2,14 @@
 
 De nieuwste versie staat bovenaan. (Vanaf 1.48 houdt `version.json` enkel de laatste versie bij; het Planbord vraagt dat bestand elke 5 minuten op.)
 
+## 1.50.1 — 2026-10-19 (nieuw drive/Code.gs + nieuw drive/YukiArchief.gs)
+
+Yuki-mails uit archief@bros.be: een klein apart script (drive/YukiArchief.gs) in het account archief@bros.be leest daar elk uur de Yuki-factuurmails (met handtekeningcontrole) en stuurt ze met de pdf naar het Drive-script, dat ze verwerkt zoals voorheen (koppelen bij exact bedrag, pdf en betaalgegevens in het klantenportaal). Het zoekt ook de facturen op die in het Planbord als verzonden staan maar nog geen pdf hebben (pdf enkel gedeeld als bedrag, factuurnummer en rekening kloppen). Eigen secret (ARCHIEF_SECRET), los van het Drive-secret van het team; droogloop archiefTest vóór de installatie. Brosburo stopt met lezen bij de eerste echte Yuki-mail via archief@; een storing bij één factuur houdt de rest niet tegen (opnieuw proberen, na 3 keer 'te bekijken'); één meldingsmail per run; staat het archief-script 2 dagen stil, dan staat dat in de overzichtsmail.
+
+## 1.50.0 — 2026-10-19 (script 048 + nieuw drive/Code.gs)
+
+Facturen opvolgen: nieuw tabblad Facturen (beheer) met Klanten en Aannemers. Klanten: openstaande en vervallen facturen, betalingen automatisch uit Yuki (een factuur die Yuki eerder als openstaand toonde en nu niet meer, wordt 'betaald'), en betalingsherinneringen die het Drive-script elke werkdag voorstelt (3 en 7 dagen na de vervaldag) — ze vertrekken pas als je ze goedkeurt, de tekst kan je aanpassen; na de tweede krijg je een melding om zelf op te volgen. Het Drive-script controleert ook of elke factuur die in het Planbord als verzonden staat echt via Yuki in de mailbox zit (pdf en betaalgegevens voor de klant) en meldt vorderingen die lang 'op te maken' staan. Eén overzichtsmail per werkdag.
+
 ## 1.49.1 — 2026-10-19
 
 Uren en taken: de projectkeuze staat alfabetisch op klantnaam (met projectnummer erachter), lopende projecten bovenaan en afgeronde apart onderaan; ook de projectfilter bij Taken en Planning staat alfabetisch.

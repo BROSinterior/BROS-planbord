@@ -69,7 +69,7 @@ function vAfPanel(p) {
     : `<div class="empty"><b>Nog geen facturen van aannemers</b>Aannemers laden hun facturen op in hun portaal (tabblad Facturen); ze verschijnen hier meteen.</div>`}</div>`;
 }
 /* overzicht over alle projecten (hoofdtabblad Aankoop) */
-function vAankoop() {
+function vAankoop(sub) {   // sub = als deel van het tabblad Facturen (deb-beheer.js): zonder eigen kop
   if (!afbOk()) return `<div class="panel"><div class="empty"><b>Aankoop ${isBeheer() ? "nog niet beschikbaar" : "is enkel voor beheerders"}</b>${isBeheer() ? "Voer databasescript <code>sql/047_aannemer_facturen.sql</code> uit." : ""}</div></div>`;
   S.afbF = S.afbF || { status: "open", q: "" }; const F = S.afbF; const q = (F.q || "").toLowerCase();
   const alle = afbAlle();
@@ -79,7 +79,7 @@ function vAankoop() {
   const som = (l) => l.reduce((s, f) => s + afbIncl(f), 0); const n = (st) => alle.filter(f => st.includes(f.status));
   const maand = todayIso.slice(0, 7); const betaaldMaand = alle.filter(f => f.status === "betaald" && (f.betaald_op || "").startsWith(maand));
   const teBetalen = n(["goedgekeurd"]), vervallen = teBetalen.filter(afbVervallen);
-  return `<div class="page-head"><div><div class="eyebrow">Facturen van aannemers</div><h1>Aankoop</h1><div class="sub">Wat aannemers in hun portaal opladen. Keur goed, stel een vraag (de aannemer ziet je toelichting en kan de factuur aanpassen) of zet op betaald. Per project vind je ze ook onder Facturatie, met de kostprijs per lot ernaast.</div></div></div>
+  return `${sub ? `<p class="muted" style="font-size:13px;margin:0 0 14px">Wat aannemers in hun portaal opladen. Keur goed, stel een vraag (de aannemer ziet je toelichting en kan de factuur aanpassen) of zet op betaald. Per project vind je ze ook onder Facturatie, met de kostprijs per lot ernaast.</p>` : `<div class="page-head"><div><div class="eyebrow">Facturen van aannemers</div><h1>Aankoop</h1><div class="sub">Wat aannemers in hun portaal opladen. Keur goed, stel een vraag (de aannemer ziet je toelichting en kan de factuur aanpassen) of zet op betaald. Per project vind je ze ook onder Facturatie, met de kostprijs per lot ernaast.</div></div></div>`}
     <div class="rend" style="margin-bottom:16px"><div class="panel"><div class="k">Te behandelen</div><div class="v">${n(["ontvangen"]).length}</div><div class="muted" style="font-size:12px">${eur2(som(n(["ontvangen"])))} incl. btw</div></div>
       <div class="panel"><div class="k">Vraag aan aannemer</div><div class="v">${n(["betwist"]).length}</div><div class="muted" style="font-size:12px">${eur2(som(n(["betwist"])))}</div></div>
       <div class="panel"><div class="k">Goedgekeurd, te betalen</div><div class="v ${vervallen.length ? "neg" : ""}">${eur2(som(teBetalen))}</div><div class="muted" style="font-size:12px">${teBetalen.length} factu${teBetalen.length === 1 ? "ur" : "ren"}${vervallen.length ? ` · ${vervallen.length} vervallen` : ""}</div></div>
