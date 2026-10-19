@@ -3,7 +3,7 @@
    Statische webapp op Supabase (login, live-synchronisatie, rechten)
    ===================================================================== */
 if (window.top !== window.self) { try { window.top.location.replace(window.location.href); } catch (e) { document.documentElement.innerHTML = ""; } }   // niet in een vreemd frame (clickjacking)
-const APP_VERSION = "1.49.0";
+const APP_VERSION = "1.49.1";
 const PROJ_STATUS = { offerte: "In offerte", lopend: "Lopend", on_hold: "On hold", afgerond: "Afgerond", verloren: "Verloren" };
 const KLANTTYPE = { particulier: "Particulier", zakelijk: "Zakelijk" };
 const KLANTCODE = { particulier: "PAR", zakelijk: "ZAK" };
@@ -2689,7 +2689,7 @@ function vTaken() {
   <div class="page-head"><div><div class="eyebrow">${ts.length} taken</div><h1>Taken</h1></div><div class="actions"><button class="btn primary" data-act="new-task">+ Nieuwe taak</button></div></div>
   <div class="filters">
     <input type="search" placeholder="Zoeken…" value="${esc(f.q)}" data-filter="q" aria-label="Zoeken">
-    <select data-filter="project"><option value="">Alle projecten</option>${projects().map(p => `<option value="${p.id}" ${f.project === p.id ? "selected" : ""}>${esc(p.klant)}</option>`).join("")}</select>
+    <select data-filter="project"><option value="">Alle projecten</option>${projects().slice().sort((a, b) => (a.klant || "").localeCompare(b.klant || "", "nl", { sensitivity: "base" })).map(p => `<option value="${p.id}" ${f.project === p.id ? "selected" : ""}>${esc(p.klant)}</option>`).join("")}</select>
     <select data-filter="user"><option value="">Iedereen</option>${users().map(u => `<option value="${u.id}" ${f.user === u.id ? "selected" : ""}>${esc(u.name)}</option>`).join("")}</select>
     <select data-filter="status"><option value="">Open</option><option value="late" ${f.status === "late" ? "selected" : ""}>Te laat</option>${Object.entries(TASK_STATUS).map(([k, v]) => `<option value="${k}" ${f.status === k ? "selected" : ""}>${v}</option>`).join("")}</select>
   </div>
@@ -2704,7 +2704,7 @@ function vPlanning() {
   const ps = projects().filter(p => p.status !== "afgerond" && p.status !== "verloren" && (!S.filters.project || p.id === S.filters.project));
   return `
   <div class="page-head"><div><div class="eyebrow">${ps.length} projecten · ${Object.values(S.taken).filter(t => ps.some(p => p.id === t.project_id) && t.status !== "done").length} open taken</div><h1>Planning</h1></div>
-    <div class="actions"><select data-filter="project"><option value="">Alle projecten</option>${projects().map(p => `<option value="${p.id}" ${S.filters.project === p.id ? "selected" : ""}>${esc(p.klant)}</option>`).join("")}</select><button class="btn primary" data-act="new-task">+ Taak</button></div></div>
+    <div class="actions"><select data-filter="project"><option value="">Alle projecten</option>${projects().slice().sort((a, b) => (a.klant || "").localeCompare(b.klant || "", "nl", { sensitivity: "base" })).map(p => `<option value="${p.id}" ${S.filters.project === p.id ? "selected" : ""}>${esc(p.klant)}</option>`).join("")}</select><button class="btn primary" data-act="new-task">+ Taak</button></div></div>
   ${ganttHtml(ps, { title: "Timing van alle projecten" })}`;
 }
 function ganttHtml(ps, opt = {}) {
@@ -3203,7 +3203,15 @@ document.addEventListener("mousedown", (e) => { MODAL.downOnBg = e.target === $(
 window.addEventListener("beforeunload", (e) => { if ($("#modalBg")?.classList.contains("show") && MODAL.dirty) { e.preventDefault(); e.returnValue = ""; } });
 const opts = (arr, sel) => arr.map(([v, l]) => `<option value="${esc(v)}" ${String(v) === String(sel) ? "selected" : ""}>${esc(l)}</option>`).join("");
 const userOpts = (sel, allowEmpty) => (allowEmpty ? `<option value="">— niemand —</option>` : "") + opts(users().map(u => [u.id, u.name]), sel);
-const projOpts = (sel) => opts(projects().map(p => [p.id, projName(p)]), sel);
+/* 1.49.1: projectkeuze alfabetisch op klantnaam (met nummer erachter); lopende projecten bovenaan, afgeronde en verloren apart onderaan */
+const projOpts = (sel) => {
+  const abc = (a, b) => projName(a).localeCompare(projName(b), "nl", { sensitivity: "base", numeric: true }) || (b.nummer || "").localeCompare(a.nummer || "");
+  const lbl = (p) => projName(p) + (p.nummer ? " · " + p.nummer : "");
+  const ps = projects(), dicht = (p) => p.status === "afgerond" || p.status === "verloren";
+  const open = ps.filter(p => !dicht(p)).sort(abc), toe = ps.filter(dicht).sort(abc);
+  if (!toe.length) return opts(open.map(p => [p.id, lbl(p)]), sel);
+  return `<optgroup label="Lopend en in offerte">${opts(open.map(p => [p.id, lbl(p)]), sel)}</optgroup><optgroup label="Afgerond of niet doorgegaan">${opts(toe.map(p => [p.id, lbl(p)]), sel)}</optgroup>`;
+};
 const faseOpts = (sel, allowEmpty) => (allowEmpty ? `<option value="">— geen fase —</option>` : "") + opts(fasenList().map(f => [f.nr, `${f.nr} · ${f.naam}`]), sel);
 
 function projectForm(p = {}) {

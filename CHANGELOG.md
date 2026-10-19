@@ -2,6 +2,10 @@
 
 De nieuwste versie staat bovenaan. (Vanaf 1.48 houdt `version.json` enkel de laatste versie bij; het Planbord vraagt dat bestand elke 5 minuten op.)
 
+## 1.49.1 — 2026-10-19
+
+Uren en taken: de projectkeuze staat alfabetisch op klantnaam (met projectnummer erachter), lopende projecten bovenaan en afgeronde apart onderaan; ook de projectfilter bij Taken en Planning staat alfabetisch.
+
 ## 1.49.0 — 2026-10-19 (script 047 + nieuw drive/Code.gs + Edge Function assistent)
 
 Aannemersportaal: aannemers laden hun facturen op (pdf, nummer, datum, vervaldag, bedrag; optioneel gekoppeld aan loten of posten) en volgen de status op: ontvangen, goedgekeurd, betaald of een vraag van BROS. Planbord: per project onder Facturatie de facturen van aannemers met de kostprijs per lot ernaast, en een nieuw tabblad Aankoop met alle facturen (goedkeuren, vraag stellen, betaald zetten) en een keuze per factuur of de klant ze in zijn portaal ziet. Dagmail aan BROS met nieuwe aannemersfacturen. Hulp in het aannemersportaal: handleiding en een assistent die vragen over het portaal beantwoordt. Gebruiksgemak: lijst 'Te doen' over alle projecten, pdf's slepen, knop Vernieuwen en vanzelf verversen na een tijd weg, één melding tegelijk.
