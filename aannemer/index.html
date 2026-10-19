@@ -218,6 +218,53 @@
   table.t input.opm { width: 100%; min-width: 140px; font: inherit; font-size: 13px; padding: 6px 8px; border: 1px solid var(--line-2); border-radius: 8px; background: var(--surface); color: var(--ink); }
   table.t input:focus { outline: none; border-color: var(--blue); }
   .plans { display: grid; grid-template-columns: repeat(auto-fill, minmax(320px, 1fr)); gap: 16px; }
+  /* ---- 1.49: facturen, 'Te doen', hulp ---- */
+  .drop { display: grid; justify-items: center; gap: 4px; padding: 22px 16px; border: 2px dashed var(--line-2); border-radius: 14px; background: var(--surface-2); text-align: center; cursor: pointer; font-size: 14px; transition: border-color .15s, background .15s; }
+  .drop:hover, .drop.over { border-color: var(--blue); background: var(--blue-soft); }
+  .drop .drop-ic { font-size: 26px; line-height: 1; }
+  .drop.drop-sm { padding: 12px; margin-top: 6px; }
+  .linkje { background: none; border: 0; padding: 0 4px; font: inherit; font-size: 12px; font-weight: 600; color: var(--blue); cursor: pointer; border-radius: 6px; }
+  .linkje.on { background: var(--blue-soft); }
+  .field label .linkje { font-size: 12px; }
+  .af-kop { border: 1px solid var(--line); border-radius: 12px; padding: 10px 14px; margin-top: 4px; }
+  .af-kop > summary { cursor: pointer; }
+  .kl { border-top: 1px solid var(--line); padding: 6px 0; }
+  .kl:first-of-type { border-top: 0; }
+  .kl-r { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+  .kl-r.sub { padding: 3px 0 3px 26px; font-size: 13px; }
+  .kl .kb { width: 110px; flex: none; font: inherit; font-family: var(--font-mono); font-size: 13px; text-align: right; padding: 5px 8px; border: 1px solid var(--line-2); border-radius: 8px; background: var(--surface); color: var(--ink); }
+  .kl .kp > summary { cursor: pointer; font-size: 12px; color: var(--muted); padding: 2px 0 2px 26px; }
+  label.chk { display: flex; gap: 8px; align-items: flex-start; cursor: pointer; min-width: 0; }
+  label.chk input { margin-top: 3px; flex: none; }
+  .field textarea { width: 100%; }
+  .todo { margin-bottom: 18px; overflow: hidden; }
+  .todo-i { display: grid; grid-template-columns: minmax(120px, 190px) 1fr auto 18px; gap: 4px 14px; align-items: center; width: 100%; text-align: left; background: none; border: 0; border-top: 1px solid var(--line); padding: 11px 18px; font: inherit; color: inherit; cursor: pointer; }
+  .todo-i:first-of-type { border-top: 0; }
+  .todo-i:hover { background: var(--surface-2); }
+  .todo-i.laat { box-shadow: inset 3px 0 0 var(--crit); }
+  .todo-w { font-weight: 600; font-size: 14px; }
+  .todo-t { font-size: 14px; color: var(--ink-2); min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .todo-m { font-size: 12px; color: var(--muted); white-space: nowrap; }
+  .todo-i .pijl { color: var(--muted); font-size: 20px; }
+  .todo-leeg { margin-bottom: 18px; }
+  @media (max-width: 640px) { .todo-i { grid-template-columns: 1fr 18px; } .todo-t, .todo-m { grid-column: 1; white-space: normal; } .todo-i .pijl { grid-row: 1 / span 3; grid-column: 2; } .hide-sm { display: none; } }
+  .hchat { display: flex; flex-direction: column; gap: 8px; padding: 16px 18px; max-height: 55vh; min-height: 120px; overflow-y: auto; }
+  .hb { max-width: 88%; padding: 10px 14px; border-radius: 16px; font-size: 14px; line-height: 1.45; white-space: pre-wrap; }
+  .hb.ik { align-self: flex-end; background: var(--ink); color: var(--ground); border-bottom-right-radius: 4px; }
+  .hb.hulp { align-self: flex-start; background: var(--surface-2); border-bottom-left-radius: 4px; }
+  .hb.denkt { color: var(--muted); font-style: italic; }
+  .hsug { display: flex; flex-wrap: wrap; gap: 6px; }
+  .hsug .chip { white-space: normal; text-align: left; }
+  .hform { display: flex; gap: 8px; padding: 12px 18px; border-top: 1px solid var(--line); }
+  .hform input { flex: 1; min-width: 0; padding: 10px 13px; border: 1px solid var(--line-2); border-radius: 12px; font: inherit; background: var(--surface); color: var(--ink); }
+  .hl-zoek { width: 100%; padding: 10px 13px; border: 1px solid var(--line-2); border-radius: 12px; font: inherit; background: var(--surface); color: var(--ink); }
+  .hl-sec { border-top: 1px solid var(--line); }
+  .hl-sec > summary { cursor: pointer; padding: 12px 18px; font-weight: 600; }
+  .hl-sec[open] > summary { color: var(--blue); }
+  .hl-tx { padding: 0 18px 12px; font-size: 14px; color: var(--ink-2); }
+  .two.top { align-items: start; }
+  tr.flits td { animation: flits 2.4s ease-out; }
+  @keyframes flits { from { background: var(--blue-soft); } to { background: transparent; } }
 </style>
 </head>
 <body>
@@ -227,6 +274,6 @@
 <script src="../config.js?v=1.34.0"></script>
 <script src="../portaal-voorbeeld.js?v=1.42.0"></script>
 <script src="../agenda.js?v=1.42.0"></script>
-<script src="aannemer.js?v=1.48.0"></script>
+<script src="aannemer.js?v=1.49.0"></script>
 </body>
 </html>

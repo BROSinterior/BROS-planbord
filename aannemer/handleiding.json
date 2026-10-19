@@ -1,0 +1,82 @@
+{
+  "versie": "1.49.0",
+  "titel": "Handleiding aannemersportaal",
+  "intro": "Het aannemersportaal van BROS is je werkplek voor alle projecten waarvoor je met BROS samenwerkt: werfpunten, prijsaanvragen, meetstaten, plannen, documenten, planning, vragen en je facturen. Je ziet enkel de projecten en loten waaraan BROS jou koppelde, nooit prijzen van BROS of van andere aannemers.",
+  "secties": [
+    {
+      "id": "inloggen",
+      "titel": "Inloggen en wachtwoord",
+      "tekst": "Je krijgt van BROS een uitnodiging per mail. Klik op de link en kies een wachtwoord (minstens 8 tekens); daarna log je in met je e-mailadres en dat wachtwoord.\n\nWachtwoord vergeten of de link is vervallen? Kies op het inlogscherm 'Wachtwoord vergeten of nog geen wachtwoord?' en vul je e-mailadres in: je krijgt een nieuwe link. Komt er niets aan, kijk dan in je map met ongewenste mail.\n\nElke persoon heeft een eigen login. Deel je login niet: wat je in het portaal doet (prijzen, akkoorden, facturen) staat op jouw naam. Werkt een collega mee, vraag BROS dan een eigen uitnodiging voor hem of haar.\n\nUitloggen doe je rechtsboven. Op een gedeelde computer log je best altijd uit."
+    },
+    {
+      "id": "start",
+      "titel": "Je projecten en 'Te doen'",
+      "tekst": "Na het inloggen zie je al je projecten bij BROS. Bovenaan staat 'Te doen': alles wat van jou verwacht wordt, over alle projecten heen, met het dringendste eerst (werfpunten over de datum, prijsaanvragen met een deadline, actiepunten, een meetstaat ter goedkeuring en facturen waarover BROS een vraag heeft). Klik op een regel en je komt meteen op de juiste plaats.\n\nOnder 'Te doen' staan de projectkaarten: lopende projecten, prijsvragen (projecten waarvoor BROS je enkel een prijs vraagt) en, ingeklapt, de afgeronde projecten. De knopjes onder een kaart brengen je rechtstreeks naar wat er open staat.\n\nIn een project gebruik je de tabbladen bovenaan. Met '‹ Alle projecten' ga je terug naar de lijst. De terugknop van je browser werkt ook."
+    },
+    {
+      "id": "overzicht",
+      "titel": "Overzicht van een project",
+      "tekst": "Het tabblad Overzicht toont per project: het aantal open werfpunten, prijsaanvragen en actiepunten, de status en de huidige stap van het project, het werfadres, je aanspreekpunt bij BROS en je komende afspraken. Klik op een tegel om naar dat onderdeel te gaan."
+    },
+    {
+      "id": "werfpunten",
+      "titel": "Werfpunten",
+      "tekst": "Werfpunten zijn vaststellingen die BROS aan jou toewees (bv. bij een werfbezoek), en punten die je zelf meldde. Filter op Open, Wacht op controle of Alles.\n\nEen punt afwerken: open het punt, voeg een bewijsfoto toe (Foto nemen of Uit galerij) en kies '✓ Opgelost melden'. BROS controleert het daarna op de werf; dan wordt het 'Gecontroleerd'.\n\nNog niet klaar of een vraag over het punt? Schrijf een opmerking (eventueel met foto) en kies 'Bewaren — nog niet opgelost'. BROS krijgt je opmerking en kan erop antwoorden; het antwoord staat bij het punt.\n\nEen nieuw punt melden doe je met de knop '📷 Nieuw punt melden' (de werfmodus). Punten die je zelf meldt, worden eerst door BROS bekeken en daarna toegewezen.\n\nKleuren op het plan: rood = open, oranje = opgelost (wacht op controle), groen = gecontroleerd. 'Te laat' betekent dat de afgesproken datum voorbij is."
+    },
+    {
+      "id": "werfmodus",
+      "titel": "Werfmodus op je smartphone",
+      "tekst": "De werfmodus is een eenvoudige versie voor op de werf: je punten met foto, punten melden en opgelost melden. Ze werkt ook zonder bereik: foto's en meldingen wachten op je toestel en worden verstuurd zodra je weer verbinding hebt.\n\nTip: open de werfmodus één keer met bereik en zet ze op je beginscherm (iPhone: deelknop › 'Zet op beginscherm'; Android: menu › 'Toevoegen aan startscherm'). Dan open je ze als een app."
+    },
+    {
+      "id": "prijsaanvragen",
+      "titel": "Prijsaanvragen",
+      "tekst": "Bij een prijsaanvraag vraagt BROS per post een eenheidsprijs, excl. btw en inclusief levering en plaatsing tenzij anders vermeld.\n\nInvullen: typ je prijs in het veld; hij wordt bewaard zodra je het veld verlaat (Enter of klik ernaast). Kan je een post niet aanbieden, vink dan 'n.a.' aan. Per post kan je een opmerking zetten (alternatief, voorwaarde).\n\nJe offerte als pdf toevoegen kan optioneel (maximaal 5 bestanden van 15 MB).\n\nKlaar? Kies 'Prijsopgave indienen'; BROS krijgt een melding. Je kan je prijzen nog aanpassen zolang BROS de prijsvraag niet afsloot; dien daarna opnieuw in.\n\nNa de keuze van BROS zie je 'Gegund' (met een ✓ bij de weerhouden posten) of 'Niet weerhouden'. Je ziet nooit de prijzen van andere aannemers."
+    },
+    {
+      "id": "meetstaat",
+      "titel": "Meetstaat",
+      "tekst": "Onder Meetstaat zie je de posten van jouw loten met hoeveelheden en eenheden, zonder prijzen. Met 'Pdf downloaden' maak je er een pdf van om door te sturen naar je eigen onderaannemers of leveranciers (met lege prijskolommen, per ruimte gegroepeerd en met of zonder klantnaam).\n\nMeetstaat met prijzen ter goedkeuring: soms deelt BROS de meetstaat met de prijzen die BROS voor jouw werk voorstelt. Klopt een prijs niet, zet dan bij die post een opmerking of een tegenprijs. Daarna kies je 'Akkoord met deze prijzen' of 'Tegenvoorstel indienen'. Opmerkingen en tegenprijzen worden bewaard zodra je een veld verlaat."
+    },
+    {
+      "id": "facturen",
+      "titel": "Facturen opladen en opvolgen",
+      "tekst": "Onder het tabblad Facturen laad je je facturen voor dit project op, zodat BROS ze snel kan nakijken en betalen.\n\nOpladen: kies '+ Factuur opladen', sleep je pdf in het vak (of kies het bestand), en vul factuurnummer, factuurdatum, vervaldag, bedrag excl. btw en btw-bedrag in (de knoppen 21 %, 6 % en 0 % rekenen de btw voor je uit; 0 % is bv. bij verlegging). Een korte omschrijving helpt BROS (bv. 'Schrijnwerk keuken, schijf 2').\n\nKoppelen aan loten of posten is optioneel: vink de loten aan waarop de factuur betrekking heeft, en open een lot om specifieke posten te kiezen. Je mag per lot of post een bedrag invullen, maar dat hoeft niet. Zo kan BROS je factuur sneller toetsen aan de meetstaat.\n\nStatussen: 'Ontvangen' (BROS kijkt ze na) → 'Goedgekeurd' → 'Betaald' (met datum). Heeft BROS een vraag of klopt er iets niet, dan staat er 'Vraag van BROS' met de toelichting. Pas je factuur dan aan (bv. een nieuwe pdf of een ander bedrag) en bewaar: ze gaat opnieuw naar BROS.\n\nZolang een factuur 'Ontvangen' of 'Vraag van BROS' is, kan je ze wijzigen of intrekken. Na goedkeuring kan dat niet meer; stuur dan een creditnota of neem contact op met je aanspreekpunt.\n\nEén pdf per factuur, maximaal 15 MB. Hetzelfde factuurnummer kan je niet twee keer opladen voor hetzelfde project. Wanneer BROS betaalt, hangt af van de afspraken met jou; bij vragen over een betaling gebruik je het tabblad Vragen (onderwerp Facturatie)."
+    },
+    {
+      "id": "plannen",
+      "titel": "Plannen, documenten en verslagen",
+      "tekst": "Plannen: de werfplannen van het project met de plaats van jouw werfpunten. Klik op een nummer om het punt te openen, of op het plan om het groot te bekijken.\n\nDocumenten en verslagen: de werfverslagen die je ontving (als pdf) en de plannen en documenten die BROS met de aannemers deelt, altijd in de laatste versie. Je krijgt een mail als BROS nieuwe documenten klaarzet."
+    },
+    {
+      "id": "planning",
+      "titel": "Planning en afspraken",
+      "tekst": "Planning toont de stappen van het project en de timing die BROS deelt. Die data zijn een planning en kunnen nog schuiven; je eigen start- en einddatum spreek je af met je aanspreekpunt.\n\nAfspraken waarvoor je uitgenodigd bent, staan op het startscherm en in het overzicht van het project. Met 'In mijn agenda' zet je een afspraak in je eigen agenda (Outlook, Google, Apple)."
+    },
+    {
+      "id": "vragen",
+      "titel": "Vragen en actiepunten",
+      "tekst": "Onder Vragen stel je een vraag of meld je iets aan BROS. Kies het onderwerp (planning, documenten, ontwerp, facturatie, probleem op de werf of iets anders), schrijf een korte samenvatting en een toelichting. Je vraag komt bij de juiste persoon terecht; het antwoord van BROS verschijnt bij je vraag (en je krijgt een mail).\n\nActiepunten zijn afspraken uit verslagen die BROS aan jou toewees. Vink ze af als ze klaar zijn."
+    },
+    {
+      "id": "team",
+      "titel": "Wie is wie",
+      "tekst": "Het tabblad Wie is wie stelt het BROS-team van het project voor. Je vaste aanspreekpunt staat ook in het overzicht van het project."
+    },
+    {
+      "id": "hulp",
+      "titel": "Hulp en de assistent",
+      "tekst": "Via 'Hulp' bovenaan vind je deze handleiding en een assistent. De assistent beantwoordt vragen over hoe het portaal werkt (waar vind ik…, hoe meld ik…, wat betekent deze status…). Hij kent je dossier niet: voor vragen over een concreet project, een prijs, een betaling of een datum gebruik je het tabblad Vragen in dat project, of je neemt contact op met je aanspreekpunt."
+    },
+    {
+      "id": "tips",
+      "titel": "Handige tips",
+      "tekst": "Het portaal ververst zichzelf als je na een tijdje terugkomt; wil je meteen de laatste stand, kies dan 'Vernieuwen' bovenaan.\n\nZet het portaal op het beginscherm van je smartphone (deelknop › 'Zet op beginscherm'), dan open je het als een app.\n\nBedragen typ je zoals je gewoon bent: 1250,50 of 1.250,50.\n\nPdf's kan je ook gewoon in het vak slepen (facturen en offertes).\n\nGebruik een recente browser (Chrome, Edge, Safari of Firefox)."
+    },
+    {
+      "id": "privacy",
+      "titel": "Vertrouwelijkheid",
+      "tekst": "Plannen, verslagen, prijzen en klantgegevens in het portaal zijn vertrouwelijk en enkel bedoeld voor het werk aan het project. Deel ze enkel met wie eraan meewerkt (bv. je onderaannemer, met de pdf zonder klantnaam). Facturen die je oplaadt, ziet enkel BROS, tenzij BROS ze uitdrukkelijk met de klant deelt."
+    }
+  ]
+}

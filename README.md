@@ -16,14 +16,15 @@ Statische webapp (geen build-stap) op een Supabase-database.
 | `version.json` | versienummer (enkel de laatste versie); de app meldt een nieuwe versie aan wie ze open heeft |
 | `CHANGELOG.md` | versiegeschiedenis (vanaf 1.48 niet meer in version.json) |
 | `vendor/supabase-2.45.4.js` (+ `591.supabase.js`) | de Supabase-bibliotheek, zelf gehost (geen CDN nodig) |
-| `sql/001_init.sql` … `sql/046_*.sql` | databasescripts, in volgorde uit te voeren (`versie_schema` in instellingen bewaakt de volgorde vanaf 022) |
+| `sql/001_init.sql` … `sql/047_*.sql` | databasescripts, in volgorde uit te voeren (`versie_schema` in instellingen bewaakt de volgorde vanaf 022) |
 | `drive/Code.gs` | Google Apps Script dat projectmappen aanmaakt/koppelt op Drive en de meetstaat-export wegschrijft (installatie: zie bovenaan dat bestand) |
 | `agenda.js` | gedeeld (Planbord en portalen): agendabestand (.ics) en Google Agenda-link voor afspraken (script 041) |
 | `afspraken.js` | Planbord: afspraak ter plaatse in het taakformulier, synchronisatie met de Google Agenda en de mails (script 041) |
 | `meetstaat-export.js` | schrijft de meetstaat van een project in het Excel-sjabloon (zip/XML, opmaak en formules blijven intact) |
 | `klant/` | het klantenportaal (index.html + portaal.js): alleen-lezen zicht van de bouwheer op zijn project |
 | `werf/` | de werfmodus voor op de smartphone (vaststellingen met foto's, werkt ook zonder bereik; installeerbaar als app) — ook voor aannemers, beperkt tot hun eigen punten |
-| `aannemer/` | het aannemersportaal (index.html + aannemer.js): werfpunten afwerken, plannen, verslagen, documenten, planning, prijsaanvragen, vragen aan BROS |
+| `aannemer/` | het aannemersportaal (index.html + aannemer.js): werfpunten afwerken, plannen, verslagen, documenten, planning, prijsaanvragen, facturen, vragen aan BROS; `handleiding.json` = de handleiding (ook de bron van de hulp-assistent) |
+| `af-beheer.js` | Planbord: facturen van aannemers opvolgen (Facturatie per project en tabblad Aankoop, script 047) |
 | `supabase/functions/assistent/` | Edge Function van de AI-assistent (in Supabase te deployen, sleutel als secret) |
 | `next/` | (later) testversie van een volgende update |
 
@@ -164,6 +165,21 @@ Activeren (eenmalig):
 4. Edge Function `assistent` opnieuw plakken (weigert nu aannemerslogins) en pushen.
 
 Gebruik: Dossier › Contacten → bij een aannemer de knop **Aannemersportaal** (beheer) → hij krijgt een mail met een persoonlijke link. Instellingen → Klantenportaal toont wie toegang heeft (klant/aannemer). Een aannemer die op het Planbord of het klantenportaal inlogt, wordt doorgestuurd.
+
+## Facturen van aannemers, hulp en gebruiksgemak in het aannemersportaal (script 047, v1.49)
+
+**In gebruik nemen:**
+1. Supabase → SQL Editor → `sql/047_aannemer_facturen.sql` → Run (controle: `2 | 1 | 3`).
+2. Pushen (o.a. `af-beheer.js`, `aannemer/handleiding.json`, `aannemer/aannemer.js`).
+3. Supabase → Edge Functions → `assistent` → de nieuwe `supabase/functions/assistent/index.ts` plakken → Deploy (nieuwe modus `hulp`; zelfde secrets). De hulp leest de handleiding van de publieke site (`…/aannemer/handleiding.json`); werkt pas na de push.
+4. Drive-script: `drive/Code.ingevuld.gs` plakken → Deploy → Manage deployments → Version: New (dagmail over aannemersfacturen, back-up van de nieuwe tabellen).
+
+- **Aannemer (portaal › tabblad Facturen):** pdf slepen of kiezen, factuurnummer (voorgesteld uit de bestandsnaam), datum, vervaldag (+30/+60 d), bedrag excl. en btw (knoppen 21/6/0 %), omschrijving. Koppelen aan loten of posten is optioneel, met of zonder bedrag. Zolang de factuur *ontvangen* of *vraag van BROS* is, kan hij ze wijzigen (ook de pdf vervangen) of intrekken; na goedkeuring niet meer. Max. 15 MB per pdf, 30 facturen per dag, hetzelfde nummer niet twee keer per project.
+- **BROS (beheer):** Facturatie per project → blok *Facturen van aannemers* met status, betaaldatum, vinkje *Klant* (zichtbaar in het klantenportaal, standaard uit), pdf en 💬 toelichting; daaronder *kostprijs per lot versus aannemersfacturen* (hoeveelheid × aankoopprijs uit de meetstaat; een factuur zonder bedragen per lot wordt verdeeld naar verhouding van de kostprijs; facturen met een open vraag tellen niet mee). Tabblad **Aankoop**: alle facturen over alle projecten (te behandelen, te betalen met vervaldag, betaald) met zoeken; badge = aantal te behandelen. *Vraag aan aannemer* vraagt een toelichting die de aannemer in zijn portaal ziet; past hij de factuur aan, dan staat ze weer op *ontvangen*.
+- **Meldingen:** een nieuwe factuur verschijnt meteen in het Planbord (melding + badge) en komt één keer per dag (vanaf 7 u) in een mail aan `YUKI.REPORT_TO` met een link naar Aankoop. Enkel beheer ziet aannemersfacturen (medewerkers niet).
+- **Klant:** ziet enkel de facturen waarbij *Klant* aangevinkt is (Facturatie › *Facturen van aannemers*), met pdf en status, zonder jullie toelichting.
+- **Hulp (aannemersportaal, knop Hulp bovenaan):** handleiding met zoeken + assistent (Edge Function `assistent`, modus `hulp`). Die kent enkel de handleiding, geen dossiers of prijzen; grenzen: 5 vragen per minuut en 40 per dag per login, 1500 per maand samen (`instellingen.assistent.plafond_hulp`); uitzetten met `instellingen.assistent.aannemer_hulp = false`; eigen model met `model_hulp`. Vragen en antwoorden staan in `aannemer_hulp` (enkel beheer leest). De handleiding aanpassen = `aannemer/handleiding.json` bewerken en pushen.
+- **Gebruiksgemak:** startscherm *Te doen* over alle projecten (te laat eerst; klik = meteen op de juiste plaats), knop *Vernieuwen* en vanzelf verversen na 5 min weg, pdf's slepen (facturen en offertes bij prijsaanvragen), *Uitleg*-link naar de handleiding, link `…/aannemer/?p=<project>&t=facturen` opent meteen een tabblad, één melding tegelijk.
 
 ## Opnieuw uitnodigen op een ander e-mailadres (script 046)
 

@@ -1187,7 +1187,9 @@ const ONDERHOUD = { BACKUP_MAP: "BROS Planbord back-ups", BACKUP_WEKEN: 12, DREM
 const BACKUP_TABELLEN = ["profiles", "tarieven", "fasen", "standaardtaken", "projecten", "taken", "uren", "documenten", "instellingen", "loten", "posten", "meetstaat_posten", "meetstaat_prijzen",
   "vorderingen", "vordering_regels", "contacten", "project_contacten", "goedkeuringen", "goedkeuring_tekenaars", "notities", "werfbezoeken", "vaststellingen", "klant_timing", "werfplannen", "werfverslagen",
   "taak_voorstellen", "assistent_gesprekken", "assistent_berichten", "prijsaanvragen", "prijsaanvraag_regels", "prijsvragen", "prijsvraag_gunningen", "tekenplannen", "plan_objecten", "plan_versies", "plan_symbolen",
-  "aannemer_meetstaten", "aannemer_meetstaat_posten", "keuzes", "keuze_opties", "meerwerk_aanvragen", "werf_fotos", "werf_updates", "woningdossier"];
+  "aannemer_meetstaten", "aannemer_meetstaat_posten", "keuzes", "keuze_opties", "meerwerk_aanvragen", "werf_fotos", "werf_updates", "woningdossier",
+  "aannemer_facturen", "aannemer_hulp"];   // 1.49 (script 047)
+const BACKUP_OPTIONEEL = ["aannemer_facturen", "aannemer_hulp"];   // bestaan pas na script 047: ontbreken is dan geen back-upfout
 const BACKUP_ORDE = { fasen: "nr", loten: "nr", tarieven: "user_id", instellingen: "key", klant_timing: "project_id,fase_nr", prijsvraag_gunningen: "prijsvraag_id,post_id", meetstaat_prijzen: "post_id", plan_symbolen: "code" };
 function onderhoud(volledig) {
   const cache = CacheService.getScriptCache();
@@ -1211,7 +1213,7 @@ function onderhoudZeker() {
 }
 function onderhoudInstall() { CacheService.getScriptCache().remove("onderhoud-trigger"); onderhoudZeker(); CacheService.getScriptCache().remove("hartslag"); onderhoud(false); Logger.log("OK — onderhoud draait elk uur (hartslag), back-up en bewaking wekelijks."); }
 function hartslag() {
-  pbAdmin("/rest/v1/instellingen?on_conflict=key", "post", { key: "hartslag", value: { drive: new Date().toISOString(), versie: "1.48.2" } }, "resolution=merge-duplicates,return=minimal");
+  pbAdmin("/rest/v1/instellingen?on_conflict=key", "post", { key: "hartslag", value: { drive: new Date().toISOString(), versie: "1.49.0" } }, "resolution=merge-duplicates,return=minimal");
 }
 function triggersHerstellen() {   // enkel triggers die er eerder al waren (nooit iets aanzetten dat BROS zelf niet installeerde)
   const props = PropertiesService.getScriptProperties();
@@ -1234,7 +1236,7 @@ function pbAdminAll(tabel) {
 /** Elke week automatisch (via onderhoud); mag ook met de hand uitgevoerd worden. */
 function backup() {
   const t0 = Date.now(); const data = { gemaakt: new Date().toISOString(), tabellen: {}, fouten: {} };
-  BACKUP_TABELLEN.forEach(t => { if (Date.now() - t0 > 240000) { data.fouten[t] = "tijd op"; return; } try { data.tabellen[t] = pbAdminAll(t); } catch (e) { data.fouten[t] = String(e).slice(0, 200); } });
+  BACKUP_TABELLEN.forEach(t => { if (Date.now() - t0 > 240000) { data.fouten[t] = "tijd op"; return; } try { data.tabellen[t] = pbAdminAll(t); } catch (e) { if (BACKUP_OPTIONEEL.indexOf(t) >= 0 && /does not exist|42P01|PGRST205|schema cache|404/i.test(String(e))) return; data.fouten[t] = String(e).slice(0, 200); } });
   const it = DriveApp.getRootFolder().getFoldersByName(ONDERHOUD.BACKUP_MAP); const map = it.hasNext() ? it.next() : DriveApp.getRootFolder().createFolder(ONDERHOUD.BACKUP_MAP);
   const naam = "planbord-" + Utilities.formatDate(new Date(), "Europe/Brussels", "yyyy-MM-dd") + ".json.gz";
   map.createFile(Utilities.gzip(Utilities.newBlob(JSON.stringify(data), "application/json", naam.replace(/\.gz$/, "")), naam));
@@ -1275,6 +1277,7 @@ function documentenDigest() {
   const uur = new Date().getHours(); if (uur < DIGEST.VAN_UUR || uur >= DIGEST.TOT_UUR) return;
   const dag = new Date().getDay(); if (((dag === 1 && uur >= 10) || dag === 2) && ScriptApp.getProjectTriggers().some(t => t.getHandlerFunction() === "weekoverzicht")) { try { weekoverzicht(); } catch (e) { Logger.log("Weekoverzicht inhalen: " + e); } }   // 1.48: gemiste maandagmails (quotum, storing) zelf inhalen; wie al gemaild werd, slaat het over
   try { prijsaanvraagHerinneringen(); } catch (e) { Logger.log("Herinneringen prijsaanvragen: " + e); }   // script 028
+  try { aannemerFacturenMelden(); } catch (e) { Logger.log("Aannemersfacturen melden: " + e); }   // 1.49 (script 047)
   const docs = pbAdmin("/rest/v1/documenten?or=(gemeld_klant.eq.false,gemeld_aannemers.eq.false)&select=id,project_id,naam,pad,url,gedeeld,gedeeld_aannemers,gedeeld_op,gedeeld_aannemers_op,gemeld_klant,gemeld_aannemers&limit=500", "get") || [];
   if (!docs.length) { Logger.log("Niets te melden."); return; }
   const grens = Date.now() - DIGEST.WACHT_MIN * 60000; let mails = 0;
@@ -1312,6 +1315,30 @@ function documentenDigest() {
     });
   });
   Logger.log(mails + " mail(s) verstuurd.");
+}
+/** 1.49 (script 047): één keer per dag (vanaf DIGEST.VAN_UUR) een mail aan BROS met de facturen die aannemers in hun portaal
+ *  oplaadden of verbeterden sinds de vorige mail. Niets nieuw → geen mail. Opvolgen doe je in het Planbord (tabblad Aankoop). */
+function aannemerFacturenMelden() {
+  const props = PropertiesService.getScriptProperties(); const vandaag = Utilities.formatDate(new Date(), "Europe/Brussels", "yyyy-MM-dd");
+  if (props.getProperty("AF_MAIL_DAG") === vandaag) return;
+  let rijen; try { rijen = pbAdmin("/rest/v1/aannemer_facturen?gemeld=eq.false&select=id,project_id,contact_id,aannemer_naam,nummer,datum,vervaldag,bedrag_excl,btw_bedrag,omschrijving,status,created_at&order=created_at.asc&limit=200", "get") || []; }
+  catch (e) { Logger.log("aannemer_facturen (script 047 nog niet uitgevoerd?): " + e); return; }
+  if (!rijen.length) return;   // niets nieuw: later vandaag opnieuw kijken
+  if (!mailRuimte(1)) { Logger.log("Dagquotum voor mails bijna op — aannemersfacturen volgen later."); return; }
+  const projecten = pbIn("/rest/v1/projecten?", "id", rijen.map(r => r.project_id), "&select=id,nummer,klant,naam");
+  const eu = (n) => "€ " + Number(n || 0).toFixed(2).replace(".", ",").replace(/\B(?=(\d{3})+(?!\d))/g, ".");
+  const d = (x) => x ? String(x).slice(8, 10) + "/" + String(x).slice(5, 7) + "/" + String(x).slice(0, 4) : "";
+  const pn = (id) => { const p = projecten.find(x => x.id === id); return p ? (p.nummer ? p.nummer + " · " : "") + (p.klant || "") + (p.naam && p.naam !== p.klant ? " · " + p.naam : "") : ""; };
+  const incl = (r) => Number(r.bedrag_excl || 0) + Number(r.btw_bedrag || 0); const tot = rijen.reduce((s, r) => s + incl(r), 0);
+  const url = PORTAAL.URL.replace(/klant\/?$/, "") + "#aankoop";
+  const html = "<div style=\"font-family:Helvetica,Arial,sans-serif;font-size:14px;line-height:1.5;color:#1B1E1C;max-width:760px\"><p>" + (rijen.length === 1 ? "Een aannemer laadde een factuur op" : rijen.length + " facturen van aannemers opgeladen of verbeterd") + " in het aannemersportaal (samen " + eu(tot) + " incl. btw):</p>"
+    + "<table style=\"border-collapse:collapse;width:100%\"><tr style=\"color:#767D78;font-size:12px;text-align:left\"><th style=\"padding:4px 6px\">Project</th><th style=\"padding:4px 6px\">Aannemer</th><th style=\"padding:4px 6px\">Factuur</th><th style=\"padding:4px 6px;text-align:right\">Incl. btw</th><th style=\"padding:4px 6px\">Vervalt</th></tr>"
+    + rijen.map(r => "<tr style=\"border-top:1px solid #EEE\"><td style=\"padding:6px\">" + H(pn(r.project_id)) + "</td><td style=\"padding:6px\">" + H(r.aannemer_naam || "") + "</td><td style=\"padding:6px\"><b>" + H(r.nummer || "") + "</b>" + (r.omschrijving ? "<div style=\"color:#767D78;font-size:12px\">" + H(String(r.omschrijving).slice(0, 140)) + "</div>" : "") + "</td><td style=\"padding:6px;text-align:right;white-space:nowrap\">" + eu(incl(r)) + "</td><td style=\"padding:6px;white-space:nowrap\">" + d(r.vervaldag) + "</td></tr>").join("") + "</table>"
+    + "<p style=\"margin:22px 0\"><a href=\"" + url + "\" style=\"background:#1B1E1C;color:#fff;text-decoration:none;padding:10px 18px;border-radius:8px;font-weight:600;display:inline-block\">Opvolgen in het Planbord (Aankoop)</a></p><p style=\"color:#767D78;font-size:12px\">Deze mail komt hooguit één keer per dag, enkel als er iets nieuws is.</p></div>";
+  const tekst = rijen.length + " factuur/facturen van aannemers:\n" + rijen.map(r => "- " + pn(r.project_id) + " · " + (r.aannemer_naam || "") + " · " + (r.nummer || "") + " · " + eu(incl(r)) + (r.vervaldag ? " · vervalt " + d(r.vervaldag) : "")).join("\n") + "\n\nOpvolgen: " + url;
+  portaalMail(YUKI.REPORT_TO, (rijen.length === 1 ? "Nieuwe aannemersfactuur" : rijen.length + " nieuwe aannemersfacturen") + " · " + eu(tot), tekst, html);
+  props.setProperty("AF_MAIL_DAG", vandaag);   // eerst noteren: mislukt het markeren hieronder, dan vandaag geen tweede mail
+  chunks(rijen.map(r => r.id), 25).forEach(c => { try { pbAdmin("/rest/v1/aannemer_facturen?id=in.(" + c.join(",") + ")", "patch", { gemeld: true }); } catch (e) { Logger.log("gemeld zetten: " + e); } });
 }
 /* =====================================================================
    Wekelijkse samenvatting voor klanten (script 034) — elke maandag rond 8 uur

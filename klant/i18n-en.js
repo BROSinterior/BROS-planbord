@@ -133,6 +133,9 @@
     "Ondertekenen contract": "Contract signing", "Opmeting": "Survey", "Ontwerpfase": "Design phase", "Bespreking voorontwerp": "Preliminary design review", "Definitief ontwerp": "Final design",
     "Ruwbouw": "Structural works", "Buitenschrijnwerk": "Exterior joinery", "Technieken": "Building services", "Bezetting": "Plastering", "Vloeren": "Flooring", "Opmeting maatwerk": "Custom joinery survey",
     "Installatie maatwerk": "Custom joinery installation", "Afwerking": "Finishing", "Kennismaking": "Introduction", "Voorontwerp": "Preliminary design", "Meetstaat en offerte": "Bill of quantities and quotation", "Uitvoering": "Execution", "Oplevering": "Handover",
+    // 1.49: facturen van aannemers (script 047)
+    "Facturen van aannemers": "Contractor invoices", "Facturen van aannemers en leveranciers van je project die BROS met je deelt.": "Invoices from the contractors and suppliers of your project that BROS shares with you.",
+    "Aannemer": "Contractor", "Factuur": "Invoice", "Pdf": "PDF", "Ontvangen door BROS": "Received by BROS", "Goedgekeurd door BROS": "Approved by BROS", "Niet te openen:": "Cannot open:",
   };
   const MAANDEN = { januari: "January", februari: "February", maart: "March", april: "April", mei: "May", juni: "June", juli: "July", augustus: "August", september: "September", oktober: "October", november: "November", december: "December" };
   const maand = (s) => s.replace(/\b(\d{1,2}) (januari|februari|maart|april|mei|juni|juli|augustus|september|oktober|november|december)\b/g, (m, d, mm) => d + " " + MAANDEN[mm]);

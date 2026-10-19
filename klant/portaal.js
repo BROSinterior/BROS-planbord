@@ -3,7 +3,7 @@
    Leest uitsluitend de klant_*-views (databasescript 011): geen kostprijzen, marges of interne notities.
    ===================================================================== */
 if (window.top !== window.self) { try { window.top.location.replace(window.location.href); } catch (e) { document.documentElement.innerHTML = ""; } }   // niet in een vreemd frame (clickjacking)
-const PORTAAL_VERSION = "1.48.0";
+const PORTAAL_VERSION = "1.49.0";
 const todayLocal = () => { const n = new Date(); return `${n.getFullYear()}-${String(n.getMonth() + 1).padStart(2, "0")}-${String(n.getDate()).padStart(2, "0")}`; };
 const safeUrl = (u) => /^https?:\/\//i.test(String(u || "")) ? u : "#";
 const cfg = window.PLANBORD_CONFIG || {};
@@ -48,7 +48,7 @@ async function loadAll(stil) {
       all = all.concat(r.data || []); if (!r.data || r.data.length < PAGE) return all;
     } };
   const opt = (v) => q(v).catch(() => []);   // views van recente databasescripts: ontbreken ze nog, dan gewoon leeg
-  const [me, projecten, meetstaat, vorderingen, regels, planning, uren, documenten, team, ik, fasen, loten, inst, goedkeuringen, notities, notitieTaken, mijnTaken, planTaken, werfverslagen, assistent, chat, keuzes, keuzeOpties, mwAanvragen, werfpunten, werfFotos, werfUpdates, woningdossier, tekenaars, afspraken] = await Promise.all([
+  const [me, projecten, meetstaat, vorderingen, regels, planning, uren, documenten, team, ik, fasen, loten, inst, goedkeuringen, notities, notitieTaken, mijnTaken, planTaken, werfverslagen, assistent, chat, keuzes, keuzeOpties, mwAanvragen, werfpunten, werfFotos, werfUpdates, woningdossier, tekenaars, afspraken, aanFacturen] = await Promise.all([
     sb.from("profiles").select("id,name,email,role").eq("id", S.session.user.id).maybeSingle().then(r => r.data),
     q("klant_project"), q("klant_meetstaat"), q("klant_vorderingen"), q("klant_vordering_regels"), q("klant_planning"), q("klant_uren"),
     q("klant_documenten"), q("klant_team"), q("klant_ik"), q("fasen"), sb.from("loten_v").select("*").then(r => r.error || !(r.data || []).length ? q("loten") : r.data),
@@ -61,11 +61,11 @@ async function loadAll(stil) {
     sb.from("klant_werfverslagen").select("*").then(r => r.error ? [] : (r.data || [])),
     sb.from("instellingen").select("value").eq("key", "assistent").maybeSingle().then(r => r.data?.value || null),
     sb.from("klant_assistent_berichten").select("*").order("created_at").then(r => r.error ? [] : (r.data || [])),
-    opt("klant_keuzes"), opt("klant_keuze_opties"), opt("klant_meerwerk_aanvragen"), opt("klant_vaststellingen"), opt("klant_werf_fotos"), opt("klant_werf_updates"), opt("klant_woningdossier"), opt("klant_tekenaars"), opt("klant_afspraken"),
+    opt("klant_keuzes"), opt("klant_keuze_opties"), opt("klant_meerwerk_aanvragen"), opt("klant_vaststellingen"), opt("klant_werf_fotos"), opt("klant_werf_updates"), opt("klant_woningdossier"), opt("klant_tekenaars"), opt("klant_afspraken"), opt("klant_aannemer_facturen"),   // 1.49: facturen van aannemers die BROS voor de klant zichtbaar zette (script 047)
   ]);
   S.me = me; S.voorbeeldFout = false;
   if (VB.rol) { const vb = await VB.laad(sb); if (vb && me && me.role === "beheer") { S.me = { ...me, role: "klant", name: vb.naam }; VB.balk(); } else S.voorbeeldFout = true; }
-  S.data = { afspraken, tekenaars, keuzes, keuzeOpties, mwAanvragen, werfpunten, werfFotos, werfUpdates, woningdossier, assistent, chat, werfverslagen, planTaken, projecten: projecten.sort((a, b) => (b.nummer || "").localeCompare(a.nummer || "")), meetstaat, vorderingen, regels, planning, uren, documenten, team, ik, fasen: fasen.filter(f => f.actief !== false).sort((a, b) => a.nr - b.nr), loten: Object.fromEntries(loten.map(l => [l.nr, l])), inst, goedkeuringen: goedkeuringen.sort((a, b) => (b.voorgelegd_op || "").localeCompare(a.voorgelegd_op || "")), notities: notities.sort((a, b) => (b.datum || "").localeCompare(a.datum || "")), notitieTaken, mijnTaken: mijnTaken.sort((a, b) => (a.status === "done") - (b.status === "done") || (a.eind || "9").localeCompare(b.eind || "9")) };
+  S.data = { aanFacturen, afspraken, tekenaars, keuzes, keuzeOpties, mwAanvragen, werfpunten, werfFotos, werfUpdates, woningdossier, assistent, chat, werfverslagen, planTaken, projecten: projecten.sort((a, b) => (b.nummer || "").localeCompare(a.nummer || "")), meetstaat, vorderingen, regels, planning, uren, documenten, team, ik, fasen: fasen.filter(f => f.actief !== false).sort((a, b) => a.nr - b.nr), loten: Object.fromEntries(loten.map(l => [l.nr, l])), inst, goedkeuringen: goedkeuringen.sort((a, b) => (b.voorgelegd_op || "").localeCompare(a.voorgelegd_op || "")), notities: notities.sort((a, b) => (b.datum || "").localeCompare(a.datum || "")), notitieTaken, mijnTaken: mijnTaken.sort((a, b) => (a.status === "done") - (b.status === "done") || (a.eind || "9").localeCompare(b.eind || "9")) };
   if (!S.project || !projecten.some(p => p.id === S.project)) S.project = projecten[0]?.id || null;
   if (VB.rol) { let t = null; try { t = sessionStorage.getItem("bros.vb.taal"); } catch (e) { } zetTaal(t || (ik[0] && ik[0].taal === "en" ? "en" : "nl"), false); }
   else if (!taalGekozen()) zetTaal(ik[0] && ik[0].taal === "en" ? "en" : "nl", false);   // eigen keuze op dit toestel › taal van het contact › Nederlands
@@ -327,7 +327,23 @@ function vFacturatie(p) {
       ${calcs.map(({ v, c }) => `<tr><td class="num">${v.nr === 0 ? "V" : v.nr}</td><td class="num">${fmt(v.datum)}</td><td><b>${(v.omschrijving ? nt(v.omschrijving) : esc(VORD_SOORT[v.soort]))}</b>${v.factuurnummer ? `<div class="muted" style="font-size:12px">factuur ${esc(v.factuurnummer)}${factuurDoc(v) ? ` · <a href="${esc(safeUrl(factuurDoc(v).url))}" target="_blank" rel="noopener">pdf</a>` : ""}</div>` : ""}</td><td class="muted" style="font-size:12px;max-width:260px">${v.soort === "voorschot" ? "alle onderdelen" : nt(c.loten.map(lotNaam).join(", "))}</td><td class="r num">${eur(c.excl)}</td><td class="r num">${eur(c.btw)}</td><td class="r num"><b>${eur(c.incl)}</b></td><td><span class="pill ${v.status}">${VORD_STATUS[v.status] || esc(v.status)}</span>${v.status === "verzonden" ? `${v.vervaldag ? `<div class="muted" style="font-size:12px;${vervallen(v) ? "color:var(--crit)" : ""}">${vervallen(v) ? "vervallen sinds" : "vóór"} ${fmt(v.vervaldag)}</div>` : ""}${c.incl > 0.005 ? `<div><button class="btn sm ${S.betaal === v.id ? "" : "primary"}" style="margin-top:4px" data-act="betaal" data-id="${v.id}">Betalen</button></div>` : ""}` : ""}</td></tr>`).join("")}
       <tr class="tot"><td colspan="4">Totaal gefactureerd</td><td class="r num">${eur(gefact)}</td><td class="r num">${eur(calcs.reduce((s, x) => s + x.c.btw, 0))}</td><td class="r num">${eur(calcs.reduce((s, x) => s + x.c.incl, 0))}</td><td></td></tr></tbody></table></div>` : `<div class="empty"><b>Nog geen facturen</b>Zodra we een factuur versturen, vind je ze hier terug.</div>`}</div>
     ${S.betaal && vs.some(v => v.id === S.betaal && v.status === "verzonden") ? vBetalen(vs.find(v => v.id === S.betaal)) : ""}
-    ${vs.length ? vordMatrix(p, vs) : ""}`;
+    ${vs.length ? vordMatrix(p, vs) : ""}${vAanFacturen(p)}`;
+}
+/* 1.49 (script 047): facturen van aannemers die BROS met de klant deelt (bv. wanneer de klant die rechtstreeks betaalt of ter info) */
+const AANF_STATUS = { ontvangen: "Ontvangen door BROS", goedgekeurd: "Goedgekeurd door BROS", betaald: "Betaald", betwist: "In behandeling" };
+function vAanFacturen(p) {
+  const fs = (D().aanFacturen || []).filter(f => f.project_id === p.id).sort((a, b) => (b.datum || "").localeCompare(a.datum || ""));
+  if (!fs.length) return "";
+  const incl = (f) => Number(f.bedrag_excl || 0) + Number(f.btw_bedrag || 0);
+  return `<div class="panel" style="margin-top:16px"><div class="panel-head"><h2>Facturen van aannemers</h2></div><div class="panel-body" style="padding-bottom:0"><p class="muted" style="font-size:13px;margin:0">Facturen van aannemers en leveranciers van je project die BROS met je deelt.</p></div><div class="tw"><table class="t"><thead><tr><th>Datum</th><th>Aannemer</th><th>Factuur</th><th class="r">Excl. btw</th><th class="r">Btw</th><th class="r">Incl. btw</th><th>Status</th><th></th></tr></thead><tbody>
+    ${fs.map(f => `<tr><td class="num">${fmt(f.datum)}</td><td>${nt(f.aannemer || "")}</td><td><b>${esc(f.nummer || "")}</b>${f.omschrijving ? `<div class="muted" style="font-size:12px">${nt(f.omschrijving)}</div>` : ""}${(f.loten || []).length ? `<div class="muted" style="font-size:12px">${nt(f.loten.map(lotNaam).join(", "))}</div>` : ""}</td><td class="r num">${eur(f.bedrag_excl)}</td><td class="r num">${f.btw_bedrag == null ? "—" : eur(f.btw_bedrag)}</td><td class="r num"><b>${eur(incl(f))}</b></td><td><span class="pill ${f.status === "betaald" ? "betaald" : "verzonden"}">${AANF_STATUS[f.status] || esc(f.status)}</span>${f.status === "betaald" && f.betaald_op ? `<div class="muted" style="font-size:12px">${fmt(f.betaald_op)}</div>` : ""}</td><td class="r"><button class="btn sm" data-act="aanf-pdf" data-path="${esc(f.pdf_path)}">Pdf</button></td></tr>`).join("")}
+    </tbody></table></div></div>`;
+}
+async function aanfPdf(path) {
+  const w = window.open("", "_blank");
+  const { data, error } = await sb.storage.from("aannemerfacturen").createSignedUrl(path, 600);
+  if (error || !data) { if (w) w.close(); toast(tr("Niet te openen: ") + (error?.message || ""), 5000); return; }
+  if (w) w.location = data.signedUrl; else location.href = data.signedUrl;
 }
 /* vorderingsstaat per onderdeel: welk deel van elk lot (en elke post) in welke factuur zat, wat cumulatief gefactureerd is en wat nog rest */
 function vordMatrix(p, vs) {
@@ -611,6 +627,7 @@ document.addEventListener("click", (e) => {
   if (el.dataset.tab) { S.tab = el.dataset.tab; S.dossier = null; render(); }
   if (el.dataset.act === "logout") { try { localStorage.removeItem("bros.klant.taal"); } catch (x) { } sb.auth.signOut().then(() => location.reload()); }
   if (el.dataset.act === "afs-ics" && window.BROS_AGENDA) { const a = (D().afspraken || []).find(x => String(x.id) === el.dataset.id); if (a) BROS_AGENDA.download(a, afsOpties(a)); }   // afspraak → eigen agenda (script 041)
+  if (el.dataset.act === "aanf-pdf") { aanfPdf(el.dataset.path); return; }   // 1.49
   if (el.dataset.act === "betaal") { const zelfde = S.betaal === el.dataset.id && !el.dataset.ga; S.betaal = zelfde ? null : el.dataset.id; if (el.dataset.ga) S.tab = el.dataset.ga; render(!el.dataset.ga); if (S.betaal) setTimeout(() => document.getElementById("betaal_" + S.betaal)?.scrollIntoView({ behavior: "smooth", block: "start" }), 50); return; }
   if (el.dataset.act === "kopieer") { const t = el.dataset.v || ""; (navigator.clipboard ? navigator.clipboard.writeText(t) : Promise.reject()).then(() => toast("Gekopieerd: " + t)).catch(() => toast(t, 6000)); return; }
   if (el.dataset.act === "gk-nee") { const box = $("#gk_nee_" + el.dataset.id); box.hidden = !box.hidden; if (!box.hidden) box.querySelector("textarea").focus(); }

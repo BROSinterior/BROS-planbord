@@ -3,7 +3,7 @@
    Statische webapp op Supabase (login, live-synchronisatie, rechten)
    ===================================================================== */
 if (window.top !== window.self) { try { window.top.location.replace(window.location.href); } catch (e) { document.documentElement.innerHTML = ""; } }   // niet in een vreemd frame (clickjacking)
-const APP_VERSION = "1.48.4";
+const APP_VERSION = "1.49.0";
 const PROJ_STATUS = { offerte: "In offerte", lopend: "Lopend", on_hold: "On hold", afgerond: "Afgerond", verloren: "Verloren" };
 const KLANTTYPE = { particulier: "Particulier", zakelijk: "Zakelijk" };
 const KLANTCODE = { particulier: "PAR", zakelijk: "ZAK" };
@@ -38,7 +38,7 @@ const workdays = (a, b) => { let n = 0; for (let s = a; s <= b; s = addDays(s, 1
 /* ---------- state ---------- */
 const S = {
   session: null, me: null, setPassword: false, passwordForced: false,
-  profiles: {}, tarieven: {}, fasen: {}, standaardtaken: [], projecten: {}, taken: {}, uren: {}, documenten: {}, instellingen: {}, loten: {}, posten: {}, meetstaat_posten: {}, vorderingen: {}, vordering_regels: {}, contacten: {}, project_contacten: {}, goedkeuringen: {}, notities: {}, werfbezoeken: {}, vaststellingen: {}, klant_timing: {}, werfplannen: {}, werfverslagen: {}, tekenplannen: {}, aannemer_meetstaten: {}, aannemer_meetstaat_posten: {}, keuzes: {}, keuze_opties: {}, meerwerk_aanvragen: {}, werf_fotos: {}, werf_updates: {}, woningdossier: {}, taak_voorstellen: {}, assistent_berichten: {},
+  profiles: {}, tarieven: {}, fasen: {}, standaardtaken: [], projecten: {}, taken: {}, uren: {}, documenten: {}, instellingen: {}, loten: {}, posten: {}, meetstaat_posten: {}, vorderingen: {}, vordering_regels: {}, contacten: {}, project_contacten: {}, goedkeuringen: {}, notities: {}, werfbezoeken: {}, vaststellingen: {}, klant_timing: {}, werfplannen: {}, werfverslagen: {}, tekenplannen: {}, aannemer_meetstaten: {}, aannemer_meetstaat_posten: {}, keuzes: {}, keuze_opties: {}, meerwerk_aanvragen: {}, werf_fotos: {}, werf_updates: {}, woningdossier: {}, taak_voorstellen: {}, assistent_berichten: {}, aannemer_facturen: {},
   view: "overzicht", project: null, ptab: "taken",
   filters: { user: "", status: "", project: "", q: "" }, cfilters: { soort: "", q: "" },
   ganttStart: addDays(mondayOf(todayIso), -14), ganttDays: 112, ganttOpen: {},
@@ -129,8 +129,8 @@ function telFmt(s) {
 let toastT; function toast(msg, ms = 2800) { const t = $("#toast"); t.textContent = msg; t.classList.add("show"); clearTimeout(toastT); toastT = setTimeout(() => t.classList.remove("show"), Math.max(2800, ms)); }
 
 /* ---------- data laden en live houden ---------- */
-const TABLES = { profiles: "profiles", tarieven: "tarieven", fasen: "fasen", standaardtaken: "standaardtaken", projecten: "projecten", taken: "taken", uren: "uren", documenten: "documenten", instellingen: "instellingen", loten: "loten", posten: "posten", meetstaat_posten: "meetstaat_posten", vorderingen: "vorderingen", vordering_regels: "vordering_regels", contacten: "contacten", project_contacten: "project_contacten", goedkeuringen: "goedkeuringen", notities: "notities", werfbezoeken: "werfbezoeken", vaststellingen: "vaststellingen", klant_timing: "klant_timing", werfplannen: "werfplannen", werfverslagen: "werfverslagen", taak_voorstellen: "taak_voorstellen", assistent_berichten: "assistent_berichten", prijsaanvragen: "prijsaanvragen", prijsaanvraag_regels: "prijsaanvraag_regels", tekenplannen: "tekenplannen", aannemer_meetstaten: "aannemer_meetstaten", aannemer_meetstaat_posten: "aannemer_meetstaat_posten", keuzes: "keuzes", keuze_opties: "keuze_opties", meerwerk_aanvragen: "meerwerk_aanvragen", werf_fotos: "werf_fotos", werf_updates: "werf_updates", woningdossier: "woningdossier", prijsvragen: "prijsvragen", prijsvraag_gunningen: "prijsvraag_gunningen", goedkeuring_tekenaars: "goedkeuring_tekenaars" };
-const OPTIONAL_TABLES = ["tarieven", "documenten", "instellingen", "loten", "posten", "meetstaat_posten", "vorderingen", "vordering_regels", "contacten", "project_contacten", "goedkeuringen", "notities", "werfbezoeken", "vaststellingen", "klant_timing", "werfplannen", "werfverslagen", "taak_voorstellen", "assistent_berichten", "prijsaanvragen", "prijsaanvraag_regels", "tekenplannen", "aannemer_meetstaten", "aannemer_meetstaat_posten", "keuzes", "keuze_opties", "meerwerk_aanvragen", "werf_fotos", "werf_updates", "woningdossier", "prijsvragen", "prijsvraag_gunningen", "goedkeuring_tekenaars"]; // ontbreken zolang het bijbehorende sql-script niet is uitgevoerd
+const TABLES = { profiles: "profiles", tarieven: "tarieven", fasen: "fasen", standaardtaken: "standaardtaken", projecten: "projecten", taken: "taken", uren: "uren", documenten: "documenten", instellingen: "instellingen", loten: "loten", posten: "posten", meetstaat_posten: "meetstaat_posten", vorderingen: "vorderingen", vordering_regels: "vordering_regels", contacten: "contacten", project_contacten: "project_contacten", goedkeuringen: "goedkeuringen", notities: "notities", werfbezoeken: "werfbezoeken", vaststellingen: "vaststellingen", klant_timing: "klant_timing", werfplannen: "werfplannen", werfverslagen: "werfverslagen", taak_voorstellen: "taak_voorstellen", assistent_berichten: "assistent_berichten", prijsaanvragen: "prijsaanvragen", prijsaanvraag_regels: "prijsaanvraag_regels", tekenplannen: "tekenplannen", aannemer_meetstaten: "aannemer_meetstaten", aannemer_meetstaat_posten: "aannemer_meetstaat_posten", keuzes: "keuzes", keuze_opties: "keuze_opties", meerwerk_aanvragen: "meerwerk_aanvragen", werf_fotos: "werf_fotos", werf_updates: "werf_updates", woningdossier: "woningdossier", prijsvragen: "prijsvragen", prijsvraag_gunningen: "prijsvraag_gunningen", goedkeuring_tekenaars: "goedkeuring_tekenaars", aannemer_facturen: "aannemer_facturen" };
+const OPTIONAL_TABLES = ["tarieven", "documenten", "instellingen", "loten", "posten", "meetstaat_posten", "vorderingen", "vordering_regels", "contacten", "project_contacten", "goedkeuringen", "notities", "werfbezoeken", "vaststellingen", "klant_timing", "werfplannen", "werfverslagen", "taak_voorstellen", "assistent_berichten", "prijsaanvragen", "prijsaanvraag_regels", "tekenplannen", "aannemer_meetstaten", "aannemer_meetstaat_posten", "keuzes", "keuze_opties", "meerwerk_aanvragen", "werf_fotos", "werf_updates", "woningdossier", "prijsvragen", "prijsvraag_gunningen", "goedkeuring_tekenaars", "aannemer_facturen"]; // ontbreken zolang het bijbehorende sql-script niet is uitgevoerd
 const rowKey = (t, r) => t === "fasen" || t === "loten" ? r.nr : t === "klant_timing" ? r.project_id + "|" + r.fase_nr : t === "tarieven" ? r.user_id : t === "instellingen" ? r.key : t === "prijsvraag_gunningen" ? r.prijsvraag_id + "|" + r.post_id : t === "vordering_regels" ? (r.id || r.vordering_id + "|" + r.lot + "|" + (r.post_id || "")) : r.id;
 function ingest(table, rows) {
   if (table === "standaardtaken") { S.standaardtaken = rows.sort((a, b) => a.fase_nr - b.fase_nr || a.volgorde - b.volgorde); return; }
@@ -173,7 +173,7 @@ async function loadAll() {
 }
 function subscribe() {
   // Eén kanaal per tabel: als één tabel niet in de realtime-publicatie zit, blijven de andere werken.
-  ["profiles", "tarieven", "fasen", "standaardtaken", "projecten", "taken", "uren", "documenten", "loten", "posten", "meetstaat_posten", "meetstaat_prijzen", "vorderingen", "vordering_regels", "contacten", "project_contacten", "goedkeuringen", "notities", "werfbezoeken", "vaststellingen", "klant_timing", "werfplannen", "werfverslagen", "taak_voorstellen", "assistent_berichten", "prijsaanvragen", "prijsaanvraag_regels", "tekenplannen", "aannemer_meetstaten", "keuzes", "keuze_opties", "meerwerk_aanvragen", "werf_fotos", "werf_updates", "woningdossier", "prijsvragen", "prijsvraag_gunningen", "goedkeuring_tekenaars"].forEach(t => {
+  ["profiles", "tarieven", "fasen", "standaardtaken", "projecten", "taken", "uren", "documenten", "loten", "posten", "meetstaat_posten", "meetstaat_prijzen", "vorderingen", "vordering_regels", "contacten", "project_contacten", "goedkeuringen", "notities", "werfbezoeken", "vaststellingen", "klant_timing", "werfplannen", "werfverslagen", "taak_voorstellen", "assistent_berichten", "prijsaanvragen", "prijsaanvraag_regels", "tekenplannen", "aannemer_meetstaten", "keuzes", "keuze_opties", "meerwerk_aanvragen", "werf_fotos", "werf_updates", "woningdossier", "prijsvragen", "prijsvraag_gunningen", "goedkeuring_tekenaars", "aannemer_facturen"].forEach(t => {
     const ch = sb.channel("pb-" + t);
     ch.on("postgres_changes", { event: "*", schema: "public", table: t }, (payload) => {
       if (S.bulk) { (S.bulkGemist = S.bulkGemist || new Set()).add(t === "meetstaat_prijzen" ? "meetstaat_posten" : t); return; }   // tijdens een bulkactie niet per rij herbouwen; erna worden de gemiste tabellen herladen (bulkKlaar)
@@ -183,6 +183,7 @@ function subscribe() {
       if (VIEW_OF[t] && S.viewsOk !== false) { if (payload.eventType === "DELETE") { delete S[t][rowKey(t, payload.old)]; render(); } else rtQueue(t, rowKey(t, payload.new)); return; }
       if (payload.eventType === "DELETE") { delete S[t][rowKey(t, payload.old)]; }
       else { S[t][rowKey(t, payload.new)] = payload.new; }
+      if (t === "aannemer_facturen" && payload.eventType === "INSERT" && payload.new && typeof afbAannemer === "function") toast(`Nieuwe factuur van ${afbAannemer(payload.new)}: ${payload.new.nummer || ""} · ${eur2(payload.new.bedrag_excl)} excl. btw`, 6000);   // 1.49 (script 047)
       IDX = null;
       if (t === "profiles") S.me = S.profiles[S.session.user.id] || S.me;
       renderSoon();   // 1.48: veel wijzigingen na elkaar (Drive-sync, nieuw project) → één keer tekenen per beeld
@@ -1715,6 +1716,8 @@ function vAssistentBeheer() {
       <div class="field"><label for="ai_pp">Plafond per project per maand (vragen)</label><input id="ai_pp" type="number" min="0" value="${Number(c.plafond_project) || 0}"><small class="muted">0 = geen plafond. Erboven geeft de assistent de vraag door zonder modeloproep.</small></div>
       <div class="field"><label for="ai_pg">Globaal plafond per maand (vragen)</label><input id="ai_pg" type="number" min="0" value="${Number(c.plafond_globaal) || 0}"><small class="muted">Harde stop voor alle projecten samen.</small></div>
       <div class="field span2"><label class="sw-row"><input type="checkbox" class="sw" id="ai_datums" ${c.datums !== false ? "checked" : ""}><span><b>Data uit de planning noemen</b><small class="muted" style="display:block">Aan: de assistent noemt de data uit de klantplanning, met de nuance dat ze kunnen schuiven. Uit: enkel de fase.</small></span></label></div>
+      ${schemaV() >= 47 ? `<div class="field"><label class="sw-row"><input type="checkbox" class="sw" id="ai_hulp" ${c.aannemer_hulp !== false ? "checked" : ""}><span><b>Hulp-assistent in het aannemersportaal</b><small class="muted" style="display:block">Beantwoordt enkel vragen over het gebruik van het portaal (uit aannemer/handleiding.json), zonder dossiergegevens. Staat los van de klantassistent.</small></span></label></div>
+      <div class="field"><label for="ai_ph">Plafond hulp-assistent per maand (vragen, alle aannemers samen)</label><input id="ai_ph" type="number" min="0" value="${Number(c.plafond_hulp) || 1500}"><small class="muted">Daarnaast max. 5 vragen per minuut en 40 per dag per login.</small></div>` : ""}
       <div class="field span2"><label for="ai_begroeting">Zin bovenaan het tabblad Vragen</label><input id="ai_begroeting" value="${esc(c.begroeting || "")}"></div>
       <div class="field span2"><label>Routering van taakvoorstellen</label><div class="tw"><table class="t"><tbody>${Object.entries(ONDERWERP).map(([k, l]) => `<tr><td style="width:160px">${l}${k === "klacht" ? ' <span class="muted">(altijd dringend)</span>' : ""}</td><td>${sel(k)}</td></tr>`).join("")}</tbody></table></div><small class="muted">Leeg = naar de beheerder.</small></div>
       <div class="field span2"><div class="actions"><button class="btn primary" data-act="ai-save">Bewaren</button><span class="muted" style="font-size:12px">De API-sleutel staat niet hier maar als secret bij de Edge Function in Supabase (zie README).</span></div></div>
@@ -1725,6 +1728,7 @@ function vAssistentBeheer() {
 async function aiSaveSettings() {
   const r = {}; document.querySelectorAll("[data-ai-route]").forEach(s => r[s.dataset.aiRoute] = s.value || null);
   const value = { ...aiCfg(), actief: $("#ai_actief").checked, model: $("#ai_model").value, functie: ($("#ai_functie").value.trim().replace(/^.*\/functions\/v1\//, "").replace(/\/.*$/, "") || "assistent"), plafond_project: Number($("#ai_pp").value) || 0, plafond_globaal: Number($("#ai_pg").value) || 0, datums: $("#ai_datums").checked, begroeting: $("#ai_begroeting").value.trim(), routering: r };
+  if ($("#ai_hulp")) { value.aannemer_hulp = $("#ai_hulp").checked; value.plafond_hulp = Number($("#ai_ph").value) || 1500; }   // 1.49 (script 047)
   const { data, error } = await sb.from("instellingen").upsert({ key: "assistent", value, updated_at: new Date().toISOString() }).select().single();
   if (error) { toast("Bewaren mislukt: " + error.message, 5000); return; } S.instellingen.assistent = data; render(); toast("Assistent-instellingen bewaard");
 }
@@ -2051,7 +2055,7 @@ function vFacturatie(p) {
     <div class="panel"><div class="k">Nog te factureren</div><div class="v ${contract + meerwerk - gefact - open < -0.5 ? "neg" : ""}">${eur2(contract + meerwerk - gefact - open)}</div></div></div>`;
   const zonderHoev = msRows(p.id).filter(r => msTelt(r) && !(Number(r.hoeveelheid) > 0) && Number(r.eenheidsprijs) > 0);
   const waarschuwing = zonderHoev.length ? `<div class="banner show" style="border:1px solid var(--line);border-radius:8px;margin-bottom:16px">${zonderHoev.length} post${zonderHoev.length > 1 ? "en" : ""} in de meetstaat ${zonderHoev.length > 1 ? "hebben" : "heeft"} wel een prijs maar nog geen hoeveelheid (${zonderHoev.slice(0, 3).map(r => esc(r.code + " " + r.omschrijving.slice(0, 30))).join(", ")}${zonderHoev.length > 3 ? ", …" : ""}) — die tellen voor € 0 mee in het contract. Vul de hoeveelheid in op het tabblad Meetstaat.</div>` : "";
-  if (!lots.length || contract + Math.abs(meerwerk) < 0.005) return kpi + waarschuwing + `<div class="panel"><div class="empty"><b>${lots.length ? "Het contract staat op € 0" : "Nog geen meetstaat"}</b>${lots.length ? "De vorderingsstaat rekent op hoeveelheid × prijs van de posten in de meetstaat; vul eerst de hoeveelheden in." : "Maak eerst de meetstaat op (tabblad Meetstaat); de vorderingsstaat rekent op de loten en posten daarvan."}</div></div>`;
+  if (!lots.length || contract + Math.abs(meerwerk) < 0.005) return kpi + waarschuwing + `<div class="panel" style="margin-bottom:16px"><div class="empty"><b>${lots.length ? "Het contract staat op € 0" : "Nog geen meetstaat"}</b>${lots.length ? "De vorderingsstaat rekent op hoeveelheid × prijs van de posten in de meetstaat; vul eerst de hoeveelheden in." : "Maak eerst de meetstaat op (tabblad Meetstaat); de vorderingsstaat rekent op de loten en posten daarvan."}</div></div>` + (typeof vAfPanel === "function" ? vAfPanel(p) : "");
   const heeftVoorschot = vs.some(v => v.soort === "voorschot");
   S.vordOpen = S.vordOpen || {};
   const pctFmt = (x) => Math.round(x * 10000) / 100; /* 2 decimalen: na "Percentages herrekenen" zijn de percentages niet rond (31,33 %) en moet % × basis het getoonde bedrag geven */
@@ -2105,7 +2109,7 @@ function vFacturatie(p) {
           + (verst.length - betaaldL.length > 0 ? rij("Nog te betalen (verzonden)", som(verst.filter(v => v.status !== "betaald"))) : "")
           + (opg.length ? rij("Opgemaakt, nog niet verzonden", som(opg)) : ""); })()}
       <tr class="tot"><td colspan="4"><b>Nog te factureren (contract + meerwerk − gefactureerd/opgemaakt)</b></td><td class="r num"><b>${eur2(contract + meerwerk - gefact - open)}</b></td><td></td><td></td><td></td></tr></tbody></table></div></div>`;
-  return kpi + waarschuwing + grid + klant;
+  return kpi + waarschuwing + grid + (typeof vAfPanel === "function" ? vAfPanel(p) : "") + klant;   // 1.49: facturen van aannemers (af-beheer.js, script 047)
 }
 /* regels voor "de rest" van gekozen loten: lot-% als alle posten gelijk staan, anders per post */
 function restRegels(pid, soort, lots, calcs) {
@@ -2410,7 +2414,7 @@ async function postDel(id) {
 const docIcon = (m, n) => /spreadsheet|excel/.test(m) ? "xls" : /word|document/.test(m) ? "doc" : /pdf/.test(m) ? "pdf" : /^image\//.test(m) || /\.(jpe?g|png|heic|gif|webp|tiff?)$/i.test(n) ? "img" : /skp|sketchup|vwx|dwg|dxf/i.test(n) ? "dwg" : "map";
 
 /* ---------- render root ---------- */
-const TABS = [["overzicht", "Overzicht"], ["projecten", "Projecten"], ["taken", "Taken"], ["planning", "Planning"], ["uren", "Uren"], ["contacten", "Contacten"], ["notities", "Notities"], ["voorstellen", "Voorstellen"], ["team", "Team"], ["rapporten", "Rapporten"], ["instellingen", "Instellingen", "beheer"]];
+const TABS = [["overzicht", "Overzicht"], ["projecten", "Projecten"], ["taken", "Taken"], ["planning", "Planning"], ["uren", "Uren"], ["contacten", "Contacten"], ["notities", "Notities"], ["voorstellen", "Voorstellen"], ["aankoop", "Aankoop", "beheer"], ["team", "Team"], ["rapporten", "Rapporten"], ["instellingen", "Instellingen", "beheer"]];
 let renderPending = false;
 function render() {
   // niet herbouwen terwijl iemand in een inline-veld typt (realtime-update van een collega zou de invoer wissen); zoekvelden regelen hun eigen focus
@@ -2424,14 +2428,14 @@ function render() {
   if (S.loadError) { app.innerHTML = `<div class="login"><div class="card"><h1>Kon de gegevens niet laden</h1><p class="err">${esc(S.loadError)}</p><button class="btn" data-act="logout">Uitloggen</button> <button class="btn primary" data-act="reload">Opnieuw proberen</button></div></div>`; return; }
   if (!S.ready) { app.innerHTML = `<div class="login"><div class="card"><h1>BROS Planbord</h1><p>Gegevens laden…</p></div></div>`; return; }
   if (!S.me) { app.innerHTML = `<div class="login"><div class="card"><h1>Nog geen profiel</h1><p>Je login werkt, maar er is nog geen medewerkersprofiel gekoppeld. Vraag de beheerder om je uit te nodigen, of herlaad de pagina.</p><button class="btn" data-act="logout">Uitloggen</button> <button class="btn primary" data-act="reload">Herladen</button></div></div>`; return; }
-  const views = { overzicht: vOverzicht, projecten: vProjecten, taken: vTaken, planning: vPlanning, uren: vUren, contacten: vContacten, notities: vNotitiesAlle, voorstellen: vVoorstellen, team: vTeam, rapporten: vRapporten, instellingen: vInstellingen };
+  const views = { overzicht: vOverzicht, projecten: vProjecten, taken: vTaken, planning: vPlanning, uren: vUren, contacten: vContacten, notities: vNotitiesAlle, voorstellen: vVoorstellen, aankoop: (typeof vAankoop === "function" ? vAankoop : vOverzicht), team: vTeam, rapporten: vRapporten, instellingen: vInstellingen };
   // 1.48.3: horizontale/verticale scrollpositie van tabellen (.tw, bv. de vorderingsstaat) bewaren bij het hertekenen — anders springt de tabel terug naar links
   const scrollSleutel = [S.view, S.project, S.ptab].join("|"); const scrolls = app.dataset.scroll === scrollSleutel ? [...app.querySelectorAll(".tw")].map(e => [e.scrollLeft, e.scrollTop]) : [];
   app.innerHTML = `
   <header class="top">
     <div class="top-in">
       <div class="brand"><span class="mark">BROS</span><span class="name">Planbord</span></div>
-      <nav class="tabs" aria-label="Hoofdnavigatie">${TABS.filter(([, , r]) => !r || isBeheer()).filter(([k]) => k !== "voorstellen" || schemaV() >= 23).map(([k, l]) => `<button data-nav="${k}" ${S.view === k ? 'aria-current="page"' : ""}>${l}${k === "voorstellen" && voorstellenOpen().length ? ` <span class="cnt" style="background:var(--crit);color:#fff">${voorstellenOpen().length}</span>` : ""}</button>`).join("")}</nav>
+      <nav class="tabs" aria-label="Hoofdnavigatie">${TABS.filter(([, , r]) => !r || isBeheer()).filter(([k]) => k !== "voorstellen" || schemaV() >= 23).filter(([k]) => k !== "aankoop" || (schemaV() >= 47 && typeof vAankoop === "function")).map(([k, l]) => `<button data-nav="${k}" ${S.view === k ? 'aria-current="page"' : ""}>${l}${k === "voorstellen" && voorstellenOpen().length ? ` <span class="cnt" style="background:var(--crit);color:#fff">${voorstellenOpen().length}</span>` : ""}${k === "aankoop" && typeof afbTeDoen === "function" && afbTeDoen().length ? ` <span class="cnt" style="background:var(--crit);color:#fff">${afbTeDoen().length}</span>` : ""}</button>`).join("")}</nav>
       <div class="who"><button class="zk-knop" type="button" data-act="zoek" title="Snel zoeken — ⌘K of /"><span>⌕</span><span class="zk-lbl">Zoeken</span><kbd>${/Mac|iPhone|iPad/.test(navigator.platform || navigator.userAgent) ? "⌘" : "Ctrl "}K</kbd></button>${dagRing()}<span class="who-cell">${avatar(S.me.id)}<span style="font-weight:600">${esc(S.me.name)}</span></span>${typeof tmKnop === "function" ? tmKnop() : ""}<button class="btn ghost sm" data-act="change-password" title="Wachtwoord wijzigen">Wachtwoord</button><button class="btn ghost sm" data-act="logout" title="Uitloggen">Uitloggen</button></div>
     </div>
     <div class="update" id="updateBar"><span>Er is een nieuwe versie van het Planbord.</span><button class="btn sm primary" data-act="reload">Nu herladen</button><button class="btn sm ghost" data-act="update-later">Later</button></div>
@@ -3544,7 +3548,7 @@ document.addEventListener("click", (e) => {
   if (d.close != null) return closeModal();
   if (d.sort) { S.sort = { key: d.sort, dir: S.sort.key === d.sort && S.sort.dir === "asc" ? "desc" : S.sort.key === d.sort ? "asc" : (["klant", "lead", "status", "fase"].includes(d.sort) ? "asc" : "desc") }; try { localStorage.setItem("bros.sort", JSON.stringify(S.sort)); } catch (err) { } return render(); }
   if (d.nav) { S.view = d.nav; S.project = null; if (d.nav === "planning") S.filters.project = ""; return render(); }
-  if (d.open) { S.view = "projecten"; S.project = d.open; S.ptab = S.ptab || "taken"; return render(); }
+  if (d.open) { S.view = "projecten"; S.project = d.open; S.ptab = d.optab || S.ptab || "taken"; return render(); }
   if (d.back) { S.project = null; return render(); }
   if (d.ptab) { S.ptab = d.ptab; return render(); }
   if (d.gtoggle) { S.ganttOpen[d.gtoggle] = S.ganttOpen[d.gtoggle] === false; return render(); }
@@ -3697,7 +3701,7 @@ document.addEventListener("keydown", (e) => { if (e.key === "Escape" && !/^(SELE
 
 /* ---------- versiecontrole: melden als er een nieuwe versie online staat ---------- */
 let updateAvailable = false;
-const APP_FILES = ["index.html", "app.js", "config.js", "vendor/supabase-2.45.4.js", "postcodes.js", "meetstaat-export.js", "meetstaat-import.js", "tekenen.js", "symbolen.js", "vendor/dxf-parser.js", "version.json", "klant/index.html", "klant/portaal.js", "klant/i18n-en.js", "kp-beheer.js", "pv-beheer.js", "portaal-voorbeeld.js", "agenda.js", "afspraken.js", "logo-mark.svg", "werf/index.html", "werf/werf.js", "werf/sw.js", "aannemer/index.html", "aannemer/aannemer.js"];
+const APP_FILES = ["index.html", "app.js", "config.js", "vendor/supabase-2.45.4.js", "postcodes.js", "meetstaat-export.js", "meetstaat-import.js", "tekenen.js", "symbolen.js", "vendor/dxf-parser.js", "version.json", "klant/index.html", "klant/portaal.js", "klant/i18n-en.js", "kp-beheer.js", "pv-beheer.js", "portaal-voorbeeld.js", "agenda.js", "afspraken.js", "logo-mark.svg", "werf/index.html", "werf/werf.js", "werf/sw.js", "aannemer/index.html", "aannemer/aannemer.js", "aannemer/handleiding.json", "af-beheer.js"];
 /* de browser-cache omzeilen: alle bestanden van de app vers ophalen (cache: "reload" ververst de HTTP-cache) en dan herladen */
 async function hardReload() {
   try { sessionStorage.setItem("pb-state", JSON.stringify({ view: S.view, project: S.project, ptab: S.ptab })); } catch (e) { }
@@ -3720,6 +3724,7 @@ async function checkVersion() {
 async function boot() {
   try { const sv = JSON.parse(localStorage.getItem("bros.sort") || "null"); if (sv && sv.key) S.sort = sv; S.msKlant = localStorage.getItem("bros.msKlant") === "1"; S.msRuimte = localStorage.getItem("bros.msRuimte") === "1"; } catch (e) { }
   if (location.hash === "#voorstellen") { S.view = "voorstellen"; history.replaceState(null, "", location.pathname); }
+  if (location.hash === "#aankoop") { S.view = "aankoop"; history.replaceState(null, "", location.pathname); }   // 1.49: link uit de dagmail over aannemersfacturen
   try { const st = JSON.parse(sessionStorage.getItem("pb-state") || "null"); sessionStorage.removeItem("pb-state"); if (st && st.view) { S.view = st.view; S.project = st.project || null; S.ptab = st.ptab || "taken"; } } catch (e) { }
   render();
   if (!configured) return;
