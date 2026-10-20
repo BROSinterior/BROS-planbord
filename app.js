@@ -3,7 +3,7 @@
    Statische webapp op Supabase (login, live-synchronisatie, rechten)
    ===================================================================== */
 if (window.top !== window.self) { try { window.top.location.replace(window.location.href); } catch (e) { document.documentElement.innerHTML = ""; } }   // niet in een vreemd frame (clickjacking)
-const APP_VERSION = "1.53.0";
+const APP_VERSION = "1.55.0";
 const PROJ_STATUS = { offerte: "In offerte", lopend: "Lopend", on_hold: "On hold", afgerond: "Afgerond", verloren: "Verloren" };
 const KLANTTYPE = { particulier: "Particulier", zakelijk: "Zakelijk" };
 const KLANTCODE = { particulier: "PAR", zakelijk: "ZAK" };
@@ -38,7 +38,7 @@ const workdays = (a, b) => { let n = 0; for (let s = a; s <= b; s = addDays(s, 1
 /* ---------- state ---------- */
 const S = {
   session: null, me: null, setPassword: false, passwordForced: false,
-  profiles: {}, tarieven: {}, fasen: {}, standaardtaken: [], projecten: {}, taken: {}, uren: {}, documenten: {}, instellingen: {}, loten: {}, posten: {}, meetstaat_posten: {}, vorderingen: {}, vordering_regels: {}, contacten: {}, project_contacten: {}, goedkeuringen: {}, notities: {}, werfbezoeken: {}, vaststellingen: {}, klant_timing: {}, werfplannen: {}, werfverslagen: {}, tekenplannen: {}, aannemer_meetstaten: {}, aannemer_meetstaat_posten: {}, keuzes: {}, keuze_opties: {}, meerwerk_aanvragen: {}, werf_fotos: {}, werf_updates: {}, woningdossier: {}, taak_voorstellen: {}, assistent_berichten: {}, aannemer_facturen: {}, betaalherinneringen: {}, fin_plan: {}, fin_vaste_kosten: {}, fin_instellingen: {},
+  profiles: {}, tarieven: {}, fasen: {}, standaardtaken: [], projecten: {}, taken: {}, uren: {}, documenten: {}, instellingen: {}, loten: {}, posten: {}, meetstaat_posten: {}, vorderingen: {}, vordering_regels: {}, contacten: {}, project_contacten: {}, goedkeuringen: {}, notities: {}, werfbezoeken: {}, vaststellingen: {}, klant_timing: {}, werfplannen: {}, werfverslagen: {}, tekenplannen: {}, aannemer_meetstaten: {}, aannemer_meetstaat_posten: {}, keuzes: {}, keuze_opties: {}, meerwerk_aanvragen: {}, werf_fotos: {}, werf_updates: {}, woningdossier: {}, taak_voorstellen: {}, assistent_berichten: {}, aannemer_facturen: {}, betaalherinneringen: {}, fin_plan: {}, fin_vaste_kosten: {}, fin_instellingen: {}, vergaderingen: {}, vergadering_punten: {}, verwerkingen: {}, verwerker_status: {}, ms_raming: {},
   view: "overzicht", project: null, ptab: "taken",
   filters: { user: "", status: "", project: "", q: "" }, cfilters: { soort: "", q: "" },
   ganttStart: addDays(mondayOf(todayIso), -14), ganttDays: 112, ganttOpen: {},
@@ -61,7 +61,7 @@ const sb = configured ? window.supabase.createClient(cfg.supabaseUrl, cfg.supaba
 
 /* ---------- helpers ---------- */
 const isBeheer = () => S.me?.role === "beheer";
-const EXTERN = ["klant", "aannemer"]; const users = () => Object.values(S.profiles).filter(u => u.active !== false && !EXTERN.includes(u.role)).sort((a, b) => a.name.localeCompare(b.name));
+const EXTERN = ["klant", "aannemer", "verwerker"]; const users = () => Object.values(S.profiles).filter(u => u.active !== false && !EXTERN.includes(u.role)).sort((a, b) => a.name.localeCompare(b.name));
 const projects = () => Object.values(S.projecten).sort((a, b) => (b.nummer || "").localeCompare(a.nummer || "") || (a.klant || "").localeCompare(b.klant || ""));
 /* index per render: uren per taak/project en taken per project (vermijdt een volledige scan per rij in grote lijsten) */
 let IDX = null;
@@ -80,7 +80,7 @@ const projDone = (pid) => idx().byProj[pid] || 0;
 const projPlanned = (pid) => tasksOf(pid).reduce((s, t) => s + (Number(t.uren_gepland) || 0), 0);
 const isLate = (t) => t.status !== "done" && t.eind && t.eind < todayIso;
 const userById = (id) => S.profiles[id] || { name: "—", initials: "?", color: "#999" };
-const projName = (p) => p ? (p.klant + (p.naam && p.naam !== p.klant ? " · " + p.naam : "")) : "—";
+const projName = (p) => p ? (p.intern ? "BROS — Interne werking" : p.klant + (p.naam && p.naam !== p.klant ? " · " + p.naam : "")) : "—";   // 1.54: het interne project (script 051) toont zijn functie
 const projCode = (p) => p ? [p.nummer, KLANTCODE[p.klanttype]].filter(Boolean).join(" · ") : "";
 const faseName = (nr) => nr ? (S.fasen[nr] ? `${nr} · ${S.fasen[nr].naam}` : String(nr)) : "";
 const faseShort = (nr) => nr && S.fasen[nr] ? S.fasen[nr].naam : "";
@@ -88,7 +88,7 @@ const fasenList = () => Object.values(S.fasen).filter(f => f.actief !== false).s
 const projSpan = (p) => { const ts = tasksOf(p.id); const st = [p.start, ...ts.map(t => t.start)].filter(Boolean).sort()[0]; const en = [p.eind, ...ts.map(t => t.eind)].filter(Boolean).sort().pop(); return [st, en]; };
 /* toegewezen aan: teamlid (assignee) of contact zoals de klant of een aannemer (contact_id, sinds script 015) */
 const contactAvatar = (c) => `<span class="avatar" style="background:var(--surface-2);color:var(--ink-2);border:1px solid var(--line-2)" title="${esc(c.naam)}">${esc((c.naam || "?").trim().split(/\s+/).map(w => w[0]).join("").slice(0, 2).toUpperCase())}</span>`;
-const wieCell = (t) => t.contact_id && S.contacten[t.contact_id] ? `<span class="who-cell">${contactAvatar(S.contacten[t.contact_id])}${esc(S.contacten[t.contact_id].naam)} <span class="pill kl">${S.contacten[t.contact_id].soort === "klant" ? "klant" : CONTACT_SOORT[S.contacten[t.contact_id].soort] || "contact"}</span></span>` : `<span class="who-cell">${t.assignee ? avatar(t.assignee) : ""}${esc(userById(t.assignee).name)}</span>`;
+const wieCell = (t) => t.contact_id && S.contacten[t.contact_id] ? `<span class="who-cell">${contactAvatar(S.contacten[t.contact_id])}${esc(S.contacten[t.contact_id].naam)} <span class="pill kl">${S.contacten[t.contact_id].soort === "klant" ? "klant" : CONTACT_SOORT[S.contacten[t.contact_id].soort] || "contact"}</span></span>` : `${!t.assignee && t.vergadering_id ? `<span class="pill late" title="Uit een vergadering: verantwoordelijke nog te bepalen">nog te bepalen</span>` : `<span class="who-cell">${t.assignee ? avatar(t.assignee) : ""}${esc(userById(t.assignee).name)}</span>`}`;
 const wieNaam = (t) => t.contact_id && S.contacten[t.contact_id] ? S.contacten[t.contact_id].naam : userById(t.assignee).name;
 /* keuzelijst "toegewezen aan": team + contacten van het project (waarde "c:<id>" voor een contact) */
 const wieOpts = (pid, t) => { const cur = t.contact_id ? "c:" + t.contact_id : (t.assignee ?? S.me.id); const pcs = pid ? contactsOf(pid) : []; return `<option value="">— niemand —</option><optgroup label="Team">${opts(users().map(u => [u.id, u.name]), cur)}</optgroup>${pcs.length ? `<optgroup label="Klant en contacten van dit project">${opts(pcs.map(x => ["c:" + x.c.id, x.c.naam + " · " + (CONTACT_ROL[x.rol] || x.rol)]), cur)}</optgroup>` : ""}`; };
@@ -129,9 +129,9 @@ function telFmt(s) {
 let toastT; function toast(msg, ms = 2800) { const t = $("#toast"); t.textContent = msg; t.classList.add("show"); clearTimeout(toastT); toastT = setTimeout(() => t.classList.remove("show"), Math.max(2800, ms)); }
 
 /* ---------- data laden en live houden ---------- */
-const TABLES = { profiles: "profiles", tarieven: "tarieven", fasen: "fasen", standaardtaken: "standaardtaken", projecten: "projecten", taken: "taken", uren: "uren", documenten: "documenten", instellingen: "instellingen", loten: "loten", posten: "posten", meetstaat_posten: "meetstaat_posten", vorderingen: "vorderingen", vordering_regels: "vordering_regels", contacten: "contacten", project_contacten: "project_contacten", goedkeuringen: "goedkeuringen", notities: "notities", werfbezoeken: "werfbezoeken", vaststellingen: "vaststellingen", klant_timing: "klant_timing", werfplannen: "werfplannen", werfverslagen: "werfverslagen", taak_voorstellen: "taak_voorstellen", assistent_berichten: "assistent_berichten", prijsaanvragen: "prijsaanvragen", prijsaanvraag_regels: "prijsaanvraag_regels", tekenplannen: "tekenplannen", aannemer_meetstaten: "aannemer_meetstaten", aannemer_meetstaat_posten: "aannemer_meetstaat_posten", keuzes: "keuzes", keuze_opties: "keuze_opties", meerwerk_aanvragen: "meerwerk_aanvragen", werf_fotos: "werf_fotos", werf_updates: "werf_updates", woningdossier: "woningdossier", prijsvragen: "prijsvragen", prijsvraag_gunningen: "prijsvraag_gunningen", goedkeuring_tekenaars: "goedkeuring_tekenaars", aannemer_facturen: "aannemer_facturen", betaalherinneringen: "betaalherinneringen", fin_plan: "fin_plan", fin_vaste_kosten: "fin_vaste_kosten", fin_instellingen: "fin_instellingen" };
-const OPTIONAL_TABLES = ["tarieven", "documenten", "instellingen", "loten", "posten", "meetstaat_posten", "vorderingen", "vordering_regels", "contacten", "project_contacten", "goedkeuringen", "notities", "werfbezoeken", "vaststellingen", "klant_timing", "werfplannen", "werfverslagen", "taak_voorstellen", "assistent_berichten", "prijsaanvragen", "prijsaanvraag_regels", "tekenplannen", "aannemer_meetstaten", "aannemer_meetstaat_posten", "keuzes", "keuze_opties", "meerwerk_aanvragen", "werf_fotos", "werf_updates", "woningdossier", "prijsvragen", "prijsvraag_gunningen", "goedkeuring_tekenaars", "aannemer_facturen", "betaalherinneringen", "fin_plan", "fin_vaste_kosten", "fin_instellingen"]; // ontbreken zolang het bijbehorende sql-script niet is uitgevoerd
-const rowKey = (t, r) => t === "fasen" || t === "loten" ? r.nr : t === "klant_timing" ? r.project_id + "|" + r.fase_nr : t === "tarieven" ? r.user_id : t === "instellingen" ? r.key : t === "prijsvraag_gunningen" ? r.prijsvraag_id + "|" + r.post_id : t === "vordering_regels" ? (r.id || r.vordering_id + "|" + r.lot + "|" + (r.post_id || "")) : r.id;
+const TABLES = { profiles: "profiles", tarieven: "tarieven", fasen: "fasen", standaardtaken: "standaardtaken", projecten: "projecten", taken: "taken", uren: "uren", documenten: "documenten", instellingen: "instellingen", loten: "loten", posten: "posten", meetstaat_posten: "meetstaat_posten", vorderingen: "vorderingen", vordering_regels: "vordering_regels", contacten: "contacten", project_contacten: "project_contacten", goedkeuringen: "goedkeuringen", notities: "notities", werfbezoeken: "werfbezoeken", vaststellingen: "vaststellingen", klant_timing: "klant_timing", werfplannen: "werfplannen", werfverslagen: "werfverslagen", taak_voorstellen: "taak_voorstellen", assistent_berichten: "assistent_berichten", prijsaanvragen: "prijsaanvragen", prijsaanvraag_regels: "prijsaanvraag_regels", tekenplannen: "tekenplannen", aannemer_meetstaten: "aannemer_meetstaten", aannemer_meetstaat_posten: "aannemer_meetstaat_posten", keuzes: "keuzes", keuze_opties: "keuze_opties", meerwerk_aanvragen: "meerwerk_aanvragen", werf_fotos: "werf_fotos", werf_updates: "werf_updates", woningdossier: "woningdossier", prijsvragen: "prijsvragen", prijsvraag_gunningen: "prijsvraag_gunningen", goedkeuring_tekenaars: "goedkeuring_tekenaars", aannemer_facturen: "aannemer_facturen", betaalherinneringen: "betaalherinneringen", fin_plan: "fin_plan", fin_vaste_kosten: "fin_vaste_kosten", fin_instellingen: "fin_instellingen", vergaderingen: "vergaderingen", vergadering_punten: "vergadering_punten", verwerkingen: "verwerkingen", verwerker_status: "verwerker_status", ms_raming: "ms_raming" };
+const OPTIONAL_TABLES = ["tarieven", "documenten", "instellingen", "loten", "posten", "meetstaat_posten", "vorderingen", "vordering_regels", "contacten", "project_contacten", "goedkeuringen", "notities", "werfbezoeken", "vaststellingen", "klant_timing", "werfplannen", "werfverslagen", "taak_voorstellen", "assistent_berichten", "prijsaanvragen", "prijsaanvraag_regels", "tekenplannen", "aannemer_meetstaten", "aannemer_meetstaat_posten", "keuzes", "keuze_opties", "meerwerk_aanvragen", "werf_fotos", "werf_updates", "woningdossier", "prijsvragen", "prijsvraag_gunningen", "goedkeuring_tekenaars", "aannemer_facturen", "betaalherinneringen", "fin_plan", "fin_vaste_kosten", "fin_instellingen", "vergaderingen", "vergadering_punten", "verwerkingen", "verwerker_status", "ms_raming"]; // ontbreken zolang het bijbehorende sql-script niet is uitgevoerd
+const rowKey = (t, r) => t === "fasen" || t === "loten" ? r.nr : t === "klant_timing" ? r.project_id + "|" + r.fase_nr : t === "tarieven" ? r.user_id : t === "instellingen" ? r.key : t === "prijsvraag_gunningen" ? r.prijsvraag_id + "|" + r.post_id : t === "vordering_regels" ? (r.id || r.vordering_id + "|" + r.lot + "|" + (r.post_id || "")) : t === "verwerker_status" ? r.naam : r.id;
 function ingest(table, rows) {
   if (table === "standaardtaken") { S.standaardtaken = rows.sort((a, b) => a.fase_nr - b.fase_nr || a.volgorde - b.volgorde); return; }
   const o = {}; rows.forEach(r => o[rowKey(table, r)] = r); S[table] = o; IDX = null;
@@ -143,7 +143,7 @@ const srcOf = (t) => VIEW_OF[t] && S.viewsOk !== false ? VIEW_OF[t] : t;
 // Supabase geeft max. 1000 rijen per aanvraag terug: in pagina's ophalen tot alles binnen is.
 // Altijd sorteren op een unieke kolom: zonder vaste volgorde geeft de database bij elke pagina een andere volgorde terug
 // en vallen er rijen tussen twee pagina's weg (zo misten posten in de meetstaat zodra er > 1000 rijen waren — fix v1.33.1).
-const ORDER_OF = { fasen: ["nr"], loten: ["nr"], tarieven: ["user_id"], instellingen: ["key"], klant_timing: ["project_id", "fase_nr"], prijsvraag_gunningen: ["prijsvraag_id", "post_id"] };
+const ORDER_OF = { verwerker_status: ["naam"], fasen: ["nr"], loten: ["nr"], tarieven: ["user_id"], instellingen: ["key"], klant_timing: ["project_id", "fase_nr"], prijsvraag_gunningen: ["prijsvraag_id", "post_id"] };
 // 1.48: tabellen gesorteerd op id bladeren met een sleutel (id > laatste) i.p.v. OFFSET — blijft even snel als de tabel groeit
 const pagina = (src, t, from, PAGE, na) => { let q = sb.from(src).select("*"); (ORDER_OF[t] || ["id"]).forEach(c => { q = q.order(c, { ascending: true }); });
   if (!ORDER_OF[t]) { if (na != null) q = q.gt("id", na); return q.limit(PAGE); } return q.range(from, from + PAGE - 1); };
@@ -173,7 +173,7 @@ async function loadAll() {
 }
 function subscribe() {
   // Eén kanaal per tabel: als één tabel niet in de realtime-publicatie zit, blijven de andere werken.
-  ["profiles", "tarieven", "fasen", "standaardtaken", "projecten", "taken", "uren", "documenten", "loten", "posten", "meetstaat_posten", "meetstaat_prijzen", "vorderingen", "vordering_regels", "contacten", "project_contacten", "goedkeuringen", "notities", "werfbezoeken", "vaststellingen", "klant_timing", "werfplannen", "werfverslagen", "taak_voorstellen", "assistent_berichten", "prijsaanvragen", "prijsaanvraag_regels", "tekenplannen", "aannemer_meetstaten", "keuzes", "keuze_opties", "meerwerk_aanvragen", "werf_fotos", "werf_updates", "woningdossier", "prijsvragen", "prijsvraag_gunningen", "goedkeuring_tekenaars", "aannemer_facturen", "betaalherinneringen", "fin_plan", "fin_vaste_kosten", "fin_instellingen"].forEach(t => {
+  ["profiles", "tarieven", "fasen", "standaardtaken", "projecten", "taken", "uren", "documenten", "loten", "posten", "meetstaat_posten", "meetstaat_prijzen", "vorderingen", "vordering_regels", "contacten", "project_contacten", "goedkeuringen", "notities", "werfbezoeken", "vaststellingen", "klant_timing", "werfplannen", "werfverslagen", "taak_voorstellen", "assistent_berichten", "prijsaanvragen", "prijsaanvraag_regels", "tekenplannen", "aannemer_meetstaten", "keuzes", "keuze_opties", "meerwerk_aanvragen", "werf_fotos", "werf_updates", "woningdossier", "prijsvragen", "prijsvraag_gunningen", "goedkeuring_tekenaars", "aannemer_facturen", "betaalherinneringen", "fin_plan", "fin_vaste_kosten", "fin_instellingen", "vergaderingen", "vergadering_punten", "verwerkingen", "verwerker_status", "ms_raming"].forEach(t => {
     const ch = sb.channel("pb-" + t);
     ch.on("postgres_changes", { event: "*", schema: "public", table: t }, (payload) => {
       if (S.bulk) { (S.bulkGemist = S.bulkGemist || new Set()).add(t === "meetstaat_prijzen" ? "meetstaat_posten" : t); return; }   // tijdens een bulkactie niet per rij herbouwen; erna worden de gemiste tabellen herladen (bulkKlaar)
@@ -717,24 +717,140 @@ const rowSigned = (r) => r.status === "minwerk" ? -Math.abs(msVerkoop(r)) : msVe
 const kostSigned = (r) => r.status === "minwerk" ? -Math.abs(msKost(r)) : msKost(r);
 const msTelt = (r) => r.status !== "vervallen";
 const eur2 = (n) => Number(n || 0).toLocaleString("nl-BE", { style: "currency", currency: "EUR", minimumFractionDigits: 2, maximumFractionDigits: 2 });
-function msTotals(pid) {
-  const rows = msRows(pid).filter(msTelt);
-  const t = { kost: 0, verkoop: 0, btw: 0, meerwerk: 0, n: rows.length };
-  rows.forEach(r => { const v = rowSigned(r); t.kost += kostSigned(r); if (isMw(r)) t.meerwerk += v; else t.verkoop += v; t.btw += v * (Number(r.btw) || 0); });
-  t.marge = t.verkoop + t.meerwerk - t.kost; t.incl = t.verkoop + t.meerwerk + t.btw; return t;
+function msTotals(pid, raVooraf) {
+  const rows = msRows(pid).filter(msTelt); const ra = raVooraf !== undefined ? raVooraf : msRaming(pid);
+  const t = { kost: 0, verkoop: 0, btw: 0, meerwerk: 0, n: rows.length, kostRaming: 0, verkoopRaming: 0, nRaming: 0 };
+  rows.forEach(r => { const v = rowSigned(r); const x = ra && ra.rij[r.id]; if (x && x.bron === "raming") { t.kost += x.kost; t.kostRaming += x.kost; t.verkoopRaming += v; t.nRaming++; } else t.kost += kostSigned(r); if (isMw(r)) t.meerwerk += v; else t.verkoop += v; t.btw += v * (Number(r.btw) || 0); });
+  t.kost = r2(t.kost); t.kostRaming = r2(t.kostRaming); t.verkoopRaming = r2(t.verkoopRaming);
+  t.marge = t.verkoop + t.meerwerk - t.kost; t.margeRaming = r2(t.verkoopRaming - t.kostRaming); t.incl = t.verkoop + t.meerwerk + t.btw; return t;
+}
+/* ---------- 1.55 (script 052): geraamde marge voor posten zonder offerte van een aannemer ----------
+   De klantprijs blijft altijd zoals hij is; de marge bepaalt enkel de geraamde kostprijs (voor de marge in de meetstaat
+   en de financiële planning): kost = klantprijs / (1 + marge %) of klantprijs − marge in €.
+   Welke marge: post › lot (% of € verdeeld over de geraamde posten van het lot) › standaard van het project (Financiële
+   planning) › algemene standaard. Bron 'auto': gegund via een prijsvraag of met een eigen kostprijs/marge (≠ 0 %) = offerte
+   aannemer, al de rest (kostprijs = klantprijs, zoals na een import uit Excel) = raming. Enkel voor beheer. */
+const msRamingKlaar = () => schemaV() >= 52 && isBeheer() && !!S.ms_raming;
+const msrPost = (id) => Object.values(S.ms_raming || {}).find(x => x.post_id === id) || null;
+const msrLot = (pid, lot) => Object.values(S.ms_raming || {}).find(x => x.project_id === pid && x.post_id == null && Number(x.lot) === Number(lot)) || null;
+function msRamingStd(pid) {
+  const f = typeof finPlanVan === "function" ? finPlanVan(pid) : null;
+  if (f && f.marge_pct != null && f.marge_pct !== "") return { pct: Number(f.marge_pct), bron: "project" };
+  const I = typeof finInst === "function" ? finInst() : { marge: 0.25 };
+  return { pct: Number.isFinite(Number(I.marge)) ? Number(I.marge) : 0.25, bron: "standaard" };
+}
+function msRaming(pid) {
+  if (!msRamingKlaar()) return null;
+  const rows = msRows(pid).filter(msTelt); const std = msRamingStd(pid);
+  const gegund = new Set(Object.values(S.prijsvraag_gunningen || {}).map(g => g.post_id));
+  const eigen = Object.values(S.ms_raming || {}).filter(x => x.project_id === pid); const pMap = {}, lMap = {};
+  eigen.forEach(x => { if (x.post_id) pMap[x.post_id] = x; else lMap[Number(x.lot)] = x; });
+  const rij = {}; const perLot = {}; const viaLotBedrag = {};
+  const zet = (r, o) => { rij[r.id] = o; const L = perLot[r.lot] = perLot[r.lot] || { verkoop: 0, kost: 0, n: 0, nAannemer: 0, verkoopA: 0, kostA: 0 }; if (o.bron === "raming") { L.verkoop += o.v; L.kost += o.kost; L.n++; } else { L.nAannemer++; L.verkoopA += o.v; L.kostA += o.kost; } };
+  rows.forEach(r => {
+    const v = rowSigned(r); const pr = pMap[r.id] || null; const lr = lMap[Number(r.lot)] || null;
+    const autoA = gegund.has(r.id) || Math.abs(msMarge(r)) > 1e-9 || Number(r.lot) === 21;   // lot 21 = extra budget bouwheer: doorgerekend, geen marge verzinnen
+    const keuze = pr && pr.bron !== "auto" ? pr.bron : lr && lr.bron !== "auto" ? lr.bron : null;
+    const bron = keuze || (autoA ? "aannemer" : "raming");
+    const basis = { v, bron, auto: !keuze, autoBron: autoA ? "aannemer" : "raming" };
+    if (bron === "aannemer") return zet(r, { ...basis, kost: kostSigned(r), via: "kostprijs" });
+    const s = v < 0 ? -1 : 1;
+    if (Math.abs(v) < 0.005) return zet(r, { ...basis, kost: 0, via: "nul", pct: std.pct });   // klantprijs 0 (bv. PM-post): geen marge
+    if (pr && pr.bedrag != null) return zet(r, { ...basis, kost: msrKap(v, r2(v - s * Number(pr.bedrag))), via: "post€", bedrag: Number(pr.bedrag) });
+    if (pr && pr.marge != null) return zet(r, { ...basis, kost: r2(v / (1 + Number(pr.marge))), via: "post%", pct: Number(pr.marge) });
+    if (lr && lr.bedrag != null) { (viaLotBedrag[r.lot] = viaLotBedrag[r.lot] || []).push([r, basis]); return; }
+    if (lr && lr.marge != null) return zet(r, { ...basis, kost: r2(v / (1 + Number(lr.marge))), via: "lot%", pct: Number(lr.marge) });
+    zet(r, { ...basis, kost: r2(v / (1 + std.pct)), via: std.bron, pct: std.pct });
+  });
+  // marge in € op lotniveau: evenredig met de klantprijs verdeeld over de geraamde posten van dat lot (centen kloppen op het totaal)
+  Object.entries(viaLotBedrag).forEach(([lot, l]) => {
+    // verdeeld naar het gewicht |klantprijs|; minwerk krijgt zijn deel met het teken van de post (zoals een bedrag per post)
+    const bedrag = Number(lMap[Number(lot)].bedrag); const tot = l.reduce((s, [, b]) => s + Math.abs(b.v), 0);
+    if (tot < 0.005) { l.forEach(([r, b]) => zet(r, { ...b, kost: 0, via: "lot€", bedrag: 0 })); return; }
+    let rest = r2(bedrag);
+    l.forEach(([r, b], i) => { const deel = i === l.length - 1 ? rest : r2(bedrag * Math.abs(b.v) / tot); rest = r2(rest - deel); const s = b.v < 0 ? -1 : 1; zet(r, { ...b, kost: msrKap(b.v, r2(b.v - s * deel)), via: "lot€", bedrag: deel }); });
+  });
+  Object.values(perLot).forEach(L => { L.verkoop = r2(L.verkoop); L.kost = r2(L.kost); L.marge = r2(L.verkoop - L.kost); L.verkoopA = r2(L.verkoopA); L.kostA = r2(L.kostA); });
+  return { rij, perLot, std, pMap, lMap };
+}
+/* een marge groter dan de klantprijs zou een negatieve kostprijs geven: de kost wordt dan 0 (marge = de hele klantprijs) */
+const msrKap = (v, kost) => (v >= 0 ? kost < 0 : kost > 0) ? 0 : kost;
+/* invoer "25", "25 %" = marge op de kostprijs · "€ 500", "500 €", "500 eur" = marge in euro · leeg = overerven */
+function msrLees(raw) {
+  const t = String(raw ?? "").trim(); if (!t) return { marge: null, bedrag: null };
+  const euro = /€|eur/i.test(t); const n = leesGetal(t.replace(/eur(o)?/i, ""));
+  if (n == null || Number.isNaN(n)) return { fout: `"${t}" is geen geldig getal — bv. 25 (= 25 %) of € 1.500` };
+  if (euro) { if (Math.abs(n) >= 1e8) return { fout: "Dat bedrag is te groot." }; return { marge: null, bedrag: r2(n) }; }
+  if (n < -99 || n > 1000) return { fout: `Een marge van ${nl(n, 2)} % kan niet — geef een % tussen -99 en 1000 (of een bedrag met €)` };
+  return { marge: Math.round(n * 1e4) / 1e6, bedrag: null };
+}
+const msrToon = (x) => !x ? "" : x.bedrag != null ? "€ " + nl(x.bedrag, 2) : x.marge != null ? pctVeld(x.marge) + " %" : "";
+async function msrBewaar(pid, waar, patch) {
+  // waar = { post: id } of { lot: nr }; patch = { bron } en/of { marge, bedrag }
+  if (!msRamingKlaar()) return;
+  const oud = waar.post ? msrPost(waar.post) : msrLot(pid, waar.lot);
+  const nieuw = { bron: (oud && oud.bron) || "auto", marge: oud && oud.marge != null ? Number(oud.marge) : null, bedrag: oud && oud.bedrag != null ? Number(oud.bedrag) : null, ...patch };
+  const leeg = nieuw.bron === "auto" && nieuw.marge == null && nieuw.bedrag == null;
+  try {
+    if (oud && leeg) { await dbDelete("ms_raming", oud.id); return; }
+    if (oud) { await dbUpdate("ms_raming", oud.id, { bron: nieuw.bron, marge: nieuw.marge, bedrag: nieuw.bedrag }); return; }
+    if (leeg) return;
+    // enkel de gewijzigde kolommen: bestaat de rij intussen al (andere beheerder), dan blijft de rest staan
+    const rij = { project_id: pid, ...patch, ...(waar.post ? { post_id: waar.post } : { lot: Number(waar.lot) }) };
+    const { data, error } = await sb.from("ms_raming").upsert(rij, { onConflict: waar.post ? "post_id" : "project_id,lot" }).select().single();
+    if (error) { toast("Marge niet bewaard: " + error.message, 6000); render(); return; }
+    S.ms_raming[data.id] = data; render();
+  } catch (e) { }
+}
+/* weergave Marges in de meetstaat: per lot en per post de bron en de marge (% of €) */
+const MSR_BRON = [["auto", "Automatisch"], ["aannemer", "Offerte aannemer"], ["raming", "Geen offerte (raming)"]];
+const msrViaTekst = (x) => !x ? "" : x.bron === "aannemer" ? "kostprijs van de aannemer" : ({ "post€": "bedrag van deze post", "post%": "% van deze post", "lot€": "deel van het bedrag van het lot", "lot%": "% van het lot", project: "standaard van dit project", standaard: "algemene standaard" })[x.via] || "";
+function msrInfo(p, t, ra) {
+  const f = finPlanVan(p.id); const I = typeof finInst === "function" ? finInst() : { marge: 0.25 };
+  return `<div class="msr-info"><div><b>Marges zonder offerte van een aannemer</b> — de klantprijs blijft altijd zoals hij is; de marge die je hier aanduidt bepaalt enkel de geraamde kostprijs (voor de marge hierboven en de financiële planning). Typ een % (bv. <i>25</i>) of een bedrag (bv. <i>€ 1.500</i>); leeg = overerven (post › lot › project › algemeen).</div>
+    <div class="msr-tot"><label>Standaardmarge van dit project <input class="inline num" data-msr-std="${p.id}" type="text" inputmode="decimal" autocomplete="off" value="${f && f.marge_pct != null ? pctVeld(f.marge_pct) : ""}" placeholder="${pctVeld(I.marge)}" aria-label="Standaardmarge van dit project in %" style="width:64px"> %</label>
+    <span class="muted">${t.nRaming ? `${t.nRaming} geraamde post${t.nRaming === 1 ? "" : "en"}: klantprijs ${eur(t.verkoopRaming)} · marge <b>${eur(t.margeRaming)}</b>${t.kostRaming ? " (" + nl(t.margeRaming / t.kostRaming * 100, 1) + " % op de kost)" : ""}` : "Geen geraamde posten: overal zit een offerte van een aannemer achter."}</span></div></div>`;
+}
+function msrLotCtl(pid, nr, ra) {
+  const lr = msrLot(pid, nr); const L = ra.perLot[nr] || { n: 0, nAannemer: 0, marge: 0 };
+  return `<span class="msr-lot" title="Marge voor de posten van dit lot zonder offerte van een aannemer (de klantprijs verandert niet)"><select class="inline" data-msr-lot="${nr}" data-pid="${pid}" data-msrf="bron" aria-label="Bron lot ${nr}">${opts(MSR_BRON.map(([v, l]) => [v, v === "auto" ? "Automatisch per post" : l]), lr ? lr.bron : "auto")}</select>
+    <input class="inline num" data-msr-lot="${nr}" data-pid="${pid}" data-msrf="marge" type="text" autocomplete="off" value="${esc(msrToon(lr))}" placeholder="${pctVeld(ra.std.pct)} %" aria-label="Marge lot ${nr} (% of €)" style="width:84px" ${lr && lr.bron === "aannemer" ? "disabled" : ""}>
+    <span class="muted num">${L.n ? `${L.n} geraamd · marge ${eur(L.marge)}` : "geen geraamde posten"}${L.nAannemer ? ` · ${L.nAannemer} met offerte` : ""}</span></span>`;
+}
+function msrPostCellen(r, ra) {
+  const x = ra.rij[r.id]; const pr = ra.pMap[r.id] || null;
+  if (!x) return `<td class="muted" style="width:124px">vervallen</td><td style="width:64px"></td>`;
+  const autoTekst = x.autoBron === "aannemer" ? "Auto: offerte" : "Auto: raming";
+  const marge = x.bron === "aannemer" ? `<span class="num" title="Echte marge op de kostprijs van de aannemer">${eur2(r2(x.v - x.kost))}</span>` : `<input class="inline num" data-msr-post="${r.id}" data-pid="${r.project_id}" data-msrf="marge" type="text" autocomplete="off" value="${esc(msrToon(pr))}" placeholder="${x.via === "post€" || x.via === "lot€" ? "€ " + nl(x.bedrag, 0) : pctVeld(x.pct) + " %"}" title="Marge van deze post (% of €) — nu: ${esc(msrViaTekst(x))}. Leeg = overerven." aria-label="Marge ${esc(r.code)}"><small class="muted num" style="display:block">${eur2(r2(x.v - x.kost))}</small>`;
+  return `<td style="width:124px"><select class="inline msr-bron ${x.bron}" data-msr-post="${r.id}" data-pid="${r.project_id}" data-msrf="bron" title="${x.auto ? (x.autoBron === "aannemer" ? "Automatisch: gegund via een prijsvraag of met een eigen kostprijs/marge" : "Automatisch: kostprijs = klantprijs (bv. geïmporteerd uit Excel)") : "Zelf gekozen"}" aria-label="Bron ${esc(r.code)}">${opts([["auto", autoTekst], ["aannemer", "Offerte"], ["raming", "Raming"]], pr ? pr.bron : "auto")}</select></td><td style="width:64px">${marge}</td>`;
+}
+async function msrVeld(el) {
+  const d = el.dataset; const pid = d.pid; const waar = d.msrPost ? { post: d.msrPost } : { lot: Number(d.msrLot) };
+  if (d.msrf === "bron") return msrBewaar(pid, waar, { bron: el.value });
+  const oud = waar.post ? msrPost(waar.post) : msrLot(pid, waar.lot); const v = msrLees(el.value);
+  if (v.fout) { toast(v.fout, 6000); render(); return; }
+  if ((oud && oud.marge != null ? Number(oud.marge) : null) === v.marge && (oud && oud.bedrag != null ? Number(oud.bedrag) : null) === v.bedrag) return;
+  return msrBewaar(pid, waar, { marge: v.marge, bedrag: v.bedrag });
+}
+async function msrProjectStd(pid, raw) {
+  const t = String(raw ?? "").trim(); const n = t ? leesGetal(t) : null;
+  if (/€|eur/i.test(t) || Number.isNaN(n) || (n != null && (n < -99 || n >= 1000))) { toast(`"${t}" kan niet als standaardmarge — geef een % op de kostprijs (bv. 25); een bedrag kan per lot of per post`, 6000); render(); return; }
+  const m = n == null ? null : Math.round(n * 100) / 1e4; const f = finPlanVan(pid);
+  try { if (f) { if ((f.marge_pct == null ? null : Number(f.marge_pct)) !== m) await dbUpdate("fin_plan", f.id, { marge_pct: m }); } else if (m != null) await dbInsert("fin_plan", { project_id: pid, marge_pct: m }); } catch (e) { }
 }
 function vMeetstaat(p) {
   if (!msReady()) return `<div class="panel"><div class="empty"><b>Meetstaat nog niet beschikbaar</b>Voer eerst databasescript <code>sql/007_meetstaat.sql</code> uit in Supabase (SQL Editor). Daarna verschijnen hier de loten en de postenbibliotheek.</div></div>`;
   // klantweergave: kostprijs, marge en btw-kolom verbergen (bv. tijdens een bespreking met de klant) — onthouden per browser
   if (S.prijsFout) return `<div class="panel"><div class="empty"><b>Prijzen niet correct geladen</b>De prijzen van de meetstaat konden niet opgehaald worden (de databank was even niet bereikbaar of er liep net een databasescript). Herlaad de pagina (⌘⌥R) — tot dan worden er geen bedragen getoond om fouten te vermijden.</div></div>`;
-  const rows = msRows(p.id); const beheer = isBeheer() && !S.msKlant; const t = msTotals(p.id);
+  const rows = msRows(p.id); const beheer = isBeheer() && !S.msKlant;
+  const ra = msRaming(p.id); const t = msTotals(p.id, ra); const marges = !!(ra && beheer && S.msMarges);   // 1.55: geraamde marges (script 052)
   const byLot = {}; rows.forEach(r => (byLot[r.lot] = byLot[r.lot] || []).push(r));
   const lots = Object.keys(byLot).map(Number).sort((a, b) => a - b);
   const kpi = `<div class="rend">
-    ${beheer ? `<div class="panel"><div class="k">Kostprijs excl. btw</div><div class="v">${eur(t.kost)}</div></div>` : ""}
+    ${beheer ? `<div class="panel"><div class="k">Kostprijs excl. btw</div><div class="v">${eur(t.kost)}${t.nRaming ? `<small class="muted" style="font-size:12px;font-weight:400;display:block">waarvan geraamd ${eur(t.kostRaming)}</small>` : ""}</div></div>` : ""}
     <div class="panel"><div class="k">Offerte excl. btw</div><div class="v">${eur(t.verkoop)}</div></div>
     <div class="panel"><div class="k">Meer-/minwerk excl. btw</div><div class="v ${t.meerwerk < 0 ? "neg" : ""}">${t.meerwerk ? eur(t.meerwerk) : "—"}</div></div>
-    ${beheer ? `<div class="panel"><div class="k">Marge</div><div class="v ${t.marge >= 0 ? "pos" : "neg"}">${eur(t.marge)}<small class="muted" style="font-size:12px;font-weight:400"> · ${t.kost ? nl(t.marge / t.kost * 100, 1) : "0"} %</small></div></div>` : ""}
+    ${beheer ? `<div class="panel"><div class="k">Marge${t.nRaming ? ` <span class="muted" title="Deels geraamd: ${t.nRaming} post${t.nRaming === 1 ? "" : "en"} zonder offerte van een aannemer (zie Marges)">≈</span>` : ""}</div><div class="v ${t.marge >= 0 ? "pos" : "neg"}">${eur(t.marge)}<small class="muted" style="font-size:12px;font-weight:400"> · ${t.kost ? nl(t.marge / t.kost * 100, 1) : "0"} %</small></div></div>` : ""}
     <div class="panel"><div class="k">Btw</div><div class="v">${eur(t.btw)}</div></div>
     <div class="panel"><div class="k">Totaal incl. btw</div><div class="v">${eur(t.incl)}</div></div></div>`;
   const inp = (r, f, cls = "", attrs = "") => `<input class="inline ${cls}" data-ms="${r.id}" data-f="${f}" value="${esc(r[f] ?? "")}" ${attrs}>`;
@@ -743,23 +859,23 @@ function vMeetstaat(p) {
   const cols = 9 + (beheer ? 3 : 0);
   const perRuimte = !!S.msRuimte; const ruimteKey = (r) => (r.locatie || "").trim().toLowerCase();
   if (perRuimte) lots.forEach(nr => byLot[nr].sort((a, b) => (ruimteKey(a) === "" ? 1 : 0) - (ruimteKey(b) === "" ? 1 : 0) || ruimteKey(a).localeCompare(ruimteKey(b), "nl") || (a.volgorde ?? 0) - (b.volgorde ?? 0) || (a.code || "").localeCompare(b.code || "")));
-  const body = lots.map(nr => { const g = byLot[nr]; const sub = g.filter(msTelt).reduce((s, r) => s + rowSigned(r), 0); const subk = g.filter(msTelt).reduce((s, r) => s + kostSigned(r), 0); let lastGroep = null;
-    return `<tr class="ms-lot"><td colspan="${cols}"><div style="display:flex;justify-content:space-between;align-items:center;gap:8px;flex-wrap:wrap"><span>${esc(lotName(nr))} <span class="muted num" style="font-weight:400">${g.length} posten${beheer ? ` · kost ${eur(subk)}` : ""} · <b>${eur(sub)}</b> excl. btw</span></span><span class="actions"><button class="btn ghost sm" data-act="ms-add-post" data-pid="${p.id}" data-lot="${nr}">+ Post</button><button class="btn ghost sm danger" data-act="ms-del-lot" data-pid="${p.id}" data-lot="${nr}" title="Alle posten van dit lot verwijderen">✕</button></span></div></td></tr>` +
+  const body = lots.map(nr => { const g = byLot[nr]; const sub = g.filter(msTelt).reduce((s, r) => s + rowSigned(r), 0); const subk = g.filter(msTelt).reduce((s, r) => s + (ra && beheer && ra.rij[r.id] ? ra.rij[r.id].kost : kostSigned(r)), 0); let lastGroep = null;
+    return `<tr class="ms-lot"><td colspan="${cols}"><div style="display:flex;justify-content:space-between;align-items:center;gap:8px;flex-wrap:wrap"><span>${esc(lotName(nr))} <span class="muted num" style="font-weight:400">${g.length} posten${beheer ? ` · kost ${eur(subk)}` : ""} · <b>${eur(sub)}</b> excl. btw</span></span>${marges ? msrLotCtl(p.id, nr, ra) : ""}<span class="actions"><button class="btn ghost sm" data-act="ms-add-post" data-pid="${p.id}" data-lot="${nr}">+ Post</button><button class="btn ghost sm danger" data-act="ms-del-lot" data-pid="${p.id}" data-lot="${nr}" title="Alle posten van dit lot verwijderen">✕</button></span></div></td></tr>` +
       g.map((r, i) => { const kop = perRuimte ? ((r.locatie || "").trim() || "Zonder ruimte") : r.groep; const gh = kop && kop !== lastGroep ? `<tr class="ms-groep"><td></td><td colspan="${cols - 1}">${esc(kop)}${perRuimte ? ` <span class="muted" style="font-weight:400;text-transform:none;letter-spacing:0">· ${g.filter(x => (perRuimte ? ((x.locatie || "").trim() || "Zonder ruimte") : x.groep) === kop).length} posten · ${eur(g.filter(x => msTelt(x) && ((x.locatie || "").trim() || "Zonder ruimte") === kop).reduce((s, x) => s + rowSigned(x), 0))}</span>` : ""}</td></tr>` : ""; lastGroep = kop || lastGroep; const dead = r.status === "vervallen";
         return gh + `<tr class="${dead ? "ms-dead" : ""}" data-msrow="${r.id}" data-lot="${nr}"><td class="drag" style="width:26px">${perRuimte ? `<span class="muted" title="Volgorde wijzigen kan in de gewone weergave (Per ruimte uit)">·</span>` : `<span class="grip" draggable="true" data-drag="${r.id}" title="Sleep om de volgorde te wijzigen">⋮⋮</span>`}<span class="updown">${perRuimte ? "" : `<button class="btn ghost sm" data-act="ms-move" data-id="${r.id}" data-dir="-1" ${i === 0 ? "disabled" : ""} aria-label="Omhoog">▲</button>`}${perRuimte ? "" : `<button class="btn ghost sm" data-act="ms-move" data-id="${r.id}" data-dir="1" ${i === g.length - 1 ? "disabled" : ""} aria-label="Omlaag">▼</button>`}</span></td><td class="num muted" style="width:52px">${esc(r.code)}</td>
         <td style="min-width:260px">${inp(r, "omschrijving", "wide")}</td>
         <td style="width:110px">${inp(r, "locatie", "", 'placeholder="locatie"')}</td>
         <td style="width:84px">${num(r, "hoeveelheid")}</td>
         <td style="width:82px">${sel(r, "eenheid", opts(EENHEDEN.map(e => [e, e]), r.eenheid))}</td>
-        ${beheer ? `<td style="width:96px">${num(r, "eenheidsprijs")}</td><td style="width:64px"><input class="inline num" data-ms="${r.id}" data-f="marge" type="text" inputmode="decimal" autocomplete="off" placeholder="${pctVeld(Number(S.loten[r.lot]?.marge) || 0)}" value="${pctVeld(r.marge)}" title="Marge % (leeg = marge van het lot)"></td>` : ""}
+        ${marges ? msrPostCellen(r, ra) : beheer ? `<td style="width:96px">${num(r, "eenheidsprijs")}</td><td style="width:64px"><input class="inline num" data-ms="${r.id}" data-f="marge" type="text" inputmode="decimal" autocomplete="off" placeholder="${pctVeld(Number(S.loten[r.lot]?.marge) || 0)}" value="${pctVeld(r.marge)}" title="Marge % (leeg = marge van het lot)"></td>` : ""}
         <td class="r num" style="width:96px" title="Eenheidsprijs voor de klant">${eur2(msVerkoopEP(r))}</td>
         <td class="r num" style="width:104px"><b>${eur2(rowSigned(r))}</b></td>
         ${beheer ? `<td style="width:76px">${sel(r, "btw", opts([[0.06, "6 %"], [0.21, "21 %"], [0, "0 %"]], Number(r.btw)))}</td>` : ""}
         <td style="width:104px">${sel(r, "status", opts(Object.entries(MS_STATUS), r.status))}${r.akkoord_op ? `<small class="muted" style="display:block;color:var(--ok)" title="Goedgekeurd door de klant in het portaal">✓ klant ${fmt(lokDag(r.akkoord_op))}</small>` : ""}</td>
         <td class="r" style="width:36px"><button class="btn ghost sm danger" data-act="ms-del" data-id="${r.id}" aria-label="Verwijderen">✕</button></td></tr>`; }).join(""); }).join("");
   return kpi + (typeof vMeerwerkAanvragen === "function" ? vMeerwerkAanvragen(p) : "") + vGoedkeuringen(p) + (typeof vPrijsvragen === "function" ? vPrijsvragen(p) : vPrijsaanvragen(p)) + vAanMeetstaten(p) + `<div class="panel"><div class="panel-head"><div><h3>Meetstaat</h3><div class="muted" style="font-size:12px;margin-top:2px">${rows.length ? `${rows.length} posten in ${lots.length} loten` : "Nog leeg"} · klik in een veld om het te wijzigen, bewaard bij verlaten van het veld</div></div>
-      <div class="actions">${isBeheer() && rows.length ? `<select class="btn sm" data-act="ms-btw-alles" data-pid="${p.id}" title="Het btw-tarief van alle posten van dit project in één keer zetten"><option value="">Btw alles…</option><option value="0.06">alles op 6 %</option><option value="0.21">alles op 21 %</option><option value="0">alles op 0 %</option></select><select class="btn sm" data-act="ms-marge-alles" data-pid="${p.id}" title="De marge van alle posten van dit project in één keer zetten (goedgekeurde posten houden hun klantprijs, tenzij je kiest om ze mee te nemen)"><option value="">Marge alles…</option><option value="10">alles op 10 %</option><option value="15">alles op 15 %</option><option value="20">alles op 20 %</option><option value="ander">ander %…</option><option value="lot">lotmarge (eigen marge leegmaken)</option></select>` : ""}<button class="btn sm ${S.msRuimte ? "primary" : ""}" data-act="ms-ruimte" title="Posten per lot groeperen per ruimte (alfabetisch), enkel in deze weergave — de nummering en de export veranderen niet">${S.msRuimte ? "Per ruimte ✓" : "Per ruimte"}</button>${isBeheer() ? `<button class="btn sm ${S.msKlant ? "primary" : ""}" data-act="ms-klant" title="Kostprijs, marge en btw-kolom verbergen, bv. als je de meetstaat met de klant overloopt (sneltoets: K)">${S.msKlant ? "👁 Klantweergave aan" : "Klantweergave"}</button>` : ""}${schemaV() >= 13 && rows.some(r => gkKandidaat(r)) ? `<button class="btn sm" data-act="gk-new" data-pid="${p.id}" title="Offerte of meerwerk bevroren ter goedkeuring in het klantenportaal zetten">Ter goedkeuring voorleggen</button>` : ""}${isBeheer() ? `<button class="btn sm" data-act="ms-import" data-pid="${p.id}" title="Een bestaande meetstaat (Excel, elk BROS-sjabloon) inlezen als posten">Importeren uit Excel</button>` : ""}${rows.length ? `<button class="btn sm" data-act="ms-export" data-pid="${p.id}" title="Excel in het BROS-sjabloon aanmaken in Documenten/Meetstaat van de projectmap">Exporteren naar Drive (Excel)</button><button class="btn sm" data-act="ms-pdf" data-pid="${p.id}" title="Meetstaat als pdf: klantversie of interne versie, per lot of per ruimte">Pdf</button>` : ""}<button class="btn sm" data-act="ms-add-post" data-pid="${p.id}">+ Post</button><button class="btn sm primary" data-act="ms-add-lot" data-pid="${p.id}">+ Lot toevoegen</button></div></div>
-    ${rows.length ? `<div class="tw"><table class="t ms"><thead><tr><th></th><th>Nr</th><th>Omschrijving</th><th>Locatie</th><th>Hoev.</th><th>Eenh.</th>${beheer ? `<th title="Kostprijs / aannemersprijs excl. btw">Kost EP</th><th>Marge</th>` : ""}<th class="r">Klant EP</th><th class="r">Totaal excl.</th>${beheer ? `<th>Btw</th>` : ""}<th>Status</th><th></th></tr></thead><tbody>${body}</tbody></table></div>` : `<div class="empty"><b>Nog geen posten</b>Voeg een lot toe (met de standaardposten) of kies losse posten uit de bibliotheek.</div>`}</div>`;
+      <div class="actions">${isBeheer() && rows.length ? `<select class="btn sm" data-act="ms-btw-alles" data-pid="${p.id}" title="Het btw-tarief van alle posten van dit project in één keer zetten"><option value="">Btw alles…</option><option value="0.06">alles op 6 %</option><option value="0.21">alles op 21 %</option><option value="0">alles op 0 %</option></select><select class="btn sm" data-act="ms-marge-alles" data-pid="${p.id}" title="De marge van alle posten van dit project in één keer zetten (goedgekeurde posten houden hun klantprijs, tenzij je kiest om ze mee te nemen)"><option value="">Marge alles…</option><option value="10">alles op 10 %</option><option value="15">alles op 15 %</option><option value="20">alles op 20 %</option><option value="ander">ander %…</option><option value="lot">lotmarge (eigen marge leegmaken)</option></select>` : ""}<button class="btn sm ${S.msRuimte ? "primary" : ""}" data-act="ms-ruimte" title="Posten per lot groeperen per ruimte (alfabetisch), enkel in deze weergave — de nummering en de export veranderen niet">${S.msRuimte ? "Per ruimte ✓" : "Per ruimte"}</button>${msRamingKlaar() && rows.length && !S.msKlant ? `<button class="btn sm ${S.msMarges ? "primary" : ""}" data-act="ms-marges" title="Per lot en per post aanduiden of er een offerte van een aannemer achter zit, en hoeveel marge BROS heeft op de rest (de klantprijs verandert niet)">${S.msMarges ? "Marges ✓" : "Marges"}</button>` : ""}${isBeheer() ? `<button class="btn sm ${S.msKlant ? "primary" : ""}" data-act="ms-klant" title="Kostprijs, marge en btw-kolom verbergen, bv. als je de meetstaat met de klant overloopt (sneltoets: K)">${S.msKlant ? "👁 Klantweergave aan" : "Klantweergave"}</button>` : ""}${schemaV() >= 13 && rows.some(r => gkKandidaat(r)) ? `<button class="btn sm" data-act="gk-new" data-pid="${p.id}" title="Offerte of meerwerk bevroren ter goedkeuring in het klantenportaal zetten">Ter goedkeuring voorleggen</button>` : ""}${isBeheer() ? `<button class="btn sm" data-act="ms-import" data-pid="${p.id}" title="Een bestaande meetstaat (Excel, elk BROS-sjabloon) inlezen als posten">Importeren uit Excel</button>` : ""}${rows.length ? `<button class="btn sm" data-act="ms-export" data-pid="${p.id}" title="Excel in het BROS-sjabloon aanmaken in Documenten/Meetstaat van de projectmap">Exporteren naar Drive (Excel)</button><button class="btn sm" data-act="ms-pdf" data-pid="${p.id}" title="Meetstaat als pdf: klantversie of interne versie, per lot of per ruimte">Pdf</button>` : ""}<button class="btn sm" data-act="ms-add-post" data-pid="${p.id}">+ Post</button><button class="btn sm primary" data-act="ms-add-lot" data-pid="${p.id}">+ Lot toevoegen</button></div></div>
+    ${marges && rows.length ? msrInfo(p, t, ra) : ""}${rows.length ? `<div class="tw"><table class="t ms${marges ? " ms-marges" : ""}"><thead><tr><th></th><th>Nr</th><th>Omschrijving</th><th>Locatie</th><th>Hoev.</th><th>Eenh.</th>${marges ? `<th title="Zit er een offerte van een aannemer achter deze post?">Bron</th><th title="Marge zonder aannemersofferte: % op de kostprijs of een bedrag in €">Marge</th>` : beheer ? `<th title="Kostprijs / aannemersprijs excl. btw">Kost EP</th><th>Marge</th>` : ""}<th class="r">Klant EP</th><th class="r">Totaal excl.</th>${beheer ? `<th>Btw</th>` : ""}<th>Status</th><th></th></tr></thead><tbody>${body}</tbody></table></div>` : `<div class="empty"><b>Nog geen posten</b>Voeg een lot toe (met de standaardposten) of kies losse posten uit de bibliotheek.</div>`}</div>`;
 }
 /* ---------- Meetstaat als pdf (jsPDF): klantversie (verkoopprijzen) of interne versie (kost, marge, verkoop) ---------- */
 async function msBuildPdf(p, o) {
@@ -1932,6 +2048,7 @@ async function msDelLot(pid, lot) {
   const { error } = await sb.from("meetstaat_posten").delete().in("id", ids);
   if (error) return toast("Mislukt: " + error.message);
   ids.forEach(id => delete S.meetstaat_posten[id]); render(); toast("Lot verwijderd");
+  const lr = msRamingKlaar() ? msrLot(pid, lot) : null; if (lr) dbDelete("ms_raming", lr.id).catch(() => { });   // 1.55: geen oude lotmarge laten staan
 }
 /* ---------- Facturatie: vorderingsstaat per project (percentages per lot én per post) ---------- */
 const VORD_SOORT = { voorschot: "Voorschot", vordering: "Vordering", slotfactuur: "Slotfactuur", meerwerk: "Meerwerk" };
@@ -2483,6 +2600,7 @@ function render() {
   if (scrolls.length) app.querySelectorAll(".tw").forEach((e, i) => { const k = scrolls[i]; if (k && (k[0] || k[1])) { e.scrollLeft = k[0]; e.scrollTop = k[1]; } });
   if (updateAvailable) $("#updateBar").classList.add("show");
   if (acctI >= 0 && typeof acctFocus === "function") acctFocus(acctI);
+  if (typeof vgNaRender === "function") vgNaRender();   // 1.54: de vaste opnamespeler verbergen buiten de vergadering
 }
 let loginMode = "password";
 let loginNotice = URL_AUTH.error ? (/expired|invalid|otp/i.test(URL_AUTH.error) ? "Deze link is vervallen of al gebruikt. Log in met je wachtwoord, of vraag hieronder een nieuwe link aan." : "Inloggen via de link lukte niet: " + URL_AUTH.error.replace(/\+/g, " ")) : "";
@@ -2628,6 +2746,8 @@ function vProjectDetail(p) {
   const ts = tasksOf(p.id), pl = projPlanned(p.id), dn = projDone(p.id);
   const [st, en] = projSpan(p);
   const tabs = [["taken", "Taken"], ["notities", "Notities" + (schemaV() >= 14 && notesOf(p.id).length ? ` <span class="cnt">${notesOf(p.id).length}</span>` : "")], ["meetstaat", "Meetstaat"], ["facturatie", "Facturatie"], ["werf", "Werf" + (schemaV() >= 16 && vsOf(p.id).some(v => v.status === "open") ? ` <span class="cnt">${vsOf(p.id).filter(v => v.status === "open").length}</span>` : "")], ["tekenen", "Plannen"]].concat(typeof vKeuzes === "function" && schemaV() >= 35 ? [["keuzes", "Keuzes" + (kzOf(p.id).filter(k => k.status === "gekozen").length ? ` <span class="cnt">${kzOf(p.id).filter(k => k.status === "gekozen").length}</span>` : "")]] : []).concat([["planning", "Planning"], ["uren", "Uren"], ["dossier", "Dossier"]]).concat(schemaV() >= 23 ? [["vragen", "Vragen" + (voorstellenOpen().some(v => v.project_id === p.id) ? ` <span class="cnt" style="background:var(--crit);color:#fff">${voorstellenOpen().filter(v => v.project_id === p.id).length}</span>` : "")]] : []);
+  if (typeof vVergaderingen === "function" && schemaV() >= 51) { const nC = vgOf(p.id).filter(v => v.status === "controle").length; tabs.splice(1, 0, ["vergaderingen", "Vergaderingen" + (nC ? ` <span class="cnt">${nC}</span>` : "")]); }   // 1.54 (script 051)
+  if (p.intern && typeof vgIntern === "function") tabs.unshift(["intern", "Overzicht"]);
   let body = "";
   if (S.ptab === "taken") {
     const byFase = {}; ts.forEach(t => { (byFase[t.fase_nr || 0] = byFase[t.fase_nr || 0] || []).push(t); });
@@ -2639,6 +2759,10 @@ function vProjectDetail(p) {
         <td class="num">${fmt(t.start)}</td><td class="num" style="color:${isLate(t) ? "var(--crit)" : "inherit"}">${fmt(t.eind)}</td><td class="r num">${nl(taskDone(t.id))} / ${nl(t.uren_gepland)}</td><td>${pill(t)}</td></tr>`).join(""); }).join("")}</tbody></table></div>` : `<div class="empty"><b>Nog geen taken</b>Voeg een fase toe (met de standaardtaken) of maak een losse taak.</div>`}</div>`;
   } else if (S.ptab === "notities") {
     body = vNotities(p);
+  } else if (S.ptab === "vergaderingen" && typeof vVergaderingen === "function") {   // 1.54: vergaderingen & opnames (vergaderingen.js, script 051)
+    body = vVergaderingen(p);
+  } else if (S.ptab === "intern" && p.intern && typeof vgIntern === "function") {
+    body = vgIntern(p);
   } else if (S.ptab === "meetstaat") {
     body = vMeetstaat(p);
   } else if (S.ptab === "facturatie") {
@@ -2943,6 +3067,7 @@ function vInstellingen() {
     </div></div></div>
   ${vPortaalBeheer()}
   ${vAssistentBeheer()}
+  ${typeof vVergaderInstellingen === "function" ? vVergaderInstellingen() : ""}
   ${vPostenBeheer()}
   ${vStandaardWie()}
   <div class="grid two" style="grid-template-columns: 1fr 1.4fr">
@@ -3335,6 +3460,7 @@ function projectForm(p = {}) {
     <div class="field"><label for="f_eind">Geplande oplevering</label><input id="f_eind" type="date" name="eind" value="${esc(p.eind || "")}"></div>
     <div class="field"><label for="f_map">Drive-map</label><input id="f_map" name="drive_map" value="${esc(p.drive_map || "")}" placeholder="PROJECTEN/klantnaam (automatisch)"></div>
     <div class="field verloren"><label for="f_vr">Reden verloren</label><input id="f_vr" name="verloren_reden" value="${esc(p.verloren_reden || "")}" placeholder="bv. prijs, timing, ander bureau"></div>
+    ${schemaV() >= 51 && isBeheer() ? `<div class="field span2"><label class="sw-row"><input type="checkbox" class="sw" name="intern" value="1" ${p.intern ? "checked" : ""}><span><b>Intern project (BROS — Interne werking)</b><small class="muted" style="display:block">Het interne project van BROS: eigen vergaderingen en de interne takenlijst, zichtbaar voor het hele team en nooit voor klanten. Er is er maar één.</small></span></label></div>` : ""}
     <div class="field span2"><label for="f_not">Notities</label><textarea id="f_not" name="notities">${esc(p.notities || "")}</textarea></div>
     ${schemaV() >= 23 ? `<div class="field span2"><label class="sw-row"><input type="checkbox" class="sw" name="assistent" ${p.assistent !== false ? "checked" : ""}><span><b>AI-assistent in het klantenportaal</b><small class="muted" style="display:block">Uit bij een moeilijk dossier of geschil: het tabblad Vragen verdwijnt dan voor deze klant.</small></span></label></div>` : ""}
     <div class="field span2"><div class="eyebrow" style="margin-top:4px">Extra gegevens <span class="muted" style="font-weight:400;letter-spacing:0;text-transform:none">— niet verplicht, handig voor rapportage en nacalculatie</span></div></div>
@@ -3355,6 +3481,11 @@ function projectForm(p = {}) {
       // Klantnaam gewijzigd terwijl er nog geen Drive-map gekoppeld is en de mapnaam niet zelf aangepast werd → mapnaam volgt de klantnaam
       if (!isNew && !p.drive_folder_id && row.klant !== (p.klant || "") && row.drive_map === (p.drive_map || "")) row.drive_map = "PROJECTEN/" + row.klant;
       if (schemaV() >= 23) row.assistent = d.assistent === "on";
+      if (schemaV() >= 51 && isBeheer() && !!d.intern !== !!p.intern) {   // 1.54 (script 051): er is maar één intern project
+        const ander = Object.values(S.projecten).find(x => x.intern && x.id !== p.id);
+        if (d.intern && ander) { toast(`"${ander.klant}" is al het interne project. Zet het daar eerst uit.`, 6000); return false; }
+        row.intern = !!d.intern;
+      }
       if (d.nummer && d.nummer.trim()) row.nummer = d.nummer.trim(); else if (!isNew) row.nummer = p.nummer || null;
       if (isNew) {
         row.created_by = S.me.id;
@@ -3439,6 +3570,7 @@ function taskForm(t = {}, pid) {
     ${schemaV() >= 10 ? `<div class="field span2"><label class="sw-row"><input type="checkbox" class="sw" name="uren_klant" value="1" ${t.uren_klant ? "checked" : ""}><span><b>Gepresteerde uren zichtbaar voor de klant</b><small class="muted" style="display:block">De klant ziet de geregistreerde uren van deze taak, met datum en tijdstip. Staat standaard uit.</small></span></label></div>` : ""}
     ${schemaV() >= 17 ? `<div class="field span2"><label class="sw-row"><input type="checkbox" class="sw" name="timing_klant" value="1" ${t.timing_klant ? "checked" : ""}><span><b>Timing delen met de klant</b><small class="muted" style="display:block">Titel en van–tot van deze taak verschijnen onder de fase in de planning van het portaal (geen uren, geen wie). Staat standaard uit.</small></span></label></div>` : ""}
     ${typeof afsVelden === "function" ? afsVelden(t, projectId) : ""}
+    ${typeof vgTaakLink === "function" ? vgTaakLink(t) : ""}
   </div>`, {
     onSave: async (d) => {
       const row = { titel: d.titel.trim(), project_id: d.project_id, fase_nr: d.fase_nr ? Number(d.fase_nr) : null, ...(schemaV() >= 15 ? wieSplit(d.assignee) : { assignee: d.assignee || null }), status: d.status, start: d.start || null, eind: d.eind || null, uren_gepland: Number(d.uren_gepland) || 0, notitie: d.notitie , ...(schemaV() >= 14 && "notitie_id" in d ? { notitie_id: d.notitie_id || null } : {}) };
@@ -3689,6 +3821,7 @@ document.addEventListener("click", (e) => {
   if (d.sellot) { S.selLot = Number(d.sellot); return render(); }
   if (d.vtoggle) { S.vordOpen = S.vordOpen || {}; S.vordOpen[d.vtoggle] = !S.vordOpen[d.vtoggle]; return render(); }
   if (d.act === "ms-ruimte") { S.msRuimte = !S.msRuimte; try { localStorage.setItem("bros.msRuimte", S.msRuimte ? "1" : ""); } catch (x) { } return render(); }
+  if (d.act === "ms-marges") { S.msMarges = !S.msMarges; try { localStorage.setItem("bros.msMarges", S.msMarges ? "1" : ""); } catch (x) { } return render(); }
   if (d.act === "ms-klant") { S.msKlant = !S.msKlant; try { localStorage.setItem("bros.msKlant", S.msKlant ? "1" : ""); } catch (x) { } toast(S.msKlant ? "Klantweergave: kostprijs en marge verborgen" : "Volledige weergave"); return render(); }
   if (d.act === "ms-add-lot") return msAddLotForm(d.pid);
   if (d.act === "ms-open") { S.ptab = "meetstaat"; render(); if (!msRows(d.pid).length) msAddLotForm(d.pid); return; }
@@ -3766,6 +3899,8 @@ document.addEventListener("focusout", (e) => {
   if (d.ms && e.target.tagName !== "SELECT") return msEdit(d.ms, d.f, e.target.value);
   if (d.post && e.target.type !== "checkbox" && e.target.tagName !== "SELECT") return postEdit(d.post, d.f, e.target.value);
   if (d.lot && d.f === "marge") return lotEdit(Number(d.lot), d.f, e.target.value);
+  if ((d.msrPost || d.msrLot) && d.msrf === "marge" && e.target.tagName === "INPUT") { if (d.getypt === "1") msrVeld(e.target); return; }   // 1.55: geraamde marge
+  if (d.msrStd && e.target.tagName === "INPUT") { if (d.getypt === "1") msrProjectStd(d.msrStd, e.target.value); return; }
 
   if (d.vf && e.target.tagName !== "SELECT" && e.target.type !== "date") return vordEdit(d.vf, d.f, e.target.value);
 });
@@ -3774,6 +3909,7 @@ document.addEventListener("input", (e) => { if (e.target.dataset && e.target.dat
   if (e.target.dataset && e.target.hasAttribute("data-noteq")) { S.noteQ = e.target.value; const pos = e.target.selectionStart; render(); const el = document.querySelector("[data-noteq]"); if (el) { el.focus(); try { el.setSelectionRange(pos, pos); } catch (x) { } } } });
 document.addEventListener("change", (e) => {
   const el = e.target;
+  if (el.tagName === "SELECT" && el.dataset.msrf === "bron" && (el.dataset.msrPost || el.dataset.msrLot)) return msrVeld(el);   // 1.55: bron van de kostprijs (offerte aannemer / raming)
   if (el.dataset.filter) { S.filters[el.dataset.filter] = el.value; return render(); }
   if (el.dataset.cfilter) { S.cfilters[el.dataset.cfilter] = el.value; return render(); }
   if (el.dataset.werff) { S.werfF = S.werfF || { status: "actief", wie: "", q: "", groep: false }; S.werfF[el.dataset.werff] = el.type === "checkbox" ? el.checked : el.value; return render(); }
@@ -3806,7 +3942,7 @@ document.addEventListener("keydown", (e) => { if (e.key === "Escape" && !/^(SELE
 
 /* ---------- versiecontrole: melden als er een nieuwe versie online staat ---------- */
 let updateAvailable = false;
-const APP_FILES = ["index.html", "app.js", "config.js", "vendor/supabase-2.45.4.js", "postcodes.js", "meetstaat-export.js", "meetstaat-import.js", "tekenen.js", "symbolen.js", "vendor/dxf-parser.js", "version.json", "klant/index.html", "klant/portaal.js", "klant/i18n-en.js", "kp-beheer.js", "pv-beheer.js", "portaal-voorbeeld.js", "agenda.js", "afspraken.js", "logo-mark.svg", "werf/index.html", "werf/werf.js", "werf/sw.js", "aannemer/index.html", "aannemer/aannemer.js", "aannemer/handleiding.json", "af-beheer.js", "deb-beheer.js", "wacht.js", "fin-planning.js"];
+const APP_FILES = ["index.html", "app.js", "config.js", "vendor/supabase-2.45.4.js", "postcodes.js", "meetstaat-export.js", "meetstaat-import.js", "tekenen.js", "symbolen.js", "vendor/dxf-parser.js", "version.json", "klant/index.html", "klant/portaal.js", "klant/i18n-en.js", "kp-beheer.js", "pv-beheer.js", "portaal-voorbeeld.js", "agenda.js", "afspraken.js", "logo-mark.svg", "werf/index.html", "werf/werf.js", "werf/sw.js", "aannemer/index.html", "aannemer/aannemer.js", "aannemer/handleiding.json", "af-beheer.js", "deb-beheer.js", "wacht.js", "fin-planning.js", "vergaderingen.js"];
 /* de browser-cache omzeilen: alle bestanden van de app vers ophalen (cache: "reload" ververst de HTTP-cache) en dan herladen */
 async function hardReload() {
   try { sessionStorage.setItem("pb-state", JSON.stringify({ view: S.view, project: S.project, ptab: S.ptab })); } catch (e) { }
@@ -3827,7 +3963,7 @@ async function checkVersion() {
 
 /* ---------- start ---------- */
 async function boot() {
-  try { const sv = JSON.parse(localStorage.getItem("bros.sort") || "null"); if (sv && sv.key) S.sort = sv; S.msKlant = localStorage.getItem("bros.msKlant") === "1"; S.msRuimte = localStorage.getItem("bros.msRuimte") === "1"; } catch (e) { }
+  try { const sv = JSON.parse(localStorage.getItem("bros.sort") || "null"); if (sv && sv.key) S.sort = sv; S.msKlant = localStorage.getItem("bros.msKlant") === "1"; S.msMarges = localStorage.getItem("bros.msMarges") === "1"; S.msRuimte = localStorage.getItem("bros.msRuimte") === "1"; } catch (e) { }
   if (location.hash === "#voorstellen") { S.view = "voorstellen"; history.replaceState(null, "", location.pathname); }
   if (location.hash === "#aankoop" || location.hash === "#aankoop-aannemers") { S.view = "aankoop"; if (location.hash === "#aankoop-aannemers") S.factTab = "aannemers"; history.replaceState(null, "", location.pathname); }   // links uit de mails over facturen (1.49/1.50)
   try { const st = JSON.parse(sessionStorage.getItem("pb-state") || "null"); sessionStorage.removeItem("pb-state"); if (st && st.view) { S.view = st.view; S.project = st.project || null; S.ptab = st.ptab || "taken"; } } catch (e) { }
@@ -3847,7 +3983,7 @@ async function boot() {
 }
 async function start() {
   loader.start("app.load", "Planbord laden…", 2500);
-  try { await loadAll(); if (S.me && S.me.role === "klant") { location.replace("klant/"); return; } if (S.me && S.me.role === "aannemer") { location.replace("aannemer/"); return; } S.ready = true; S.loadError = null; S.laadPoging = 0; render(); loader.done("app.load");
+  try { await loadAll(); if (S.me && S.me.role === "klant") { location.replace("klant/"); return; } if (S.me && S.me.role === "aannemer") { location.replace("aannemer/"); return; } if (S.me && S.me.role === "verwerker") { loader.done("app.load"); $("#app").innerHTML = `<div class="login"><div class="card"><h1>Login van de verwerkingscomputer</h1><p>Deze login is enkel voor de verwerkingscomputer (Mac mini) en kan het Planbord niet gebruiken.</p><button class="btn" data-act="logout">Uitloggen</button></div></div>`; return; } S.ready = true; S.loadError = null; S.laadPoging = 0; render(); loader.done("app.load");
     if (!S.gestart) { S.gestart = true; subscribe(); if (typeof ovAuto === "function") { setTimeout(ovAuto, 5000); setInterval(ovAuto, 120000); } setInterval(checkVersion, 5 * 60 * 1000); setTimeout(checkVersion, 20000); setInterval(() => { if (document.visibilityState === "visible") refetch("instellingen"); }, 30 * 60000); } }   // 1.48.2: instellingen (o.a. de hartslag van het Drive-script) elk half uur vers   // 1.48: na opnieuw inloggen niet dubbel abonneren
   catch (e) {
     loader.fail(); S.loadError = e.message || String(e); render();

@@ -284,6 +284,15 @@
   table.ms .grip:active { cursor: grabbing; }
   table.ms .updown { display: none; }
   table.ms .updown .btn { padding: 0 4px; font-size: 10px; line-height: 16px; }
+  /* 1.55: weergave Marges (geraamde marge zonder aannemersofferte) */
+  .msr-info { display: flex; flex-direction: column; gap: 8px; margin: 0 0 12px; padding: 10px 12px; border-radius: 10px; background: var(--warn-soft); font-size: 13px; }
+  .msr-tot { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 16px; }
+  .msr-tot label { display: inline-flex; align-items: center; gap: 6px; font-weight: 600; }
+  .msr-lot { display: inline-flex; flex-wrap: wrap; align-items: center; gap: 6px; font-weight: 400; font-size: 12px; }
+  .msr-lot select.inline { width: auto; max-width: 190px; }
+  table.ms-marges select.msr-bron { width: 100%; font-size: 12px; }
+  table.ms-marges select.msr-bron.raming { color: var(--warn); }
+  table.ms-marges td small.num { font-size: 11px; text-align: right; }
   @media (hover: none) { table.ms .grip { display: none; } table.ms .updown { display: inline-flex; flex-direction: column; } }
   table.ms tr.dragging { opacity: .4; }
   table.ms tr.drop-before td { box-shadow: inset 0 3px 0 var(--accent); }
@@ -697,6 +706,45 @@
   .fin-mt .neg, .fin-pt .neg, .fin-kpi .neg { color: var(--crit); }
   .fin-pt td { vertical-align: top; } .fin-pt small { display: block; font-size: 11.5px; }
   .fin-pn { max-width: 300px; }
+  /* 1.54: vergaderingen & opnames */
+  .vg-sig { font-size: 12px; } .vg-sig-aan { color: var(--ok); } .vg-sig-uit { color: var(--crit); }
+  .vg-kaarten { display: grid; grid-template-columns: repeat(auto-fit, minmax(230px, 1fr)); gap: 12px; }
+  .vg-kaart .panel-body { display: grid; gap: 6px; font-size: 13px; } .vg-kaart h3 { font-size: 14px; }
+  .vg-banner { display: flex; justify-content: space-between; gap: 12px; align-items: flex-start; margin: 0 0 16px; flex-wrap: wrap; } .vg-concept { border-color: var(--warn); }
+  .vg-pre { white-space: pre-wrap; font-size: 11px; max-height: 200px; overflow: auto; background: var(--surface-2); padding: 8px; border-radius: 6px; }
+  .vg-meta { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; font-size: 13px; }
+  .vg-agenda { margin: 0; padding-left: 18px; display: grid; gap: 4px; }
+  .vg-tr { max-height: 70vh; overflow: auto; padding: 4px 0; }
+  .vg-seg { display: flex; gap: 10px; padding: 5px 14px; align-items: baseline; line-height: 1.45; } .vg-seg:hover { background: var(--surface-2); }
+  .vg-ond { background: color-mix(in srgb, var(--warn) 9%, transparent); } .vg-w { color: var(--warn); font-size: 12px; }
+  .vg-flits { outline: 2px solid var(--accent); outline-offset: -2px; }
+  .vg-bron { flex: none; border: 1px solid var(--line); background: var(--surface); color: var(--ink); border-radius: 999px; padding: 1px 8px; font: 600 11.5px/1.6 var(--font-mono, ui-monospace, monospace); cursor: pointer; white-space: nowrap; }
+  .vg-bron:hover { background: var(--surface-2); } .vg-geenbron { cursor: default; color: var(--muted); }
+  .vg-ta { width: 100%; resize: vertical; font: inherit; border: 1px solid var(--line); border-radius: 8px; padding: 8px 10px; background: var(--surface); color: var(--ink); }
+  .vg-ta:disabled { background: var(--surface-2); }
+  .vg-ond-rij { display: grid; gap: 6px; padding: 8px 0; border-bottom: 1px solid var(--line); } .vg-ond-rij:last-child { border-bottom: 0; }
+  .vg-ond-kop { display: flex; gap: 8px; align-items: center; } .vg-ond-kop input { flex: 1; font-weight: 600; }
+  .vg-pts { display: grid; } .vg-leeg { padding: 12px 16px; font-size: 13px; }
+  .vg-pt { display: flex; gap: 12px; padding: 12px 16px; border-top: 1px solid var(--line); align-items: flex-start; } .vg-pt:first-child { border-top: 0; }
+  .vg-pt-in { flex: 1; min-width: 0; display: grid; gap: 5px; }
+  .vg-kritiek { box-shadow: inset 3px 0 0 var(--warn); } .vg-st-afgewezen { opacity: .62; } .vg-st-bevestigd, .vg-st-gecorrigeerd { box-shadow: inset 3px 0 0 var(--ok); }
+  .vg-tags { display: flex; flex-wrap: wrap; gap: 4px; } .vg-tags:empty { display: none; }
+  .vg-tekst { font-weight: 600; } .vg-weg { text-decoration: line-through; } .vg-vw { font-size: 13px; } .vg-wie { font-size: 13px; }
+  .vg-cit { font-size: 12.5px; color: var(--muted); font-style: italic; } .vg-link { border: 0; background: none; color: var(--accent); cursor: pointer; font: inherit; font-style: normal; padding: 0; text-decoration: underline; }
+  .vg-wl { margin: 0; padding: 0; list-style: none; font-size: 12.5px; color: var(--warn); display: grid; gap: 2px; }
+  .vg-oordeel { font-size: 12.5px; } .vg-o-bevestigd, .vg-o-gecorrigeerd { color: var(--ok); } .vg-o-afgewezen { color: var(--crit); } .vg-oordeel .muted { color: var(--muted); }
+  .vg-taak { font-size: 13px; }
+  .vg-knop { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 2px; }
+  .vg-actie { display: grid; gap: 6px; } .vg-actie-velden { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
+  .vg-actie-velden .inline, .vg-bewerk input.inline, .vg-bewerk select.inline, .vg-ond-kop input.inline { width: auto; border: 1px solid var(--line); border-radius: 8px; padding: 5px 8px; background: var(--surface); color: var(--ink); font: inherit; }
+  .vg-actie-velden input.inline:not([type=date]):not([type=checkbox]) { flex: 1 1 240px; min-width: 0; } .vg-actie-velden select.inline { flex: 0 1 200px; } .vg-actie-velden input[type=date].inline { flex: 0 0 160px; }
+  .vg-bewerk input.inline { width: 100%; } .vg-ond-kop input.inline { flex: 1; font-weight: 600; }
+  .vg-afronden .btn[disabled], .vg-knop .btn[disabled] { opacity: .45; cursor: not-allowed; } .vg-lijkt { font-size: 12.5px; display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
+  .vg-bewerk { display: grid; gap: 6px; } .vg-nieuw { background: var(--surface-2); }
+  .vg-afronden .panel-body { display: flex; justify-content: space-between; gap: 12px; align-items: center; flex-wrap: wrap; }
+  .vg-speler { position: fixed; left: 50%; transform: translateX(-50%); bottom: 16px; z-index: 55; display: flex; gap: 10px; align-items: center; background: var(--surface); border: 1px solid var(--line); box-shadow: var(--shadow); border-radius: 14px; padding: 8px 10px 8px 14px; max-width: calc(100vw - 32px); }
+  .vg-speler[hidden] { display: none; } .vg-speler audio { height: 36px; width: min(460px, 60vw); } .vg-sp-t { font-size: 12.5px; font-weight: 600; max-width: 220px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  @media (max-width: 640px) { .vg-pt { flex-direction: column; gap: 6px; } .vg-sp-t { display: none; } .vg-speler { bottom: 8px; } }
   .pst-knop { border: 0; font-family: inherit; cursor: pointer; } .pst-knop:hover { filter: brightness(.96); } .pst-knop:focus-visible { outline: 2px solid var(--accent, #2a78d6); outline-offset: 2px; }
   .pst-pijl { font-size: 9px; opacity: .65; margin-left: 1px; }
   .pst-menu { position: fixed; z-index: 60; min-width: 170px; padding: 6px; background: var(--surface); border: 1px solid var(--line); border-radius: 12px; box-shadow: var(--shadow); display: flex; flex-direction: column; gap: 2px; }
@@ -719,23 +767,24 @@
 <div class="toast" id="toast" role="status"></div>
 <div class="loader" id="loader" aria-live="polite"><div class="logo"><i class="base"></i><i class="fill" id="loaderFill"></i></div><div class="pct" id="loaderPct">0%</div><div class="msg" id="loaderMsg">Even geduld…</div></div>
 <script src="vendor/supabase-2.45.4.js"></script>
-<script src="config.js?v=1.53.0"></script>
+<script src="config.js?v=1.55.0"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
-<script src="postcodes.js?v=1.53.0"></script>
-<script src="meetstaat-export.js?v=1.53.0"></script>
-<script src="meetstaat-import.js?v=1.53.0"></script>
+<script src="postcodes.js?v=1.55.0"></script>
+<script src="meetstaat-export.js?v=1.55.0"></script>
+<script src="meetstaat-import.js?v=1.55.0"></script>
 <!-- tekenmodule: deze drie scripts horen bij het tabblad Plannen — niet verwijderen -->
-<script src="vendor/dxf-parser.js?v=1.53.0"></script>
-<script src="symbolen.js?v=1.53.0"></script>
-<script src="tekenen.js?v=1.53.0"></script>
-<script src="agenda.js?v=1.53.0"></script>
-<script src="afspraken.js?v=1.53.0"></script>
-<script src="kp-beheer.js?v=1.53.0"></script>
-<script src="pv-beheer.js?v=1.53.0"></script>
-<script src="af-beheer.js?v=1.53.0"></script>
-<script src="deb-beheer.js?v=1.53.0"></script>
-<script src="wacht.js?v=1.53.0"></script>
-<script src="fin-planning.js?v=1.53.0"></script>
-<script src="app.js?v=1.53.0"></script>
+<script src="vendor/dxf-parser.js?v=1.55.0"></script>
+<script src="symbolen.js?v=1.55.0"></script>
+<script src="tekenen.js?v=1.55.0"></script>
+<script src="agenda.js?v=1.55.0"></script>
+<script src="afspraken.js?v=1.55.0"></script>
+<script src="kp-beheer.js?v=1.55.0"></script>
+<script src="pv-beheer.js?v=1.55.0"></script>
+<script src="af-beheer.js?v=1.55.0"></script>
+<script src="deb-beheer.js?v=1.55.0"></script>
+<script src="wacht.js?v=1.55.0"></script>
+<script src="fin-planning.js?v=1.55.0"></script>
+<script src="vergaderingen.js?v=1.55.0"></script>
+<script src="app.js?v=1.55.0"></script>
 </body>
 </html>

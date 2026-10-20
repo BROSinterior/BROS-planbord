@@ -47,8 +47,9 @@ function finProject(p, f, I, scen) {
   const nogTe = (d) => d < todayIso ? todayIso : d;
   // omzet en kostprijs (excl. btw)
   const mPct = f && f.marge_pct != null ? Number(f.marge_pct) : I.marge;
-  const t = p ? msTotals(p.id) : null; let O = 0, K = 0, bron = "geen";
-  if (t && t.n && Math.abs(t.verkoop + t.meerwerk) > 0.005) { O = r2(t.verkoop + t.meerwerk); K = r2(t.kost); bron = "meetstaat"; if (!(K > 0)) waarsch.push("de meetstaat heeft nog geen kostprijzen — marge onbekend"); }
+  const t = p ? msTotals(p.id) : null; let O = 0, K = 0, bron = "geen", raming = null;
+  if (t && t.n && Math.abs(t.verkoop + t.meerwerk) > 0.005) { O = r2(t.verkoop + t.meerwerk); K = r2(t.kost); bron = "meetstaat"; if (!(K > 0)) waarsch.push("de meetstaat heeft nog geen kostprijzen — marge onbekend");
+    if (t.nRaming) raming = { n: t.nRaming, verkoop: t.verkoopRaming, kost: t.kostRaming, marge: t.margeRaming }; }   // 1.55: posten zonder aannemersofferte met een geraamde marge
   else if (f && f.budget_excl != null) { O = Number(f.budget_excl); K = r2(O / (1 + mPct)); bron = "budget"; }
   else if (p && Number(p.forfait)) { O = Number(p.forfait); K = r2(O / (1 + mPct)); bron = "forfait"; }
   else waarsch.push("geen bedrag — vul een budget in of maak een meetstaat");
@@ -121,13 +122,13 @@ function finProject(p, f, I, scen) {
     plan.forEach((x, i) => { const c = addDays(x.datum, I.aannemer_termijn); kosten.push({ datum: x.datum, bedrag: gw[i], bruto: x.bruto, cash: c < todayIso ? null : c, naam: x.naam, soort: "gepland" }); });
   }
   if (A > K + 0.5 && K > 0.5) waarsch.push("aannemersfacturen (" + eur(A) + ") hoger dan de kostprijs in de meetstaat (" + eur(K) + ")");
-  return { key: p ? p.id : "f:" + f.id, p, f, geraamd, naam: p ? (p.nummer ? p.nummer + " · " : "") + projName(p) : f.naam, status, getekend, kans, gewicht, start, eind, echtStart, O, K, marge: r2(O - K), bron, R, inkomsten, kosten, waarsch, eigenPlan: !!(f && Array.isArray(f.plan) && f.plan.length) };
+  return { key: p ? p.id : "f:" + f.id, p, f, geraamd, naam: p ? (p.nummer ? p.nummer + " · " : "") + projName(p) : f.naam, status, getekend, kans, gewicht, start, eind, echtStart, O, K, marge: r2(O - K), bron, raming, R, inkomsten, kosten, waarsch, eigenPlan: !!(f && Array.isArray(f.plan) && f.plan.length) };
 }
 /* 1.53: een project dat je zelf uitzet (fin_plan.meetellen = false) telt nergens mee — enkel de projectlijst toont het (ook = true) */
 const finTeltMee = (f) => !(f && f.meetellen === false);
 function finModel(scen, ook) {
   const I = finInst(); const uit = [];
-  projects().filter(p => p.status !== "verloren").forEach(p => uit.push(finProject(p, finPlanVan(p.id), I, scen)));
+  projects().filter(p => p.status !== "verloren" && !p.intern).forEach(p => uit.push(finProject(p, finPlanVan(p.id), I, scen)));   // 1.54: het interne project telt niet mee
   Object.values(S.fin_plan || {}).filter(x => !x.project_id).forEach(f => uit.push(finProject(null, f, I, scen)));
   uit.forEach(x => x.uit = !finTeltMee(x.f));
   return ook ? uit : uit.filter(x => !x.uit);
@@ -235,7 +236,7 @@ function vFinPlanning() {
       <td>${x.geraamd ? `<span class="pill">Geraamd</span>` : typeof projStatusKnop === "function" ? projStatusKnop(x.p) : `<span class="pill st-${x.status}">${PROJ_STATUS[x.status]}</span>`}</td>
       <td class="r" style="white-space:nowrap">${x.getekend ? `<span class="muted">100 %</span>` : `<input class="inline num fin-kans" data-fin-kans data-k="${esc(x.key)}" type="text" inputmode="numeric" value="${x.f && x.f.kans != null ? x.f.kans : ""}" placeholder="${finInst().kans}" aria-label="Slaagkans ${esc(x.naam)}">%`}</td>
       <td>${datumVeld(x, "start")}</td><td>${datumVeld(x, "eind")}</td>
-      <td class="r num">${eur(x.O)}</td><td class="r num" title="Marge op kostprijs: ${x.K ? finPct(x.marge / x.K) : "—"}">${eur(x.marge)}<small class="muted">${x.O ? finPct(x.marge / x.O) : ""}</small></td>
+      <td class="r num">${eur(x.O)}</td><td class="r num" title="Marge op kostprijs: ${x.K ? finPct(x.marge / x.K) : "—"}${x.raming ? ` · waarvan geraamd: ${eur(x.raming.marge)} op ${eur(x.raming.verkoop)} zonder offerte van een aannemer` : ""}">${x.raming ? `<span class="muted" aria-label="deels geraamd">≈ </span>` : ""}${eur(x.marge)}<small class="muted">${x.O ? finPct(x.marge / x.O) : ""}${x.raming ? (Math.abs(x.raming.verkoop - x.O) < 0.5 ? " · geraamd" : " · deels geraamd") : ""}</small></td>
       <td class="r num">${gefT ? eur(gefT) : "—"}</td><td class="r num">${x.R > 0.5 ? eur(x.R) : "—"}</td><td class="r num">${x.uit ? `<span class="muted">—</span><small class="muted">zelf uitgezet</small>` : `<b>${j.o ? eur(j.o) : "—"}</b>`}${x.uit ? "" : !x.getekend && x.gewicht < 1 && x.gewicht > 0 ? `<small class="muted">gewogen ${Math.round(x.gewicht * 100)} %</small>` : !x.getekend && x.gewicht === 0 ? `<small class="muted">telt niet mee</small>` : ""}</td></tr>`; };
   const nk = kanUit ? 11 : 10;
   const projTabel = `<div class="tw"><table class="t fin-pt"><thead><tr>${kanUit ? `<th class="fin-in" title="Zelf kiezen welke projecten meetellen">Telt mee</th>` : ""}<th>Project</th><th>Status</th><th class="r">Kans</th><th>Start</th><th>Geplande einde</th><th class="r">Omzet</th><th class="r">Marge</th><th class="r">Gefactureerd</th><th class="r">Nog te factureren</th><th class="r">In ${jaar}</th></tr></thead><tbody>
@@ -261,7 +262,7 @@ function vFinPlanning() {
     <div class="panel"><div class="panel-head"><h3>Binnen en buiten per maand</h3><div class="fin-leg"><span><i class="fin-sw s3"></i>Binnen (ontvangsten)</span><span><i class="fin-sw s4"></i>Buiten (aannemers + vaste kosten)</span></div></div><div class="panel-body">${finGrafiekKasstroom(R)}</div></div>
   </div>
   <div class="panel" style="margin-bottom:16px"><div class="panel-head"><h3>Per maand · ${jaar}</h3><span class="muted" style="font-size:12px">bedragen in euro (k = duizend)</span></div>${maandTabel()}</div>
-  <div class="panel" style="margin-bottom:16px"><div class="panel-head"><h3>Projecten</h3><div class="actions"><span class="muted" style="font-size:12px">klik op een project voor het facturatieplan · marges per post in de meetstaat${kanUit ? " · vink uit wat niet mag meetellen" : ""}</span><button class="btn sm" data-fin-act="geraamd">+ Geraamd project</button></div></div>${projTabel}
+  <div class="panel" style="margin-bottom:16px"><div class="panel-head"><h3>Projecten</h3><div class="actions"><span class="muted" style="font-size:12px">klik op een project voor het facturatieplan · ≈ marge (deels) geraamd: pas ze aan in de meetstaat › Marges${kanUit ? " · vink uit wat niet mag meetellen" : ""}</span><button class="btn sm" data-fin-act="geraamd">+ Geraamd project</button></div></div>${projTabel}
     <div class="panel-body muted" style="font-size:12px;border-top:1px solid var(--line)">Pijplijn (offertes en geraamde projecten, gewogen met hun kans): <b>${eur(pipeline)}</b> nog te factureren.${nUit ? ` · <b>${nUit}</b> ${nUit === 1 ? "project staat" : "projecten staan"} zelf uitgezet en ${nUit === 1 ? "telt" : "tellen"} nergens mee (ook niet in Excel en pdf).` : ""}</div></div>
   <div class="fin-onder" style="margin-bottom:16px">
     <div class="panel"><div class="panel-head"><h3>Meerjarenoverzicht</h3><span class="muted" style="font-size:12px">voor een businessplan · scenario ${FIN_SCEN[scen].toLowerCase()}</span></div>
@@ -293,7 +294,7 @@ function finInstForm() {
     <div class="form-grid">
       ${veld("voorschot", "Voorschot bij de start (%)", "van de omzet, als er nog geen voorschot is", "pct")}${veld("slot", "Slotfactuur bij oplevering (%)", "", "pct")}
       ${veld("klant_termijn", "Betaaltermijn klanten (dagen)", "", "getal")}${veld("aannemer_termijn", "Betaaltermijn aannemers (dagen)", "", "getal")}
-      ${veld("duur", "Standaard looptijd (maanden)", "als een project geen einddatum heeft", "getal")}${veld("marge", "Standaard marge op kostprijs (%)", "voor projecten met een budget of forfait", "pct")}
+      ${veld("duur", "Standaard looptijd (maanden)", "als een project geen einddatum heeft", "getal")}${veld("marge", "Standaard marge op kostprijs (%)", "voor projecten met een budget of forfait, en voor meetstaatposten zonder offerte van een aannemer", "pct")}
       ${veld("kans", "Standaard slaagkans offertes (%)", "", "getal")}${veld("index", "Indexatie vaste kosten per jaar (%)", "", "pct")}
       ${veld("vz_drempel", "Voorzichtig: offertes vanaf kans (%)", "en", "getal")}${veld("vz_vertraging", "Voorzichtig: later gestart (maanden)", "", "getal")}
       ${veld("opt_drempel", "Optimistisch: offertes vanaf kans (%)", "tellen volledig", "getal")}
@@ -320,9 +321,10 @@ function finPlanForm(key, nieuw) {
   const echte = x ? x.inkomsten.filter(i => i.soort !== "gepland") : []; const auto = x ? x.inkomsten.filter(i => i.soort === "gepland") : [];
   const planRijen = eigen ? f.plan.map(r => ({ datum: r.datum, pct: Number(r.pct) })) : auto.map(i => ({ datum: i.datum, pct: x.R ? i.bruto / x.R : 0 }));
   const rijHtml = finRijHtml;
-  const bronTekst = x ? (x.bron === "meetstaat" ? `Omzet en kostprijs komen uit de <a href="#" data-fin-act="naar-ms" data-pid="${p.id}">meetstaat</a> (marge per post of per lot): omzet ${eur(x.O)}, kostprijs ${eur(x.K)}, marge ${eur(x.marge)}.` : x.bron === "forfait" ? `Omzet = het forfait van het project (${eur(x.O)}); kostprijs volgens de marge hieronder. Zodra er een meetstaat is, telt die.` : x.bron === "budget" ? `Omzet = het budget hieronder; kostprijs volgens de marge. Zodra er een meetstaat is, telt die.` : `Nog geen bedrag: vul een budget in (of maak een meetstaat).`) : "";
+  const bronTekst = x ? (x.bron === "meetstaat" ? `Omzet en kostprijs komen uit de <a href="#" data-fin-act="naar-ms" data-pid="${p.id}">meetstaat</a> (marge per post of per lot): omzet ${eur(x.O)}, kostprijs ${eur(x.K)}, marge ${eur(x.marge)}.${x.raming ? ` Waarvan <b>geraamd</b>: ${x.raming.n} post${x.raming.n === 1 ? "" : "en"} zonder offerte van een aannemer (${eur(x.raming.verkoop)}) met een marge van ${eur(x.raming.marge)} — <a href="#" data-fin-act="naar-ms" data-marges="1" data-pid="${p.id}">marges aanpassen</a>.` : ""}` : x.bron === "forfait" ? `Omzet = het forfait van het project (${eur(x.O)}); kostprijs volgens de marge hieronder. Zodra er een meetstaat is, telt die.` : x.bron === "budget" ? `Omzet = het budget hieronder; kostprijs volgens de marge. Zodra er een meetstaat is, telt die.` : `Nog geen bedrag: vul een budget in (of maak een meetstaat).`) : "";
   const budgetVelden = (geraamd || (x && x.bron !== "meetstaat")) ? `<div class="field"><label for="fp_budget">${geraamd ? "Verwachte omzet" : "Budget"} (€, excl. btw)</label><input id="fp_budget" name="budget" type="text" inputmode="decimal" value="${f && f.budget_excl != null ? getalVeld(f.budget_excl) : ""}" placeholder="${p && Number(p.forfait) ? getalVeld(p.forfait) : ""}"></div>
-      <div class="field"><label for="fp_marge">Marge op kostprijs (%)</label><input id="fp_marge" name="marge" type="text" inputmode="decimal" value="${f && f.marge_pct != null ? pctVeld(f.marge_pct) : ""}" placeholder="${pctVeld(I.marge)}"></div>` : "";
+      <div class="field"><label for="fp_marge">Marge op kostprijs (%)</label><input id="fp_marge" name="marge" type="text" inputmode="decimal" value="${f && f.marge_pct != null ? pctVeld(f.marge_pct) : ""}" placeholder="${pctVeld(I.marge)}"></div>`
+    : x && x.bron === "meetstaat" && typeof msRamingKlaar === "function" && msRamingKlaar() ? `<div class="field"><label for="fp_marge">Standaardmarge zonder aannemersofferte (%)</label><input id="fp_marge" name="marge" type="text" inputmode="decimal" value="${f && f.marge_pct != null ? pctVeld(f.marge_pct) : ""}" placeholder="${pctVeld(I.marge)}"><small class="muted">Op de kostprijs, voor meetstaatposten zonder offerte van een aannemer (de klantprijs verandert niet). Per lot of post aan te passen in de meetstaat › Marges.</small></div>` : "";
   openModal(geraamd ? (nieuw ? "Geraamd project toevoegen" : "Geraamd project") : "Financiële planning · " + (p.nummer ? p.nummer + " " : "") + projName(p), `
     ${geraamd ? `<p class="muted" style="margin-top:0">Een verwachte opdracht die nog niet in het Planbord staat — bv. voor een businessplan ("2 renovaties via architect X in 2027"). Wordt het een echt project, verwijder het dan hier.</p>` : `<p class="muted" style="margin-top:0">${bronTekst}</p>`}
     <div class="form-grid">
@@ -347,6 +349,7 @@ function finPlanForm(key, nieuw) {
       try {
         if (geraamd) { patch.naam = String(d.naam || "").trim(); if (!patch.naam) { toast("Geef een omschrijving."); return false; } patch.start = d.start || null; patch.eind = d.eind || null; if (patch.start && patch.eind && patch.eind < patch.start) { toast("Het einde ligt vóór de start."); return false; } }
         if ("budget" in d) { const b = pc("budget"); patch.budget_excl = b; const m = pc("marge"); patch.marge_pct = m == null ? null : m / 100; }
+        else if ("marge" in d) { const m = pc("marge"); if (m != null && (m < -99 || m >= 1000)) { toast("Geef een marge tussen -99 en 1000 %."); return false; } patch.marge_pct = m == null ? null : Math.round(m * 100) / 1e4; }   // 1.55: standaardmarge voor geraamde meetstaatposten
         if ("kans" in d) { const k = pc("kans"); if (k != null && (k < 0 || k > 100)) { toast("Kans tussen 0 en 100 %."); return false; } patch.kans = k == null ? null : Math.round(k); }
         const vs = pc("voorschot"), sl = pc("slot"); patch.voorschot_pct = vs == null ? null : vs / 100; patch.slot_pct = sl == null ? null : sl / 100;
         if ((patch.voorschot_pct || 0) < 0 || (patch.slot_pct || 0) < 0 || (patch.voorschot_pct ?? I.voorschot) + (patch.slot_pct ?? I.slot) > 1) { toast("Voorschot en slotfactuur samen moeten tussen 0 en 100 % liggen."); return false; }
@@ -368,7 +371,7 @@ document.addEventListener("click", async (e) => {
   if (e.target.closest("#modal [data-fin-rijweg]")) { e.target.closest("tr").remove(); MODAL.dirty = true; return; }
   if (e.target.closest("#modal [data-fin-rijplus]")) { const tb = document.querySelector("#fin-planrijen"); if (tb) { tb.insertAdjacentHTML("beforeend", finRijHtml({ datum: "", pct: 0 }, "n" + Date.now())); MODAL.dirty = true; } return; }
   const el = e.target.closest("[data-fin-act]"); if (!el) return; const d = el.dataset;
-  if (d.finAct === "naar-ms") { e.preventDefault(); if (closeModal() === false) return; S.view = "projecten"; S.project = d.pid; S.ptab = "meetstaat"; render(); window.scrollTo({ top: 0 }); return; }
+  if (d.finAct === "naar-ms") { e.preventDefault(); if (closeModal() === false) return; S.view = "projecten"; S.project = d.pid; S.ptab = "meetstaat"; if (d.marges) { S.msMarges = true; S.msKlant = false; try { localStorage.setItem("bros.msMarges", "1"); localStorage.setItem("bros.msKlant", ""); } catch (x) { } } render(); window.scrollTo({ top: 0 }); return; }
   if (d.finAct === "raptab") { S.rapTab = d.t; render(); return; }
   if (d.finAct === "scen") { S.finScen = d.s; render(); return; }
   if (d.finAct === "inst") return finInstForm();
@@ -416,7 +419,7 @@ function finExportData() {
 const finStatusTekst = (x) => x.geraamd ? "Geraamd" : PROJ_STATUS[x.status] || x.status;
 const finMethode = (E) => [
   "Alle bedragen zijn exclusief btw. Scenario: " + FIN_SCEN[E.scen].toLowerCase() + ".",
-  "Omzet en kostprijs per project komen uit de meetstaat in het Planbord (kostprijs van de aannemers plus de marge van BROS per post of per lot). Projecten zonder meetstaat rekenen met hun budget of forfait en een marge van " + finPct(E.I.marge) + " op de kostprijs.",
+  "Omzet en kostprijs per project komen uit de meetstaat in het Planbord (kostprijs van de aannemers plus de marge van BROS per post of per lot). Voor posten zonder offerte van een aannemer is de kostprijs geraamd: klantprijs min de marge die BROS ervoor aanduidt (standaard " + finPct(E.I.marge) + " op de kostprijs). Projecten zonder meetstaat rekenen met hun budget of forfait en een marge van " + finPct(E.I.marge) + " op de kostprijs.",
   "Gefactureerde omzet = verzonden en betaalde facturen (vorderingen). Wat nog gefactureerd moet worden, is ingepland: voorschot " + finPct(E.I.voorschot) + " bij de start, gelijke vorderingen per maand tijdens de uitvoering en een slotfactuur van " + finPct(E.I.slot) + " bij de oplevering, tenzij er per project een eigen plan is.",
   "Aankopen: de kostprijs wordt gelijk gespreid over de uitvoeringsperiode; ontvangen aannemersfacturen zijn eerst verrekend. Klanten betalen na " + Math.round(E.I.klant_termijn) + " dagen, aannemers worden betaald na " + Math.round(E.I.aannemer_termijn) + " dagen.",
   "Offertes en geraamde projecten: " + (E.scen === "verwacht" ? "meegerekend in verhouding tot hun slaagkans (bv. 60 % kans = 60 % van de bedragen)." : E.scen === "voorzichtig" ? "enkel bij een slaagkans vanaf " + E.I.vz_drempel + " %, in verhouding tot die kans, en " + E.I.vz_vertraging + " maand(en) later gestart dan gepland." : "volledig meegerekend vanaf een slaagkans van " + E.I.opt_drempel + " %, de andere in verhouding tot hun kans."),

@@ -1,0 +1,16 @@
+{
+  "naam": "macmini",
+  "supabase_url": "https://JOUWPROJECT.supabase.co",
+  "supabase_anon_key": "zelfde publieke sleutel als in config.js",
+  "email": "verwerker@bros.be",
+  "drive_script_url": "https://script.google.com/macros/s/…/exec",
+  "whisper_cli": "/opt/homebrew/bin/whisper-cli",
+  "ffmpeg": "/opt/homebrew/bin/ffmpeg",
+  "ffprobe": "/opt/homebrew/bin/ffprobe",
+  "whisper_model": "/Users/NAAM/Library/Application Support/BROS-verwerker/modellen/ggml-large-v3-turbo-q5_0.bin",
+  "vad_model": "/Users/NAAM/Library/Application Support/BROS-verwerker/modellen/ggml-silero-v6.2.0.bin",
+  "whisper_threads": 4,
+  "deel_minuten": 10,
+  "min_vrij_gb": 15,
+  "llm": { "model": "claude-sonnet-5-5", "tweede_controle": false }
+}

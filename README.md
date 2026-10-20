@@ -16,7 +16,7 @@ Statische webapp (geen build-stap) op een Supabase-database.
 | `version.json` | versienummer (enkel de laatste versie); de app meldt een nieuwe versie aan wie ze open heeft |
 | `CHANGELOG.md` | versiegeschiedenis (vanaf 1.48 niet meer in version.json) |
 | `vendor/supabase-2.45.4.js` (+ `591.supabase.js`) | de Supabase-bibliotheek, zelf gehost (geen CDN nodig) |
-| `sql/001_init.sql` … `sql/050_*.sql` | databasescripts, in volgorde uit te voeren (`versie_schema` in instellingen bewaakt de volgorde vanaf 022) |
+| `sql/001_init.sql` … `sql/052_*.sql` | databasescripts, in volgorde uit te voeren (`versie_schema` in instellingen bewaakt de volgorde vanaf 022) |
 | `drive/Code.gs` | Google Apps Script dat projectmappen aanmaakt/koppelt op Drive en de meetstaat-export wegschrijft (installatie: zie bovenaan dat bestand) |
 | `drive/YukiArchief.gs` | klein Apps Script voor het account archief@bros.be: leest daar de Yuki-factuurmails en stuurt ze naar het Drive-script (v1.50.1, zie *Yuki-mails uit archief@bros.be*) |
 | `agenda.js` | gedeeld (Planbord en portalen): agendabestand (.ics) en Google Agenda-link voor afspraken (script 041) |
@@ -27,6 +27,8 @@ Statische webapp (geen build-stap) op een Supabase-database.
 | `aannemer/` | het aannemersportaal (index.html + aannemer.js): werfpunten afwerken, plannen, verslagen, documenten, planning, prijsaanvragen, facturen, vragen aan BROS; `handleiding.json` = de handleiding (ook de bron van de hulp-assistent) |
 | `af-beheer.js` | Planbord: facturen van aannemers opvolgen (Facturatie per project en tabblad Facturen › Aannemers, script 047) |
 | `fin-planning.js` | Planbord: Rapporten › Financiële planning — jaarplanning, businessplan, pdf en Excel voor de bank (script 049, enkel beheer; projecten in/uit: script 050) |
+| `vergaderingen.js` | Planbord: tabblad Vergaderingen per project (opname opladen, transcript, conceptverslag controleren, taken) en het overzicht van het interne project (script 051) |
+| `verwerker/` | de verwerkingscomputer (Mac mini): `bros_verwerker.py`, `installeer.sh`, `LEESMIJ.md` (installatie, praktijktest, kosten, gegevensstromen) |
 | `wacht.js` | Planbord: *Wacht op jou* bovenaan het Overzicht en het accountmenu onder je naam (v1.51) |
 | `deb-beheer.js` | Planbord: tabblad Facturen › Klanten — openstaande facturen, betalingen uit Yuki, betalingsherinneringen goedkeuren (script 048) |
 | `supabase/functions/assistent/` | Edge Function van de AI-assistent (in Supabase te deployen, sleutel als secret) |
@@ -169,6 +171,32 @@ Activeren (eenmalig):
 4. Edge Function `assistent` opnieuw plakken (weigert nu aannemerslogins) en pushen.
 
 Gebruik: Dossier › Contacten → bij een aannemer de knop **Aannemersportaal** (beheer) → hij krijgt een mail met een persoonlijke link. Instellingen → Klantenportaal toont wie toegang heeft (klant/aannemer). Een aannemer die op het Planbord of het klantenportaal inlogt, wordt doorgestuurd.
+
+## Marges zonder offerte van een aannemer (script 052, v1.55) — enkel beheer
+
+Veel meetstaten zijn met klantprijzen uit Excel ingelezen: kostprijs = klantprijs, marge 0 %. Daardoor zag de financiële planning daar € 0 marge. Nu duid je per post of per lot aan of er een **offerte van een aannemer** achter zit en hoeveel **marge** BROS op de rest heeft.
+
+- **De klantprijs verandert nooit.** De marge bepaalt enkel de *geraamde* kostprijs: kost = klantprijs / (1 + marge %) of klantprijs − marge in €. Die geraamde kost telt in de marge van de meetstaat (≈) en in de financiële planning.
+- Meetstaat › knop **Marges** (beheer, niet in klantweergave): per lot een bron en een marge, per post een bron en een marge. Typ `25` (= 25 % op de kostprijs) of `€ 1.500` (bedrag; voor een lot evenredig verdeeld over de geraamde posten). Leeg = overerven: **post › lot › standaard van het project › algemene standaard** (Financiële planning › Uitgangspunten, 25 %).
+- **Bron automatisch**: gegund via een prijsvraag of met een eigen kostprijs/marge (≠ 0 %) = offerte aannemer (de ingevulde kostprijs telt), en lot 21 (extra budget bouwheer) telt als doorgerekend zonder marge; al de rest = raming. Een marge groter dan de klantprijs geeft hoogstens kost 0; posten met klantprijs 0 krijgen geen marge. Per lot of post kan je dat omzetten (*Offerte aannemer* / *Geen offerte (raming)*).
+- De standaardmarge van een project zet je bovenaan in Marges of in Financiële planning › project (veld *Standaardmarge zonder aannemersofferte*).
+- Alleen beheer ziet of wijzigt dit (tabel `ms_raming`, RLS). Klanten, aannemers en medewerkers zien niets; de pdf/Excel voor de klant blijven ongewijzigd.
+
+Activeren: Supabase → SQL Editor → `sql/052_marges_raming.sql` → Run (na 051; controle `1 | 1 | 52`). Optioneel: nieuw `drive/Code.gs` (neemt `ms_raming` mee in de wekelijkse back-up) als `Code.ingevuld.gs` plakken en een nieuwe versie deployen.
+
+## Vergaderingen & opnames (script 051, v1.54)
+
+Per project (ook *BROS — Interne werking*) een tabblad **Vergaderingen**: vergadering aanmaken → opname opladen (telefoon of computer) → de **verwerkingscomputer** (Mac mini) maakt lokaal een transcript en (optioneel, cloud-API) een conceptverslag → **menselijke controle** → bevestigde taken. Alles wat de AI maakt, is een concept tot iemand het controleert. Er wordt nooit iets automatisch gewijzigd in offertes, bestellingen, meetstaten of facturatie.
+
+- **Installeren:** `sql/051_vergaderingen.sql` (controle `6 | 6 | 1 | 1`), het nieuwe `drive/Code.gs` (actie `opname`, nieuwe versie online zetten), en de verwerkingscomputer volgens **`verwerker/LEESMIJ.md`** (login met rol *verwerker* koppelen via Instellingen › Vergaderingen & opnames).
+- **Per vergadering:** onderwerp, datum, deelnemers (team, projectcontacten, vrije namen), controleur; status *Geen opname → In wachtrij → Wordt verwerkt → Klaar voor controle → Gecontroleerd* (of *Mislukt*, met een begrijpelijke melding). Speler met bronfragmenten, transcript met tijden (onduidelijke passages gemarkeerd), bewerkbaar verslag in de BROS-indeling: korte samenvatting, besproken onderwerpen, beslissingen (besloten / voorgesteld / besproken, met voorwaarden), open vragen, actiepunten, mogelijk meerwerk, kritieke gegevens.
+- **Controle:** per punt *Juist*, *Aanpassen* (wordt *gecorrigeerd*, de AI-versie blijft bewaard), *Afwijzen* (met reden) of *+ Toevoegen* (gemist punt, met de huidige afspeeltijd als bron). Kritieke gegevens (bedragen, maten, codes, datums …) komen ook zonder AI op de lijst. Automatische waarschuwingen bij een weggelaten voorwaarde of ontkenning, een getal of naam dat niet in de bron staat, een citaat dat niet terug te vinden is; een ontbrekende waarschuwing is geen bewijs van juistheid. Afronden kan pas als alles beoordeeld is, door de controleur of een beheerder.
+- **Taken:** een actiepunt wordt pas een taak na bevestiging (met link naar de vergadering en het bronfragment; verantwoordelijke/deadline leeg = *nog te bepalen*). Lijkt het op een bestaande taak, dan stelt het Planbord *koppelen* voor. Nooit dubbel: ook niet bij opnieuw bevestigen of opnieuw verwerken. *Volgende vergadering* neemt open taken en open beslissingen/vragen mee als agenda.
+- **Toegang:** beheer, de projectlead en de leden van de vergadering (wie ze aanmaakte, de controleur en de deelnemers van BROS — wie toegang nodig heeft, voeg je toe als deelnemer); het interne project: het hele team. De projectlead, het interne project en de controleur kan niet iedereen wijzigen (beheer, resp. beheer/aanmaker/projectlead). Ook afspelen en downloaden van de opname en het ophalen van opdrachten zijn zo beveiligd. De klant ziet **niets**, behalve een gecontroleerd verslag dat de controleur of een beheerder expliciet deelt (*Delen met de klant…*: enkel de gekozen onderdelen, nooit opname, transcript of interne opmerking; heropenen stopt het delen).
+- **Opslag:** de upload gaat in delen van 20 MB naar de privé-opslag `opnames`; het origineel gaat daarna naar de projectmap op Drive (`Vergaderingen/…`) en de uploaddelen worden pas weggehaald als die kopie gecontroleerd is (MD5). In de opslag blijft een kleine afspeelkopie (~14 MB/uur).
+- **Interne werking:** het bestaande project BROS (zelfde id, taken en historiek) heet nu *BROS — Interne werking* en heeft een tabblad *Overzicht* met komende vergaderingen, te controleren verslagen, open beslissingen en de interne takenlijst. Het telt niet mee in de financiële planning.
+- **Proefperiode:** Instellingen › *Evaluatie proefperiode* (juist / gecorrigeerd / afgewezen / gemist per soort, verwerkingsmetingen, CSV-export van het logboek). Per vergadering: tabblad *Logboek*.
+- **Kosten:** het Claude-abonnement dekt de API niet; het conceptverslag gebruikt een apart Anthropic API-account (per verbruik). Zonder API-sleutel: enkel transcript en kritieke gegevens. Zie `verwerker/LEESMIJ.md` §2.
 
 ## Goedgekeurd voorstel annuleren (script 050, v1.53) — enkel beheer
 

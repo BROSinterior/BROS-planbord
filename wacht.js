@@ -58,6 +58,7 @@ function wjExtern() {
   if (schemaV() >= 25) Object.values(S.prijsaanvragen || {}).filter(a => mag(a) && a.status === "ingediend").forEach(a => uit.push({ k: "pa:" + a.id, stempel: a.ingediend_op || a.updated_at, ic: "€", toon: "accent", titel: "Prijs ontvangen van " + (wjContact(a.contact_id) || "aannemer") + (a.titel ? ": " + a.titel : ""), sub: wjProj(a.project_id), wanneer: a.ingediend_op || a.updated_at, pid: a.project_id, tab: "meetstaat" }));
   if (schemaV() >= 23) voorstellenOpen().filter(v => mag(v) || v.voorgestelde_user === S.me.id).forEach(v => uit.push({ k: "tv:" + v.id, stempel: v.created_at, ic: "?", toon: v.urgentie === "hoog" || v.onderwerp === "klacht" ? "crit" : "accent", titel: (v.onderwerp === "klacht" ? "Klacht: " : "Vraag van de klant: ") + (v.titel || ""), sub: wjProj(v.project_id) + (v.urgentie === "hoog" ? " · dringend" : ""), wanneer: v.created_at, pid: v.project_id, tab: "vragen" }));
   if (schemaV() >= 13) Object.values(S.goedkeuringen || {}).filter(g => mag(g) && (g.status === "akkoord" || g.status === "geweigerd") && g.beslist_op && wjDagen(g.beslist_op) <= 7).forEach(g => uit.push({ k: "gk:" + g.id, stempel: g.beslist_op, ic: g.status === "akkoord" ? "✓" : "✕", toon: g.status === "akkoord" ? "ok" : "crit", titel: g.soort === "overeenkomst" ? "Overeenkomst " + (g.status === "akkoord" ? "ondertekend" : "geweigerd") + (g.titel ? ": " + g.titel : "") : (g.soort === "meerwerk" ? "Meerwerk " : "Offerte ") + (g.status === "akkoord" ? "goedgekeurd" : "geweigerd") + " door de klant" + (g.titel ? ": " + g.titel : ""), sub: wjProj(g.project_id) + (g.beslist_naam ? " · " + g.beslist_naam : ""), wanneer: g.beslist_op, pid: g.project_id, tab: g.soort === "overeenkomst" ? "dossier" : "meetstaat", info: true }));
+  if (typeof vgWachtItems === "function") vgWachtItems().forEach(it => uit.push(it));   // 1.54: verslagen te controleren, mislukte verwerkingen, verwerkingscomputer offline
   return uit.sort((a, b) => ({ crit: 0, warn: 1, accent: 2, ok: 3 }[a.toon] - { crit: 0, warn: 1, accent: 2, ok: 3 }[b.toon]) || String(a.wanneer || "").localeCompare(String(b.wanneer || "")));
 }
 function wjFacturen() {
@@ -83,7 +84,7 @@ function wjTaakRij(t, opties) {
     <div class="wj-acts">${knoppen}</div></div>`;
 }
 function wjItemRij(it) {
-  const doel = it.nav ? `data-wj-act="nav" data-view="${esc(it.nav)}" data-ft="${esc(it.ft || "")}"` : `data-open="${esc(it.pid)}" data-optab="${esc(it.tab)}"`;
+  const doel = it.nav ? `data-wj-act="nav" data-view="${esc(it.nav)}" data-ft="${esc(it.ft || "")}"` : `data-open="${esc(it.pid)}" data-optab="${esc(it.tab)}"${it.vg ? ` data-vg-open="${esc(it.vg)}"` : ""}`;
   return `<div class="wj-it wj-${it.toon}"><span class="wj-ic" aria-hidden="true">${esc(it.ic)}</span>
     <div class="wj-tx"><button type="button" class="wj-t" ${doel}>${esc(it.titel)}</button><small>${esc(it.sub)}${it.wanneer ? " · " + esc(wjGeleden(it.wanneer)) : ""}</small></div>
     <div class="wj-acts"><button class="btn sm ghost" ${doel}>Openen</button>${it.nav ? "" : `<button class="btn sm ghost" data-wj-act="weg" data-k="${esc(it.k)}" data-s="${esc(it.stempel || "")}" data-d="${it.info ? "" : "3"}" title="${it.info ? "Verbergen tot er iets verandert" : "3 dagen verbergen"}">${it.info ? "Gezien" : "Later"}</button>`}</div></div>`;

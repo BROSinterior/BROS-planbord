@@ -43,6 +43,7 @@ function doPost(e) {
     if (body.action === "ovmail") return json(overeenkomstMail(body)); // overeenkomsten (script 039): voorgelegd (team), code en beslist (klant) // klantenportaal (script 035): keuze gemaakt, meerwerk aangevraagd of werfpunt gemeld → mail aan de projectverantwoordelijke
     if (body.action === "werfpuntmelding") return json(werfpuntMelding(body));
     if (body.action === "werfpuntfeedback") return json(werfpuntFeedback(body));   // aannemer (script 044): opmerking/foto bij een toegewezen werfpunt zonder het op te lossen → mail aan de projectverantwoordelijke   // aannemer (script 043): nieuw werfpunt gemeld in de werfmodus → mail aan de projectverantwoordelijke (token-gecontroleerd)
+    if (body.action === "opname") return json(opnameDrive(body));   // 1.54 (script 051): de verwerkingscomputer (login met rol verwerker, lopende opdracht) bewaart opnames en transcripten in de projectmap
     if (body.action === "bestand") return json(portaalBestand(body)); // klant/aannemer: een gedeeld document ophalen om er een pdf-dossier van te maken (login + toegang gecontroleerd) // team (token): aannemer verwittigen dat hij aan een project gekoppeld is (met uitnodiging als hij nog geen login heeft)
     if (body.action === "yukimails" || body.action === "yukizoeklijst") {   // 1.50.1: het archief-script (archief@bros.be) — met een EIGEN secret (ARCHIEF_SECRET), niet het Drive-secret van het team
       if (!archiefSecretOk(body.archief_secret)) return json({ ok: false, error: "Geen toegang (ARCHIEF_SECRET klopt niet)." });
@@ -515,6 +516,63 @@ function goedkeuringMail(body) {
   }
   return { ok: true, naar: naar };
 }
+/* =====================================================================
+   Vergaderingen & opnames (script 051, v1.54) — voor de verwerkingscomputer (Mac mini)
+   Enkel een actieve login met rol 'verwerker' die nu een opdracht voor deze vergadering verwerkt.
+   soort 'start': map Vergaderingen/<datum onderwerp> in de projectmap + een uploadsessie (de verwerkingscomputer stuurt het
+                  bestand rechtstreeks naar Google; het script ziet de inhoud niet). Bestaat het bestand al (zelfde naam en
+                  grootte), dan krijg je dat terug (hervatten na een onderbreking).
+   soort 'info':  id, md5 en grootte van een bestand in die map (controle vóór de uploaddelen weg mogen).
+   soort 'lees':  een stuk (max. 8 MB) van het origineel, om opnieuw te verwerken als de uploaddelen al opgeruimd zijn.
+   ===================================================================== */
+function opnameDrive(body) {
+  const wie = callerAny(body.token);
+  if (wie.role !== "verwerker") return { ok: false, error: "Geen toegang (enkel de verwerkingscomputer)." };
+  const vid = uuid(body.vergadering_id);
+  const job = (pbAdmin("/rest/v1/verwerkingen?vergadering_id=eq." + vid + "&status=eq.bezig&worker_user=eq." + uuid(wie.id) + "&claim=eq." + uuid(body.claim) + "&lease_tot=gt." + encodeURIComponent(new Date().toISOString()) + "&select=id", "get") || [])[0];
+  if (!job) return { ok: false, error: "Geen lopende opdracht voor deze vergadering." };
+  const v = (pbAdmin("/rest/v1/vergaderingen?id=eq." + vid + "&select=id,project_id,onderwerp,datum,drive_file_id", "get") || [])[0];
+  if (!v) return { ok: false, error: "Vergadering niet gevonden." };
+  const p = (pbAdmin("/rest/v1/projecten?id=eq." + uuid(v.project_id) + "&select=drive_folder_id,klant", "get") || [])[0] || {};
+  if (!p.drive_folder_id) return { ok: false, geen_map: true, error: "Dit project heeft nog geen projectmap op Drive (Dossier › Projectmap koppelen)." };
+  onderProjecten(p.drive_folder_id);
+  const auth = { Authorization: "Bearer " + ScriptApp.getOAuthToken() };
+  const schoon = (t, max) => String(t || "").replace(/[\\/:*?"<>|\r\n\t]+/g, " ").replace(/\s+/g, " ").trim().slice(0, max);
+  const map = subfolder(DriveApp.getFolderById(p.drive_folder_id), "Vergaderingen/" + schoon(String(v.datum || "") + " " + v.onderwerp, 90));
+  const soort = String(body.soort || "");
+  const fileInfo = (id) => {
+    const r = UrlFetchApp.fetch("https://www.googleapis.com/drive/v3/files/" + encodeURIComponent(id) + "?supportsAllDrives=true&fields=id,name,md5Checksum,size,webViewLink,parents,trashed", { headers: auth, muteHttpExceptions: true });
+    if (r.getResponseCode() !== 200) throw new Error("Bestand niet gevonden op Drive.");
+    return JSON.parse(r.getContentText());
+  };
+  if (soort === "start") {
+    const naam = schoon(body.naam, 150) || "opname"; const grootte = Number(body.grootte) || 0; const mime = schoon(body.mime, 100) || "application/octet-stream";
+    if (!(grootte > 0) || grootte > 4 * 1024 * 1024 * 1024) return { ok: false, error: "Ongeldige bestandsgrootte." };
+    const it = map.getFilesByName(naam);
+    while (it.hasNext()) { const f = it.next(); if (f.getSize() === grootte && !f.isTrashed()) { const i = fileInfo(f.getId()); return { ok: true, bestaand: { id: i.id, md5: i.md5Checksum || "", url: i.webViewLink, size: Number(i.size) }, map_url: map.getUrl() }; } }
+    const r = UrlFetchApp.fetch("https://www.googleapis.com/upload/drive/v3/files?uploadType=resumable&supportsAllDrives=true&fields=id,md5Checksum,size,webViewLink", {
+      method: "post", contentType: "application/json; charset=UTF-8", payload: JSON.stringify({ name: naam, parents: [map.getId()], mimeType: mime }),
+      headers: Object.assign({ "X-Upload-Content-Type": mime, "X-Upload-Content-Length": String(grootte) }, auth), muteHttpExceptions: true });
+    const h = r.getHeaders(); const loc = h.Location || h.location;
+    if (r.getResponseCode() !== 200 || !loc) return { ok: false, error: "Drive gaf geen uploadsessie (" + r.getResponseCode() + ")." };
+    return { ok: true, upload_url: loc, map_url: map.getUrl() };
+  }
+  if (soort === "info") {
+    const i = fileInfo(String(body.file_id || ""));
+    if (i.trashed || (i.parents || []).indexOf(map.getId()) < 0) return { ok: false, error: "Dit bestand staat niet in de map van deze vergadering." };
+    return { ok: true, id: i.id, md5: i.md5Checksum || "", size: Number(i.size), url: i.webViewLink, map_url: map.getUrl() };
+  }
+  if (soort === "lees") {
+    if (!v.drive_file_id) return { ok: false, error: "Er is nog geen origineel op Drive." };
+    const start = Math.max(0, Math.floor(Number(body.start) || 0)); const len = Math.min(8 * 1024 * 1024, Math.max(1, Math.floor(Number(body.lengte) || 0)));
+    const r = UrlFetchApp.fetch("https://www.googleapis.com/drive/v3/files/" + encodeURIComponent(v.drive_file_id) + "?alt=media&supportsAllDrives=true", { headers: Object.assign({ Range: "bytes=" + start + "-" + (start + len - 1) }, auth), muteHttpExceptions: true });
+    if (r.getResponseCode() !== 206 && r.getResponseCode() !== 200) return { ok: false, error: "Lezen van Drive mislukt (" + r.getResponseCode() + ")." };
+    const bytes = r.getBlob().getBytes();
+    return { ok: true, base64: Utilities.base64Encode(bytes), lengte: bytes.length, bereik: String(r.getHeaders()["Content-Range"] || "") };
+  }
+  return { ok: false, error: "Onbekende soort." };
+}
+
 /* =====================================================================
    Overeenkomsten goedkeuren in het klantenportaal (script 039)
    'voorgelegd' (team → iedere tekenaar), 'code' (klant: eenmalige code van 6 cijfers per mail, 15 min geldig),
@@ -1202,9 +1260,10 @@ const BACKUP_TABELLEN = ["profiles", "tarieven", "fasen", "standaardtaken", "pro
   "vorderingen", "vordering_regels", "contacten", "project_contacten", "goedkeuringen", "goedkeuring_tekenaars", "notities", "werfbezoeken", "vaststellingen", "klant_timing", "werfplannen", "werfverslagen",
   "taak_voorstellen", "assistent_gesprekken", "assistent_berichten", "prijsaanvragen", "prijsaanvraag_regels", "prijsvragen", "prijsvraag_gunningen", "tekenplannen", "plan_objecten", "plan_versies", "plan_symbolen",
   "aannemer_meetstaten", "aannemer_meetstaat_posten", "keuzes", "keuze_opties", "meerwerk_aanvragen", "werf_fotos", "werf_updates", "woningdossier",
-  "aannemer_facturen", "aannemer_hulp", "betaalherinneringen", "fin_plan", "fin_vaste_kosten", "fin_instellingen"];   // 1.49 (script 047), 1.50 (048), 1.52 (049)
-const BACKUP_OPTIONEEL = ["aannemer_facturen", "aannemer_hulp", "betaalherinneringen", "fin_plan", "fin_vaste_kosten", "fin_instellingen"];   // bestaan pas na script 047/049: ontbreken is dan geen back-upfout
-const BACKUP_ORDE = { fasen: "nr", loten: "nr", tarieven: "user_id", instellingen: "key", klant_timing: "project_id,fase_nr", prijsvraag_gunningen: "prijsvraag_id,post_id", meetstaat_prijzen: "post_id", plan_symbolen: "code" };
+  "aannemer_facturen", "aannemer_hulp", "betaalherinneringen", "fin_plan", "fin_vaste_kosten", "fin_instellingen",
+  "vergaderingen", "verwerkingen", "vergadering_uitvoer", "vergadering_punten", "vergadering_feedback", "verwerker_status", "ms_raming"];   // 1.49 (script 047), 1.50 (048), 1.52 (049), 1.54 (051), 1.55 (052)
+const BACKUP_OPTIONEEL = ["aannemer_facturen", "aannemer_hulp", "betaalherinneringen", "fin_plan", "fin_vaste_kosten", "fin_instellingen", "vergaderingen", "verwerkingen", "vergadering_uitvoer", "vergadering_punten", "vergadering_feedback", "verwerker_status", "ms_raming"];   // bestaan pas na script 047/049: ontbreken is dan geen back-upfout
+const BACKUP_ORDE = { fasen: "nr", loten: "nr", tarieven: "user_id", instellingen: "key", klant_timing: "project_id,fase_nr", prijsvraag_gunningen: "prijsvraag_id,post_id", meetstaat_prijzen: "post_id", plan_symbolen: "code", verwerker_status: "naam" };
 function onderhoud(volledig) {
   const cache = CacheService.getScriptCache();
   if (!cache.get("hartslag")) { cache.put("hartslag", "1", 3000); try { hartslag(); } catch (e) { Logger.log("Hartslag: " + e); } try { triggersHerstellen(); } catch (e) { Logger.log("Triggers: " + e); } }
@@ -1227,7 +1286,7 @@ function onderhoudZeker() {
 }
 function onderhoudInstall() { CacheService.getScriptCache().remove("onderhoud-trigger"); onderhoudZeker(); CacheService.getScriptCache().remove("hartslag"); onderhoud(false); Logger.log("OK — onderhoud draait elk uur (hartslag), back-up en bewaking wekelijks."); }
 function hartslag() {
-  pbAdmin("/rest/v1/instellingen?on_conflict=key", "post", { key: "hartslag", value: { drive: new Date().toISOString(), versie: "1.53.0" } }, "resolution=merge-duplicates,return=minimal");
+  pbAdmin("/rest/v1/instellingen?on_conflict=key", "post", { key: "hartslag", value: { drive: new Date().toISOString(), versie: "1.55.0" } }, "resolution=merge-duplicates,return=minimal");
 }
 function triggersHerstellen() {   // enkel triggers die er eerder al waren (nooit iets aanzetten dat BROS zelf niet installeerde)
   const props = PropertiesService.getScriptProperties();
