@@ -2,6 +2,14 @@
 
 De nieuwste versie staat bovenaan. (Vanaf 1.48 houdt `version.json` enkel de laatste versie bij; het Planbord vraagt dat bestand elke 5 minuten op.)
 
+## 1.56.1 — 2026-10-20 (geen databasescript)
+
+Financiële planning: de kostprijs in het resultaat volgt nu de facturen. Elke factuur draagt de kostprijs die erbij hoort (factuur × kostprijs/omzet van het project), dus een project met een positieve marge geeft nooit een maand met een negatieve brutomarge — ook niet als een voorschot vóór de werken valt of de aannemers later betaald worden. Wanneer de aannemers betaald worden, blijft zichtbaar in de kasstroom (binnen/buiten). De rij 'Aankopen (aannemers)' heet nu 'Kostprijs van de omzet' (scherm, pdf, Excel).
+
+## 1.56.0 — 2026-10-20 (script 053 + nieuw drive/Code.gs)
+
+Documenten per aannemer delen (script 053): een bestand deel je bewust met gekozen aannemers (Dossier › Documenten › knop aannemers). Een aannemer ziet in zijn portaal enkel wat met hém gedeeld is, niet met wie je het nog deelt. De meldingsmail gaat per aannemer, met enkel zijn eigen nieuwe bestanden. Bestaande deelacties blijven behouden voor de aannemers die vandaag aan het project gekoppeld zijn; wie later gekoppeld wordt, ziet ze niet vanzelf, en wie losgekoppeld wordt, verliest ze.
+
 ## 1.55.0 — 2026-10-20 (script 052 + optioneel nieuw drive/Code.gs voor de back-up)
 
 Marges zonder offerte van een aannemer (script 052, enkel beheer): in de meetstaat zet de knop Marges per lot en per post de bron (offerte aannemer of raming) en de marge van BROS — een % op de kostprijs of een bedrag in €. De klantprijs verandert niet: de marge bepaalt enkel de geraamde kostprijs. Overerven: post › lot › standaard van het project › algemene standaard (25 %). Automatisch: gegund via een prijsvraag of met een eigen kostprijs/marge = offerte aannemer, de rest (bv. meetstaten ingelezen uit Excel met marge 0 %) = raming. De marge in de meetstaat en de financiële planning tellen de geraamde kost mee (≈, 'deels geraamd'); in Financiële planning › project zet je de standaardmarge van dat project.

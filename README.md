@@ -16,7 +16,7 @@ Statische webapp (geen build-stap) op een Supabase-database.
 | `version.json` | versienummer (enkel de laatste versie); de app meldt een nieuwe versie aan wie ze open heeft |
 | `CHANGELOG.md` | versiegeschiedenis (vanaf 1.48 niet meer in version.json) |
 | `vendor/supabase-2.45.4.js` (+ `591.supabase.js`) | de Supabase-bibliotheek, zelf gehost (geen CDN nodig) |
-| `sql/001_init.sql` … `sql/052_*.sql` | databasescripts, in volgorde uit te voeren (`versie_schema` in instellingen bewaakt de volgorde vanaf 022) |
+| `sql/001_init.sql` … `sql/053_*.sql` | databasescripts, in volgorde uit te voeren (`versie_schema` in instellingen bewaakt de volgorde vanaf 022) |
 | `drive/Code.gs` | Google Apps Script dat projectmappen aanmaakt/koppelt op Drive en de meetstaat-export wegschrijft (installatie: zie bovenaan dat bestand) |
 | `drive/YukiArchief.gs` | klein Apps Script voor het account archief@bros.be: leest daar de Yuki-factuurmails en stuurt ze naar het Drive-script (v1.50.1, zie *Yuki-mails uit archief@bros.be*) |
 | `agenda.js` | gedeeld (Planbord en portalen): agendabestand (.ics) en Google Agenda-link voor afspraken (script 041) |
@@ -172,6 +172,17 @@ Activeren (eenmalig):
 
 Gebruik: Dossier › Contacten → bij een aannemer de knop **Aannemersportaal** (beheer) → hij krijgt een mail met een persoonlijke link. Instellingen → Klantenportaal toont wie toegang heeft (klant/aannemer). Een aannemer die op het Planbord of het klantenportaal inlogt, wordt doorgestuurd.
 
+## Documenten per aannemer delen (script 053, v1.56)
+
+Een document deel je niet meer met "de aannemers" van een project, maar **bewust met gekozen aannemers**. Een aannemer ziet in zijn portaal enkel de bestanden die met hém gedeeld zijn — niet met wie je ze nog deelt, en dus ook niet wie er nog aan het project werkt.
+
+- Dossier › Documenten → bij een bestand de knop **aannemers** → vink de aannemers aan (Alles aanvinken / Niemand). Het aantal staat op de knop; met de muis erover zie je de namen.
+- Wie later aan het project gekoppeld wordt, ziet de eerder gedeelde bestanden niet vanzelf. Koppel je een aannemer los van het project, dan vervallen zijn gedeelde bestanden van dat project.
+- Meldingsmail: elke aannemer krijgt één gebundelde mail met enkel zijn eigen nieuwe bestanden.
+- Bij de overstap blijft alles zoals het was: wat nu met "de aannemers" gedeeld is, wordt gedeeld met de aannemers die vandaag aan dat project gekoppeld zijn (zonder nieuwe mail). Kijk die lijst gerust na en vink uit wat een aannemer niet hoeft te zien.
+
+Activeren: Supabase → SQL Editor → `sql/053_documenten_per_aannemer.sql` → Run (na 052; de controle toont tabel | deelacties | documenten | `53`). Daarna het nieuwe `drive/Code.gs` als `Code.ingevuld.gs` plakken en een nieuwe versie online zetten (meldingsmail per aannemer). Tot dat gebeurd is, vertrekt er geen documentenmail naar aannemers — nooit één met de bestanden van een ander.
+
 ## Marges zonder offerte van een aannemer (script 052, v1.55) — enkel beheer
 
 Veel meetstaten zijn met klantprijzen uit Excel ingelezen: kostprijs = klantprijs, marge 0 %. Daardoor zag de financiële planning daar € 0 marge. Nu duid je per post of per lot aan of er een **offerte van een aannemer** achter zit en hoeveel **marge** BROS op de rest heeft.
@@ -228,7 +239,8 @@ Per project (ook *BROS — Interne werking*) een tabblad **Vergaderingen**: verg
   - Wat al gefactureerd is (vorderingen verzonden of betaald) en wat klaarstaat (op te maken) telt mee zoals het is.
   - Voor de rest maakt het model een **automatisch voorstel**: voorschot bij de start (als er nog geen voorschot is), gelijke vorderingen per maand en een slotfactuur bij het geplande einde.
   - Per project kan je het voorschot- en slotpercentage aanpassen, of een **eigen plan** maken (datums + percentages van wat nog te factureren is; voorbije momenten vallen weg en de rest wordt herschaald).
-- **Aankopen:**
+- **Kostprijs van de omzet** (resultaat, sinds 1.56.1): elke factuur draagt de kostprijs die erbij hoort (factuur × kostprijs/omzet van het project). De brutomarge per maand volgt zo de marge van de projecten: een project met winst geeft nooit een maand verlies, ook niet als de aannemers in een andere maand betaald worden.
+- **Betalingen aan aannemers** (kasstroom, binnen/buiten):
   - De kostprijs wordt gelijk gespreid over de uitvoering (start → einde).
   - Aannemersfacturen uit het portaal worden eerst verrekend.
   - Aannemers worden betaald na de betaaltermijn, klanten betalen na de klanttermijn. Een verzonden maar nog niet betaalde factuur wordt verwacht vanaf vandaag.

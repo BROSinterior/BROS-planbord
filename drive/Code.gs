@@ -1261,9 +1261,9 @@ const BACKUP_TABELLEN = ["profiles", "tarieven", "fasen", "standaardtaken", "pro
   "taak_voorstellen", "assistent_gesprekken", "assistent_berichten", "prijsaanvragen", "prijsaanvraag_regels", "prijsvragen", "prijsvraag_gunningen", "tekenplannen", "plan_objecten", "plan_versies", "plan_symbolen",
   "aannemer_meetstaten", "aannemer_meetstaat_posten", "keuzes", "keuze_opties", "meerwerk_aanvragen", "werf_fotos", "werf_updates", "woningdossier",
   "aannemer_facturen", "aannemer_hulp", "betaalherinneringen", "fin_plan", "fin_vaste_kosten", "fin_instellingen",
-  "vergaderingen", "verwerkingen", "vergadering_uitvoer", "vergadering_punten", "vergadering_feedback", "verwerker_status", "ms_raming"];   // 1.49 (script 047), 1.50 (048), 1.52 (049), 1.54 (051), 1.55 (052)
-const BACKUP_OPTIONEEL = ["aannemer_facturen", "aannemer_hulp", "betaalherinneringen", "fin_plan", "fin_vaste_kosten", "fin_instellingen", "vergaderingen", "verwerkingen", "vergadering_uitvoer", "vergadering_punten", "vergadering_feedback", "verwerker_status", "ms_raming"];   // bestaan pas na script 047/049: ontbreken is dan geen back-upfout
-const BACKUP_ORDE = { fasen: "nr", loten: "nr", tarieven: "user_id", instellingen: "key", klant_timing: "project_id,fase_nr", prijsvraag_gunningen: "prijsvraag_id,post_id", meetstaat_prijzen: "post_id", plan_symbolen: "code", verwerker_status: "naam" };
+  "vergaderingen", "verwerkingen", "vergadering_uitvoer", "vergadering_punten", "vergadering_feedback", "verwerker_status", "ms_raming", "document_aannemers"];   // 1.49 (script 047), 1.50 (048), 1.52 (049), 1.54 (051), 1.55 (052), 1.56 (053)
+const BACKUP_OPTIONEEL = ["aannemer_facturen", "aannemer_hulp", "betaalherinneringen", "fin_plan", "fin_vaste_kosten", "fin_instellingen", "vergaderingen", "verwerkingen", "vergadering_uitvoer", "vergadering_punten", "vergadering_feedback", "verwerker_status", "ms_raming", "document_aannemers"];   // bestaan pas na script 047/049: ontbreken is dan geen back-upfout
+const BACKUP_ORDE = { fasen: "nr", loten: "nr", tarieven: "user_id", instellingen: "key", klant_timing: "project_id,fase_nr", prijsvraag_gunningen: "prijsvraag_id,post_id", meetstaat_prijzen: "post_id", plan_symbolen: "code", verwerker_status: "naam", document_aannemers: "document_id,contact_id" };
 function onderhoud(volledig) {
   const cache = CacheService.getScriptCache();
   if (!cache.get("hartslag")) { cache.put("hartslag", "1", 3000); try { hartslag(); } catch (e) { Logger.log("Hartslag: " + e); } try { triggersHerstellen(); } catch (e) { Logger.log("Triggers: " + e); } }
@@ -1286,7 +1286,7 @@ function onderhoudZeker() {
 }
 function onderhoudInstall() { CacheService.getScriptCache().remove("onderhoud-trigger"); onderhoudZeker(); CacheService.getScriptCache().remove("hartslag"); onderhoud(false); Logger.log("OK — onderhoud draait elk uur (hartslag), back-up en bewaking wekelijks."); }
 function hartslag() {
-  pbAdmin("/rest/v1/instellingen?on_conflict=key", "post", { key: "hartslag", value: { drive: new Date().toISOString(), versie: "1.55.0" } }, "resolution=merge-duplicates,return=minimal");
+  pbAdmin("/rest/v1/instellingen?on_conflict=key", "post", { key: "hartslag", value: { drive: new Date().toISOString(), versie: "1.56.0" } }, "resolution=merge-duplicates,return=minimal");
 }
 function triggersHerstellen() {   // enkel triggers die er eerder al waren (nooit iets aanzetten dat BROS zelf niet installeerde)
   const props = PropertiesService.getScriptProperties();
@@ -1353,6 +1353,7 @@ function documentenDigest() {
   try { aannemerFacturenMelden(); } catch (e) { Logger.log("Aannemersfacturen melden: " + e); }   // 1.49 (script 047)
   try { debiteurenDagelijks(); } catch (e) { Logger.log("Opvolging klantfacturen: " + e); }   // 1.50 (script 048): één keer per werkdag
   try { herinneringenVersturen(); } catch (e) { Logger.log("Herinneringen versturen: " + e); }   // vangnet: goedgekeurde herinneringen die nog niet vertrokken
+  try { documentenDigestAannemers(); } catch (e) { Logger.log("Documenten per aannemer melden: " + e); }   // 1.56 (script 053)
   const docs = pbAdmin("/rest/v1/documenten?or=(gemeld_klant.eq.false,gemeld_aannemers.eq.false)&select=id,project_id,naam,pad,url,gedeeld,gedeeld_aannemers,gedeeld_op,gedeeld_aannemers_op,gemeld_klant,gemeld_aannemers&limit=500", "get") || [];
   if (!docs.length) { Logger.log("Niets te melden."); return; }
   const grens = Date.now() - DIGEST.WACHT_MIN * 60000; let mails = 0;
@@ -1390,6 +1391,38 @@ function documentenDigest() {
     });
   });
   Logger.log(mails + " mail(s) verstuurd.");
+}
+/** 1.56 (script 053): documenten worden per aannemer gedeeld (document_aannemers). Elke aannemer krijgt per project één
+ *  mail met enkel zijn eigen nieuwe documenten — nooit de namen van wat met een ander gedeeld is. Zelfde wachttijd als hierboven. */
+function documentenDigestAannemers() {
+  let rijen; try { rijen = pbAdmin("/rest/v1/document_aannemers?gemeld=eq.false&select=document_id,contact_id,gedeeld_op&order=gedeeld_op.asc&limit=1000", "get") || []; }
+  catch (e) { return; }   // vóór script 053: de tabel bestaat nog niet
+  if (!rijen.length) return;
+  const grens = Date.now() - DIGEST.WACHT_MIN * 60000; const esc = H; let mails = 0;
+  const docs = pbIn("/rest/v1/documenten?", "id", rijen.map(r => r.document_id), "&select=id,project_id,naam,pad");
+  const contacten = pbIn("/rest/v1/contacten?", "id", rijen.map(r => r.contact_id), "&select=id,naam,contactpersoon,email,user_id,actief");
+  const projecten = pbIn("/rest/v1/projecten?", "id", docs.map(d => d.project_id), "&select=id,nummer,klant,naam,lead");
+  const profs = pbAdmin("/rest/v1/profiles?select=id,name&active=eq.true", "get") || [];
+  const groepen = {};   // per aannemer en project
+  rijen.forEach(r => { const d = docs.find(x => x.id === r.document_id); if (!d) return; const k = r.contact_id + "|" + d.project_id; (groepen[k] = groepen[k] || []).push({ r: r, d: d }); });
+  Object.keys(groepen).forEach(k => { try {
+    const lijst = groepen[k]; const c = contacten.find(x => x.id === k.split("|")[0]); const p = projecten.find(x => x.id === k.split("|")[1]);
+    if (lijst.some(x => new Date(x.r.gedeeld_op).getTime() > grens)) return;   // nog bezig met delen: volgend uur
+    const kanMail = c && c.actief && c.user_id && c.email && p;
+    if (kanMail && !mailRuimte(1)) return;   // dagquotum: later opnieuw
+    if (kanMail) {
+      const proj = (p.klant || "") + (p.naam && p.naam !== p.klant ? " · " + p.naam : ""); const lead = profs.find(x => x.id === p.lead); const naam = c.contactpersoon || c.naam;
+      const g = {}; lijst.forEach(x => (g[x.d.pad || ""] = g[x.d.pad || ""] || []).push(x.d));
+      const rows = Object.keys(g).sort().map(m => (m ? "<div style=\"color:#767D78;font-size:12px;margin-top:10px\">" + esc(m.replace(/\//g, " › ")) + "</div>" : "") + g[m].map(d => "<div style=\"padding:6px 0;border-bottom:1px solid #EEE\">" + esc(d.naam) + "</div>").join("")).join("");
+      const html = "<div style=\"font-family:Helvetica,Arial,sans-serif;font-size:15px;line-height:1.5;color:#1B1E1C;max-width:640px\"><p>Beste " + esc(naam) + ",</p><p>BROS heeft " + (lijst.length === 1 ? "een nieuw document" : lijst.length + " nieuwe documenten") + " voor je klaargezet bij <b>" + esc(proj) + "</b>:</p>" + rows
+        + "<p style=\"margin:24px 0\"><a href=\"" + PORTAAL.URL_AANNEMER + "\" style=\"background:#1B1E1C;color:#fff;text-decoration:none;padding:12px 20px;border-radius:8px;font-weight:600;display:inline-block\">Bekijken in het BROS-aannemersportaal</a></p><p style=\"color:#767D78;font-size:13px\">Je vindt ze onder Documenten; het portaal toont altijd de laatste versie.</p><p>" + esc(lead ? lead.name : "Het team") + " — BROS</p></div>";
+      const tekst = "Beste " + naam + ",\n\nBROS heeft " + lijst.length + " nieuwe document(en) voor je klaargezet bij " + proj + ":\n" + lijst.map(x => "- " + (x.d.pad ? x.d.pad + "/" : "") + x.d.naam).join("\n") + "\n\nBekijken: " + PORTAAL.URL_AANNEMER + "\n\nBROS";
+      try { portaalMail(String(c.email).trim(), (lijst.length === 1 ? "Nieuw document" : lijst.length + " nieuwe documenten") + " · " + proj, tekst, html); mails++; } catch (e) { Logger.log("Digest aannemer " + c.email + ": " + e); }
+    }
+    // gemeld (ook zonder login/e-mail: die aannemer ziet ze bij zijn eerste aanmelding)
+    chunks(lijst.map(x => x.d.id), 25).forEach(ids => pbAdmin("/rest/v1/document_aannemers?contact_id=eq." + encodeURIComponent(k.split("|")[0]) + "&document_id=in.(" + ids.join(",") + ")", "patch", { gemeld: true }));
+  } catch (e) { Logger.log("Documentenmail aannemer " + k + ": " + e); } });   // één fout houdt de andere aannemers niet tegen
+  Logger.log(mails + " documentenmail(s) aan aannemers verstuurd.");
 }
 /** 1.49 (script 047): één keer per dag (vanaf DIGEST.VAN_UUR) een mail aan BROS met de facturen die aannemers in hun portaal
  *  oplaadden of verbeterden sinds de vorige mail. Niets nieuw → geen mail. Opvolgen doe je in het Planbord (tabblad Aankoop). */

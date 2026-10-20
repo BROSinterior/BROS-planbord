@@ -6,8 +6,10 @@
    - Facturatie: wat al gefactureerd is (vorderingen verzonden/betaald), wat al klaarstaat (op te maken), en voor de rest een
      automatisch voorstel (voorschot bij de start, maandelijkse vorderingen, slotfactuur bij de oplevering) — per project
      aanpasbaar of te vervangen door een eigen plan.
-   - Aankopen: de kostprijs van de meetstaat gespreid over de uitvoering (start → einde), met de echte aannemersfacturen
-     eerst verrekend; betaald na de betaaltermijn.
+   - Resultaat: elke factuur draagt haar kostprijs (factuur × kost/omzet van het project, sinds 1.56.1), dus de brutomarge
+     per maand volgt de marge van de projecten.
+   - Betalingen aan aannemers (kasstroom): de kostprijs van de meetstaat gespreid over de uitvoering (start → einde), met
+     de echte aannemersfacturen eerst verrekend; betaald na de betaaltermijn.
    - Vaste kosten per maand/kwartaal/jaar (met indexatie). Per maand: wat binnenkomt en wat gepland buitengaat (geen kaspositie).
    - Scenario's: voorzichtig (enkel offertes met hoge kans, later gestart), verwacht (gewogen met de kans), optimistisch.
    Geladen vóór app.js; app.js roept vFinPlanning aan via vRapporten (typeof).
@@ -122,7 +124,12 @@ function finProject(p, f, I, scen) {
     plan.forEach((x, i) => { const c = addDays(x.datum, I.aannemer_termijn); kosten.push({ datum: x.datum, bedrag: gw[i], bruto: x.bruto, cash: c < todayIso ? null : c, naam: x.naam, soort: "gepland" }); });
   }
   if (A > K + 0.5 && K > 0.5) waarsch.push("aannemersfacturen (" + eur(A) + ") hoger dan de kostprijs in de meetstaat (" + eur(K) + ")");
-  return { key: p ? p.id : "f:" + f.id, p, f, geraamd, naam: p ? (p.nummer ? p.nummer + " · " : "") + projName(p) : f.naam, status, getekend, kans, gewicht, start, eind, echtStart, O, K, marge: r2(O - K), bron, raming, R, inkomsten, kosten, waarsch, eigenPlan: !!(f && Array.isArray(f.plan) && f.plan.length) };
+  // 1.56.1: elke factuur draagt haar eigen kostprijs (factuur × kost/omzet van het project) — de brutomarge per maand volgt
+  // de facturen, dus een project met winst maakt nooit een maand verlies. Wanneer de aannemers betaald worden, blijft
+  // apart in de kasstroom (binnen/buiten) zoals hierboven gepland.
+  const kostRatio = O > 0.5 ? K / O : null;
+  if (kostRatio != null) inkomsten.forEach(i => { i.kost = r2(i.bedrag * kostRatio); });
+  return { key: p ? p.id : "f:" + f.id, p, f, geraamd, naam: p ? (p.nummer ? p.nummer + " · " : "") + projName(p) : f.naam, status, getekend, kans, gewicht, start, eind, echtStart, O, K, marge: r2(O - K), bron, raming, R, inkomsten, kosten, kostRatio, waarsch, eigenPlan: !!(f && Array.isArray(f.plan) && f.plan.length) };
 }
 /* 1.53: een project dat je zelf uitzet (fin_plan.meetellen = false) telt nergens mee — enkel de projectlijst toont het (ook = true) */
 const finTeltMee = (f) => !(f && f.meetellen === false);
@@ -150,8 +157,9 @@ function finReeks(model, I, vanYm, totYm) {
   const rij = () => ms.map(() => 0);
   const R = { maanden: ms, gef: rij(), plan: rij(), kost: rij(), vast: rij(), in: rij(), uitA: rij(), uitV: rij() };
   model.forEach(x => {
-    x.inkomsten.forEach(i => { const k = idx[finYm(i.datum)]; if (k != null) R[i.soort === "gefactureerd" ? "gef" : "plan"][k] += i.bedrag; const kc = idx[finYm(i.cash)]; if (kc != null) R.in[kc] += i.bedrag; });
-    x.kosten.forEach(c => { const k = idx[finYm(c.datum)]; if (k != null) R.kost[k] += c.bedrag; if (!c.cash) return; const kc = idx[finYm(c.cash)]; if (kc != null) R.uitA[kc] += c.bedrag; });
+    x.inkomsten.forEach(i => { const k = idx[finYm(i.datum)]; if (k != null) { R[i.soort === "gefactureerd" ? "gef" : "plan"][k] += i.bedrag; if (x.kostRatio != null) R.kost[k] += i.kost || 0; } const kc = idx[finYm(i.cash)]; if (kc != null) R.in[kc] += i.bedrag; });
+    // kostprijs in het resultaat: bij de facturen (hierboven); enkel een project zonder omzet rekent met de aankopen zelf
+    x.kosten.forEach(c => { const k = idx[finYm(c.datum)]; if (k != null && x.kostRatio == null) R.kost[k] += c.bedrag; if (!c.cash) return; const kc = idx[finYm(c.cash)]; if (kc != null) R.uitA[kc] += c.bedrag; });
   });
   ms.forEach((m, k) => { const v = finVast(I, m); R.vast[k] = v.kost; R.uitV[k] = v.cash; });
   ["gef", "plan", "kost", "vast", "in", "uitA", "uitV"].forEach(s => R[s] = R[s].map(r2));
@@ -220,12 +228,12 @@ function vFinPlanning() {
   const maandTabel = () => { const rij = (lbl, arr, cls) => `<tr class="${cls || ""}"><td>${lbl}</td>${arr.map(v => `<td class="r num${v < 0 ? " neg" : ""}">${finK(v)}</td>`).join("")}<td class="r num"><b>${finK(finTot(arr))}</b></td></tr>`;
     return `<div class="tw"><table class="t fin-mt"><thead><tr><th></th>${R.maanden.map(m => `<th class="r">${MONTHS[Number(m.slice(5, 7)) - 1]}</th>`).join("")}<th class="r">${jaar}</th></tr></thead><tbody>
       <tr class="fin-kop"><td colspan="14">Resultaat (op factuurdatum)</td></tr>
-      ${rij("Omzet gefactureerd", R.gef)}${rij("Omzet gepland", R.plan)}${rij("<b>Omzet</b>", R.omzet, "fin-sub")}${rij("Aankopen (aannemers)", R.kost.map(v => -v))}${rij("<b>Brutomarge</b>", R.marge, "fin-sub")}${rij("Vaste kosten", R.vast.map(v => -v))}${rij("<b>Bedrijfsresultaat</b>", R.resultaat, "fin-sub")}
+      ${rij("Omzet gefactureerd", R.gef)}${rij("Omzet gepland", R.plan)}${rij("<b>Omzet</b>", R.omzet, "fin-sub")}${rij("Kostprijs van de omzet", R.kost.map(v => -v))}${rij("<b>Brutomarge</b>", R.marge, "fin-sub")}${rij("Vaste kosten", R.vast.map(v => -v))}${rij("<b>Bedrijfsresultaat</b>", R.resultaat, "fin-sub")}
       <tr class="fin-kop"><td colspan="14">Binnen en buiten (op betaaldatum)</td></tr>
       ${rij("<b>Binnen: ontvangsten klanten</b>", R.in, "fin-sub")}${rij("Buiten: betalingen aannemers", R.uitA.map(v => -v))}${rij("Buiten: vaste kosten", R.uitV.map(v => -v))}${rij("<b>Buiten: totaal</b>", R.uit.map(v => -v), "fin-sub")}${rij("Verschil binnen − buiten", R.verschil, "fin-muted")}
     </tbody></table></div>`; };
   // projecten
-  const inJaar = (x) => ({ o: r2(finSom(x.inkomsten.filter(i => i.datum.slice(0, 4) === jaar), i => i.bedrag)), k: r2(finSom(x.kosten.filter(c => c.datum.slice(0, 4) === jaar), c => c.bedrag)) });
+  const inJaar = (x) => ({ o: r2(finSom(x.inkomsten.filter(i => i.datum.slice(0, 4) === jaar), i => i.bedrag)), k: x.kostRatio != null ? r2(finSom(x.inkomsten.filter(i => i.datum.slice(0, 4) === jaar), i => i.kost || 0)) : r2(finSom(x.kosten.filter(c => c.datum.slice(0, 4) === jaar), c => c.bedrag)) });
   const relevant = alle.filter(x => x.status !== "afgerond" || inJaar(x).o || inJaar(x).k);
   const kanUit = schemaV() >= 50; const nUit = relevant.filter(x => x.uit).length;
   const groepen = [["Getekend", relevant.filter(x => x.getekend)], ["Offertes", relevant.filter(x => x.status === "offerte")], ["Geraamde projecten (nog niet in het Planbord)", relevant.filter(x => x.geraamd)]];
@@ -268,7 +276,7 @@ function vFinPlanning() {
     <div class="panel"><div class="panel-head"><h3>Meerjarenoverzicht</h3><span class="muted" style="font-size:12px">voor een businessplan · scenario ${FIN_SCEN[scen].toLowerCase()}</span></div>
       <div class="tw"><table class="t"><thead><tr><th></th>${drie.map(d => `<th class="r">${d.j}</th>`).join("")}</tr></thead><tbody>
         <tr><td>Omzet</td>${drie.map(d => `<td class="r num">${eur(d.o)}</td>`).join("")}</tr><tr><td class="muted">waarvan al gefactureerd</td>${drie.map(d => `<td class="r num muted">${eur(d.gef)}</td>`).join("")}</tr>
-        <tr><td>Aankopen</td>${drie.map(d => `<td class="r num">${eur(finMin(d.k))}</td>`).join("")}</tr><tr><td><b>Brutomarge</b></td>${drie.map(d => `<td class="r num"><b>${eur(d.m)}</b><small class="muted"> ${d.o ? finPct(d.m / d.o) : ""}</small></td>`).join("")}</tr>
+        <tr><td>Kostprijs van de omzet</td>${drie.map(d => `<td class="r num">${eur(finMin(d.k))}</td>`).join("")}</tr><tr><td><b>Brutomarge</b></td>${drie.map(d => `<td class="r num"><b>${eur(d.m)}</b><small class="muted"> ${d.o ? finPct(d.m / d.o) : ""}</small></td>`).join("")}</tr>
         <tr><td>Vaste kosten</td>${drie.map(d => `<td class="r num">${eur(finMin(d.v))}</td>`).join("")}</tr><tr><td><b>Bedrijfsresultaat</b></td>${drie.map(d => `<td class="r num ${d.res < 0 ? "neg" : ""}"><b>${eur(d.res)}</b></td>`).join("")}</tr>
         <tr><td>Binnen (ontvangsten)</td>${drie.map(d => `<td class="r num">${eur(d.in)}</td>`).join("")}</tr><tr><td>Buiten</td>${drie.map(d => `<td class="r num">${eur(finMin(d.uit))}</td>`).join("")}</tr></tbody></table></div>
       <div class="panel-body muted" style="font-size:12px;border-top:1px solid var(--line)">Latere jaren tellen enkel wat nu gekend is (projecten, offertes, geraamde projecten). Voeg geraamde projecten toe om de verwachte groei te tonen.</div></div>
@@ -410,7 +418,7 @@ function finExportData() {
   const I = finInst(); const jaar = S.finJaar || todayIso.slice(0, 4); const scen = S.finScen || "verwacht";
   const model = finModel(scen); const R = finReeks(model, I, jaar + "-01", jaar + "-12");
   const drie = [0, 1, 2].map(i => { const j = String(Number(jaar) + i); const r = finReeks(model, I, j + "-01", j + "-12"); const o = finTot(r.omzet), k = finTot(r.kost), v = finTot(r.vast); return { j, o, k, m: r2(o - k), v, res: r2(o - k - v), in: finTot(r.in), uit: finTot(r.uit) }; });
-  const inJaar = (x) => ({ o: r2(finSom(x.inkomsten.filter(i => i.datum.slice(0, 4) === jaar), i => i.bedrag)), k: r2(finSom(x.kosten.filter(c => c.datum.slice(0, 4) === jaar), c => c.bedrag)) });
+  const inJaar = (x) => ({ o: r2(finSom(x.inkomsten.filter(i => i.datum.slice(0, 4) === jaar), i => i.bedrag)), k: x.kostRatio != null ? r2(finSom(x.inkomsten.filter(i => i.datum.slice(0, 4) === jaar), i => i.kost || 0)) : r2(finSom(x.kosten.filter(c => c.datum.slice(0, 4) === jaar), c => c.bedrag)) });
   const projecten = model.filter(x => x.status !== "afgerond" || inJaar(x).o || inJaar(x).k).map(x => ({ x, j: inJaar(x), gef: r2(finSom(x.inkomsten.filter(i => i.soort === "gefactureerd"), i => i.bruto)) }))
     .sort((a, b) => (a.x.getekend === b.x.getekend ? 0 : a.x.getekend ? -1 : 1) || (a.x.geraamd === b.x.geraamd ? 0 : a.x.geraamd ? 1 : -1) || (a.x.start || "").localeCompare(b.x.start || ""));
   const vk = Object.values(S.fin_vaste_kosten || {}).sort((a, b) => (a.volgorde || 0) - (b.volgorde || 0) || (a.categorie || "").localeCompare(b.categorie || ""));
@@ -421,10 +429,11 @@ const finMethode = (E) => [
   "Alle bedragen zijn exclusief btw. Scenario: " + FIN_SCEN[E.scen].toLowerCase() + ".",
   "Omzet en kostprijs per project komen uit de meetstaat in het Planbord (kostprijs van de aannemers plus de marge van BROS per post of per lot). Voor posten zonder offerte van een aannemer is de kostprijs geraamd: klantprijs min de marge die BROS ervoor aanduidt (standaard " + finPct(E.I.marge) + " op de kostprijs). Projecten zonder meetstaat rekenen met hun budget of forfait en een marge van " + finPct(E.I.marge) + " op de kostprijs.",
   "Gefactureerde omzet = verzonden en betaalde facturen (vorderingen). Wat nog gefactureerd moet worden, is ingepland: voorschot " + finPct(E.I.voorschot) + " bij de start, gelijke vorderingen per maand tijdens de uitvoering en een slotfactuur van " + finPct(E.I.slot) + " bij de oplevering, tenzij er per project een eigen plan is.",
-  "Aankopen: de kostprijs wordt gelijk gespreid over de uitvoeringsperiode; ontvangen aannemersfacturen zijn eerst verrekend. Klanten betalen na " + Math.round(E.I.klant_termijn) + " dagen, aannemers worden betaald na " + Math.round(E.I.aannemer_termijn) + " dagen.",
+  "Kostprijs van de omzet: elke factuur draagt de kostprijs die erbij hoort (factuur × kostprijs/omzet van het project), zodat de brutomarge per maand de marge van de projecten volgt.",
+  "Betalingen aan aannemers (kasstroom): de kostprijs wordt gelijk gespreid over de uitvoeringsperiode; ontvangen aannemersfacturen zijn eerst verrekend. Klanten betalen na " + Math.round(E.I.klant_termijn) + " dagen, aannemers worden betaald na " + Math.round(E.I.aannemer_termijn) + " dagen.",
   "Offertes en geraamde projecten: " + (E.scen === "verwacht" ? "meegerekend in verhouding tot hun slaagkans (bv. 60 % kans = 60 % van de bedragen)." : E.scen === "voorzichtig" ? "enkel bij een slaagkans vanaf " + E.I.vz_drempel + " %, in verhouding tot die kans, en " + E.I.vz_vertraging + " maand(en) later gestart dan gepland." : "volledig meegerekend vanaf een slaagkans van " + E.I.opt_drempel + " %, de andere in verhouding tot hun kans."),
   "Binnen en buiten per maand: wat er die maand binnenkomt (betalingen van klanten) en wat er buitengaat (aannemers en vaste kosten), op de (verwachte) betaaldatum. Er wordt geen kaspositie of banksaldo berekend.",
-  "Voor voorbije maanden tellen bij binnen en buiten enkel de feiten: betaalde en openstaande facturen en de aannemersfacturen in het Planbord. Geplande aankopen waarvan de betaaldatum al voorbij is, tellen wel in het resultaat maar niet bij buiten (vermoedelijk al betaald buiten het Planbord).",
+  "Voor voorbije maanden tellen bij binnen en buiten enkel de feiten: betaalde en openstaande facturen en de aannemersfacturen in het Planbord. Geplande aankopen waarvan de betaaldatum al voorbij is, tellen niet bij buiten (vermoedelijk al betaald buiten het Planbord).",
   "Omzet die volgens de planning in voorbije maanden gefactureerd had moeten zijn, staat nu ingepland. Facturen die verzonden maar nog niet betaald zijn, worden verwacht vanaf vandaag; van een deels betaalde factuur (volgens Yuki) telt het betaalde deel als ontvangen op de factuurdatum.",
   "Binnen en buiten zijn exclusief btw: btw-ontvangsten, -betalingen en de kwartaalafdracht zitten er niet in.",
   "Vaste kosten zoals ingegeven, jaarlijks geïndexeerd met " + finPct(E.I.index) + " waar aangeduid; in het resultaat gespreid over de maanden, bij binnen/buiten in de maand waarin ze betaald worden.",
@@ -463,7 +472,7 @@ async function finExcel() {
   pm.push([k("Resultaat (op factuurdatum)")]);
   const rG = rij("Omzet gefactureerd", R.gef), rP = rij("Omzet gepland", R.plan);
   const rO = fRij("Omzet", (c) => `${c}${rG}+${c}${rP}`, true);
-  const rA = rij("Aankopen (aannemers)", R.kost.map(v => -v));
+  const rA = rij("Kostprijs van de omzet", R.kost.map(v => -v));
   const rM = fRij("Brutomarge", (c) => `${c}${rO}+${c}${rA}`, true);
   pm.push([{ v: "Brutomarge in % van de omzet" }].concat(R.maanden.map((m, i) => ({ f: `IF(${col(i)}${rO}=0,"",${col(i)}${rM}/${col(i)}${rO})`, s: 4 }))).concat([{ f: `IF(N${rO}=0,"",N${rM}/N${rO})`, s: 8 }]));
   const rV = rij("Vaste kosten", R.vast.map(v => -v));
@@ -475,7 +484,7 @@ async function finExcel() {
   // 2. samenvatting en meerjaren
   const sv = [[{ v: "BROS — financiële planning " + jaar, s: 6 }], [{ v: "Scenario " + FIN_SCEN[E.scen].toLowerCase() + " · opgemaakt " + fmtLong(todayIso) + " · alle bedragen excl. btw", s: 7 }], [],
     [k(""), ...E.drie.map(d => k(d.j))],
-    ["Omzet", ...E.drie.map(d => e2(d.o))], ["Aankopen", ...E.drie.map(d => e2(finMin(d.k)))], [{ v: "Brutomarge", s: 1 }, ...E.drie.map((d, i) => ({ f: `${col(i)}5+${col(i)}6`, s: 3 }))],
+    ["Omzet", ...E.drie.map(d => e2(d.o))], ["Kostprijs van de omzet", ...E.drie.map(d => e2(finMin(d.k)))], [{ v: "Brutomarge", s: 1 }, ...E.drie.map((d, i) => ({ f: `${col(i)}5+${col(i)}6`, s: 3 }))],
     ["Brutomarge in %", ...E.drie.map((d, i) => ({ f: `IF(${col(i)}5=0,"",${col(i)}7/${col(i)}5)`, s: 4 }))], ["Vaste kosten", ...E.drie.map(d => e2(finMin(d.v)))],
     [{ v: "Bedrijfsresultaat", s: 1 }, ...E.drie.map((d, i) => ({ f: `${col(i)}7+${col(i)}9`, s: 3 }))], ["Binnen (ontvangsten)", ...E.drie.map(d => e2(d.in))], ["Buiten", ...E.drie.map(d => e2(finMin(d.uit)))], [],
     [k("Uitgangspunten en methode")], ...finMethode(E).map(t => [{ v: t, s: 7 }])];
@@ -546,7 +555,7 @@ async function finPdf() {
     doc.setFont("helvetica", "bold"); doc.setFontSize(16); doc.setTextColor(...(i === 2 && res < 0 ? crit : ink)); doc.text(clean(t[1]), x + 5, y + 15); doc.setFont("helvetica", "normal"); doc.setFontSize(8); doc.setTextColor(...muted); doc.text(clean(t[2]), x + 5, y + 20.5); });
   y += 32; titel("Meerjarenoverzicht");
   tabel([["", CW - 3 * 62, "l"], ...E.drie.map(d => [d.j, 62, "r"])], [
-    { cellen: ["Omzet", ...E.drie.map(d => geld(d.o))], lijn: true }, { cellen: ["Aankopen (aannemers)", ...E.drie.map(d => geld(finMin(d.k)))], lijn: true },
+    { cellen: ["Omzet", ...E.drie.map(d => geld(d.o))], lijn: true }, { cellen: ["Kostprijs van de omzet", ...E.drie.map(d => geld(finMin(d.k)))], lijn: true },
     { cellen: ["Brutomarge", ...E.drie.map(d => geld(d.m) + (d.o ? "  (" + finPct(d.m / d.o) + ")" : ""))], vet: true, lijn: true }, { cellen: ["Vaste kosten", ...E.drie.map(d => geld(finMin(d.v)))], lijn: true },
     { cellen: ["Bedrijfsresultaat", ...E.drie.map(d => ({ t: geld(d.res), neg: d.res < 0 }))], vet: true, lijn: true }, { cellen: ["Binnen (ontvangsten)", ...E.drie.map(d => geld(d.in))], lijn: true }, { cellen: ["Buiten", ...E.drie.map(d => geld(finMin(d.uit)))], lijn: true }]);
   doc.setFont("helvetica", "normal"); doc.setFontSize(8); doc.setTextColor(...muted); doc.text(clean("Latere jaren bevatten enkel wat vandaag gekend is: lopende projecten, offertes en geraamde projecten."), M, y); y += 6;
@@ -568,7 +577,7 @@ async function finPdf() {
   nieuw(); titel("Per maand · " + jaar);
   const mk = [["", 50, "l"], ...R.maanden.map(m => [MONTHS[Number(m.slice(5, 7)) - 1], 16.4, "r"]), ["Totaal", 19.2, "r"]];
   const mr = (lbl, arr, o = {}) => ({ cellen: [lbl, ...arr.map(v => ({ t: k(v), neg: v < 0 })), { t: k(finTot(arr)), neg: finTot(arr) < 0 }], vet: o.vet, grijs: o.grijs, lijn: true });
-  tabel(mk, [{ sectie: "Resultaat (op factuurdatum)" }, mr("Omzet gefactureerd", R.gef), mr("Omzet gepland", R.plan), mr("Omzet", R.omzet, { vet: true }), mr("Aankopen (aannemers)", R.kost.map(v => -v)), mr("Brutomarge", R.marge, { vet: true }), mr("Vaste kosten", R.vast.map(v => -v)), mr("Bedrijfsresultaat", R.resultaat, { vet: true }),
+  tabel(mk, [{ sectie: "Resultaat (op factuurdatum)" }, mr("Omzet gefactureerd", R.gef), mr("Omzet gepland", R.plan), mr("Omzet", R.omzet, { vet: true }), mr("Kostprijs van de omzet", R.kost.map(v => -v)), mr("Brutomarge", R.marge, { vet: true }), mr("Vaste kosten", R.vast.map(v => -v)), mr("Bedrijfsresultaat", R.resultaat, { vet: true }),
     { sectie: "Binnen en buiten (op betaaldatum)" }, mr("Binnen: ontvangsten klanten", R.in, { vet: true }), mr("Buiten: betalingen aannemers", R.uitA.map(v => -v)), mr("Buiten: vaste kosten", R.uitV.map(v => -v)), mr("Buiten: totaal", R.uit.map(v => -v), { vet: true }), mr("Verschil binnen - buiten", R.verschil, { grijs: true })], { rh: 6.2 });
   doc.setFont("helvetica", "normal"); doc.setFontSize(8); doc.setTextColor(...muted); doc.text(clean("Bedragen in euro, k = duizend. Geen kaspositie: enkel wat per maand binnenkomt en gepland buitengaat."), M, y); y += 6;
   // pagina 4: projecten
