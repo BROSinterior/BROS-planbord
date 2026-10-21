@@ -546,7 +546,7 @@ function opnameDrive(body) {
     return JSON.parse(r.getContentText());
   };
   if (soort === "start") {
-    const naam = schoon(body.naam, 150) || "opname"; const grootte = Number(body.grootte) || 0; const mime = schoon(body.mime, 100) || "application/octet-stream";
+    const naam = schoon(body.naam, 150) || "opname"; const grootte = Number(body.grootte) || 0; const mime = /^[\w.+-]{1,60}\/[\w.+-]{1,60}$/.test(String(body.mime || "").trim()) ? String(body.mime).trim() : "application/octet-stream";   // 1.56.2: niet via schoon() — die haalde de "/" uit "audio/mp4" en Drive weigerde (400)
     if (!(grootte > 0) || grootte > 4 * 1024 * 1024 * 1024) return { ok: false, error: "Ongeldige bestandsgrootte." };
     const it = map.getFilesByName(naam);
     while (it.hasNext()) { const f = it.next(); if (f.getSize() === grootte && !f.isTrashed()) { const i = fileInfo(f.getId()); return { ok: true, bestaand: { id: i.id, md5: i.md5Checksum || "", url: i.webViewLink, size: Number(i.size) }, map_url: map.getUrl() }; } }
@@ -554,7 +554,7 @@ function opnameDrive(body) {
       method: "post", contentType: "application/json; charset=UTF-8", payload: JSON.stringify({ name: naam, parents: [map.getId()], mimeType: mime }),
       headers: Object.assign({ "X-Upload-Content-Type": mime, "X-Upload-Content-Length": String(grootte) }, auth), muteHttpExceptions: true });
     const h = r.getHeaders(); const loc = h.Location || h.location;
-    if (r.getResponseCode() !== 200 || !loc) return { ok: false, error: "Drive gaf geen uploadsessie (" + r.getResponseCode() + ")." };
+    if (r.getResponseCode() !== 200 || !loc) { let w = ""; try { w = String((JSON.parse(r.getContentText()).error || {}).message || "").slice(0, 160); } catch (e) { } return { ok: false, error: "Drive gaf geen uploadsessie (" + r.getResponseCode() + (w ? ": " + w : "") + ")." }; }
     return { ok: true, upload_url: loc, map_url: map.getUrl() };
   }
   if (soort === "info") {
@@ -1286,7 +1286,7 @@ function onderhoudZeker() {
 }
 function onderhoudInstall() { CacheService.getScriptCache().remove("onderhoud-trigger"); onderhoudZeker(); CacheService.getScriptCache().remove("hartslag"); onderhoud(false); Logger.log("OK — onderhoud draait elk uur (hartslag), back-up en bewaking wekelijks."); }
 function hartslag() {
-  pbAdmin("/rest/v1/instellingen?on_conflict=key", "post", { key: "hartslag", value: { drive: new Date().toISOString(), versie: "1.56.0" } }, "resolution=merge-duplicates,return=minimal");
+  pbAdmin("/rest/v1/instellingen?on_conflict=key", "post", { key: "hartslag", value: { drive: new Date().toISOString(), versie: "1.56.2" } }, "resolution=merge-duplicates,return=minimal");
 }
 function triggersHerstellen() {   // enkel triggers die er eerder al waren (nooit iets aanzetten dat BROS zelf niet installeerde)
   const props = PropertiesService.getScriptProperties();

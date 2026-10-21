@@ -5,3 +5,4 @@ drive/Code.ingevuld.gs
 *.ingevuld.*
 *.bak
 _to_delete/
+__pycache__/

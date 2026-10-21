@@ -2,6 +2,12 @@
 
 De nieuwste versie staat bovenaan. (Vanaf 1.48 houdt `version.json` enkel de laatste versie bij; het Planbord vraagt dat bestand elke 5 minuten op.)
 
+## 1.56.2 — 2026-10-21 (enkel nieuw drive/Code.gs)
+
+Vergaderingen: de verwerkingscomputer kon het origineel niet op Drive zetten ("Drive gaf geen uploadsessie (400)"). Het Drive-script haalde de "/" uit het bestandstype (audio/mp4 werd "audio mp4") en Drive weigerde dat. Opgelost; bij een weigering toont de melding nu ook de reden die Drive geeft.
+
+Verwerkingscomputer 1.56.2 (verwerker/bros_verwerker.py): het spraakmodel krijgt de namen van het team en een lijst vaktermen mee (werf, meetstaat, offerte, meerwerk, …), zodat het bv. "werf" i.p.v. "wirf" en "Noa" i.p.v. "Noah" schrijft. De lijst is aan te passen in config.json ("woordenlijst"). Het conceptverslag stuurt geen "temperature" meer mee: nieuwere modellen (zoals claude-sonnet-5-5) weigeren die parameter met een fout 400 ("Geen conceptverslag: … fout (400)"); weigert een model toch nog een parameter, dan probeert de verwerker één keer opnieuw zonder. Bijwerken op de Mac mini: verwerker/installeer.sh opnieuw uitvoeren (instellingen en sleutelhanger blijven).
+
 ## 1.56.1 — 2026-10-20 (geen databasescript)
 
 Financiële planning: de kostprijs in het resultaat volgt nu de facturen. Elke factuur draagt de kostprijs die erbij hoort (factuur × kostprijs/omzet van het project), dus een project met een positieve marge geeft nooit een maand met een negatieve brutomarge — ook niet als een voorschot vóór de werken valt of de aannemers later betaald worden. Wanneer de aannemers betaald worden, blijft zichtbaar in de kasstroom (binnen/buiten). De rij 'Aankopen (aannemers)' heet nu 'Kostprijs van de omzet' (scherm, pdf, Excel).

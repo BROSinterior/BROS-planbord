@@ -203,6 +203,7 @@ Planbord › Instellingen › *Evaluatie proefperiode* toont per soort hoeveel A
 | `vad_model` | `…/ggml-silero-v6.2.0.bin` | stiltedetectie: minder verzonnen tekst in stiltes; leeg = uit |
 | `whisper_threads` | 4 | CPU-threads (de GPU doet het meeste werk) |
 | `deel_minuten` | 10 | lengte van een deel; knippen gebeurt in een stilte |
+| `woordenlijst` | werf, meetstaat, offerte, … | vaktermen die het spraakmodel als woordenschat meekrijgt, samen met de namen van het team en de deelnemers (bv. "werf" i.p.v. "wirf"). Een lijst: `["werf", "kalkplaat", …]` |
 | `laag_vertrouwen` | 0.45 | segmenten met een lagere modelzekerheid worden "onduidelijk" gemarkeerd |
 | `min_vrij_gb` | 15 | onder deze vrije ruimte neemt de Mac geen opdrachten meer aan |
 | `llm.model` | `claude-sonnet-5-5` | taalmodel voor het conceptverslag |

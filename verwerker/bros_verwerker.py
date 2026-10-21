@@ -43,7 +43,10 @@ import urllib.request
 import uuid as uuidlib
 from datetime import datetime, timezone
 
-VERSIE = "1.54.0"
+VERSIE = "1.56.2"
+# vaktermen die het spraakmodel als woordenschat meekrijgt (aan te passen in config.json › "woordenlijst")
+WOORDENLIJST = ["werf", "werfbezoek", "werfvergadering", "meetstaat", "offerte", "meerwerk", "minwerk", "vordering", "oplevering",
+                "schrijnwerker", "aannemer", "bouwheer", "ontwerp", "plannen", "maatwerk", "Planbord"]
 IS_MAC = platform.system() == "Darwin"
 
 # ---------------------------------------------------------------- configuratie
@@ -664,8 +667,11 @@ class Taalmodel:
         return bool(self.sleutel) and self.cfg.get("provider") == "anthropic"
 
     def vraag(self, systeem, inhoud, max_tokens=None):
-        body = {"model": self.cfg["model"], "max_tokens": int(max_tokens or self.cfg.get("max_tokens") or 16000), "temperature": 0,
+        body = {"model": self.cfg["model"], "max_tokens": int(max_tokens or self.cfg.get("max_tokens") or 16000),
                 "system": systeem, "messages": [{"role": "user", "content": inhoud}]}
+        # 1.56.2: geen temperature meer standaard — nieuwere modellen weigeren die parameter (400 "deprecated"); enkel als ze in config.json staat
+        if self.cfg.get("temperature") is not None:
+            body["temperature"] = self.cfg["temperature"]
         laatste = None
         for poging in range(4):
             st, raw, hdr = http("POST", self.cfg.get("url") or STANDAARD["llm"]["url"],
@@ -678,6 +684,15 @@ class Taalmodel:
                 self.tokens_uit += int(u.get("output_tokens", 0))
                 return "".join(c.get("text", "") for c in j.get("content", []) if c.get("type") == "text"), j.get("stop_reason")
             laatste = (st, (raw or b"")[:300].decode("utf-8", "replace"))
+            # een parameter die het model niet (meer) kent: één keer opnieuw zonder die parameter
+            if st == 400 and poging == 0:
+                fout = str(((json_of(raw) or {}).get("error") or {}).get("message", ""))
+                weg = [k for k in ("temperature", "top_p", "top_k") if k in body and k in fout]
+                if weg:
+                    for k in weg:
+                        body.pop(k, None)
+                    log("taalmodel weigerde %s — opnieuw zonder" % ", ".join(weg))
+                    continue
             if st in (429, 500, 502, 503, 529):
                 time.sleep(min(60, 5 * (2 ** poging)))
                 continue
@@ -963,7 +978,11 @@ class Verwerking:
         segmenten, staart = [], ""
         namen = ", ".join(d.get("naam", "") for d in self.v.get("deelnemers") or [] if d.get("naam"))
         p = self.opdracht.get("project") or {}
-        basisprompt = "Vergadering van BROS interieurarchitecten" + (", project " + p.get("klant", "") if p.get("klant") else "") + (". Deelnemers: " + namen if namen else "") + "."
+        # 1.56.2: de namen van het team en de vaktermen van BROS sturen het spraakmodel (bv. "werf" i.p.v. "wirf", "Noa" i.p.v. "Noah")
+        teamnamen = ", ".join(sorted({str(t.get("naam", "")).strip() for t in (self.opdracht.get("team") or []) if str(t.get("naam", "")).strip()}))
+        vaktermen = ", ".join(str(w).strip() for w in (self.cfg.get("woordenlijst") or WOORDENLIJST) if str(w).strip())
+        basisprompt = ("Vergadering van BROS interieurarchitecten" + (", project " + p.get("klant", "") if p.get("klant") else "") + (". Deelnemers: " + namen if namen else "")
+                       + (". Team: " + teamnamen if teamnamen else "") + (". Vaktermen: " + vaktermen if vaktermen else "") + ".")[:450]
         for n, (s, e) in enumerate(delen):
             uitbasis = os.path.join(self.map, "deel%03d" % n)
             if not os.path.exists(uitbasis + ".json"):
