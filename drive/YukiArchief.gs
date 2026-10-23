@@ -1,5 +1,5 @@
 /* =====================================================================
-   BROS Planbord — Yuki-mails lezen in archief@bros.be (v1.50.1)
+   BROS Planbord — Yuki-mails lezen in archief@bros.be (v1.56.3)
    Dit kleine script draait in het Google-account archief@bros.be (NIET in brosburo). Elk uur:
    1. zoekt het in de mailbox van archief@bros.be de Yuki-factuurmails ("Factuur van BROS", laatste 60 dagen, nog niet verwerkt),
       controleert of Gmail bevestigt dat ze echt van Yuki komen (handtekening DKIM/SPF/DMARC) en stuurt ze — met de factuur-pdf —
@@ -24,16 +24,29 @@
    3. Kies bovenaan de functie archiefTest → Uitvoeren → toestemming geven (Gmail lezen/labelen, externe verbinding).
       Die verandert niets: ze toont de laatste Yuki-mails met of de handtekening bevestigd is, en test de verbinding.
    4. Ziet dat er goed uit: functie archiefInstall → Uitvoeren. Daarna draait het elk uur vanzelf.
+   5. (eenmalig, 1.56.3) functie archiefInhalen → Uitvoeren: werkt 2 dagen lang ook de Yuki-mails en verzonden facturen van de
+      voorbije ± 13 maanden af (pdf, mededeling, vervaldag en factuurnummer bij vorderingen die al op verzonden/betaald stonden).
    Stoppen: Triggers (wekker links) → de trigger archiefYuki verwijderen.
    ===================================================================== */
 const ARCHIEF = {
   QUERY: 'subject:"Factuur van BROS" newer_than:60d -label:planbord-verwerkt -label:planbord-te-bekijken -label:planbord-overgeslagen',
+  INHAAL_DAGEN: 400,           // archiefInhalen: eenmalig ook oudere Yuki-mails en facturen (tot ± 13 maanden terug), 2 dagen lang
   LABEL: "Planbord/verwerkt", LABEL_CHECK: "Planbord/te bekijken", LABEL_SKIP: "Planbord/overgeslagen",
   PER_KEER: 2,                 // mails per doorstuurbericht (met pdf; het Planbord leest de pdf — binnen de wachttijd blijven)
   MAX_PDF: 5 * 1048576,        // grotere pdf's niet meesturen
   POGINGEN: 3,                 // daarna label "te bekijken"
 };
 const YUKI_DOM_A = "(?:[\\w-]+\\.)*yukiworks\\.(?:be|nl)(?![\\w.-])";
+/* 1.56.3: inhaalmodus — na archiefInhalen() werkt het script 2 dagen lang ook de oudere mails en facturen af (elk uur een deel) */
+function archiefInhaal() { return Number(PropertiesService.getScriptProperties().getProperty("INHALEN_TOT") || 0) > Date.now(); }
+function archiefQuery() { return archiefInhaal() ? ARCHIEF.QUERY.replace("newer_than:60d", "newer_than:" + ARCHIEF.INHAAL_DAGEN + "d") : ARCHIEF.QUERY; }
+/** Eenmalig na de installatie: ook de Yuki-mails en verzonden facturen van de voorbije ± 13 maanden afwerken (2 dagen lang, elk uur een deel). */
+function archiefInhalen() {
+  PropertiesService.getScriptProperties().setProperty("INHALEN_TOT", String(Date.now() + 48 * 3600000));
+  const n = GmailApp.search('subject:"Factuur van BROS" newer_than:' + ARCHIEF.INHAAL_DAGEN + 'd -label:planbord-verwerkt -label:planbord-te-bekijken -label:planbord-overgeslagen', 0, 500).length;
+  Logger.log("Inhaalmodus aan voor 48 uur: " + n + " Yuki-conversatie(s) van de voorbije " + ARCHIEF.INHAAL_DAGEN + " dagen worden elk uur per 20 afgewerkt. Eerste ronde start nu.");
+  archiefYuki();
+}
 function archiefLabel(naam) { return GmailApp.getUserLabelByName(naam) || GmailApp.createLabel(naam); }
 function archiefInstall() {
   [ARCHIEF.LABEL, ARCHIEF.LABEL_CHECK, ARCHIEF.LABEL_SKIP].forEach(archiefLabel);
@@ -50,7 +63,7 @@ function archiefTest() {
     const pdf = m.getAttachments().find(a => /\.pdf$/i.test(a.getName()) && /factuur/i.test(a.getName()));
     lijnen.push(Utilities.formatDate(m.getDate(), "Europe/Brussels", "dd/MM/yyyy HH:mm") + " · " + m.getSubject() + " · handtekening Yuki " + (archiefEcht(m) ? "BEVESTIGD" : "NIET bevestigd (zou niet automatisch verwerkt worden)") + " · pdf " + (pdf ? "ja" : "nee"));
   }));
-  Logger.log(lijnen.length ? "Laatste Yuki-mails in " + Session.getActiveUser().getEmail() + ":\n" + lijnen.join("\n") : "Geen Yuki-mails (Factuur van BROS, van yukiworks) gevonden in de laatste 60 dagen van " + Session.getActiveUser().getEmail() + ".");
+  Logger.log(lijnen.length ? "Laatste Yuki-mails in " + Session.getActiveUser().getEmail() + ":\n" + lijnen.join("\n") : "Geen Yuki-mails (Factuur van BROS, verstuurd via yukiworks) gevonden in de laatste 60 dagen (alle mappen) van " + Session.getActiveUser().getEmail() + ".");
   const r = archiefPost({ action: "yukizoeklijst" });
   Logger.log("Verbinding met het Planbord: in orde (" + ((r && r.nummers) || []).length + " factu(u)r(en) zonder pdf). Er is niets gewijzigd. Klopt dit, voer dan archiefInstall uit.");
 }
@@ -63,17 +76,38 @@ function archiefPost(body) {
   if (j && j.ok === false) throw new Error("Planbord-script: " + (j.error || "fout"));
   return j;
 }
-/** Gmail bevestigde dat de mail echt van Yuki komt (zelfde regels als yukiEcht in het Drive-script). */
+/** Kopregels van de mail in volgorde (bovenaan = laatst toegevoegd, door Gmail zelf). null als de ruwe mail niet leesbaar is. */
+function archiefKoppen(m) {
+  try {
+    const blok = String(m.getRawContent() || "").split(/\r?\n\r?\n/)[0].replace(/\r?\n[ \t]+/g, " ");
+    return blok.split(/\r?\n/).map(l => { const i = l.indexOf(":"); return i > 0 ? [l.slice(0, i).trim().toLowerCase(), l.slice(i + 1).trim()] : null; }).filter(Boolean);
+  } catch (e) { return null; }
+}
+/** Gmail bevestigde dat de mail echt van Yuki komt. Enkel de bovenste resultaten (door Gmail zelf toegevoegd):
+ *  - DKIM of SPF geslaagd voor (een subdomein van) yukiworks.be/.nl, of
+ *  - 1.56.3: via de Google-groep info@bros.be — Yuki mailt naar info@, de groep stuurt door naar archief@. Dan bevestigt Gmail
+ *    "arc=pass (i=N … dkim=pass dkdomain=yukiworks.be)", en die ARC-stap N moet door Google zelf verzegeld zijn (d=google.com) met
+ *    een eigen controle van mx.google.com: DKIM geslaagd voor yukiworks. De afzender moet een bros.be-adres zijn (accounting@bros.be). */
 function archiefEcht(m) {
-  let ar = "", arc = ""; try { ar = String(m.getHeader("Authentication-Results") || ""); arc = String(m.getHeader("ARC-Authentication-Results") || ""); } catch (e) { }
+  const k = archiefKoppen(m);
+  const eerste = (n) => k ? ((k.find(x => x[0] === n.toLowerCase()) || [])[1] || "") : (() => { try { return String(m.getHeader(n) || ""); } catch (e) { return ""; } })();
+  const ar = eerste("Authentication-Results"); if (!/^mx\.google\.com\s*;/i.test(ar)) return false;
   const yuki = (re) => new RegExp(re.replace("YUKI", YUKI_DOM_A), "i");
   const direct = yuki("dkim=pass[^;]*header\\.[di]=@?YUKI").test(ar) || yuki("spf=pass[^;]*smtp\\.mailfrom=(?:[^;\\s@]*@)?YUKI").test(ar) || yuki("dmarc=pass[^;]*header\\.from=YUKI").test(ar);
-  const brosDmarc = /dmarc=pass[^;]*header\.from=bros\.be(?![\w.-])/i.test(ar) && (yuki("(?:dkdomain|spfdomain|header\\.[di]|mailfrom)=@?(?:[^;\\s@]*@)?YUKI").test(ar + " " + arc));
-  return direct || brosDmarc;
+  if (direct) return true;
+  const a = ar.match(/\barc=pass \(i=(\d{1,2})\s([^)]*)\)/i);
+  if (!k || !a || !yuki("(?:^|\\s)dkim=pass dkdomain=YUKI").test(a[2])) return false;
+  const seal = k.find(x => x[0] === "arc-seal" && new RegExp("(?:^|;)\\s*i=" + a[1] + "\\s*(?:;|$)").test(x[1]));
+  const aar = k.find(x => x[0] === "arc-authentication-results" && new RegExp("^i=" + a[1] + "\\s*;\\s*mx\\.google\\.com\\s*;").test(x[1]));
+  const doorGoogle = !!seal && /(?:^|;)\s*d=google\.com\s*(?:;|$)/i.test(seal[1]) && /(?:^|;)\s*cv=(?:pass|none)\s*(?:;|$)/i.test(seal[1]);
+  const vanBros = /@bros\.be>?\s*$/i.test(String(m.getFrom() || "").trim());
+  return doorGoogle && !!aar && yuki("dkim=pass header\\.[di]=@?YUKI").test(aar[1]) && vanBros;
 }
-/** Komt de mail (volgens afzender, antwoordadres, Sender of Return-Path) van Yuki en gaat ze over een BROS-factuur? (de handtekening apart: archiefEcht) */
+/** Komt de mail (volgens afzender, antwoordadres, Sender, Return-Path of Message-ID) van Yuki en gaat ze over een BROS-factuur?
+ *  Enkel een voorselectie; of ze echt van Yuki komt, beslist archiefEcht. (Via de groep info@ staat yukiworks enkel nog in de Message-ID.) */
 function archiefIsYuki(m) {
-  const kop = [m.getFrom(), m.getReplyTo(), m.getHeader("Sender"), m.getHeader("Return-Path")].join(" ");
+  const h = (n) => { try { return m.getHeader(n) || ""; } catch (e) { return ""; } };
+  const kop = [m.getFrom(), m.getReplyTo(), h("Sender"), h("Return-Path"), h("Message-ID")].join(" ");
   return /yukiworks\./i.test(kop) && m.getSubject().indexOf("Factuur van BROS") >= 0;
 }
 /** Wat naar het Planbord gaat (de pdf pas hier ingepakt, per doorstuurbericht). */
@@ -89,7 +123,7 @@ function archiefYuki() {
     const label = archiefLabel(ARCHIEF.LABEL), labelCheck = archiefLabel(ARCHIEF.LABEL_CHECK), labelSkip = archiefLabel(ARCHIEF.LABEL_SKIP);
     // 1. nieuwe Yuki-mails
     const items = [];
-    GmailApp.search(ARCHIEF.QUERY, 0, 20).forEach(t => {
+    GmailApp.search(archiefQuery(), 0, 20).forEach(t => {
       const ms = t.getMessages().filter(archiefIsYuki);
       if (!ms.length) { t.addLabel(labelSkip); return; }   // "Factuur van BROS" maar niet van Yuki (bv. antwoord van een klant): niet telkens opnieuw bekijken
       ms.forEach(m => items.push({ m: m, t: t }));
@@ -114,13 +148,14 @@ function archiefYuki() {
     perThread.forEach((st, t) => { if (st.every(Boolean)) t.addLabel(st.indexOf("check") >= 0 ? labelCheck : label); });
     if (items.length) Logger.log(n + " van " + items.length + " Yuki-mail(s) verwerkt door het Planbord.");
     // 2. verzonden facturen zonder pdf opzoeken (per factuur hooguit om de 6 uur)
-    let lijst = []; try { lijst = (archiefPost({ action: "yukizoeklijst" }) || {}).nummers || []; } catch (e) { fouten.push(String(e.message || e)); }
+    const inhaal = archiefInhaal();
+    let lijst = []; try { lijst = (archiefPost({ action: "yukizoeklijst", dagen: inhaal ? ARCHIEF.INHAAL_DAGEN : 120 }) || {}).nummers || []; } catch (e) { fouten.push(String(e.message || e)); }
     lijst.forEach(nr => {
       if (Date.now() - t0 > 270000) return; nr = String(nr); const sleutel = "Z_" + nr; const vorig = Number(props.getProperty(sleutel) || 0); if (Date.now() - vorig < 6 * 3600000) return;
       props.setProperty(sleutel, String(Date.now()));
       try {
         const re = new RegExp("Factuurnummer\\s*:\\s*" + nr.replace(/[.*+?^${}()|[\]\\\/-]/g, "\\$&") + "(?![0-9A-Za-z\\-\\/])");
-        const gevonden = []; GmailApp.search('subject:"Factuur van BROS" "' + nr.replace(/"/g, "") + '" newer_than:180d', 0, 5).forEach(t => t.getMessages().forEach(m => { if (gevonden.length < 2 && archiefIsYuki(m) && re.test(m.getPlainBody() || "")) gevonden.push(m); }));
+        const gevonden = []; GmailApp.search('subject:"Factuur van BROS" "' + nr.replace(/"/g, "") + '" newer_than:' + (inhaal ? ARCHIEF.INHAAL_DAGEN + 60 : 180) + 'd', 0, 5).forEach(t => t.getMessages().forEach(m => { if (gevonden.length < 2 && archiefIsYuki(m) && re.test(m.getPlainBody() || "")) gevonden.push(m); }));
         if (gevonden.length) { const r = archiefPost({ action: "yukimails", zoek: true, mails: gevonden.map(archiefBericht) }); verstuurd = true; Logger.log("Factuur " + nr + ": " + JSON.stringify((r && r.resultaten) || {})); }
       } catch (e) { fouten.push("factuur " + nr + ": " + String(e.message || e)); }
     });

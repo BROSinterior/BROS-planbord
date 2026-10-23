@@ -44,10 +44,11 @@ function doPost(e) {
     if (body.action === "werfpuntmelding") return json(werfpuntMelding(body));
     if (body.action === "werfpuntfeedback") return json(werfpuntFeedback(body));   // aannemer (script 044): opmerking/foto bij een toegewezen werfpunt zonder het op te lossen → mail aan de projectverantwoordelijke   // aannemer (script 043): nieuw werfpunt gemeld in de werfmodus → mail aan de projectverantwoordelijke (token-gecontroleerd)
     if (body.action === "opname") return json(opnameDrive(body));   // 1.54 (script 051): de verwerkingscomputer (login met rol verwerker, lopende opdracht) bewaart opnames en transcripten in de projectmap
+    if (body.action === "plan") return json(planDrive(body));   // 1.57 (script 054): de verwerkingscomputer bewaart omgezette plannen (Plan2CAD) in Plannen/DXF van de projectmap
     if (body.action === "bestand") return json(portaalBestand(body)); // klant/aannemer: een gedeeld document ophalen om er een pdf-dossier van te maken (login + toegang gecontroleerd) // team (token): aannemer verwittigen dat hij aan een project gekoppeld is (met uitnodiging als hij nog geen login heeft)
     if (body.action === "yukimails" || body.action === "yukizoeklijst") {   // 1.50.1: het archief-script (archief@bros.be) — met een EIGEN secret (ARCHIEF_SECRET), niet het Drive-secret van het team
       if (!archiefSecretOk(body.archief_secret)) return json({ ok: false, error: "Geen toegang (ARCHIEF_SECRET klopt niet)." });
-      return json(body.action === "yukimails" ? yukiMailsVanArchief(body) : { ok: true, nummers: yukiZoeklijst() });
+      return json(body.action === "yukimails" ? yukiMailsVanArchief(body) : { ok: true, nummers: yukiZoeklijst(body.dagen) });
     }
     if (!body.secret || body.secret !== CONFIG.SECRET) return json({ ok: false, error: "Geen toegang (secret klopt niet)." });
     if (body.action === "ping") return json({ ok: true, info: "Verbinding en secret in orde.", projecten: DriveApp.getFolderById(CONFIG.PROJECTEN_FOLDER_ID).getName(), sjabloon: DriveApp.getFolderById(CONFIG.SJABLOON_FOLDER_ID).getName() });
@@ -569,6 +570,71 @@ function opnameDrive(body) {
     if (r.getResponseCode() !== 206 && r.getResponseCode() !== 200) return { ok: false, error: "Lezen van Drive mislukt (" + r.getResponseCode() + ")." };
     const bytes = r.getBlob().getBytes();
     return { ok: true, base64: Utilities.base64Encode(bytes), lengte: bytes.length, bereik: String(r.getHeaders()["Content-Range"] || "") };
+  }
+  return { ok: false, error: "Onbekende soort." };
+}
+
+/* =====================================================================
+   Plannen omzetten met Plan2CAD (script 054, v1.57) — voor de verwerkingscomputer (Mac mini)
+   Enkel een actieve login met rol 'verwerker' die nu deze omzetting verwerkt (claim + lease, zoals bij de opnames).
+   Map: projectmap › Plannen/DXF (origineel + DXF/DWG op ware grootte).
+   soort 'start': uploadsessie (de verwerkingscomputer stuurt het bestand rechtstreeks naar Google). Staat er al een bestand
+                  met dezelfde naam en hetzelfde controlegetal (md5), dan krijg je dat terug (hervatten). Met vervang=true
+                  gaan bestanden met dezelfde naam maar een andere inhoud naar de prullenbak (opnieuw op een andere schaal).
+   soort 'info':  id, md5 en grootte van een bestand in die map (controle na het opladen).
+   soort 'lees':  een stuk (max. 8 MB) van het origineel op Drive, om opnieuw om te zetten als het niet meer in de opslag staat.
+   ===================================================================== */
+function planDrive(body) {
+  const wie = callerAny(body.token);
+  if (wie.role !== "verwerker") return { ok: false, error: "Geen toegang (enkel de verwerkingscomputer)." };
+  const id = uuid(body.omzetting_id);
+  const job = (pbAdmin("/rest/v1/plan_omzettingen?id=eq." + id + "&status=eq.bezig&worker_user=eq." + uuid(wie.id) + "&claim=eq." + uuid(body.claim) + "&lease_tot=gt." + encodeURIComponent(new Date().toISOString()) + "&select=id,project_id,drive_bron", "get") || [])[0];
+  if (!job) return { ok: false, error: "Geen lopende omzetting." };
+  const p = (pbAdmin("/rest/v1/projecten?id=eq." + uuid(job.project_id) + "&select=drive_folder_id,klant", "get") || [])[0] || {};
+  if (!p.drive_folder_id) return { ok: false, geen_map: true, error: "Dit project heeft nog geen projectmap op Drive (Dossier › Projectmap koppelen)." };
+  onderProjecten(p.drive_folder_id);
+  const auth = { Authorization: "Bearer " + ScriptApp.getOAuthToken() };
+  const schoon = (t, max) => String(t || "").replace(/[\\/:*?"<>|\r\n\t]+/g, " ").replace(/\s+/g, " ").trim().slice(0, max);
+  const map = subfolder(DriveApp.getFolderById(p.drive_folder_id), "Plannen/DXF");
+  const soort = String(body.soort || "");
+  const fileInfo = (fid) => {
+    const r = UrlFetchApp.fetch("https://www.googleapis.com/drive/v3/files/" + encodeURIComponent(fid) + "?supportsAllDrives=true&fields=id,name,md5Checksum,size,webViewLink,parents,trashed", { headers: auth, muteHttpExceptions: true });
+    if (r.getResponseCode() !== 200) throw new Error("Bestand niet gevonden op Drive.");
+    return JSON.parse(r.getContentText());
+  };
+  if (soort === "start") {
+    const naam = schoon(body.naam, 150) || "plan"; const grootte = Number(body.grootte) || 0;
+    const mime = /^[\w.+-]{1,60}\/[\w.+-]{1,60}$/.test(String(body.mime || "").trim()) ? String(body.mime).trim() : "application/octet-stream";
+    const md5 = /^[0-9a-f]{32}$/.test(String(body.md5 || "")) ? String(body.md5) : "";
+    if (!(grootte > 0) || grootte > 1024 * 1024 * 1024) return { ok: false, error: "Ongeldige bestandsgrootte." };
+    const it = map.getFilesByName(naam); const anders = [];
+    while (it.hasNext()) {
+      const f = it.next(); if (f.isTrashed()) continue;
+      const i = fileInfo(f.getId());
+      if (md5 ? i.md5Checksum === md5 : Number(i.size) === grootte) return { ok: true, bestaand: { id: i.id, md5: i.md5Checksum || "", url: i.webViewLink, size: Number(i.size) }, map_url: map.getUrl() };
+      anders.push(f);
+    }
+    if (body.vervang === true) anders.forEach(f => f.setTrashed(true));   // naar de prullenbak (30 dagen terug te halen), niet definitief weg
+    const r = UrlFetchApp.fetch("https://www.googleapis.com/upload/drive/v3/files?uploadType=resumable&supportsAllDrives=true&fields=id,md5Checksum,size,webViewLink", {
+      method: "post", contentType: "application/json; charset=UTF-8", payload: JSON.stringify({ name: naam, parents: [map.getId()], mimeType: mime }),
+      headers: Object.assign({ "X-Upload-Content-Type": mime, "X-Upload-Content-Length": String(grootte) }, auth), muteHttpExceptions: true });
+    const h = r.getHeaders(); const loc = h.Location || h.location;
+    if (r.getResponseCode() !== 200 || !loc) { let w = ""; try { w = String((JSON.parse(r.getContentText()).error || {}).message || "").slice(0, 160); } catch (e) { } return { ok: false, error: "Drive gaf geen uploadsessie (" + r.getResponseCode() + (w ? ": " + w : "") + ")." }; }
+    return { ok: true, upload_url: loc, map_url: map.getUrl() };
+  }
+  if (soort === "info") {
+    const i = fileInfo(String(body.file_id || ""));
+    if (i.trashed || (i.parents || []).indexOf(map.getId()) < 0) return { ok: false, error: "Dit bestand staat niet in Plannen/DXF van dit project." };
+    return { ok: true, id: i.id, md5: i.md5Checksum || "", size: Number(i.size), url: i.webViewLink, map_url: map.getUrl() };
+  }
+  if (soort === "lees") {
+    const bron = job.drive_bron || {};
+    if (!bron.id) return { ok: false, error: "Er is nog geen origineel op Drive." };
+    const start = Math.max(0, Math.floor(Number(body.start) || 0)); const len = Math.min(8 * 1024 * 1024, Math.max(1, Math.floor(Number(body.lengte) || 0)));
+    const r = UrlFetchApp.fetch("https://www.googleapis.com/drive/v3/files/" + encodeURIComponent(bron.id) + "?alt=media&supportsAllDrives=true", { headers: Object.assign({ Range: "bytes=" + start + "-" + (start + len - 1) }, auth), muteHttpExceptions: true });
+    if (r.getResponseCode() !== 206 && r.getResponseCode() !== 200) return { ok: false, error: "Lezen van Drive mislukt (" + r.getResponseCode() + ")." };
+    const bytes = r.getBlob().getBytes();
+    return { ok: true, base64: Utilities.base64Encode(bytes), lengte: bytes.length };
   }
   return { ok: false, error: "Onbekende soort." };
 }
@@ -1286,7 +1352,7 @@ function onderhoudZeker() {
 }
 function onderhoudInstall() { CacheService.getScriptCache().remove("onderhoud-trigger"); onderhoudZeker(); CacheService.getScriptCache().remove("hartslag"); onderhoud(false); Logger.log("OK — onderhoud draait elk uur (hartslag), back-up en bewaking wekelijks."); }
 function hartslag() {
-  pbAdmin("/rest/v1/instellingen?on_conflict=key", "post", { key: "hartslag", value: { drive: new Date().toISOString(), versie: "1.56.2" } }, "resolution=merge-duplicates,return=minimal");
+  pbAdmin("/rest/v1/instellingen?on_conflict=key", "post", { key: "hartslag", value: { drive: new Date().toISOString(), versie: "1.56.3" } }, "resolution=merge-duplicates,return=minimal");
 }
 function triggersHerstellen() {   // enkel triggers die er eerder al waren (nooit iets aanzetten dat BROS zelf niet installeerde)
   const props = PropertiesService.getScriptProperties();
@@ -1533,11 +1599,12 @@ function yukiMailsVanArchief(body) {
 }
 /** Verzonden facturen zonder pdf (laatste 120 dagen, minstens een dag oud) die het archief-script in archief@bros.be moet opzoeken.
  *  Een factuur die al gevonden werd (bedrag wijkt af, geen Drive-map, …) wordt pas na 7 dagen opnieuw gezocht. */
-function yukiZoeklijst() {
+function yukiZoeklijst(dagen) {
   const props = PropertiesService.getScriptProperties(); props.setProperty("YUKI_ARCHIEF_LAATST", new Date().toISOString());
-  const vandaag = brusselsDag(); const grens = Utilities.formatDate(new Date(Date.now() - 120 * 86400000), "Europe/Brussels", "yyyy-MM-dd");
+  const d = Math.min(400, Math.max(120, Number(dagen) || 120));   // 1.56.3: archiefInhalen vraagt eenmalig tot 400 dagen terug
+  const vandaag = brusselsDag(); const grens = Utilities.formatDate(new Date(Date.now() - d * 86400000), "Europe/Brussels", "yyyy-MM-dd");
   const alle = props.getProperties(); Object.keys(alle).filter(k => k.indexOf("YZ_") === 0).forEach(k => { let d = ""; try { d = JSON.parse(alle[k]).d; } catch (e) { } if (!d || dagenTussen(d, vandaag) > 30) { try { props.deleteProperty(k); } catch (e) { } } });
-  let rijen = []; try { rijen = pbAdmin("/rest/v1/vorderingen?status=in.(verzonden,betaald)&factuurnummer=neq.&factuur_document=is.null&datum=gte." + grens + "&select=factuurnummer,datum&order=datum.desc&limit=30", "get") || []; } catch (e) { return []; }
+  let rijen = []; try { rijen = pbAdmin("/rest/v1/vorderingen?status=in.(verzonden,betaald)&factuurnummer=neq.&factuur_document=is.null&datum=gte." + grens + "&select=factuurnummer,datum&order=datum.desc&limit=" + (d > 120 ? 80 : 30), "get") || []; } catch (e) { return []; }
   return rijen.filter(v => v.datum && dagenTussen(v.datum, vandaag) >= DEBITEUREN.MAIL_ZOEKEN_NA_DAGEN).map(v => String(v.factuurnummer).trim())
     .filter(nr => { if (!nr) return false; const z = yukiZoekResultaat(nr); return !z || dagenTussen(z.d, vandaag) >= 7; });
 }
@@ -2215,6 +2282,12 @@ function yukiCalc(v, rows, regels, loten) {
     excl += a; btw += a * (Number(r.btw) || 0); });
   return { excl: Math.round(excl * 100) / 100, btw: Math.round(btw * 100) / 100, incl: Math.round((excl + btw) * 100) / 100 };
 }
+/* 1.56.3: een Yuki-factuur koppelt aan een vordering die op 'opgemaakt' staat, of aan een vordering die zelf al op verzonden/betaald
+   gezet werd zonder factuurnummer (bv. manueel ingegeven) — telkens enkel bij exact hetzelfde bedrag. */
+const yukiKoppelbaar = (v) => v.status === "opgemaakt" || ((v.status === "verzonden" || v.status === "betaald") && !String(v.factuurnummer || "").trim());
+// een vordering die pas (ruim) na de factuurdatum aangemaakt werd, hoort niet bij die (oude) factuur
+const yukiNaFactuur = (v, f) => !!(f.datum && v.created_at && String(v.created_at).slice(0, 10) > yukiPlusDagen(f.datum, 14));
+function yukiPlusDagen(iso, n) { const d = new Date(iso + "T12:00:00Z"); return isNaN(d) ? "9999-12-31" : new Date(d.getTime() + n * 86400000).toISOString().slice(0, 10); }
 function yukiKoppel(facturen) {
   const token = pbLogin();
   const projecten = pbAll("/rest/v1/projecten?select=id,nummer,klant,naam,bedrijf,status,drive_folder_id", token);
@@ -2223,7 +2296,9 @@ function yukiKoppel(facturen) {
   let rows, loten = {};
   try { rows = pbAll("/rest/v1/meetstaat_posten_v?select=id,project_id,lot,status,hoeveelheid,verkoop_ep,btw", token); }
   catch (e) { rows = pbAll("/rest/v1/meetstaat_posten?select=id,project_id,lot,status,hoeveelheid,eenheidsprijs,marge,btw", token); pbAll("/rest/v1/loten?select=nr,marge", token, "nr").forEach(l => loten[l.nr] = l); }
-  const calcMemo = {}; const calcOf = (v) => calcMemo[v.id] || (calcMemo[v.id] = yukiCalc(v, rows, regels, loten));   // 1.48: enkel berekenen wat nodig is
+  // 1.48: enkel berekenen wat nodig is · 1.56.3: een verzonden/betaalde vordering heeft een bevroren bedrag (zoals in het Planbord)
+  const bevroren = (v) => v.status !== "opgemaakt" && v.bedrag_excl != null && v.bedrag_excl !== "" ? { excl: Number(v.bedrag_excl), btw: Number(v.btw_bedrag || 0), incl: Math.round((Number(v.bedrag_excl) + Number(v.btw_bedrag || 0)) * 100) / 100 } : null;
+  const calcMemo = {}; const calcOf = (v) => calcMemo[v.id] || (calcMemo[v.id] = bevroren(v) || yukiCalc(v, rows, regels, loten));
   const bestaand = {}; vorderingen.forEach(v => { if (v.factuurnummer) bestaand[String(v.factuurnummer).trim()] = v; });
   const TOL = YUKI.TOL; const rapport = [];
   facturen.forEach(f => {
@@ -2236,18 +2311,21 @@ function yukiKoppel(facturen) {
     if (pn) proj = projecten.find(p => p.nummer === pn) || null;
     if (!proj) { const k = yukiNorm(f.klant); const kand = projecten.filter(p => k && [p.klant, p.bedrijf, p.naam].map(yukiNorm).some(n => n && (k.indexOf(n) >= 0 || n.indexOf(k) >= 0)));
       if (kand.length === 1) proj = kand[0];
-      else if (kand.length > 1) { const fit = kand.filter(p => vorderingen.some(v => v.project_id === p.id && v.status === "opgemaakt" && Math.abs(calcOf(v).incl - incl) <= TOL)); if (fit.length === 1) proj = fit[0]; else { out.resultaat = "twijfel"; out.reden = "meerdere projecten passen: " + kand.map(p => p.klant).join(", "); rapport.push(out); return; } } }
-    const kandV = vorderingen.filter(v => v.status === "opgemaakt" && (!proj || v.project_id === proj.id) && Math.abs(calcOf(v).incl) > TOL);   // 1.48: nooit een lege vordering (€ 0) koppelen
+      else if (kand.length > 1) { const fit = kand.filter(p => vorderingen.some(v => v.project_id === p.id && yukiKoppelbaar(v) && !yukiNaFactuur(v, f) && Math.abs(calcOf(v).incl - incl) <= TOL)); if (fit.length === 1) proj = fit[0]; else { out.resultaat = "twijfel"; out.reden = "meerdere projecten passen: " + kand.map(p => p.klant).join(", "); rapport.push(out); return; } } }
+    const kandV = vorderingen.filter(v => yukiKoppelbaar(v) && !yukiNaFactuur(v, f) && (v.status === "opgemaakt" ? (!proj || v.project_id === proj.id) : !!proj && v.project_id === proj.id) && Math.abs(calcOf(v).incl) > TOL);   // 1.56.3: al verzonden/betaald enkel binnen het herkende project   // 1.48: nooit een lege vordering (€ 0) koppelen
     let v = null, opm = "";
     const exact = kandV.filter(x => Math.abs(calcOf(x).incl - incl) <= TOL);
     if (exact.length === 1) v = exact[0];
-    else if (!exact.length && f.excl != null) { const e2 = kandV.filter(x => Math.abs(calcOf(x).excl - f.excl) <= TOL); if (e2.length === 1) v = e2[0]; }
+    else if (!exact.length && f.excl != null) { const e2 = kandV.filter(x => (x.status === "opgemaakt" || x.btw_bedrag == null || x.btw_bedrag === "") && Math.abs(calcOf(x).excl - f.excl) <= TOL); if (e2.length === 1) v = e2[0]; }   // bevroren bedrag mét btw: enkel op het totaal
     // geen automatische koppeling meer bij een afwijkend bedrag (veiligheid: een vervalste mail kan zo niets wijzigen) — wel melden
-    if (!v) { out.resultaat = "niet gevonden"; out.project = proj ? proj.klant : null; out.reden = proj ? (kandV.length === 1 ? "bedrag wijkt af van de openstaande vordering (berekend " + calcOf(kandV[0]).incl.toFixed(2) + " incl.) — koppel ze zelf in het Planbord" : "geen openstaande vordering met dit bedrag") : "project niet herkend"; rapport.push(out); return; }
+    if (!v) { out.resultaat = "niet gevonden"; out.project = proj ? proj.klant : null; out.reden = proj ? (exact.length > 1 ? exact.length + " vorderingen met precies dit bedrag — koppel ze zelf in het Planbord" : kandV.length === 1 ? "bedrag wijkt af van de openstaande vordering (berekend " + calcOf(kandV[0]).incl.toFixed(2) + " incl.) — koppel ze zelf in het Planbord" : "geen openstaande vordering met dit bedrag") : "project niet herkend"; rapport.push(out); return; }
     const c = calcOf(v);
     const bedrag = f.excl != null ? f.excl : (Math.abs(c.incl - incl) <= TOL ? c.excl : Math.round(incl / (1 + (c.excl ? c.btw / c.excl : 0.06)) * 100) / 100);
-    const patch = { factuurnummer: nr, datum: f.datum || v.datum, bedrag_excl: bedrag, status: "verzonden" };
-    if (opm) patch.opmerking = ((v.opmerking || "") + " " + opm).trim();
+    const patch = { factuurnummer: nr, datum: f.datum || v.datum, bedrag_excl: bedrag, status: v.status === "betaald" ? "betaald" : "verzonden" };   // 1.56.3: een al betaalde factuur blijft betaald
+    // 1.56.3: een oude factuur die nu pas gekoppeld wordt (vervaldag al voorbij): geen automatische herinneringsvoorstellen
+    const oudLaat = v.status !== "opgemaakt" && v.status !== "betaald" && (f.vervaldag || v.vervaldag) && String(f.vervaldag || v.vervaldag) < brusselsDag() && v.herinneren !== false;
+    if (oudLaat) { patch.herinneren = false; opm = "oude factuur: betalingsherinneringen staan uit — zet ze aan in het Planbord als ze nog openstaat"; }
+    // (vorderingen heeft geen kolom opmerking: opm komt enkel in het rapport)
     pbReq("/rest/v1/vorderingen?id=eq." + v.id, "patch", patch, token, "return=minimal");
     Object.assign(v, patch); bestaand[nr] = v;
     const p = projecten.find(x => x.id === v.project_id) || {};

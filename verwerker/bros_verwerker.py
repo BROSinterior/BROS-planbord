@@ -16,6 +16,11 @@ Haalt opdrachten op uit de beveiligde wachtrij in Supabase (één tegelijk), en 
 Geen externe Python-pakketten nodig (alleen de standaardbibliotheek). Nodig op de Mac: ffmpeg, whisper.cpp (whisper-cli) en een model.
 Geheimen staan NIET in deze code of in het configuratiebestand maar in de macOS-sleutelhanger (dienst 'BROS-verwerker').
 
+Sinds 1.57 (script 054) ook: Plannen omzetten met Plan2CAD. Een plan (pdf, scan, foto) uit het tabblad Plannen wordt
+opgehaald uit de opslag 'plan2cad', het origineel gaat naar de projectmap › Plannen/DXF op Drive, Plan2CAD (eigen Python-
+omgeving, apart proces) zet het om naar DXF (en DWG met de ODA File Converter) op ware grootte, en het resultaat gaat naar
+Drive en terug naar het Planbord. Een onzekere schaal wordt nooit stil gebruikt: het Planbord vraagt dan om te bevestigen.
+
 Gebruik:
   python3 bros_verwerker.py              # de dienst (zo start launchd hem)
   python3 bros_verwerker.py controle     # alles nakijken: programma's, model, sleutelhanger, login, Drive-script, schijf
@@ -43,7 +48,7 @@ import urllib.request
 import uuid as uuidlib
 from datetime import datetime, timezone
 
-VERSIE = "1.56.2"
+VERSIE = "1.57.0"
 # vaktermen die het spraakmodel als woordenschat meekrijgt (aan te passen in config.json › "woordenlijst")
 WOORDENLIJST = ["werf", "werfbezoek", "werfvergadering", "meetstaat", "offerte", "meerwerk", "minwerk", "vordering", "oplevering",
                 "schrijnwerker", "aannemer", "bouwheer", "ontwerp", "plannen", "maatwerk", "Planbord"]
@@ -68,6 +73,9 @@ STANDAARD = {
     "werkmap": "",
     "min_vrij_gb": 15,
     "poll_seconden": 20,
+    "plan2cad_python": "",       # leeg = <map van config.json>/plan2cad-venv/bin/python (installeer.sh)
+    "plan2cad_map": "",          # leeg = <map van config.json>/plan2cad (de map met het pakket plan2cad)
+    "plan2cad_timeout": 1200,
     "laag_vertrouwen": 0.45,
     "llm": {"provider": "anthropic", "model": "claude-sonnet-5-5", "max_tokens": 16000, "tweede_controle": False,
             "prijs_input_per_mtok": 2.0, "prijs_output_per_mtok": 10.0, "url": "https://api.anthropic.com/v1/messages"},
@@ -94,6 +102,11 @@ def laad_config(pad=None):
                 cfg["llm"].update(v)
             else:
                 cfg[k] = v
+    hier = os.path.dirname(os.path.abspath(pad))
+    if not cfg.get("plan2cad_python"):
+        cfg["plan2cad_python"] = os.path.join(hier, "plan2cad-venv", "bin", "python")
+    if not cfg.get("plan2cad_map"):
+        cfg["plan2cad_map"] = os.path.join(hier, "plan2cad")
     if not cfg["werkmap"]:
         cfg["werkmap"] = os.path.expanduser("~/Library/Caches/BROS-verwerker" if IS_MAC else "~/.cache/bros-verwerker")
     cfg["_pad"] = pad
@@ -248,6 +261,30 @@ class Supabase:
         if st >= 300:
             raise Fout("Afspeelkopie opladen mislukt (%s)." % st, body[:300].decode("utf-8", "replace"), opnieuw=True)
 
+    # 1.57: de opslag 'plan2cad' (Plannen omzetten)
+    def download_uit(self, bucket, pad, doel):
+        with open(doel, "wb") as f:
+            st, info, _ = http("GET", self.url + "/storage/v1/object/authenticated/" + bucket + "/" + urllib.parse.quote(pad), self.headers(), timeout=600, stream_naar=f)
+        if st != 200:
+            raise Fout("Bestand niet gevonden in de opslag (%s)." % st, pad, opnieuw=st >= 500)
+        return info
+
+    def upload_naar(self, bucket, pad, bestand, mime):
+        with open(bestand, "rb") as f:
+            data = f.read()
+        st, body, _ = http("POST", self.url + "/storage/v1/object/" + bucket + "/" + urllib.parse.quote(pad), self.headers({"Content-Type": mime, "x-upsert": "false"}), data, timeout=600)
+        if st in (400, 409) and re.search(rb"Duplicate|already exists|409", body or b""):
+            return
+        if st >= 300:
+            raise Fout("Opladen naar de opslag mislukt (%s)." % st, body[:300].decode("utf-8", "replace"), opnieuw=True)
+
+    def verwijder_uit(self, bucket, paden):
+        if not paden:
+            return
+        st, body, _ = http("DELETE", self.url + "/storage/v1/object/" + bucket, self.headers({"Content-Type": "application/json"}), json.dumps({"prefixes": paden}).encode(), timeout=120)
+        if st >= 300:
+            raise Fout("Opruimen in de opslag mislukt (%s)." % st, body[:300].decode("utf-8", "replace"), opnieuw=True)
+
     def verwijder(self, paden):
         if not paden:
             return
@@ -339,6 +376,26 @@ class Drive:
                 pos += len(data)
                 if voortgang:
                     voortgang(pos / grootte)
+
+
+class PlanDrive(Drive):
+    """Drive-script, actie 'plan' (script 054): de map Plannen/DXF in de projectmap. 'start' krijgt het controlegetal mee
+    (zelfde inhoud = hervatten) en bij een nieuwe versie vervang=True (de oude met dezelfde naam gaat naar de prullenbak)."""
+    def __init__(self, cfg, sb):
+        super().__init__(cfg, sb)
+        self.start_extra = {}
+
+    def call(self, vid, soort, **kw):
+        if soort == "start":
+            kw = dict(kw, **self.start_extra)
+        body = dict(kw, action="plan", soort=soort, omzetting_id=vid, claim=self.claim, token=self.sb.headers()["Authorization"][7:])
+        st, raw, _ = http("POST", self.url, {"Content-Type": "application/json"}, json.dumps(body).encode(), timeout=300)
+        j = json_of(raw)
+        if st != 200 or j is None:
+            raise Fout("Het Drive-script antwoordt niet zoals verwacht (%s)." % st, (raw or b"")[:300].decode("utf-8", "replace"), opnieuw=True)
+        if not j.get("ok") and "Onbekende actie" in str(j.get("error", "")):
+            raise Fout("Het Drive-script kent de actie 'plan' nog niet: plak het nieuwe drive/Code.gs en zet een nieuwe versie online.", opnieuw=False)
+        return j
 
 
 # ---------------------------------------------------------------- hulpmiddelen
@@ -1142,6 +1199,243 @@ class Verwerking:
         return r
 
 
+# ---------------------------------------------------------------- Plannen omzetten (Plan2CAD, script 054)
+def veilige_naam(naam, standaard="plan"):
+    n = re.sub(r'[\\/:*?"<>|\r\n\t]+', " ", str(naam or "")).strip().strip(".")[:150]
+    return n or standaard
+
+
+MIME_PLAN = {".pdf": "application/pdf", ".jpg": "image/jpeg", ".jpeg": "image/jpeg", ".png": "image/png", ".tif": "image/tiff", ".tiff": "image/tiff",
+             ".heic": "image/heic", ".webp": "image/webp", ".bmp": "image/bmp", ".dxf": "application/dxf", ".dwg": "application/acad"}
+
+
+def plan2cad_status(cfg):
+    py, map_ = cfg.get("plan2cad_python") or "", cfg.get("plan2cad_map") or ""
+    return bool(py and os.path.exists(py) and os.path.isdir(os.path.join(map_, "plan2cad")))
+
+
+class PlanOmzetting:
+    """Eén omzetting: origineel ophalen → origineel naar Drive (Plannen/DXF) → Plan2CAD (apart proces) → DXF/DWG naar Drive
+    en de opslag → resultaat naar het Planbord. Een fout in één pagina houdt de andere niet tegen."""
+    voortgang_rpc = "plan_voortgang"
+
+    def __init__(self, cfg, sb, job, stop):
+        self.cfg, self.sb, self.opdracht, self.stop = cfg, sb, job, stop
+        self.job_id = job["job"]["id"]
+        self.claim = job["job"].get("claim")
+        self.soort = job["job"].get("soort") or "omzetten"
+        self.o = job["omzetting"]
+        self.project = job.get("project") or {}
+        self.drive = PlanDrive(cfg, sb)
+        self.drive.claim = self.claim
+        self.audio = self            # de hartslag stopt het lopende proces via audio.kill()
+        self.proces = None
+        self.stap, self.voortgang = "gestart", 0.0
+        self.metingen = {}
+        self.meldingen = []
+        self.map = os.path.join(cfg["werkmap"], "plan-" + self.job_id)
+        os.makedirs(self.map, exist_ok=True)
+
+    def kill(self):
+        p = self.proces
+        if p and p.poll() is None:
+            try:
+                p.terminate()
+                p.wait(10)
+            except Exception:
+                try:
+                    p.kill()
+                except Exception:
+                    pass
+
+    def zet(self, stap, voortgang):
+        self.stap, self.voortgang = stap, max(0.0, min(1.0, voortgang))
+        if self.stop.is_set():
+            raise Gestopt()
+
+    def kort(self, tekst):
+        """Foutmelding zonder de paden van de werkmap (die zeggen niets in het Planbord)."""
+        t = str(tekst or "")
+        for p in (os.path.join(self.map, "bron") + os.sep, os.path.join(self.map, "uit") + os.sep, self.map + os.sep):
+            t = t.replace(p, "")
+        return t
+
+    def gegevens(self, g):
+        return self.sb.rpc("plan_bestand", {"p_job": self.job_id, "p_claim": self.claim, "p_gegevens": g})
+
+    # -- 1. het origineel
+    def origineel(self):
+        naam = veilige_naam(self.o.get("bestand"), "plan.pdf")
+        doel = os.path.join(self.map, "bron")
+        os.makedirs(doel, exist_ok=True)
+        pad = os.path.join(doel, naam)
+        if self.o.get("bron_pad"):
+            self.zet("origineel ophalen", 0.02)
+            info = self.sb.download_uit("plan2cad", self.o["bron_pad"], pad)
+            if self.o.get("bron_sha256") and info["sha256"] != self.o["bron_sha256"]:
+                raise Fout("Het opgeladen plan is beschadigd (controlegetal klopt niet). Laad het opnieuw op.", self.o["bron_pad"], opnieuw=False)
+        elif (self.o.get("drive_bron") or {}).get("id") and self.drive.actief():
+            b = self.o["drive_bron"]
+            self.zet("origineel ophalen van Drive", 0.02)
+            self.drive.download(self.job_id, pad, int(b.get("size") or 0), lambda x: self.zet("origineel ophalen van Drive", 0.02 + 0.06 * x))
+            if b.get("md5") and md5_van(pad) != b["md5"]:
+                raise Fout("Het origineel op Drive komt niet overeen met het controlegetal.", opnieuw=True)
+        else:
+            raise Fout("Het origineel is niet meer beschikbaar (niet in de opslag en niet op Drive).", opnieuw=False)
+        return pad
+
+    # -- 2. het origineel bewaren in Plannen/DXF (pas daarna mag het uit de opslag)
+    def origineel_naar_drive(self, pad):
+        if (self.o.get("drive_bron") or {}).get("md5"):
+            return True
+        if not self.drive.actief():
+            self.meldingen.append("Geen Drive-script ingesteld op de verwerkingscomputer: het origineel en de DXF blijven in het Planbord.")
+            return False
+        if not self.project.get("drive"):
+            self.meldingen.append("Dit project heeft nog geen projectmap op Drive: het origineel en de DXF blijven in het Planbord (Dossier › Projectmap koppelen, daarna opnieuw omzetten).")
+            return False
+        self.zet("origineel naar Drive (Plannen/DXF)", 0.08)
+        md5 = md5_van(pad)
+        self.drive.start_extra = {"md5": md5, "vervang": False}
+        naam = os.path.basename(pad)
+        r = self.drive.upload(self.job_id, pad, naam, MIME_PLAN.get(os.path.splitext(naam)[1].lower(), "application/octet-stream"), md5)
+        if r.get("geen_map"):
+            self.meldingen.append(r.get("melding") or "Geen projectmap op Drive.")
+            return False
+        self.gegevens({"drive_bron": {"id": r["id"], "url": r.get("url", ""), "md5": r["md5"], "size": os.path.getsize(pad)}, "drive_map_url": r.get("map_url", "")})
+        self.o["drive_bron"] = {"id": r["id"], "md5": r["md5"]}
+        self.drive_map_url = r.get("map_url", "")
+        if self.o.get("bron_pad"):
+            self.sb.verwijder_uit("plan2cad", [self.o["bron_pad"]])   # mag pas nu: de kopie op Drive is gecontroleerd (MD5)
+            self.gegevens({"bron_weg": True})
+            self.o["bron_pad"] = None
+        return True
+
+    # -- 3. Plan2CAD (apart proces, eigen Python-omgeving)
+    def plan2cad(self, pad):
+        if not plan2cad_status(self.cfg):
+            raise Fout("Plan2CAD is niet geïnstalleerd op de verwerkingscomputer. Voer verwerker/installeer.sh opnieuw uit op de Mac mini.", opnieuw=False)
+        opties = self.o.get("opties") or {}
+        uit = os.path.join(self.map, "uit")
+        shutil.rmtree(uit, ignore_errors=True)
+        args = [self.cfg["plan2cad_python"], "-m", "plan2cad.dienst", pad, "--uit", uit]
+        if self.soort == "herschaal":
+            args += ["--alleen", str(opties.get("alleen") or "1:"), "--schaal", str(opties.get("herschaal"))]
+        else:
+            args += ["--paginas", str(opties.get("paginas") or "alle")]
+            if opties.get("schaal"):
+                args += ["--schaal", str(opties["schaal"])]
+        if opties.get("papier"):
+            args += ["--papier", str(opties["papier"])]
+        if opties.get("dwg", True):
+            args += ["--dwg"]
+        env = dict(os.environ, PYTHONPATH=self.cfg["plan2cad_map"], PYTHONIOENCODING="utf-8", MPLBACKEND="Agg")
+        self.zet("plan lezen", 0.12)
+        t0 = time.time()
+        resultaat, staart = None, []
+        self.proces = subprocess.Popen(args, cwd=self.map, env=env, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, encoding="utf-8", errors="replace")
+        limiet = float(self.cfg.get("plan2cad_timeout") or 1200)
+        wekker = threading.Timer(limiet, self.kill)   # ook als het proces stil blijft hangen
+        wekker.daemon = True
+        wekker.start()
+        try:
+            for regel in self.proces.stdout:
+                regel = regel.rstrip("\n")
+                if regel.startswith("P2C-VOORTGANG "):
+                    delen = regel.split(" ", 2)
+                    try:
+                        self.zet((delen[2] if len(delen) > 2 else "omzetten")[:150], 0.12 + 0.63 * float(delen[1]))
+                    except ValueError:
+                        pass
+                elif regel.startswith("P2C-RESULTAAT "):
+                    resultaat = json_of(regel[len("P2C-RESULTAAT "):])
+                else:
+                    staart = (staart + [regel])[-40:]
+            self.proces.wait(60)
+        finally:
+            wekker.cancel()
+            self.kill()
+        if self.stop.is_set():
+            raise Gestopt()
+        if time.time() - t0 >= limiet - 1:
+            raise Fout("Plan2CAD deed er te lang over (meer dan %d minuten) en werd gestopt." % (int(limiet) // 60), "\n".join(staart)[-3000:], opnieuw=False)
+        self.metingen["plan2cad_s"] = round(time.time() - t0, 1)
+        if not resultaat:
+            raise Fout("Plan2CAD gaf geen resultaat (afgebroken?).", "\n".join(staart)[-3000:], opnieuw=True)
+        if not resultaat.get("resultaten"):
+            raise Fout("Plan2CAD kon dit bestand niet lezen (beschadigd, beveiligd of geen plan): " + self.kort(resultaat.get("fout") or "onbekende fout"), str(resultaat.get("detail") or "")[-3000:], opnieuw=False)
+        return resultaat
+
+    # -- 4. DXF/DWG naar de opslag (voor de tekenmodule) en naar Drive
+    def bewaar(self, uit):
+        opties = self.o.get("opties") or {}
+        drive_ok = bool((self.o.get("drive_bron") or {}).get("md5")) and self.drive.actief() and self.project.get("drive")
+        run = datetime.now().strftime("%Y%m%d%H%M%S")
+        res = []
+        lijst = uit.get("resultaten") or []
+        for n, r in enumerate(lijst):
+            basis = {k: r.get(k) for k in ("label", "pagina", "afbeelding", "route")}
+            if not r.get("ok"):
+                res.append(dict(basis, ok=False, fout=self.kort(r.get("fout") or "onbekende fout")[:500]))
+                continue
+            self.zet("resultaat bewaren (%d/%d)" % (n + 1, len(lijst)), 0.78 + 0.18 * n / max(1, len(lijst)))
+            item = dict(basis, ok=True)
+            for k in ("noemer", "schaal_tekst", "keuze", "zeker", "vertrouwen", "kandidaten", "polylijnen", "vlakken", "teksten", "breedte_mm", "hoogte_mm"):
+                item[k] = r.get(k)
+            item["meldingen"] = [str(m)[:300] for m in (r.get("meldingen") or [])][:12]
+            item["waarschuwingen"] = [str(m)[:300] for m in (r.get("waarschuwingen") or [])][:6]
+            if self.soort == "herschaal":
+                item["keuze"] = opties.get("herschaal_bron") or "opgegeven"
+                item["zeker"] = True
+            dxf = r.get("dxf")
+            if not dxf or not os.path.exists(dxf):
+                res.append(dict(basis, ok=False, fout="Plan2CAD schreef geen DXF."))
+                continue
+            naam = os.path.basename(dxf)
+            item["dxf_naam"] = naam
+            item["dxf_grootte"] = os.path.getsize(dxf)
+            opslag = "%s/uit/%s-%d.dxf" % (self.job_id, run, n + 1)
+            self.sb.upload_naar("plan2cad", opslag, dxf, "application/octet-stream")
+            item["dxf_pad"] = opslag
+            if drive_ok:
+                for soort, bestand in (("dxf", dxf), ("dwg", r.get("dwg"))):
+                    if not bestand or not os.path.exists(bestand):
+                        continue
+                    md5 = md5_van(bestand)
+                    self.drive.start_extra = {"md5": md5, "vervang": True}
+                    up = self.drive.upload(self.job_id, bestand, os.path.basename(bestand), MIME_PLAN.get("." + soort, "application/octet-stream"), md5)
+                    if not up.get("geen_map"):
+                        item["drive_" + soort] = {"id": up["id"], "url": up.get("url", ""), "naam": os.path.basename(bestand)}
+            res.append(item)
+        return res
+
+    def run(self):
+        t0 = time.time()
+        orig = self.origineel()
+        self.origineel_naar_drive(orig)
+        uit = self.plan2cad(orig)
+        res = self.bewaar(uit)
+        if self.meldingen:
+            for item in res:
+                item["meldingen"] = (self.meldingen + list(item.get("meldingen") or []))[:14]
+        # vorige DXF's in de opslag opruimen (bij herschalen enkel die van dat ene resultaat)
+        oud = self.o.get("resultaten") or []
+        if self.soort == "herschaal":
+            i = (self.o.get("opties") or {}).get("index")
+            oud = [oud[i]] if isinstance(i, int) and 0 <= i < len(oud) else []
+        weg = [x.get("dxf_pad") for x in oud if isinstance(x, dict) and x.get("dxf_pad")]
+        if weg:
+            try:
+                self.sb.verwijder_uit("plan2cad", weg)
+            except Fout as e:
+                log("oude DXF's niet opgeruimd:", e.melding)
+        self.zet("resultaat naar het Planbord", 0.98)
+        r = self.sb.rpc("plan_klaar", {"p_job": self.job_id, "p_claim": self.claim, "p_resultaten": res}, timeout=120)
+        shutil.rmtree(self.map, ignore_errors=True)
+        self.metingen["totaal_s"] = round(time.time() - t0, 1)
+        return {"status": (r or {}).get("status"), "resultaten": len(res)}
+
+
 # ---------------------------------------------------------------- de dienst
 class Dienst:
     def __init__(self, cfg):
@@ -1150,12 +1444,14 @@ class Dienst:
         self.drive = Drive(cfg, self.sb)
         self.stop_alles = threading.Event()
         self.huidig = None
+        self.plan_uit_tot = 0   # 1.57: script 054 nog niet uitgevoerd → even niet meer vragen
 
     def info(self):
         return {"schijf_vrij_gb": vrij_gb(self.cfg["werkmap"]), "geheugen": systeemgeheugen(), "computer": platform.node(), "systeem": platform.platform(),
                 "model": os.path.basename(self.cfg.get("whisper_model") or ""), "model_ok": bool(self.cfg.get("whisper_model") and os.path.exists(self.cfg["whisper_model"])),
                 "vad": bool(self.cfg.get("vad_model") and os.path.exists(self.cfg["vad_model"])),
                 "samenvatting": Taalmodel(self.cfg).actief(), "taalmodel": self.cfg["llm"]["model"], "drive": self.drive.actief(),
+                "plan2cad": plan2cad_status(self.cfg), "tesseract": bool(shutil.which("tesseract")),
                 "bezig": bool(self.huidig), "stap": self.huidig.stap if self.huidig else ""}
 
     def meld(self):
@@ -1168,7 +1464,7 @@ class Dienst:
         laatste_meld = 0
         while not stop_job.wait(float(self.cfg.get("hartslag_seconden", 30))):
             try:
-                r = self.sb.rpc("verwerking_voortgang", {"p_job": verw.job_id, "p_claim": verw.claim, "p_stap": verw.stap, "p_voortgang": round(verw.voortgang, 3)}, timeout=30)
+                r = self.sb.rpc(getattr(verw, "voortgang_rpc", "verwerking_voortgang"), {"p_job": verw.job_id, "p_claim": verw.claim, "p_stap": verw.stap, "p_voortgang": round(verw.voortgang, 3)}, timeout=30)
                 if r and r.get("actief") is False:
                     log("opdracht gestopt door een gebruiker")
                     verw.stop.set()
@@ -1180,7 +1476,54 @@ class Dienst:
             except Fout as e:
                 log("hartslag mislukt:", e.melding)
 
+    def een_plan(self):
+        """1.57: eerst plannen (kort werk), dan opnames."""
+        if time.time() < self.plan_uit_tot:
+            return False
+        try:
+            job = self.sb.rpc("plan_claim", {"p_naam": self.cfg["naam"]})
+        except Fout as e:
+            if "plan_claim" in (e.detail or "") and ("404" in e.detail or "Could not find" in e.melding or "does not exist" in e.melding):
+                log("Plannen omzetten: script 054 is nog niet uitgevoerd in Supabase — probeer over 10 minuten opnieuw")
+                self.plan_uit_tot = time.time() + 600
+                return False
+            raise
+        if not job:
+            return False
+        log("plan", job["job"]["id"], job["job"]["soort"], "poging", job["job"]["poging"], "—", job["omzetting"].get("bestand"))
+        stop = threading.Event()
+        stop_job = threading.Event()
+        try:
+            verw = PlanOmzetting(self.cfg, self.sb, job, stop)
+            self.huidig = verw
+            threading.Thread(target=self.hartslag, args=(verw, stop_job), daemon=True).start()
+            r = verw.run()
+            log("plan klaar:", json.dumps(r), "in", verw.metingen.get("totaal_s"), "s")
+        except Gestopt:
+            if self.stop_alles.is_set():
+                self._plan_mislukt(job, "Onderbroken: de verwerkingscomputer werd gestopt. De omzetting wordt hervat.", "", True)
+            else:
+                log("plan gestopt op vraag van een gebruiker")
+        except Fout as e:
+            log("plan fout:", e.melding, (e.detail or "")[:500])
+            self._plan_mislukt(job, e.melding, e.detail, e.opnieuw)
+        except Exception as e:
+            log("onverwachte fout (plan):", traceback.format_exc())
+            self._plan_mislukt(job, "Onverwachte fout op de verwerkingscomputer (%s). Probeer opnieuw; blijft het mislukken, bekijk het logboek." % type(e).__name__, traceback.format_exc()[-3000:], True)
+        finally:
+            stop_job.set()
+            self.huidig = None
+        return True
+
+    def _plan_mislukt(self, job, melding, detail, opnieuw):
+        try:
+            self.sb.rpc("plan_mislukt", {"p_job": job["job"]["id"], "p_claim": job["job"].get("claim"), "p_fout": melding, "p_detail": detail or "", "p_opnieuw": bool(opnieuw)})
+        except Fout as e:
+            log("melden van de fout mislukt (de omzetting wordt na 10 min. vanzelf vrijgegeven):", e.melding)
+
     def een_opdracht(self):
+        if self.een_plan():
+            return True
         job = self.sb.rpc("verwerking_claim", {"p_naam": self.cfg["naam"]})
         if not job:
             return False
@@ -1307,6 +1650,19 @@ def controle(cfg):
             regel(False, "Drive-script: " + e.melding)
     else:
         print("  INFO drive_script_url niet ingevuld — originelen blijven in de opslag van het Planbord")
+    # 1.57: Plannen omzetten (Plan2CAD)
+    if plan2cad_status(cfg):
+        try:
+            r = subprocess.run([cfg["plan2cad_python"], "-c", "import plan2cad, fitz, ezdxf, cv2, numpy; print(plan2cad.__version__)"],
+                               capture_output=True, text=True, timeout=120, env=dict(os.environ, PYTHONPATH=cfg["plan2cad_map"]))
+            regel(r.returncode == 0, "Plan2CAD: " + (("versie " + r.stdout.strip()) if r.returncode == 0 else (r.stderr.strip().splitlines() or ["start niet"])[-1]))
+        except Exception as e:
+            regel(False, "Plan2CAD: " + repr(e))
+        print("  " + ("OK   " if shutil.which("tesseract") else "INFO ") + "tesseract (getekende maatgetallen, scans en foto's): " + (shutil.which("tesseract") or "niet gevonden — brew install tesseract tesseract-lang"))
+        oda = [p for p in ("/Applications/ODAFileConverter.app", "/Applications/ODA File Converter.app") if os.path.exists(p)] or [p for p in __import__("glob").glob("/Applications/ODAFileConverter*.app")]
+        print("  " + ("OK   " if oda else "INFO ") + "ODA File Converter (DWG naast de DXF): " + (oda[0] if oda else "niet gevonden — enkel DXF (gratis: opendesign.com › ODA File Converter)"))
+    else:
+        regel(False, "Plan2CAD niet geïnstalleerd (%s) — voer installeer.sh opnieuw uit" % cfg.get("plan2cad_python"))
     print("\n" + ("Alles in orde." if ok else "Er zijn problemen (zie FOUT)."))
     return 0 if ok else 1
 

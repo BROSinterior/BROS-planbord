@@ -1,5 +1,6 @@
 #!/bin/bash
 # BROS verwerkingscomputer — installatie op de Mac mini (Apple Silicon, macOS). Zie LEESMIJ.md.
+# Vergaderingen & opnames (script 051) en, sinds 1.57, Plannen omzetten met Plan2CAD (script 054).
 #   bash installeer.sh              installeren of bijwerken (vraagt de instellingen en geheimen)
 #   bash installeer.sh --modellen   extra spraakmodellen downloaden voor de praktijktest (meet)
 # Verandert geen systeeminstellingen (energie, FileVault, gebruikers): die zet je zelf, zie LEESMIJ.md §4.
@@ -30,17 +31,17 @@ if [ "${1:-}" = "--modellen" ]; then
   exit 0
 fi
 
-echo "1/5 Programma's (Homebrew): ffmpeg, whisper.cpp, python"
-brew install ffmpeg whisper-cpp python@3.12 >/dev/null || brew upgrade ffmpeg whisper-cpp >/dev/null || true
+echo "1/6 Programma's (Homebrew): ffmpeg, whisper.cpp, python, tesseract"
+brew install ffmpeg whisper-cpp python@3.12 tesseract tesseract-lang >/dev/null || brew upgrade ffmpeg whisper-cpp tesseract >/dev/null || true
 PY="$(brew --prefix)/bin/python3"; [ -x "$PY" ] || PY="$(command -v python3)"
 WCLI="$(command -v whisper-cli || true)"; [ -n "$WCLI" ] || { echo "whisper-cli niet gevonden na 'brew install whisper-cpp' — zie LEESMIJ.md"; exit 1; }
 echo "  python: $PY · whisper-cli: $WCLI"
 
-echo "2/5 Spraakmodel en stiltedetectie"
+echo "2/6 Spraakmodel en stiltedetectie"
 download "$HF/ggml-large-v3-turbo-q5_0.bin" "$MOD/ggml-large-v3-turbo-q5_0.bin" "e050f7970618a659205450ad97eb95a18d69c9ee"
 download "$VAD_URL" "$MOD/ggml-silero-v6.2.0.bin"
 
-echo "3/5 Programma en instellingen"
+echo "3/6 Programma en instellingen"
 cp "$HIER/bros_verwerker.py" "$APP/bros_verwerker.py"
 if [ ! -f "$APP/config.json" ]; then
   read -r -p "  Supabase Project URL (zoals in config.js): " SBURL
@@ -60,13 +61,28 @@ else
   echo "  config.json bestaat al (niet overschreven)"
 fi
 
-echo "4/5 Geheimen in de sleutelhanger (dienst BROS-verwerker)"
+echo "4/6 Plan2CAD (plannen omzetten naar DXF/DWG, eigen Python-omgeving)"
+if [ -d "$HIER/plan2cad/plan2cad" ]; then
+  rm -rf "$APP/plan2cad.nieuw" && mkdir -p "$APP/plan2cad.nieuw" && cp -R "$HIER/plan2cad/plan2cad" "$APP/plan2cad.nieuw/plan2cad"
+  rm -rf "$APP/plan2cad" && mv "$APP/plan2cad.nieuw" "$APP/plan2cad"
+  [ -x "$APP/plan2cad-venv/bin/python" ] || "$PY" -m venv "$APP/plan2cad-venv"
+  "$APP/plan2cad-venv/bin/python" -m pip install --quiet --upgrade pip
+  if "$APP/plan2cad-venv/bin/python" -m pip install --quiet -r "$HIER/plan2cad/requirements.txt"; then echo "  Plan2CAD en zijn Python-pakketten: ok"
+  else echo "  FOUT: de Python-pakketten voor Plan2CAD konden niet geïnstalleerd worden (zie hierboven)"; exit 1; fi
+  ODA="$(ls -d /Applications/ODAFileConverter*.app "/Applications/ODA File Converter.app" 2>/dev/null | head -1 || true)"
+  if [ -n "$ODA" ]; then echo "  ODA File Converter: $ODA (DWG naast de DXF)"
+  else echo "  ODA File Converter niet gevonden: enkel DXF. Voor DWG: gratis downloaden via https://www.opendesign.com/guestfiles/oda_file_converter en in Programma's zetten."; fi
+else
+  echo "  map plan2cad/ ontbreekt naast dit script — Plannen omzetten wordt overgeslagen"
+fi
+
+echo "5/6 Geheimen in de sleutelhanger (dienst BROS-verwerker)"
 if security find-generic-password -s BROS-verwerker -a supabase-wachtwoord >/dev/null 2>&1; then echo "  wachtwoord verwerkingslogin: aanwezig"
 else echo "  Wachtwoord van de verwerkingslogin (je ziet niets tijdens het typen):"; security add-generic-password -U -s BROS-verwerker -a supabase-wachtwoord -w; fi
 if security find-generic-password -s BROS-verwerker -a anthropic-api-key >/dev/null 2>&1; then echo "  Anthropic API-sleutel: aanwezig"
 else read -r -p "  Anthropic API-sleutel instellen voor het conceptverslag? (j/n) " JN; if [ "$JN" = "j" ]; then echo "  API-sleutel (sk-ant-…):"; security add-generic-password -U -s BROS-verwerker -a anthropic-api-key -w; else echo "  overgeslagen: enkel transcript (later: security add-generic-password -U -s BROS-verwerker -a anthropic-api-key -w)"; fi; fi
 
-echo "5/5 Automatisch starten (LaunchAgent be.bros.verwerker)"
+echo "6/6 Automatisch starten (LaunchAgent be.bros.verwerker)"
 cat > "$PLIST" <<PLEOF
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">

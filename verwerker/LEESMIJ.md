@@ -1,4 +1,6 @@
-# BROS verwerkingscomputer — Vergaderingen & opnames (v1.54)
+# BROS verwerkingscomputer — Vergaderingen & opnames (v1.54) en Plannen omzetten (v1.57)
+
+> **Plannen omzetten met Plan2CAD (v1.57):** zie [§ Plannen omzetten](#plannen-omzetten-met-plan2cad-v157) onderaan.
 
 De Mac mini haalt opnames op uit de beveiligde wachtrij van het Planbord, transcribeert ze **lokaal**, bewaart het origineel in de projectmap op Drive en maakt (optioneel, via een cloud-API) een **conceptverslag**. Alles wat de AI maakt, blijft een concept tot iemand van BROS het in het Planbord controleert.
 
@@ -251,3 +253,39 @@ Getest in de ontwikkelomgeving (Linux, zonder Mac mini en zonder echte opnames):
 - de echte Anthropic-API.
 
 Dat is de praktijktest hierboven.
+
+---
+
+## Plannen omzetten met Plan2CAD (v1.57)
+
+Dezelfde verwerkingscomputer zet ook plannen om: iemand sleept een pdf of foto in het tabblad Plannen van een project, en de Mac mini maakt er een DXF (en DWG) op ware grootte van in de projectmap › **Plannen/DXF**.
+
+| Stap | Waar | Wat |
+|---|---|---|
+| Opladen | browser → Supabase-opslag `plan2cad` (privé) | het plan (max. 50 MB) met een SHA-256-controlegetal |
+| Wachtrij | Supabase (tabel `plan_omzettingen`, script 054) | de opdracht met de opties (pagina's, papierformaat, schaal, DWG) |
+| Origineel bewaren | Google Drive, projectmap › Plannen/DXF (Drive-script, actie `plan`) | het origineel, met MD5-controle; pas daarna gaat het uit de opslag |
+| Omzetten | **lokaal** op de Mac mini: Plan2CAD in een eigen Python-omgeving, als apart proces | per pagina of geplakt plannetje: lijnen, vlakken, tekst, schaal |
+| DWG | **lokaal**: ODA File Converter (als die geïnstalleerd is) | DWG naast de DXF |
+| Resultaat | Drive (Plannen/DXF) en de opslag `plan2cad` (om als onderlegger in de tekenmodule te openen) | DXF/DWG; een nieuwe versie stuurt de vorige naar de prullenbak van Drive |
+
+Een schaal onder 75 % zekerheid wordt **nooit stil gebruikt**: het resultaat staat dan op *Schaal controleren* in het Planbord. Plannen gaan vóór opnames in de wachtrij (ze duren meestal 10 seconden tot een minuut).
+
+### Installeren of bijwerken
+
+1. `sql/054_plan_omzettingen.sql` uitvoeren in Supabase. De controle moet `1 | 1 | 1 | 54` geven.
+2. Het nieuwe `drive/Code.gs` (of `Code.ingevuld.gs`) plakken en een **nieuwe versie** online zetten (actie `plan`).
+3. Op de Mac mini: kopieer de map `verwerker/` (met de submap `plan2cad/`) en voer opnieuw uit:
+   ```bash
+   cd verwerker
+   bash installeer.sh
+   ```
+   Het script installeert nu ook `tesseract` (Homebrew, voor maatgetallen op scans, foto's en CAD-pdf's), kopieert Plan2CAD naar `~/Library/Application Support/BROS-verwerker/plan2cad` en maakt er een eigen Python-omgeving voor (`plan2cad-venv`, ongeveer 600 MB). Instellingen en sleutelhanger blijven.
+4. **DWG (optioneel):** installeer de gratis [ODA File Converter](https://www.opendesign.com/guestfiles/oda_file_converter) in Programma's. Zonder komt er enkel een DXF — Vectorworks en AutoCAD lezen die op ware grootte.
+5. `python3 ~/Library/Application\ Support/BROS-verwerker/bros_verwerker.py controle` — de regel *Plan2CAD* moet OK zijn.
+
+Instellingen in `config.json` (optioneel): `plan2cad_python`, `plan2cad_map` (standaard naast config.json) en `plan2cad_timeout` (standaard 1200 seconden per plan).
+
+### Wat getest is
+
+De volledige keten (wachtrij, origineel naar Drive met MD5, omzetten, DXF naar Drive en de opslag, herschalen vanuit Drive, mislukte bestanden, stoppen, vastgelopen opdrachten) in een testomgeving met de echte databasefuncties van script 054 en een nagebootst Drive-script, op een vectorplan (haardmeubel), een verslag met twee geplakte plannen en een kapot bestand. Nog niet getest: op de Mac mini zelf en met het echte Drive-script.

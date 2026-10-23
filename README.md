@@ -16,7 +16,7 @@ Statische webapp (geen build-stap) op een Supabase-database.
 | `version.json` | versienummer (enkel de laatste versie); de app meldt een nieuwe versie aan wie ze open heeft |
 | `CHANGELOG.md` | versiegeschiedenis (vanaf 1.48 niet meer in version.json) |
 | `vendor/supabase-2.45.4.js` (+ `591.supabase.js`) | de Supabase-bibliotheek, zelf gehost (geen CDN nodig) |
-| `sql/001_init.sql` … `sql/053_*.sql` | databasescripts, in volgorde uit te voeren (`versie_schema` in instellingen bewaakt de volgorde vanaf 022) |
+| `sql/001_init.sql` … `sql/054_*.sql` | databasescripts, in volgorde uit te voeren (`versie_schema` in instellingen bewaakt de volgorde vanaf 022) |
 | `drive/Code.gs` | Google Apps Script dat projectmappen aanmaakt/koppelt op Drive en de meetstaat-export wegschrijft (installatie: zie bovenaan dat bestand) |
 | `drive/YukiArchief.gs` | klein Apps Script voor het account archief@bros.be: leest daar de Yuki-factuurmails en stuurt ze naar het Drive-script (v1.50.1, zie *Yuki-mails uit archief@bros.be*) |
 | `agenda.js` | gedeeld (Planbord en portalen): agendabestand (.ics) en Google Agenda-link voor afspraken (script 041) |
@@ -28,7 +28,8 @@ Statische webapp (geen build-stap) op een Supabase-database.
 | `af-beheer.js` | Planbord: facturen van aannemers opvolgen (Facturatie per project en tabblad Facturen › Aannemers, script 047) |
 | `fin-planning.js` | Planbord: Rapporten › Financiële planning — jaarplanning, businessplan, pdf en Excel voor de bank (script 049, enkel beheer; projecten in/uit: script 050) |
 | `vergaderingen.js` | Planbord: tabblad Vergaderingen per project (opname opladen, transcript, conceptverslag controleren, taken) en het overzicht van het interne project (script 051) |
-| `verwerker/` | de verwerkingscomputer (Mac mini): `bros_verwerker.py`, `installeer.sh`, `LEESMIJ.md` (installatie, praktijktest, kosten, gegevensstromen) |
+| `verwerker/` | de verwerkingscomputer (Mac mini): `bros_verwerker.py`, `installeer.sh`, `LEESMIJ.md` (installatie, praktijktest, kosten, gegevensstromen); sinds 1.57 ook `plan2cad/` (Plan2CAD zonder venster, voor Plannen omzetten) |
+| `plan2cad.js` | Planbord: Plannen omzetten met Plan2CAD — sleepvak bovenaan het tabblad Plannen, wachtrij, resultaten, schaal kiezen of kalibratie uit de tekenmodule overnemen (script 054) |
 | `wacht.js` | Planbord: *Wacht op jou* bovenaan het Overzicht en het accountmenu onder je naam (v1.51) |
 | `deb-beheer.js` | Planbord: tabblad Facturen › Klanten — openstaande facturen, betalingen uit Yuki, betalingsherinneringen goedkeuren (script 048) |
 | `supabase/functions/assistent/` | Edge Function van de AI-assistent (in Supabase te deployen, sleutel als secret) |
