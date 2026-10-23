@@ -100,8 +100,17 @@ cat > "$PLIST" <<PLEOF
   <key>StandardErrorPath</key><string>$HOME/Library/Logs/BROS-verwerker.launchd.log</string>
 </dict></plist>
 PLEOF
-launchctl bootout "gui/$(id -u)/be.bros.verwerker" 2>/dev/null || true
-launchctl bootstrap "gui/$(id -u)" "$PLIST"
+DIENST="gui/$(id -u)/be.bros.verwerker"
+launchctl bootout "$DIENST" 2>/dev/null || true
+# bootout loopt asynchroon: eerst wachten tot de vorige dienst echt gestopt is (anders "Bootstrap failed: 5: Input/output error")
+for _ in $(seq 1 50); do launchctl print "$DIENST" >/dev/null 2>&1 || break; sleep 1; done
+if ! launchctl bootstrap "gui/$(id -u)" "$PLIST" 2>/dev/null; then
+  sleep 5
+  if ! launchctl bootstrap "gui/$(id -u)" "$PLIST" 2>/dev/null && ! launchctl print "$DIENST" >/dev/null 2>&1; then
+    echo "  Automatisch starten lukte niet. Herstart de Mac mini, of voer later uit: launchctl bootstrap gui/$(id -u) \"$PLIST\""
+  fi
+fi
+launchctl print "$DIENST" >/dev/null 2>&1 && echo "  dienst be.bros.verwerker: actief"
 echo
 "$PY" "$APP/bros_verwerker.py" controle || true
 echo

@@ -3,7 +3,7 @@
    Statische webapp op Supabase (login, live-synchronisatie, rechten)
    ===================================================================== */
 if (window.top !== window.self) { try { window.top.location.replace(window.location.href); } catch (e) { document.documentElement.innerHTML = ""; } }   // niet in een vreemd frame (clickjacking)
-const APP_VERSION = "1.57.0";
+const APP_VERSION = "1.57.1";
 const PROJ_STATUS = { offerte: "In offerte", lopend: "Lopend", on_hold: "On hold", afgerond: "Afgerond", verloren: "Verloren" };
 const KLANTTYPE = { particulier: "Particulier", zakelijk: "Zakelijk" };
 const KLANTCODE = { particulier: "PAR", zakelijk: "ZAK" };
@@ -1449,6 +1449,8 @@ function vsForm(v = {}, pid, bezoekId) {
   const fotos = [...(v.fotos || [])]; let nieuw = []; let pin = v.plan_id && v.plan_x != null ? { x: Number(v.plan_x), y: Number(v.plan_y) } : null;   // nieuw: File-objecten die bij bewaren geüpload worden
   const ruimtes = [...new Set(vsOf(projectId).map(x => x.ruimte).filter(Boolean))].sort();
   const lots = [...new Set(msRows(projectId).map(r => r.lot))].sort((a, b) => a - b);
+  // 1.57.1: ook loten die (nog) niet in de meetstaat van het project staan — anders was de keuzelijst leeg bij een project zonder meetstaat in het Planbord
+  const andereLots = [...new Set(Object.keys(S.loten || {}).map(Number).concat(v.lot != null ? [Number(v.lot)] : []))].filter(n => isFinite(n) && !lots.includes(n)).sort((a, b) => a - b);
   const bezoeken = wbOf(projectId);
   openModal(isNew ? "Nieuwe vaststelling — " + p.klant : `${vsNr(v)} — ${p.klant}`, `<div class="form-grid">
     <div class="field span2"><label>Foto's</label><div class="vs-foto-edit" id="vs_fotos"></div>
@@ -1457,7 +1459,7 @@ function vsForm(v = {}, pid, bezoekId) {
     ${schemaV() >= 19 ? `<div class="field span2"><label for="vs_titel">Titel <span class="muted" style="font-weight:400">— kort, voor het overzicht</span></label><input id="vs_titel" name="titel" value="${esc(v.titel || "")}" placeholder="bv. Scharnier kastdeur keuken"></div>` : ""}
     <div class="field span2"><label for="vs_oms">Omschrijving</label><textarea id="vs_oms" name="omschrijving" rows="3" ${schemaV() >= 19 ? "" : "required"} placeholder="Wat is er vastgesteld en wat moet er gebeuren?">${esc(v.omschrijving || "")}</textarea></div>
     <div class="field"><label for="vs_ruimte">Ruimte / locatie</label><input id="vs_ruimte" name="ruimte" list="vs_ruimtes" value="${esc(v.ruimte || "")}" placeholder="bv. Keuken, badkamer 1e verd."><datalist id="vs_ruimtes">${ruimtes.map(r => `<option value="${esc(r)}">`).join("")}</datalist></div>
-    <div class="field"><label for="vs_lot">Lot</label><select id="vs_lot" name="lot"><option value="">—</option>${opts(lots.map(l => [l, lotName(l)]), v.lot ?? "")}</select></div>
+    <div class="field"><label for="vs_lot">Lot</label><select id="vs_lot" name="lot"><option value="">—</option>${lots.length ? `<optgroup label="In de meetstaat van dit project">${opts(lots.map(l => [l, lotName(l)]), v.lot ?? "")}</optgroup>` : ""}${andereLots.length ? `<optgroup label="${lots.length ? "Andere loten" : "Alle loten (nog niets in de meetstaat)"}">${opts(andereLots.map(l => [l, lotName(l)]), v.lot ?? "")}</optgroup>` : ""}</select></div>
     <div class="field"><label for="vs_wie">Verantwoordelijke</label><select id="vs_wie" name="wie">${vsWieOpts(projectId, v.te_beoordelen && !v.contact_id && !v.assignee && v.gemeld_door_aannemer ? { ...v, contact_id: v.gemeld_door_aannemer } : v)}</select>${schemaV() >= 18 ? `<small class="muted">Wordt automatisch een taak in de takenlijst van die persoon (klant: in het portaal).</small>` : ""}</div>
     <div class="field"><label for="vs_deadline">Op te lossen tegen</label><input id="vs_deadline" name="deadline" type="date" value="${esc(v.deadline || "")}"></div>
     <div class="field"><label for="vs_prio">Prioriteit</label><select id="vs_prio" name="prioriteit">${opts(Object.entries(VS_PRIO), v.prioriteit || "normaal")}</select></div>

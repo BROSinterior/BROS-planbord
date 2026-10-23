@@ -4,7 +4,7 @@
    lokale wachtrij (IndexedDB) en worden verzonden zodra er weer verbinding is.
    ===================================================================== */
 if (window.top !== window.self) { try { window.top.location.replace(window.location.href); } catch (e) { document.documentElement.innerHTML = ""; } }   // niet in een vreemd frame (clickjacking)
-const WERF_VERSION = "1.48.2";
+const WERF_VERSION = "1.57.1";
 const cfg = window.PLANBORD_CONFIG || {};
 if (!window.supabase) { document.getElementById("app").innerHTML = '<main><div class="empty"><b>De werfmodus is nog niet volledig geladen.</b><br>Open ze één keer met bereik; daarna werkt ze ook offline.<br><br><button class="btn" onclick="location.reload()">Opnieuw proberen</button></div></main>'; throw new Error("supabase-js niet geladen"); }
 const sb = window.supabase.createClient(cfg.supabaseUrl, cfg.supabaseAnonKey);
@@ -323,7 +323,12 @@ function vForm() {
     <div class="field"><label>Omschrijving</label><textarea id="f_oms" placeholder="Wat is er vastgesteld, wat moet er gebeuren?">${esc(v.omschrijving || "")}</textarea></div>
     <div class="field"><label>Ruimte / locatie</label><input id="f_ruimte" list="ruimtes" value="${esc(v.ruimte || "")}" placeholder="bv. Keuken"><datalist id="ruimtes">${ruimtes.map(r => `<option value="${esc(r)}">`).join("")}</datalist></div>
     ${(S.data.plannen || []).length ? `<div class="field"><label>Locatie op plan</label><select id="f_plan"><option value="">— geen plan —</option>${S.data.plannen.map(pl => `<option value="${pl.id}" ${v.plan_id === pl.id ? "selected" : ""}>${esc(pl.naam)}</option>`).join("")}</select><div id="f_planbox" style="margin-top:8px"></div></div>` : ""}
-    ${lots.length ? `<div class="field"><label>Lot</label><select id="f_lot"><option value="">—</option>${lots.map(l => `<option value="${l}" ${v.lot === l ? "selected" : ""}>${esc(lotName(l))}</option>`).join("")}</select></div>` : ""}
+    ${(() => {   // 1.57.1: eerst de loten uit de meetstaat van het project, daarna alle andere (vroeger enkel die uit de meetstaat → geen lot te kiezen bij een project zonder meetstaat)
+      const andere = [...new Set((S.base.loten || []).map(l => l.nr).concat(v.lot ? [v.lot] : []))].filter(n => n && !lots.includes(n)).sort((a, b) => a - b);
+      if (!lots.length && !andere.length) return "";
+      const o = (l) => `<option value="${l}" ${v.lot === l ? "selected" : ""}>${esc(lotName(l))}</option>`;
+      return `<div class="field"><label>Lot</label><select id="f_lot"><option value="">—</option>${lots.length ? `<optgroup label="In de meetstaat">${lots.map(o).join("")}</optgroup>` : ""}${andere.length ? `<optgroup label="${lots.length ? "Andere loten" : "Alle loten"}">${andere.map(o).join("")}</optgroup>` : ""}</select></div>`;
+    })()}
     <div class="field"><label>Verantwoordelijke</label><select id="f_wie"><option value="">— nog niet toegewezen —</option>${pcs.length ? `<optgroup label="Klant, aannemers en contacten">${pcs.map(x => opt("c:" + x.c.id, x.c.naam + (x.c.vakgebied ? " · " + x.c.vakgebied : "") + " · " + (ROL[x.rol] || x.rol))).join("")}</optgroup>` : ""}<optgroup label="Team">${S.base.profiles.map(u => opt(u.id, u.name)).join("")}</optgroup></select></div>
     <div class="field"><label>Prioriteit</label><div class="seg" id="f_prio">${Object.entries(VS_PRIO).map(([k, l]) => `<button type="button" data-p="${k}" aria-pressed="${(v.prioriteit || "normaal") === k}">${l}</button>`).join("")}</div></div>
     <div class="field"><label>Op te lossen tegen</label><input id="f_deadline" type="date" value="${esc(v.deadline || "")}"></div>
@@ -375,7 +380,7 @@ function bindForm() {
       S.view = "list"; S.filter = "open"; S.form = null; toast(S.online ? "Voorgelegd aan BROS" : "Bewaard op dit toestel — wordt voorgelegd zodra er bereik is", 3500); return render();
     }
     const wieV = $("#f_wie").value; const wieP = wieV.startsWith("c:") ? { contact_id: wieV.slice(2), assignee: null } : { contact_id: null, assignee: wieV || null };
-    const patch = { titel, omschrijving: oms, ...(planSel ? { plan_id: planSel.value || null, plan_x: planSel.value && pin ? pin.x : null, plan_y: planSel.value && pin ? pin.y : null } : {}), ruimte: $("#f_ruimte").value.trim(), lot: $("#f_lot") && $("#f_lot").value ? Number($("#f_lot").value) : null, ...wieP, prioriteit: prio, deadline: $("#f_deadline").value || null };
+    const patch = { titel, omschrijving: oms, ...(planSel ? { plan_id: planSel.value || null, plan_x: planSel.value && pin ? pin.x : null, plan_y: planSel.value && pin ? pin.y : null } : {}), ruimte: $("#f_ruimte").value.trim(), lot: $("#f_lot") ? ($("#f_lot").value ? Number($("#f_lot").value) : null) : (v.lot ?? null), ...wieP, prioriteit: prio, deadline: $("#f_deadline").value || null };
     $("#f_save").disabled = true;
     try {
     if (v.id) {
