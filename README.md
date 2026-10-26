@@ -29,6 +29,7 @@ Statische webapp (geen build-stap) op een Supabase-database.
 | `fin-planning.js` | Planbord: Rapporten › Financiële planning — jaarplanning, businessplan, pdf en Excel voor de bank (script 049, enkel beheer; projecten in/uit: script 050) |
 | `vergaderingen.js` | Planbord: tabblad Vergaderingen per project (rechtstreeks opnemen met de microfoon (1.58) of een opname opladen, transcript, conceptverslag controleren, taken) en het overzicht van het interne project (script 051) |
 | `verwerker/` | de verwerkingscomputer (Mac mini): `bros_verwerker.py`, `installeer.sh`, `LEESMIJ.md` (installatie, praktijktest, kosten, gegevensstromen); sinds 1.57 ook `plan2cad/` (Plan2CAD zonder venster, voor Plannen omzetten) |
+| `renders.js` | Planbord: tabblad Renders per project — uploaden en renderen (OpenAI via de verwerkingscomputer), sfeerbibliotheek, materiaalafspraken per ruimte, vergelijken/goedkeuren, A3-presentatie, Instellingen › Renders (script 055) |
 | `plan2cad.js` | Planbord: Plannen omzetten met Plan2CAD — sleepvak bovenaan het tabblad Plannen, wachtrij, resultaten, schaal kiezen of kalibratie uit de tekenmodule overnemen (script 054) |
 | `wacht.js` | Planbord: *Wacht op jou* bovenaan het Overzicht en het accountmenu onder je naam (v1.51) |
 | `deb-beheer.js` | Planbord: tabblad Facturen › Klanten — openstaande facturen, betalingen uit Yuki, betalingsherinneringen goedkeuren (script 048) |
@@ -195,6 +196,15 @@ Veel meetstaten zijn met klantprijzen uit Excel ingelezen: kostprijs = klantprij
 - Alleen beheer ziet of wijzigt dit (tabel `ms_raming`, RLS). Klanten, aannemers en medewerkers zien niets; de pdf/Excel voor de klant blijven ongewijzigd.
 
 Activeren: Supabase → SQL Editor → `sql/052_marges_raming.sql` → Run (na 051; controle `1 | 1 | 52`). Optioneel: nieuw `drive/Code.gs` (neemt `ms_raming` mee in de wekelijkse back-up) als `Code.ingevuld.gs` plakken en een nieuwe versie deployen.
+
+## Renders — BROS Render in het Planbord (script 055, v1.59)
+
+Per project het tabblad **Renders** (naast Plannen), enkel voor het team.
+- **Installeren:** `sql/055_renders.sql` (controle `4 | 4 | 1 | 55`), het nieuwe `drive/Code.gs` (actie `render`, nieuwe versie online zetten) en op de Mac mini opnieuw `verwerker/installeer.sh` (vraagt de **OpenAI-sleutel**, die enkel in de sleutelhanger van de Mac mini komt — nooit in het Planbord, de databank of GitHub). Daarna in Instellingen › Renders het model, de kwaliteit, het formaat en de daglimiet nakijken, en **één proefrender** doen.
+- **Gebruik:** Uploaden en renderen → ruimte, ontwerpbeelden (één render per beeld), wat er moet gebeuren, optioneel max. 4 sfeerbeelden, kwaliteit, vinkje "betaalde beeldgeneratie". Resultaten: vergelijken, goedkeuren, downloaden, Corrigeren… (vervolgrender op een render), Opnieuw. Materiaalafspraken per ruimte (* = heel project) gaan als kopie mee in elke opdracht. A3-presentatie (huisstijl, staand of liggend) uit gekozen beelden — geen kosten.
+- **Kosten en veiligheid:** elk beeld heeft een vast aanvraagnummer (request_id): opnieuw versturen na een netwerkfout geeft de bestaande opdracht terug. Daglimiet en model worden in de databank bewaakt. Een onderbroken betaalde aanvraag wordt *Controle nodig* en nooit automatisch herhaald. Een model wijzigen = eerst één proefrender (kosten en resultaat verschillen per model).
+- **Opslag:** privé-opslag `renders` (`<project>/ontwerp|sfeer|render|presentatie/…`), kopie in de projectmap › Renders/<ruimte> en Renders/Presentaties op Drive.
+- **Terugrollen:** de vorige versie van het Planbord terugzetten (GitHub) en op de Mac mini de vorige `verwerker/` installeren; script 055 is enkel toevoegend (bestaande tabellen blijven onaangeroerd). Renders uitschakelen zonder terugrollen: daglimiet op 0.
 
 ## Vergaderingen & opnames (script 051, v1.54)
 

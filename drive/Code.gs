@@ -44,7 +44,8 @@ function doPost(e) {
     if (body.action === "werfpuntmelding") return json(werfpuntMelding(body));
     if (body.action === "werfpuntfeedback") return json(werfpuntFeedback(body));   // aannemer (script 044): opmerking/foto bij een toegewezen werfpunt zonder het op te lossen → mail aan de projectverantwoordelijke   // aannemer (script 043): nieuw werfpunt gemeld in de werfmodus → mail aan de projectverantwoordelijke (token-gecontroleerd)
     if (body.action === "opname") return json(opnameDrive(body));   // 1.54 (script 051): de verwerkingscomputer (login met rol verwerker, lopende opdracht) bewaart opnames en transcripten in de projectmap
-    if (body.action === "plan") return json(planDrive(body));   // 1.57 (script 054): de verwerkingscomputer bewaart omgezette plannen (Plan2CAD) in Plannen/DXF van de projectmap
+    if (body.action === "plan") return json(planDrive(body));
+    if (body.action === "render") return json(renderDrive(body));   // 1.59 (script 055): de verwerkingscomputer bewaart renders en A3-presentaties in Renders/ van de projectmap   // 1.57 (script 054): de verwerkingscomputer bewaart omgezette plannen (Plan2CAD) in Plannen/DXF van de projectmap
     if (body.action === "bestand") return json(portaalBestand(body)); // klant/aannemer: een gedeeld document ophalen om er een pdf-dossier van te maken (login + toegang gecontroleerd) // team (token): aannemer verwittigen dat hij aan een project gekoppeld is (met uitnodiging als hij nog geen login heeft)
     if (body.action === "yukimails" || body.action === "yukizoeklijst") {   // 1.50.1: het archief-script (archief@bros.be) — met een EIGEN secret (ARCHIEF_SECRET), niet het Drive-secret van het team
       if (!archiefSecretOk(body.archief_secret)) return json({ ok: false, error: "Geen toegang (ARCHIEF_SECRET klopt niet)." });
@@ -635,6 +636,59 @@ function planDrive(body) {
     if (r.getResponseCode() !== 206 && r.getResponseCode() !== 200) return { ok: false, error: "Lezen van Drive mislukt (" + r.getResponseCode() + ")." };
     const bytes = r.getBlob().getBytes();
     return { ok: true, base64: Utilities.base64Encode(bytes), lengte: bytes.length };
+  }
+  return { ok: false, error: "Onbekende soort." };
+}
+
+/* =====================================================================
+   Renders (script 055, v1.59) — voor de verwerkingscomputer (Mac mini)
+   Enkel een actieve login met rol 'verwerker' die nu deze render- of presentatieopdracht verwerkt (claim + lease).
+   Map: projectmap › Renders/<ruimte> (renders) of Renders/Presentaties (A3-pdf's). Bestanden worden nooit overschreven.
+   soort 'start': uploadsessie (de verwerkingscomputer stuurt het bestand rechtstreeks naar Google). Staat er al een bestand
+                  met dezelfde naam en hetzelfde controlegetal (md5), dan krijg je dat terug (hervatten).
+   soort 'info':  id, md5 en grootte van een bestand in die map (controle na het opladen).
+   ===================================================================== */
+function renderDrive(body) {
+  const wie = callerAny(body.token);
+  if (wie.role !== "verwerker") return { ok: false, error: "Geen toegang (enkel de verwerkingscomputer)." };
+  const id = uuid(body.opdracht_id); const pres = body.type === "presentatie";
+  const tabel = pres ? "render_presentaties" : "render_opdrachten";
+  const job = (pbAdmin("/rest/v1/" + tabel + "?id=eq." + id + "&status=eq.bezig&worker_user=eq." + uuid(wie.id) + "&claim=eq." + uuid(body.claim) + "&lease_tot=gt." + encodeURIComponent(new Date().toISOString()) + "&select=id,project_id" + (pres ? "" : ",ruimte"), "get") || [])[0];
+  if (!job) return { ok: false, error: "Geen lopende " + (pres ? "presentatie" : "render") + "." };
+  const p = (pbAdmin("/rest/v1/projecten?id=eq." + uuid(job.project_id) + "&select=drive_folder_id,klant", "get") || [])[0] || {};
+  if (!p.drive_folder_id) return { ok: false, geen_map: true, error: "Dit project heeft nog geen projectmap op Drive (Dossier › Projectmap koppelen)." };
+  onderProjecten(p.drive_folder_id);
+  const auth = { Authorization: "Bearer " + ScriptApp.getOAuthToken() };
+  const schoon = (t, max) => String(t || "").replace(/[\\/:*?"<>|\r\n\t]+/g, " ").replace(/\s+/g, " ").trim().slice(0, max);
+  const map = subfolder(DriveApp.getFolderById(p.drive_folder_id), pres ? "Renders/Presentaties" : "Renders/" + (schoon(job.ruimte, 60) || "Algemeen"));
+  const soort = String(body.soort || "");
+  const fileInfo = (fid) => {
+    const r = UrlFetchApp.fetch("https://www.googleapis.com/drive/v3/files/" + encodeURIComponent(fid) + "?supportsAllDrives=true&fields=id,name,md5Checksum,size,webViewLink,parents,trashed", { headers: auth, muteHttpExceptions: true });
+    if (r.getResponseCode() !== 200) throw new Error("Bestand niet gevonden op Drive.");
+    return JSON.parse(r.getContentText());
+  };
+  if (soort === "start") {
+    const naam = schoon(body.naam, 150) || "render"; const grootte = Number(body.grootte) || 0;
+    const mime = /^(image\/(png|jpeg|webp)|application\/pdf)$/.test(String(body.mime || "").trim()) ? String(body.mime).trim() : "application/octet-stream";
+    const md5 = /^[0-9a-f]{32}$/.test(String(body.md5 || "")) ? String(body.md5) : "";
+    if (!(grootte > 0) || grootte > 200 * 1024 * 1024) return { ok: false, error: "Ongeldige bestandsgrootte." };
+    const it = map.getFilesByName(naam);
+    while (it.hasNext()) {
+      const f = it.next(); if (f.isTrashed()) continue;
+      const i = fileInfo(f.getId());
+      if (md5 && i.md5Checksum === md5) return { ok: true, bestaand: { id: i.id, md5: i.md5Checksum || "", url: i.webViewLink, size: Number(i.size) }, map_url: map.getUrl() };
+    }
+    const r = UrlFetchApp.fetch("https://www.googleapis.com/upload/drive/v3/files?uploadType=resumable&supportsAllDrives=true&fields=id,md5Checksum,size,webViewLink", {
+      method: "post", contentType: "application/json; charset=UTF-8", payload: JSON.stringify({ name: naam, parents: [map.getId()], mimeType: mime }),
+      headers: Object.assign({ "X-Upload-Content-Type": mime, "X-Upload-Content-Length": String(grootte) }, auth), muteHttpExceptions: true });
+    const h = r.getHeaders(); const loc = h.Location || h.location;
+    if (r.getResponseCode() !== 200 || !loc) { let w = ""; try { w = String((JSON.parse(r.getContentText()).error || {}).message || "").slice(0, 160); } catch (e) { } return { ok: false, error: "Drive gaf geen uploadsessie (" + r.getResponseCode() + (w ? ": " + w : "") + ")." }; }
+    return { ok: true, upload_url: loc, map_url: map.getUrl() };
+  }
+  if (soort === "info") {
+    const i = fileInfo(String(body.file_id || ""));
+    if (i.trashed || (i.parents || []).indexOf(map.getId()) < 0) return { ok: false, error: "Dit bestand staat niet in de map Renders van dit project." };
+    return { ok: true, id: i.id, md5: i.md5Checksum || "", size: Number(i.size), url: i.webViewLink, map_url: map.getUrl() };
   }
   return { ok: false, error: "Onbekende soort." };
 }
@@ -1352,7 +1406,7 @@ function onderhoudZeker() {
 }
 function onderhoudInstall() { CacheService.getScriptCache().remove("onderhoud-trigger"); onderhoudZeker(); CacheService.getScriptCache().remove("hartslag"); onderhoud(false); Logger.log("OK — onderhoud draait elk uur (hartslag), back-up en bewaking wekelijks."); }
 function hartslag() {
-  pbAdmin("/rest/v1/instellingen?on_conflict=key", "post", { key: "hartslag", value: { drive: new Date().toISOString(), versie: "1.56.3" } }, "resolution=merge-duplicates,return=minimal");
+  pbAdmin("/rest/v1/instellingen?on_conflict=key", "post", { key: "hartslag", value: { drive: new Date().toISOString(), versie: "1.59.0" } }, "resolution=merge-duplicates,return=minimal");
 }
 function triggersHerstellen() {   // enkel triggers die er eerder al waren (nooit iets aanzetten dat BROS zelf niet installeerde)
   const props = PropertiesService.getScriptProperties();

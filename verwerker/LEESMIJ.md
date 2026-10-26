@@ -212,9 +212,9 @@ Planbord › Instellingen › *Evaluatie proefperiode* toont per soort hoeveel A
 | `llm.tweede_controle` | `false` | tweede AI-controle (zoekt extra fouten en gemiste punten; vervangt de menselijke controle niet) |
 | `llm.prijs_input_per_mtok`, `llm.prijs_output_per_mtok` | 2 / 10 | enkel voor de kostenraming in het logboek |
 
-## 7. Later: rechtstreeks opnemen
+## 7. Rechtstreeks opnemen (sinds 1.58)
 
-Het Planbord laadt elke opname op via één functie: `vgOpnameOpladen(vergadering, bestand, bron)`. Een opnameknop met de microfoon (MediaRecorder) geeft straks gewoon een `Blob` met bron `microfoon` door. Wachtrij, verwerking en controle blijven hetzelfde.
+In het Planbord neemt de knop **● Opnemen** (tabblad Vergaderingen) rechtstreeks op met de microfoon van laptop of gsm (webm/opus of m4a, ± 20 MB per uur) en laadt de opname bij het stoppen op via dezelfde weg (`vgOpnameOpladen`, bron `microfoon`). Zulke opnames hebben geen duur in de bestandskop: sinds 1.58.0 bepaalt de verwerker die door het geluid één keer te decoderen.
 
 ## Wat getest is
 
@@ -289,3 +289,32 @@ Instellingen in `config.json` (optioneel): `plan2cad_python`, `plan2cad_map` (st
 ### Wat getest is
 
 De volledige keten (wachtrij, origineel naar Drive met MD5, omzetten, DXF naar Drive en de opslag, herschalen vanuit Drive, mislukte bestanden, stoppen, vastgelopen opdrachten) in een testomgeving met de echte databasefuncties van script 054 en een nagebootst Drive-script, op een vectorplan (haardmeubel), een verslag met twee geplakte plannen en een kapot bestand. Nog niet getest: op de Mac mini zelf en met het echte Drive-script.
+
+## Renders (v1.59, script 055)
+
+De verwerkingscomputer maakt ook de renders uit het tabblad Renders van het Planbord en de A3-presentaties.
+
+| Stap | Waar | Wat |
+|---|---|---|
+| Opdracht | Planbord → Supabase (`render_opdrachten`) | ontwerp + max. 4 sfeerbeelden in de opslag `renders`, afspraken van de ruimte als kopie |
+| Renderen | Mac mini → **OpenAI** `images/edits` (betaald) | één aanvraag per render, **nooit automatisch herhaald**; formaat in de verhouding van het ontwerp |
+| Resultaat | opslag `renders` + Drive (Renders/<ruimte>) | pas daarna "Klaar"; mislukt het opladen, dan blijft het beeld in de werkmap op de Mac mini |
+| Presentatie | Mac mini (lokaal, `render/bros_presentatie.py` in de Python-omgeving van Plan2CAD) | A3-pdf in de huisstijl → opslag + Drive (Renders/Presentaties) |
+
+**Veiligheid voor de kosten.** Vlak vóór de betaalde aanvraag legt de verwerker in de databank vast dat ze vertrekt (`render_api_start`, één keer per opdracht, enkel met een geldige claim). Alles wat daarna misloopt (time-out, fout 5xx, herstart, stroomuitval) wordt *Controle nodig* (`onzeker`) — nooit opnieuw in de wachtrij. Een aantoonbare weigering van OpenAI (4xx, bv. ongeldige sleutel of geweigerde inhoud) wordt *Mislukt*. Fouten vóór het versturen (ontwerp ophalen, netwerk) gaan opnieuw in de wachtrij (max. 3 keer, niets betaald). Zonder OpenAI-sleutel neemt de verwerker geen renders aan: ze blijven in de wachtrij.
+
+### Installeren of bijwerken
+
+1. `sql/055_renders.sql` uitvoeren in Supabase. De controle moet `4 | 4 | 1 | 55` geven.
+2. Het nieuwe `drive/Code.gs` (of `Code.ingevuld.gs`) plakken en een **nieuwe versie** online zetten (actie `render`).
+3. Op de Mac mini `bash installeer.sh` opnieuw uitvoeren (zie hierboven). Het script kopieert `render/` naar `~/Library/Application Support/BROS-verwerker/render` en vraagt **"OpenAI API-sleutel instellen voor renders? (j/n)"** — typ de sleutel daar zelf in (je ziet niets tijdens het typen; twee keer). Een sleutel uit het OpenAI Platform-project van BROS, met toegang tot beeldgeneratie en een maandlimiet.
+4. `controle` moet tonen: *OpenAI-sleutel voor renders: aanwezig* en *A3-presentaties (huisstijl): OK*.
+5. In het Planbord: Instellingen › Renders nakijken en **één proefrender** doen; kijk daarna het verbruik na in het OpenAI-dashboard.
+
+Een andere sleutel: `security add-generic-password -U -s BROS-verwerker -a openai-api-key -w` en daarna de dienst herstarten (`launchctl kickstart -k gui/$(id -u)/be.bros.verwerker`).
+
+Instellingen in `config.json` (optioneel): `openai_url`, `render_timeout` (standaard 600 seconden per render), `render_map`.
+
+### Wat getest is
+
+In een testomgeving met de echte databasefuncties van script 055 (50 tests: toegang voor team/klant/aannemer/verwerker, opslagregels, idempotentie ook bij 8 gelijktijdige aanvragen, daglimiet, onzeker/hervatten), de verwerker met een nagebootste OpenAI en Drive (18 tests: formaat, volgorde van de beelden, 5xx/time-out → onzeker zonder herhaling, 4xx → mislukt, geen sleutel, opslag die hapert, presentatie) en het tabblad in een echte browser (15 tests, ook gsm-breedte). Nog niet getest: een echte betaalde aanvraag bij OpenAI en het echte Drive-script — doe daarom eerst één proefrender.

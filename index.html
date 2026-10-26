@@ -743,6 +743,42 @@
   .vg-bewerk { display: grid; gap: 6px; } .vg-nieuw { background: var(--surface-2); }
   .vg-afronden .panel-body { display: flex; justify-content: space-between; gap: 12px; align-items: center; flex-wrap: wrap; }
   .vg-speler { position: fixed; left: 50%; transform: translateX(-50%); bottom: 16px; z-index: 55; display: flex; gap: 10px; align-items: center; background: var(--surface); border: 1px solid var(--line); box-shadow: var(--shadow); border-radius: 14px; padding: 8px 10px 8px 14px; max-width: calc(100vw - 32px); }
+  /* 1.59: renders */
+  .rd-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(340px, 1fr)); gap: 14px; padding: 14px; }
+  .rd-kaart { border: 1px solid var(--line); border-radius: 12px; overflow: hidden; background: var(--surface); display: flex; flex-direction: column; }
+  .rd-kaart.goed { border-color: var(--ok); }
+  .rd-duo { display: grid; grid-template-columns: 1fr 1fr; gap: 2px; background: var(--line); }
+  .rd-img { display: block; width: 100%; aspect-ratio: 3 / 2; object-fit: cover; background: var(--surface-2); }
+  .rd-img.laden { animation: rdPuls 1.2s ease-in-out infinite; } @keyframes rdPuls { 50% { opacity: .55; } }
+  .rd-res { padding: 0; border: 0; background: none; cursor: zoom-in; display: block; }
+  .rd-wacht { display: flex; align-items: center; justify-content: center; text-align: center; color: var(--muted); font-size: 12.5px; padding: 8px; }
+  .rd-wacht small { display: block; font-size: 11px; }
+  .rd-info { padding: 10px 12px 12px; display: flex; flex-direction: column; gap: 4px; }
+  .rd-info .actions { margin-top: 6px; flex-wrap: wrap; }
+  .rd-instr { font-size: 13px; overflow: hidden; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; }
+  .rd-fout { color: var(--crit); font-size: 12.5px; }
+  .rd-chips { display: flex; gap: 6px; flex-wrap: wrap; padding: 10px 14px 0; }
+  .rd-chips button { border: 1px solid var(--line); background: var(--surface); border-radius: 999px; padding: 4px 10px; font: inherit; font-size: 12.5px; cursor: pointer; }
+  .rd-chips button.on { background: var(--accent-soft); border-color: var(--accent); color: var(--accent); }
+  .rd-onder { margin-top: 16px; }
+  .rd-sfeer, .rd-sfeerkeuze { display: grid; grid-template-columns: repeat(auto-fill, minmax(96px, 1fr)); gap: 8px; }
+  .rd-sfeerkeuze.klein { grid-template-columns: repeat(auto-fill, minmax(64px, 96px)); margin-top: 8px; }
+  .rd-sf { position: relative; } .rd-sf .btn { position: absolute; top: 4px; right: 4px; background: var(--surface); }
+  .rd-sf .rd-img, .rd-sk .rd-img, .rd-pk .rd-img { border-radius: 8px; }
+  .rd-sk, .rd-pk { position: relative; display: block; cursor: pointer; }
+  .rd-sk input, .rd-pk input { position: absolute; top: 6px; left: 6px; z-index: 1; width: 18px; height: 18px; }
+  .rd-sk input:checked + .rd-img, .rd-pk input:checked + .rd-img { outline: 3px solid var(--accent); outline-offset: -3px; }
+  .rd-pres { display: grid; grid-template-columns: repeat(auto-fill, minmax(130px, 1fr)); gap: 10px; max-height: 360px; overflow: auto; }
+  .rd-pk small { display: block; font-size: 11px; color: var(--muted); margin-top: 2px; }
+  .rd-nr { position: absolute; top: 6px; right: 6px; background: var(--accent); color: #fff; border-radius: 999px; min-width: 20px; text-align: center; font-size: 12px; font-weight: 600; }
+  .rd-nr:empty { display: none; }
+  .rd-bron { display: flex; gap: 10px; align-items: center; } .rd-bron .rd-img { width: 180px; border-radius: 8px; }
+  .rd-afspr { margin: 4px 0 0; padding-left: 18px; font-size: 13px; }
+  .rd-batch { display: flex; gap: 12px; align-items: flex-start; margin: 12px 14px 0; } .rd-batch ul { margin: 6px 0; padding-left: 0; list-style: none; font-size: 13px; }
+  .rd-batch .ok { color: var(--ok); } .rd-batch .nok { color: var(--crit); }
+  .rd-vgl { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; } .rd-vgl figure { margin: 0; } .rd-vgl .rd-img { aspect-ratio: auto; object-fit: contain; border-radius: 8px; max-height: 62vh; }
+  .rd-vgl figcaption { font-size: 12px; color: var(--muted); margin-top: 4px; }
+  @media (max-width: 640px) { .rd-grid { grid-template-columns: 1fr; padding: 10px; } .rd-vgl { grid-template-columns: 1fr; } .rd-batch { flex-direction: column; } }
   /* 1.58: rechtstreeks opnemen */
   .vg-rec-dot { display: inline-block; width: 10px; height: 10px; border-radius: 50%; background: #d93025; flex: none; animation: vgRecPuls 1.4s ease-in-out infinite; vertical-align: middle; }
   .vg-rec-dot.pauze { animation: none; background: var(--muted); }
@@ -781,25 +817,26 @@
 <div class="toast" id="toast" role="status"></div>
 <div class="loader" id="loader" aria-live="polite"><div class="logo"><i class="base"></i><i class="fill" id="loaderFill"></i></div><div class="pct" id="loaderPct">0%</div><div class="msg" id="loaderMsg">Even geduld…</div></div>
 <script src="vendor/supabase-2.45.4.js"></script>
-<script src="config.js?v=1.58.0"></script>
+<script src="config.js?v=1.59.0"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
-<script src="postcodes.js?v=1.58.0"></script>
-<script src="meetstaat-export.js?v=1.58.0"></script>
-<script src="meetstaat-import.js?v=1.58.0"></script>
+<script src="postcodes.js?v=1.59.0"></script>
+<script src="meetstaat-export.js?v=1.59.0"></script>
+<script src="meetstaat-import.js?v=1.59.0"></script>
 <!-- tekenmodule: deze drie scripts horen bij het tabblad Plannen — niet verwijderen -->
-<script src="vendor/dxf-parser.js?v=1.58.0"></script>
-<script src="symbolen.js?v=1.58.0"></script>
-<script src="tekenen.js?v=1.58.0"></script>
-<script src="agenda.js?v=1.58.0"></script>
-<script src="afspraken.js?v=1.58.0"></script>
-<script src="kp-beheer.js?v=1.58.0"></script>
-<script src="pv-beheer.js?v=1.58.0"></script>
-<script src="af-beheer.js?v=1.58.0"></script>
-<script src="deb-beheer.js?v=1.58.0"></script>
-<script src="wacht.js?v=1.58.0"></script>
-<script src="fin-planning.js?v=1.58.0"></script>
-<script src="vergaderingen.js?v=1.58.0"></script>
-<script src="plan2cad.js?v=1.58.0"></script>
-<script src="app.js?v=1.58.0"></script>
+<script src="vendor/dxf-parser.js?v=1.59.0"></script>
+<script src="symbolen.js?v=1.59.0"></script>
+<script src="tekenen.js?v=1.59.0"></script>
+<script src="agenda.js?v=1.59.0"></script>
+<script src="afspraken.js?v=1.59.0"></script>
+<script src="kp-beheer.js?v=1.59.0"></script>
+<script src="pv-beheer.js?v=1.59.0"></script>
+<script src="af-beheer.js?v=1.59.0"></script>
+<script src="deb-beheer.js?v=1.59.0"></script>
+<script src="wacht.js?v=1.59.0"></script>
+<script src="fin-planning.js?v=1.59.0"></script>
+<script src="vergaderingen.js?v=1.59.0"></script>
+<script src="plan2cad.js?v=1.59.0"></script>
+<script src="renders.js?v=1.59.0"></script>
+<script src="app.js?v=1.59.0"></script>
 </body>
 </html>
