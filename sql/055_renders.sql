@@ -21,6 +21,9 @@ do $$ begin
   if coalesce((select (value->>'versie_schema')::int from public.instellingen where key = 'app'), 0) < 54 then
     raise exception 'Voer eerst de scripts tot en met 054 uit.';
   end if;
+  if coalesce((select (value->>'versie_schema')::int from public.instellingen where key = 'app'), 0) >= 56 then   -- 1.60: 056 vervangt functies van 055
+    raise exception 'Script 056 (stalenborden) is al uitgevoerd: voer 055 niet opnieuw uit (dat zou de beveiliging van 056 terugdraaien). Voer zo nodig 056 opnieuw uit.';
+  end if;
 end $$;
 
 -- ---------- 1. tabellen ----------

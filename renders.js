@@ -6,6 +6,9 @@
    architectuur en de materiaalafspraken van het project blijven leidend. A3-presentatie in de BROS-huisstijl.
    Dubbel betalen kan niet: elk beeld krijgt bij het kiezen een vast aanvraagnummer (request_id); opnieuw versturen na een
    netwerkfout geeft de bestaande opdracht terug (de databank bewaakt dat, script 055).
+   1.60 (script 056): stalenbord per ruimte — een fotorealistische foto van echte stalen (enkel de materialen van die ruimte)
+   met dezelfde wachtrij, toestemming, daglimiet en bescherming tegen dubbel betalen; versies, keuze voor de presentatie en
+   de optie "Stalenborden per ruimte opnemen" in de A3-presentatie (nooit een beeldgeneratie bij het maken van de pdf).
    Laden vóór app.js. Gebruikt uit app.js: S, sb, esc, toast, render, openModal, closeModal, opts, schemaV, isBeheer,
    userById, fmtLong, lokDag, lokUur, todayIso, dbInsert, dbUpdate, dbDelete, nl, projName; uit vergaderingen.js: vgVerwerker.
    ===================================================================== */
@@ -15,13 +18,18 @@ const RD_KWALITEIT = [["low", "Snel (laag)"], ["medium", "Standaard"], ["high", 
 const RD_MAX = 48 * 1024 * 1024;   // OpenAI aanvaardt max. 50 MB per beeld
 const RD_TYPES = { "image/png": "png", "image/jpeg": "jpg", "image/webp": "webp" };
 const rdOk = () => schemaV() >= 55 && !!S.render_opdrachten;
+const rdSbOk = () => schemaV() >= 56;   // stalenborden (script 056)
+const MODAL_OPEN = () => { const bg = document.getElementById("modalBg"); return !!(bg && bg.classList.contains("show")); };
+const rdSleutel = (r) => String(r || "").trim().toLowerCase();
+const rdIsRender = (o) => (o.soort || "render") === "render";
 const rdCfg = () => { const v = (S.instellingen && S.instellingen.render && S.instellingen.render.value) || {};
   return { model: v.model || "gpt-image-2", kwaliteit: ["low", "medium", "high"].includes(v.kwaliteit) ? v.kwaliteit : "medium", lange_zijde: [1536, 2048, 2560].includes(Number(v.lange_zijde)) ? Number(v.lange_zijde) : 2048, daglimiet: Number.isFinite(Number(v.daglimiet)) ? Number(v.daglimiet) : 20 }; };
 const rdBeelden = (pid, soort) => Object.values(S.render_beelden || {}).filter(b => b.project_id === pid && (!soort || b.soort === soort)).sort((a, b) => (b.created_at || "").localeCompare(a.created_at || ""));
 const rdOpdrachten = (pid) => Object.values(S.render_opdrachten || {}).filter(o => o.project_id === pid).sort((a, b) => (b.created_at || "").localeCompare(a.created_at || ""));
 const rdAfspraken = (pid) => Object.values(S.render_afspraken || {}).filter(a => a.project_id === pid).sort((a, b) => (a.ruimte || "").localeCompare(b.ruimte || "") || (a.created_at || "").localeCompare(b.created_at || ""));
 const rdPresentaties = (pid) => Object.values(S.render_presentaties || {}).filter(r => r.project_id === pid).sort((a, b) => (b.created_at || "").localeCompare(a.created_at || ""));
-const rdRuimtes = (pid) => [...new Set(rdAfspraken(pid).map(a => a.ruimte).concat(rdOpdrachten(pid).map(o => o.ruimte)).filter(r => r && r !== "*").map(r => r.trim()))].sort((a, b) => a.localeCompare(b));
+const rdRuimtes = (pid) => { const m = new Map(); rdBeelden(pid).filter(b => b.soort !== "sfeer").map(b => b.ruimte).concat(rdOpdrachten(pid).map(o => o.ruimte), rdAfspraken(pid).map(a => a.ruimte))   // schrijfwijze: eerst die van de beelden
+  .forEach(r => { const t = String(r || "").trim(); if (t && t !== "*" && !m.has(t.toLowerCase())) m.set(t.toLowerCase(), t); }); return [...m.values()].sort((a, b) => a.localeCompare(b, "nl", { sensitivity: "base" })); };
 const rdVandaag = () => { const n = new Date(); const d = new Intl.DateTimeFormat("en-CA", { timeZone: "Europe/Brussels" }).format(n); return Object.values(S.render_opdrachten || {}).filter(o => o.dag === d && o.status !== "geannuleerd").length; };
 const rdHex = (n) => [...crypto.getRandomValues(new Uint8Array(n))].map(b => b.toString(16).padStart(2, "0")).join("");
 const rdNetFout = (e) => Number(e && (e.statusCode || e.status)) >= 500 || /fetch|network|timeout|load failed|connection|502|503|504/i.test(String((e && (e.message || e.error)) || e || ""));   // tijdelijk: opnieuw proberen
@@ -60,16 +68,17 @@ function rdSignaal() {
 /* ---------- het tabblad ---------- */
 function vRenders(p) {
   if (schemaV() < 55) return typeof SCHEMA_HINT === "function" ? SCHEMA_HINT(55) : "Voer eerst sql/055_renders.sql uit.";
-  const cfg = rdCfg(); const ops = rdOpdrachten(p.id); const nV = rdVandaag();
+  const cfg = rdCfg(); const ops = rdOpdrachten(p.id).filter(rdIsRender); const nV = rdVandaag();
   const ruimtes = [...new Set(ops.map(o => o.ruimte))].sort((a, b) => a.localeCompare(b));
   const zicht = RD.filter && ruimtes.includes(RD.filter) ? ops.filter(o => o.ruimte === RD.filter) : ops;
   const batch = RD.batch && RD.batch.pid === p.id ? rdBatchHtml() : "";
   return `<div class="panel"><div class="panel-head"><div><h3>Renders</h3><div class="muted" style="font-size:12px;margin-top:2px">${rdSignaal()} · ${esc(cfg.model)} · vandaag ${nV}/${cfg.daglimiet} renders</div></div>
-      <div class="actions"><button class="btn sm" data-rd-act="pres-nieuw" data-pid="${p.id}" ${rdBeelden(p.id).some(b => b.soort !== "sfeer") ? "" : "disabled"}>A3-presentatie</button><button class="btn sm primary" data-rd-act="nieuw" data-pid="${p.id}">Uploaden en renderen</button></div></div>
+      <div class="actions"><button class="btn sm" data-rd-act="pres-nieuw" data-pid="${p.id}" ${rdBeelden(p.id).some(b => b.soort === "render" || b.soort === "ontwerp") ? "" : "disabled"}>A3-presentatie</button><button class="btn sm primary" data-rd-act="nieuw" data-pid="${p.id}">Uploaden en renderen</button></div></div>
     ${batch}
     ${ruimtes.length > 1 ? `<div class="rd-chips"><button class="${RD.filter ? "" : "on"}" data-rd-act="filter" data-r="">Alle ruimtes</button>${ruimtes.map(r => `<button class="${RD.filter === r ? "on" : ""}" data-rd-act="filter" data-r="${esc(r)}">${esc(r)}</button>`).join("")}</div>` : ""}
     ${zicht.length ? `<div class="rd-grid">${zicht.map(rdKaart).join("")}</div>` : `<div class="empty"><b>Nog geen renders</b>Klik op <b>Uploaden en renderen</b>: kies de ruimte en je ontwerpbeelden (bv. uit SketchUp of Vectorworks), eventueel sfeerbeelden, en de verwerkingscomputer maakt er fotorealistische renders van.</div>`}
   </div>
+  ${rdSbOk() ? rdStalenPaneel(p) : ""}
   <div class="grid two rd-onder">${rdSfeerPaneel(p)}${rdAfsprakenPaneel(p)}</div>
   ${rdPresentatiesPaneel(p)}`;
 }
@@ -84,7 +93,7 @@ function rdKaart(o) {
       <div class="rd-instr" title="${esc(o.instructie)}">${esc(o.instructie)}</div>
       <small class="muted">${esc(wie)} · ${esc(fmtLong(lokDag(o.created_at)))} ${esc(lokUur(o.created_at))} · ${esc(o.model)} · ${esc((RD_KWALITEIT.find(k => k[0] === o.kwaliteit) || [0, o.kwaliteit])[1])}${(o.sfeer_ids || []).length ? ` · ${o.sfeer_ids.length} sfeerbeeld${o.sfeer_ids.length > 1 ? "en" : ""}` : ""}</small>
       ${o.fout && o.status !== "klaar" ? `<div class="rd-fout">${esc(o.fout)}</div>` : o.fout ? `<small class="muted" style="display:block">${esc(o.fout)}</small>` : ""}
-      <div class="actions">${res ? `<button class="btn sm" data-rd-act="vergelijk" data-id="${o.id}">Vergelijken</button><button class="btn sm" data-rd-act="goed" data-id="${res.id}" data-v="${goed ? "0" : "1"}">${goed ? "Goedkeuring intrekken" : "Goedkeuren"}</button><button class="btn sm" data-rd-act="download" data-id="${res.id}">Downloaden</button>${res.drive && res.drive.url ? `<a class="btn sm" href="${esc(safeUrl(res.drive.url))}" target="_blank" rel="noopener">Drive ↗</a>` : ""}<button class="btn sm" data-rd-act="corrigeer" data-id="${res.id}" title="Een nieuwe render op basis van deze render (gerichte correctie)">Corrigeren…</button>` : ""}
+      <div class="actions">${res ? `<button class="btn sm" data-rd-act="vergelijk" data-id="${o.id}">Vergelijken</button><button class="btn sm" data-rd-act="goed" data-id="${res.id}" data-v="${goed ? "0" : "1"}">${goed ? "Goedkeuring intrekken" : "Goedkeuren"}</button><button class="btn sm" data-rd-act="download" data-id="${res.id}">Downloaden</button>${res.drive && res.drive.url ? `<a class="btn sm" href="${esc(safeUrl(res.drive.url))}" target="_blank" rel="noopener">Drive ↗</a>` : ""}<button class="btn sm" data-rd-act="corrigeer" data-id="${res.id}" title="Een nieuwe render op basis van deze render (gerichte correctie)">Corrigeren…</button>${rdSbOk() ? `<button class="btn sm ghost" data-rd-act="ruimte" data-id="${res.id}" title="Deze render aan een andere ruimte koppelen (stalenbord en presentatie volgen de ruimte)">Ruimte…</button>` : ""}` : ""}
         ${o.status === "wachtrij" && (isBeheer() || o.aangevraagd_door === S.me.id) ? `<button class="btn sm ghost danger" data-rd-act="annuleer" data-id="${o.id}">Annuleren</button>` : ""}
         ${["mislukt", "onzeker", "geannuleerd"].includes(o.status) && bron ? `<button class="btn sm" data-rd-act="opnieuw" data-id="${o.id}">Opnieuw…</button>` : ""}</div></div></div>`;
 }
@@ -264,16 +273,190 @@ function rdAfsprForm(pid, a) {
   });
 }
 
+/* ---------- stalenborden per ruimte (script 056, v1.60) ---------- */
+// Een stalenbord is een betaalde beeldgeneratie zoals een render (zelfde wachtrij, toestemming, daglimiet en aanvraagnummer).
+// Enkel de materialen die Phil bevestigt; de ruimtenaam en legende komen in de presentatie via de opmaak, nooit in het beeld.
+const RD_SB_MAX_REF = 6;
+const rdSbVersies = (pid, ruimte) => rdBeelden(pid, "stalenbord").filter(b => rdSleutel(b.ruimte) === rdSleutel(ruimte)).sort((a, b) => (b.versie || 0) - (a.versie || 0) || (b.created_at || "").localeCompare(a.created_at || ""));
+const rdSbGekozen = (pid, ruimte) => rdSbVersies(pid, ruimte).find(b => b.geselecteerd) || null;
+const rdSbOpdrachten = (pid, ruimte) => rdOpdrachten(pid).filter(o => o.soort === "stalenbord" && rdSleutel(o.ruimte) === rdSleutel(ruimte));
+const rdSbLabels = (mat) => (mat || []).map(m => String(m || "").trim()).filter(Boolean).map(m => (m.includes(":") ? m.split(":")[0].trim() || m : m).slice(0, 60));
+// past een beeld bij de ruimte? ruimte van het beeld, of de ruimtenaam als woord in de bestandsnaam (enkel een voorstel)
+function rdSbPast(b, ruimte) {
+  const k = rdSleutel(ruimte); if (!k) return false;
+  if (rdSleutel(b.ruimte) === k) return true;
+  const naam = String(b.naam || "").toLowerCase().replace(/\.[a-z0-9]{2,4}$/, "");
+  const w = k.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  return new RegExp(`(^|[^a-z0-9à-ÿ])${w}([^a-z0-9à-ÿ]|$)`, "i").test(naam);
+}
+// mogelijk verouderd: de afspraken van de ruimte zijn gewijzigd, een referentiebeeld is weg, of er is een nieuwere goedgekeurde render
+function rdSbVerouderd(b) {
+  const o = b && S.render_opdrachten[b.opdracht_id]; if (!o) return [];
+  const redenen = []; const k = rdSleutel(o.ruimte);
+  const nu = rdAfspraken(o.project_id).filter(a => a.ruimte === "*" || rdSleutel(a.ruimte) === k).map(a => rdSleutel(a.ruimte) + "|" + String(a.tekst || "").trim()).sort();
+  const toen = (o.afspraken || []).map(a => rdSleutel(a.ruimte) + "|" + String(a.tekst || "").trim()).sort();
+  if (JSON.stringify(nu) !== JSON.stringify(toen)) redenen.push("de materiaalafspraken van deze ruimte zijn gewijzigd");
+  const refs = o.referentie_ids || [];
+  if (refs.some(id => !S.render_beelden[id])) redenen.push("een referentiebeeld werd verwijderd");
+  if (rdBeelden(o.project_id, "render").some(r => rdSleutel(r.ruimte) === k && r.goedgekeurd_op && r.goedgekeurd_op > (o.created_at || "") && !refs.includes(r.id))) redenen.push("er is een nieuwere goedgekeurde render van deze ruimte");
+  return redenen;
+}
+function rdSbSignaal() {
+  if (typeof vgVerwerker !== "function") return "";
+  const w = vgVerwerker(); const i = (w.r && w.r.info) || {};
+  return w.bekend && i.renders !== undefined && !i.stalenborden ? `<div class="rd-fout" style="margin:0 0 8px">De verwerkingscomputer kent nog geen stalenborden: voer installeer.sh opnieuw uit op de Mac mini. Tot dan blijven stalenborden in de wachtrij (er wordt niets betaald).</div>` : "";
+}
+function rdStalenPaneel(p) {
+  const ruimtes = rdRuimtes(p.id); const heeftBeelden = rdBeelden(p.id).some(b => b.soort === "render" || b.soort === "ontwerp");
+  const rij = (r) => {
+    const versies = rdSbVersies(p.id, r); const gekozen = versies.find(b => b.geselecteerd); const toon = gekozen || versies[0];
+    const ops = rdSbOpdrachten(p.id, r); const laatste = ops[0]; const loopt = ops.find(o => o.status === "wachtrij" || o.status === "bezig");
+    const oud = toon ? rdSbVerouderd(toon) : [];
+    const [l, c] = laatste ? (RD_STATUS[laatste.status] || [laatste.status, ""]) : ["", ""];
+    return `<div class="rd-sbrij">${toon ? `<button type="button" class="rd-sbimg" data-rd-act="sb-bekijk" data-id="${toon.id}" title="Bekijken">${rdImg(toon)}</button>` : `<div class="rd-img leeg rd-sbimg"></div>`}
+      <div class="rd-info"><div><b>${esc(r)}</b> ${gekozen ? `<span class="pill done">v${gekozen.versie || "?"} in presentatie</span>` : toon ? `<span class="pill st-offerte">nog geen versie gekozen</span>` : ""}${toon && toon.goedgekeurd_op ? ` <span class="pill done">goedgekeurd</span>` : ""}${oud.length ? ` <span class="pill st-on_hold" title="${esc(oud.join("; "))}">mogelijk verouderd</span>` : ""}${laatste && laatste.status !== "klaar" ? ` <span class="pill ${c}">${esc(l)}</span>` : ""}</div>
+        <small class="muted">${versies.length ? `${versies.length} versie${versies.length > 1 ? "s" : ""} · laatste ${esc(fmtLong(lokDag(versies[0].created_at)))}` : "Nog geen stalenbord"}${oud.length ? ` · ${esc(oud.join("; "))} — bijwerken is een bewuste keuze (betaald)` : ""}</small>
+        ${laatste && ["mislukt", "onzeker"].includes(laatste.status) && laatste.fout ? `<div class="rd-fout">${esc(laatste.fout)}</div>` : ""}
+        <div class="actions">${toon ? `<button class="btn sm" data-rd-act="sb-bekijk" data-id="${toon.id}">Bekijken</button>` : ""}
+          ${loopt ? "" : `<button class="btn sm ${toon ? "" : "primary"}" data-rd-act="sb-nieuw" data-pid="${p.id}" data-r="${esc(r)}" ${heeftBeelden ? "" : "disabled"}>${toon ? "Bijwerken…" : "Stalenbord maken"}</button>`}
+          ${laatste && ["mislukt", "onzeker", "geannuleerd"].includes(laatste.status) && !loopt ? `<button class="btn sm" data-rd-act="sb-opnieuw" data-id="${laatste.id}">Opnieuw…</button>` : ""}
+          ${laatste && laatste.status === "wachtrij" && (isBeheer() || laatste.aangevraagd_door === S.me.id) ? `<button class="btn sm ghost danger" data-rd-act="annuleer" data-id="${laatste.id}">Annuleren</button>` : ""}</div></div></div>`;
+  };
+  return `<div class="panel" style="margin-top:16px"><div class="panel-head"><div><h3>Stalenborden per ruimte</h3><div class="muted" style="font-size:12px;margin-top:2px">Eén fotorealistisch stalenbord per ruimte met enkel de materialen van die ruimte. Ruimtenaam en legende komen via de presentatie-opmaak.</div></div>
+      <div class="actions"><button class="btn sm" data-rd-act="sb-nieuw" data-pid="${p.id}" data-r="" ${heeftBeelden ? "" : "disabled"}>+ Andere ruimte</button></div></div>
+    <div class="panel-body">${rdSbSignaal()}${ruimtes.length ? `<div class="rd-sblijst">${ruimtes.map(rij).join("")}</div>` : `<span class="muted">${heeftBeelden ? "Nog geen ruimtes — klik op + Andere ruimte." : "Laad eerst renders of ontwerpbeelden op."}</span>`}</div></div>`;
+}
+
+function rdSbForm(pid, preset) {
+  preset = preset || {};
+  const p = S.projecten[pid]; const cfg = rdCfg(); const nV = rdVandaag();
+  const basis = preset.basis ? S.render_beelden[preset.basis] : null;
+  const vorigeOp = basis ? S.render_opdrachten[basis.opdracht_id] : (preset.ruimte ? rdSbOpdrachten(pid, preset.ruimte).find(o => o.status === "klaar") : null);
+  const kandidaten = rdBeelden(pid).filter(b => b.soort === "render" || b.soort === "ontwerp");
+  const rid = rdHex(16);   // vast aanvraagnummer voor dit formulier: opnieuw bewaren na een netwerkfout = dezelfde aanvraag
+  const st = { handRef: false, handMat: false, afspraakBewaard: false, gekoppeld: false };
+  const voorstelRefs = (ruimte) => {
+    const l = kandidaten.filter(b => rdSbPast(b, ruimte));
+    return l.sort((a, b) => (b.goedgekeurd_op ? 1 : 0) - (a.goedgekeurd_op ? 1 : 0) || (a.soort === "render" ? 0 : 1) - (b.soort === "render" ? 0 : 1) || (a.created_at || "").localeCompare(b.created_at || "")).slice(0, RD_SB_MAX_REF).map(b => b.id);
+  };
+  const voorstelMat = (ruimte) => {
+    const k = rdSleutel(ruimte); const l = [];
+    // enkel toewijzingen "Materiaal: details" uit de afspraken (bv. "Kasten: eiken fineer"); kleur- of verbodsregels ("geen olijfgroen") zijn geen staal en gaan als afspraak mee
+    rdAfspraken(pid).filter(a => k && (rdSleutel(a.ruimte) === k || a.ruimte === "*")).forEach(a => String(a.tekst || "").split(/\n|;|\.\s+(?=[A-ZÀ-Ý])/).map(x => x.trim().replace(/\.$/, ""))
+      .filter(x => { const i = x.indexOf(":"); return i > 0 && i <= 40 && x.slice(i + 1).trim(); }).forEach(x => { if (!l.includes(x)) l.push(x); }));
+    return l.slice(0, 12).join("\n");
+  };
+  const ruimte0 = preset.ruimte || (basis && basis.ruimte) || "";
+  const refs0 = preset.referenties || (vorigeOp && vorigeOp.referentie_ids && vorigeOp.referentie_ids.filter(id => S.render_beelden[id])) || voorstelRefs(ruimte0);
+  const mat0 = preset.materialen ? preset.materialen.join("\n") : vorigeOp && (vorigeOp.materialen || []).length ? vorigeOp.materialen.join("\n") : voorstelMat(ruimte0);
+  const grid = (gekozen) => kandidaten.slice().sort((a, b) => (gekozen.includes(b.id) ? 1 : 0) - (gekozen.includes(a.id) ? 1 : 0) || (rdSbPast(b, ruimte0) ? 1 : 0) - (rdSbPast(a, ruimte0) ? 1 : 0) || (a.created_at || "").localeCompare(b.created_at || ""))
+    .map(b => `<label class="rd-pk"><input type="checkbox" name="ref" value="${b.id}" ${gekozen.includes(b.id) ? "checked" : ""}>${rdImg(b)}<small>${esc(b.naam || "")}<br><span class="muted" data-rd-sbr="${b.id}">${esc(b.ruimte || "geen ruimte")}${b.soort === "ontwerp" ? " · ontwerp" : ""}${b.goedgekeurd_op ? " · ✓" : ""}</span></small></label>`).join("");
+  openModal((basis ? "Stalenbord corrigeren — " : "Stalenbord maken — ") + projName(p), `<div class="form-grid">
+    <div class="field"><label for="sb_r">Ruimte</label><input id="sb_r" name="ruimte" list="sb_rs" required maxlength="120" value="${esc(ruimte0)}" placeholder="bv. Freya"><datalist id="sb_rs">${rdRuimtes(pid).map(r => `<option value="${esc(r)}">`).join("")}</datalist><small class="muted">Controleer de naam: hij komt zo in de presentatie.</small></div>
+    <div class="field"><label for="sb_kw">Kwaliteit</label><select id="sb_kw" name="kwaliteit">${opts(RD_KWALITEIT, preset.kwaliteit || (vorigeOp && vorigeOp.kwaliteit) || cfg.kwaliteit)}</select></div>
+    ${basis ? `<div class="field span2"><label>Te corrigeren versie</label><div class="rd-bron">${rdImg(basis)}<small class="muted">Versie ${basis.versie || "?"} — enkel wat je hieronder vraagt, verandert. De vorige versie blijft bewaard.</small></div></div>` : ""}
+    <div class="field span2"><label>Referentiebeelden van deze ruimte <small class="muted" style="font-weight:400">— max. ${RD_SB_MAX_REF}; meerdere zichten van dezelfde ruimte horen samen. Voorstel op basis van ruimte en bestandsnaam: pas aan waar nodig.</small></label>
+      ${kandidaten.length ? `<div class="rd-pres" id="sb_refs">${grid(refs0)}</div>` : `<small class="muted">Nog geen renders of ontwerpen in dit project.</small>`}
+      <label class="sw-row" style="margin-top:6px"><input type="checkbox" class="sw" name="koppel" value="1" checked><span>Aangevinkte beelden ook aan deze ruimte koppelen <small class="muted" style="display:block">Zo komen ze in de presentatie na het stalenbord van deze ruimte. Kosteloos. <b id="sb_kop"></b></small></span></label></div>
+    <div class="field span2"><label for="sb_m">Materialen op het stalenbord <small class="muted" style="font-weight:400">— één per regel, enkel wat echt in deze ruimte voorkomt. "Naam: details" → enkel de naam komt in de legende.</small></label>
+      <textarea id="sb_m" name="materialen" rows="5" required maxlength="2400" placeholder="Groen-wit gestreept behang: vlak bedrukt, verticale strepen&#10;Groene lak: kastfronten&#10;Eiken: natuurlijk geolied&#10;Textiel: groen linnen">${esc(mat0)}</textarea>
+      <small class="muted">Geen merk, productcode, hout- of steensoort tenzij afgesproken. Deze lijst en de afspraken gaan altijd voor op kleuren uit de beelden.</small></div>
+    <div class="field span2" id="sb_afspr">${rdAfsprakenInfo(pid, ruimte0)}</div>
+    <div class="field span2"><label for="sb_a">${basis ? "Wat moet er anders?" : "Aandachtspunten / correcties"} <small class="muted" style="font-weight:400">${basis ? "" : "— optioneel"}</small></label>
+      <textarea id="sb_a" name="punten" rows="2" maxlength="2000" ${basis ? "required" : ""} placeholder="bv. Alle kastfronten hetzelfde zachtgeel — er is geen olijfgroen. De strepen onderaan de wand zijn vlak behang, geen latten.">${esc(preset.punten || "")}</textarea>
+      <label class="sw-row" style="margin-top:6px"><input type="checkbox" class="sw" name="als_afspraak" value="1"><span>Ook bewaren als materiaalafspraak van deze ruimte <small class="muted" style="display:block">Dan geldt de correctie ook voor latere renders en stalenborden van deze ruimte.</small></span></label></div>
+    <div class="field span2"><label class="sw-row"><input type="checkbox" class="sw" name="legende" value="1" ${preset.legende === false || (vorigeOp && vorigeOp.legende === false) ? "" : "checked"}><span>Materiaallegende onder het stalenbord in de presentatie</span></label></div>
+    <div class="field span2"><label class="sw-row"><input type="checkbox" class="sw" name="ok" value="1"><span><b>Ik start betaalde beeldgeneratie</b><small class="muted" style="display:block">Model ${esc(cfg.model)} · één betaalde aanvraag bij OpenAI · telt mee in de daglimiet: vandaag al ${nV} van max. ${cfg.daglimiet}. Een mislukte of onzekere aanvraag wordt nooit automatisch opnieuw betaald.</small></span></label></div>
+  </div>`, {
+    saveLabel: basis ? "Corrigeren" : "Stalenbord maken", wide: true,
+    onSave: async (d) => {
+      const f = $("#mform");
+      const ruimte = String(d.ruimte || "").replace(/\s+/g, " ").trim(); const punten = String(d.punten || "").trim();
+      const refs = [...f.querySelectorAll('input[name="ref"]:checked')].map(i => i.value);
+      const materialen = String(d.materialen || "").split("\n").map(x => x.trim()).filter(Boolean);
+      if (!ruimte || ruimte === "*") { toast("Vul de ruimte in."); return false; }
+      if (!refs.length) { toast("Kies minstens één referentiebeeld van deze ruimte."); return false; }
+      if (refs.length > RD_SB_MAX_REF) { toast(`Kies maximaal ${RD_SB_MAX_REF} referentiebeelden.`); return false; }
+      if (!materialen.length) { toast("Vul minstens één materiaal in (één per regel)."); return false; }
+      if (materialen.length > 12) { toast("Maximaal 12 materialen per stalenbord."); return false; }
+      if (basis && !punten) { toast("Beschrijf wat er aan het stalenbord moet veranderen."); return false; }
+      if (!d.ok) { toast("Bevestig eerst de betaalde beeldgeneratie."); return false; }
+      if (rdVandaag() + 1 > cfg.daglimiet) { toast(`Daglimiet bereikt (${cfg.daglimiet} beelden vandaag). Een beheerder kan dat verhogen in Instellingen › Renders.`, 7000); return false; }
+      // 1. kosteloos vooraf: beelden aan de ruimte koppelen, correctie als afspraak bewaren (één keer, ook als je opnieuw bewaart)
+      if (d.koppel && !st.gekoppeld) {
+        for (const id of refs) { const b = S.render_beelden[id]; if (!b || rdSleutel(b.ruimte) === rdSleutel(ruimte)) continue;
+          const { data, error } = await sb.rpc("render_beeld_ruimte", { p_beeld: id, p_ruimte: ruimte }); if (error) { toast("Koppelen mislukt: " + error.message, 6000); return false; } S.render_beelden[data.id] = data; }
+        st.gekoppeld = true;
+      }
+      if (d.als_afspraak && punten && !st.afspraakBewaard) { await dbInsert("render_afspraken", { project_id: pid, ruimte, tekst: punten.slice(0, 2000) }); st.afspraakBewaard = true; }
+      // 2. de betaalde aanvraag (idempotent op het aanvraagnummer)
+      let r;
+      try {
+        r = await rdPoging(async () => {
+          const { data, error } = await sb.rpc("render_stalenbord_aanvragen", { p_project: pid, p_request_id: rid, p_ruimte: ruimte, p_referenties: refs, p_materialen: materialen, p_aandachtspunten: punten,
+            p_basis: basis ? basis.id : null, p_legende: !!d.legende, p_kwaliteit: d.kwaliteit || cfg.kwaliteit, p_model: cfg.model, p_toestemming: true });
+          if (error) throw error; return data;
+        });
+      } catch (e) { toast((e && e.message) || String(e), 8000); return false; }
+      if (r && r.opdracht) S.render_opdrachten[r.opdracht.id] = r.opdracht;
+      toast(r && r.hergebruikt ? "Deze aanvraag was al ontvangen — niet dubbel aangerekend." : `Stalenbord ${ruimte} in de wachtrij.`, 6000); render();
+    },
+  });
+  const ri = $("#sb_r"), mi = $("#sb_m"), box = $("#mform");
+  if (mi) mi.addEventListener("input", () => { st.handMat = true; });
+  if (ri) ri.addEventListener("input", () => {
+    const v = $("#sb_afspr"); if (v) v.innerHTML = rdAfsprakenInfo(pid, ri.value);
+    if (!st.handRef && !basis) { const voorstel = voorstelRefs(ri.value); box.querySelectorAll('input[name="ref"]').forEach(i => { i.checked = voorstel.includes(i.value); }); }
+    if (!st.handMat && !basis && mi && !(vorigeOp && (vorigeOp.materialen || []).length)) mi.value = voorstelMat(ri.value);
+  });
+  const kop = () => { const el = $("#sb_kop"); if (!el || !box) return; const r = String((ri && ri.value) || "").trim();
+    const anders = [...box.querySelectorAll('input[name="ref"]:checked')].map(i => S.render_beelden[i.value]).filter(b => b && rdSleutel(b.ruimte) !== rdSleutel(r));
+    el.textContent = !anders.length ? "Alle aangevinkte beelden horen al bij deze ruimte." : `${anders.length} beeld${anders.length > 1 ? "en verhuizen" : " verhuist"} naar ${r || "deze ruimte"}: ${anders.map(b => `${b.naam || "beeld"} (nu ${b.ruimte || "geen ruimte"})`).join(", ")}.`; };
+  kop(); if (box) { box.addEventListener("change", kop); box.addEventListener("input", kop); }
+  if (box) box.addEventListener("change", (e) => { if (e.target.name === "ref") { st.handRef = true; if (box.querySelectorAll('input[name="ref"]:checked').length > RD_SB_MAX_REF) { e.target.checked = false; toast(`Maximaal ${RD_SB_MAX_REF} referentiebeelden.`); } } });
+}
+
+function rdSbBekijk(id) {
+  const b = S.render_beelden[id]; if (!b) return;
+  const o = S.render_opdrachten[b.opdracht_id] || {}; const versies = rdSbVersies(b.project_id, b.ruimte); const oud = rdSbVerouderd(b);
+  const refs = (o.referentie_ids || []).map(x => S.render_beelden[x]);
+  const knop = (act, label, extra) => `<button type="button" class="btn sm ${extra || ""}" data-rd-act="${act}" data-id="${b.id}">${label}</button>`;
+  openModal(`Stalenbord — ${b.ruimte} · versie ${b.versie || "?"}`, `<div class="rd-sbgroot">${rdImg(b)}</div>
+    <div class="actions" style="margin:8px 0">${knop("sb-kies", b.geselecteerd ? "✓ Gekozen voor de presentatie — intrekken" : "Gebruiken in de presentatie", b.geselecteerd ? "" : "primary")}${knop("sb-goed", b.goedgekeurd_op ? "Goedkeuring intrekken" : "Goedkeuren")}${knop("sb-download", "Downloaden")}${b.drive && b.drive.url ? `<a class="btn sm" href="${esc(safeUrl(b.drive.url))}" target="_blank" rel="noopener">Drive ↗</a>` : ""}${knop("sb-corrigeer", "Corrigeren…")}${knop("sb-bijwerken", "Bijwerken…")}</div>
+    ${oud.length ? `<div class="notice" style="margin:0 0 8px"><b>Mogelijk verouderd:</b> ${esc(oud.join("; "))}. Bijwerken start een nieuwe, betaalde versie — enkel als jij daarvoor kiest.</div>` : ""}
+    <p class="muted" style="font-size:12.5px;margin:0 0 6px">${esc(fmtLong(lokDag(b.created_at)))} ${esc(lokUur(b.created_at))} · ${esc(o.model || "")} · ${esc((RD_KWALITEIT.find(k => k[0] === o.kwaliteit) || [0, o.kwaliteit || ""])[1])}${b.breedte ? ` · ${b.breedte}×${b.hoogte}` : ""}${b.goedgekeurd_op ? ` · goedgekeurd door ${esc(userById(b.goedgekeurd_door).name || "")}` : ""}${o.basis_id ? ` · correctie van versie ${esc(String((S.render_beelden[o.basis_id] || {}).versie || "?"))}` : ""}</p>
+    <p style="margin:0 0 4px"><b>Materialen:</b> ${(o.materialen || []).map(esc).join(" · ") || "—"}</p>
+    ${o.legende === false ? `<p class="muted" style="margin:0 0 4px;font-size:12px">Zonder legende in de presentatie.</p>` : `<p class="muted" style="margin:0 0 4px;font-size:12px">Legende in de presentatie: ${rdSbLabels(o.materialen).map(esc).join(" · ")}</p>`}
+    ${o.instructie ? `<p style="margin:0 0 4px"><b>Aandachtspunten:</b> ${esc(o.instructie)}</p>` : ""}
+    ${(o.afspraken || []).length ? `<p class="muted" style="margin:0 0 4px;font-size:12.5px">Afspraken toen: ${o.afspraken.map(a => esc(a.tekst)).join(" · ")}</p>` : ""}
+    <div class="rd-sfeerkeuze klein" title="Referentiebeelden">${refs.map(r => r ? rdImg(r) : `<div class="rd-img leeg" title="verwijderd"></div>`).join("")}</div>
+    ${versies.length > 1 ? `<p style="margin:10px 0 4px"><b>Versies</b> <small class="muted">— eerdere versies blijven bewaard</small></p><div class="rd-sfeerkeuze klein">${versies.map(v => `<button type="button" class="rd-sbv${v.id === b.id ? " on" : ""}" data-rd-act="sb-bekijk" data-id="${v.id}" title="Versie ${v.versie || "?"}${v.geselecteerd ? " (gekozen)" : ""}">${rdImg(v)}<span>v${v.versie || "?"}${v.geselecteerd ? " ✓" : ""}</span></button>`).join("")}</div>` : ""}
+    <p class="muted" style="font-size:12px;margin-top:8px">Controleer of enkel de materialen van deze ruimte erop staan, met de afgesproken kleuren. De ruimtenaam en legende komen via de presentatie, niet in het beeld.</p>`, {
+    saveLabel: "Sluiten", wide: true, onSave: async () => { },
+  });
+}
+async function rdSbKies(id, aan) { const { data, error } = await sb.rpc("render_stalenbord_kies", { p_beeld: id, p_aan: aan }); if (error) { toast(error.message, 6000); return; }
+  rdBeelden(data.project_id, "stalenbord").forEach(x => { if (aan && x.id !== data.id && rdSleutel(x.ruimte) === rdSleutel(data.ruimte)) x.geselecteerd = false; }); S.render_beelden[data.id] = data;
+  toast(aan ? `Versie ${data.versie || ""} gaat in de presentatie.` : "Niet meer gekozen voor de presentatie."); render(); }
+function rdRuimteForm(b) {
+  openModal("Ruimte van deze render", `<div class="form-grid"><div class="field span2"><label for="rr_r">Ruimte</label><input id="rr_r" name="ruimte" list="rr_rs" required maxlength="120" value="${esc(b.ruimte || "")}"><datalist id="rr_rs">${rdRuimtes(b.project_id).map(r => `<option value="${esc(r)}">`).join("")}</datalist>
+    <small class="muted">Kosteloos. Stalenborden en de presentatie volgen de ruimte; de afspraken die bij het renderen golden, blijven bewaard.</small></div></div>`, {
+    onSave: async (d) => { const r = String(d.ruimte || "").trim(); if (!r || r === "*") { toast("Vul de ruimte in."); return false; }
+      const { data, error } = await sb.rpc("render_beeld_ruimte", { p_beeld: b.id, p_ruimte: r }); if (error) { toast(error.message, 6000); return false; }
+      S.render_beelden[data.id] = data; Object.values(S.render_opdrachten).forEach(o => { if (o.resultaat_id === data.id && rdIsRender(o)) o.ruimte = data.ruimte; }); render(); },
+  });
+}
+
 /* ---------- A3-presentatie ---------- */
 function rdPresentatiesPaneel(p) {
   const l = rdPresentaties(p.id); if (!l.length) return "";
   const st = { wachtrij: ["In wachtrij", "st-lopend"], bezig: ["Wordt opgemaakt", "st-lopend"], klaar: ["Klaar", "st-afgerond"], mislukt: ["Mislukt", "late"] };
-  return `<div class="panel" style="margin-top:16px"><div class="panel-head"><h3>A3-presentaties</h3></div><div class="tw"><table class="t"><tbody>${l.map(r => { const [lb, c] = st[r.status] || [r.status, ""]; return `<tr><td><b>${esc(r.klant)}</b> <small class="muted">· Ontwerp ${esc(r.versie)} · ${esc(fmtLong(r.datum))} · ${r.liggend ? "liggend" : "staand"} · ${(r.render_ids || []).length} beelden${r.paginas ? ` · ${r.paginas} p.` : ""}</small>${r.fout ? `<div class="${r.status === "mislukt" ? "rd-fout" : "muted"}" style="font-size:12px">${esc(r.fout)}</div>` : ""}</td>
+  return `<div class="panel" style="margin-top:16px"><div class="panel-head"><h3>A3-presentaties</h3></div><div class="tw"><table class="t"><tbody>${l.map(r => { const [lb, c] = st[r.status] || [r.status, ""]; return `<tr><td><b>${esc(r.klant)}</b> <small class="muted">· Ontwerp ${esc(r.versie)} · ${esc(fmtLong(r.datum))} · ${r.liggend ? "liggend" : "staand"} · ${(r.render_ids || []).length} beelden${r.stalenborden ? ` + ${(r.stalenbord_ids || []).length} stalenbord${(r.stalenbord_ids || []).length === 1 ? "" : "en"}` : ""}${r.paginas ? ` · ${r.paginas} p.` : ""}</small>${r.fout ? `<div class="${r.status === "mislukt" ? "rd-fout" : "muted"}" style="font-size:12px">${esc(r.fout)}</div>` : ""}</td>
     <td><span class="pill ${c}">${esc(lb)}</span></td><td class="r"><div class="actions" style="justify-content:flex-end">${r.status === "klaar" && r.pad ? `<button class="btn sm" data-rd-act="pres-dl" data-id="${r.id}">Pdf</button>` : ""}${r.drive && r.drive.url ? `<a class="btn sm" href="${esc(safeUrl(r.drive.url))}" target="_blank" rel="noopener">Drive ↗</a>` : ""}${r.status === "mislukt" ? `<button class="btn sm" data-rd-act="pres-opnieuw" data-id="${r.id}">Opnieuw</button>` : ""}${r.status !== "bezig" ? `<button class="btn ghost sm danger" data-rd-act="pres-weg" data-id="${r.id}" aria-label="Verwijderen">✕</button>` : ""}</div></td></tr>`; }).join("")}</tbody></table></div></div>`;
 }
 function rdPresForm(pid) {
   const p = S.projecten[pid];
-  const l = rdBeelden(pid).filter(b => b.soort !== "sfeer").sort((a, b) => (b.goedgekeurd_op ? 1 : 0) - (a.goedgekeurd_op ? 1 : 0) || (a.soort === "render" ? 0 : 1) - (b.soort === "render" ? 0 : 1) || (a.created_at || "").localeCompare(b.created_at || ""));
+  const l = rdBeelden(pid).filter(b => b.soort === "render" || b.soort === "ontwerp").sort((a, b) => (b.goedgekeurd_op ? 1 : 0) - (a.goedgekeurd_op ? 1 : 0) || (a.soort === "render" ? 0 : 1) - (b.soort === "render" ? 0 : 1) || (a.created_at || "").localeCompare(b.created_at || ""));
   const vorige = rdPresentaties(pid)[0];
   RD.pres = { pid, volgorde: l.filter(b => b.goedgekeurd_op).map(b => b.id) };
   if (!RD.pres.volgorde.length) RD.pres.volgorde = l.filter(b => b.soort === "render").slice(-6).map(b => b.id);
@@ -284,18 +467,27 @@ function rdPresForm(pid) {
     <div class="field"><label for="rp_o">Formaat</label><select id="rp_o" name="liggend">${opts([["0", "A3 staand (huisstijl)"], ["1", "A3 liggend"]], vorige && vorige.liggend ? "1" : "0")}</select></div>
     <div class="field span2"><label>Beelden <small class="muted" style="font-weight:400">— aanvinken in de volgorde waarin ze in de presentatie komen; de eerste drie vormen de cover</small></label>
       <div class="rd-pres">${l.map(b => `<label class="rd-pk"><input type="checkbox" data-rd-pk="${b.id}" ${RD.pres.volgorde.includes(b.id) ? "checked" : ""}>${rdImg(b)}<span class="rd-nr" data-rd-nr="${b.id}">${RD.pres.volgorde.indexOf(b.id) + 1 || ""}</span><small>${esc(b.ruimte || "")}${b.soort === "ontwerp" ? " · ontwerp" : ""}${b.goedgekeurd_op ? " · ✓" : ""}</small></label>`).join("")}</div></div>
+    ${rdSbOk() ? `<div class="field span2"><label class="sw-row"><input type="checkbox" class="sw" name="stalen" value="1" ${vorige && vorige.stalenborden ? "checked" : ""}><span><b>Stalenborden per ruimte opnemen</b><small class="muted" style="display:block">Per ruimte eerst het gekozen stalenbord, dan de gekozen beelden van die ruimte. De cover blijft hetzelfde. Er wordt niets gegenereerd.</small><small id="rp_sb" style="display:block;margin-top:4px">${rdPresStalen(pid)}</small></span></label></div>` : ""}
     <p class="muted span2" style="font-size:12px;margin:0">Geen betaalde generatie: de verwerkingscomputer zet de gekozen beelden in de BROS-huisstijl (beige papier, logo, cover met drie stroken, klantnaam, ontwerpversie en datum). De pdf komt hier en in de projectmap › Renders/Presentaties.</p></div>`, {
     saveLabel: "Presentatie maken", wide: true,
     onSave: async (d) => {
       const ids = RD.pres.volgorde.filter(id => S.render_beelden[id]);
       if (!ids.length) { toast("Kies minstens één beeld."); return false; }
-      const { data, error } = await sb.rpc("render_presentatie_maak", { p_project: pid, p_klant: String(d.klant || "").trim(), p_versie: String(d.versie || "").trim(), p_datum: d.datum, p_liggend: d.liggend === "1", p_render_ids: ids });
+      const args = { p_project: pid, p_klant: String(d.klant || "").trim(), p_versie: String(d.versie || "").trim(), p_datum: d.datum, p_liggend: d.liggend === "1", p_render_ids: ids };
+      if (rdSbOk()) args.p_stalenborden = !!d.stalen;   // script 056; zonder vinkje exact zoals vroeger
+      const { data, error } = await sb.rpc("render_presentatie_maak", args);
       if (error) { toast(error.message, 7000); return false; }
       S.render_presentaties[data.id] = data; toast("Presentatie in de wachtrij — de pdf verschijnt onderaan zodra ze klaar is.", 6000); render();
     },
   });
 }
-function rdPresNummers() { document.querySelectorAll("[data-rd-nr]").forEach(el => { const i = RD.pres.volgorde.indexOf(el.dataset.rdNr); el.textContent = i >= 0 ? String(i + 1) : ""; }); }
+// welke stalenborden komen mee (per ruimte van de aangevinkte beelden, in volgorde van eerste voorkomen)
+function rdPresStalen(pid) {
+  const gezien = new Map(); (RD.pres ? RD.pres.volgorde : []).forEach(id => { const b = S.render_beelden[id]; if (b && String(b.ruimte || "").trim() && !gezien.has(rdSleutel(b.ruimte))) gezien.set(rdSleutel(b.ruimte), b.ruimte.trim()); });
+  if (!gezien.size) return `<span class="muted">Vink eerst beelden aan.</span>`;
+  return [...gezien.values()].map(r => { const g = rdSbGekozen(pid, r); return g ? `<span class="pill done">${esc(r)} · v${g.versie || "?"}</span>` : `<span class="pill st-offerte" title="Geen gekozen stalenbord: enkel de renders van deze ruimte">${esc(r)} · geen stalenbord</span>`; }).join(" ");
+}
+function rdPresNummers() { document.querySelectorAll("[data-rd-nr]").forEach(el => { const i = RD.pres.volgorde.indexOf(el.dataset.rdNr); el.textContent = i >= 0 ? String(i + 1) : ""; }); const sbv = $("#rp_sb"); if (sbv && RD.pres) sbv.innerHTML = rdPresStalen(RD.pres.pid); }
 
 /* ---------- Instellingen › Renders (beheer) ---------- */
 function vRenderInstellingen() {
@@ -357,6 +549,19 @@ document.addEventListener("click", async (e) => {
   if (a === "pres-opnieuw") { const { data, error } = await sb.rpc("render_presentatie_opnieuw", { p_id: id }); if (error) { toast(error.message, 6000); return; } S.render_presentaties[data.id] = data; render(); return; }
   if (a === "pres-weg") { if (!confirm("Deze presentatie uit de lijst verwijderen? (De pdf op Drive blijft staan.)")) return; const r = S.render_presentaties[id]; try { await dbDelete("render_presentaties", id); } catch (x) { } return; }
   if (a === "inst-bewaar") return rdInstBewaar();
+  // stalenborden (1.60)
+  if (a === "sb-nieuw") { if (MODAL_OPEN()) closeModal(true); return rdSbForm(el.dataset.pid, { ruimte: el.dataset.r || "" }); }
+  if (a === "sb-bekijk") return rdSbBekijk(id);
+  if (a === "sb-kies") { const b = S.render_beelden[id]; if (!b) return; await rdSbKies(id, !b.geselecteerd); return rdSbBekijk(id); }
+  if (a === "sb-goed") { await rdGoed(id, !(S.render_beelden[id] || {}).goedgekeurd_op); return rdSbBekijk(id); }
+  if (a === "sb-download") { const b = S.render_beelden[id]; const p = b && S.projecten[b.project_id];
+    if (b) rdDownload(b, `${(p && p.klant) || "project"} - Stalenbord ${b.ruimte} v${b.versie || ""}.${(b.pad.split(".").pop() || "png")}`.replace(/[\\/:*?"<>|]+/g, " ")); return; }
+  if (a === "sb-corrigeer") { const b = S.render_beelden[id]; if (!b) return; closeModal(true); return rdSbForm(b.project_id, { basis: b.id, ruimte: b.ruimte }); }
+  if (a === "sb-bijwerken") { const b = S.render_beelden[id]; if (!b) return; closeModal(true); return rdSbForm(b.project_id, { ruimte: b.ruimte }); }
+  if (a === "sb-opnieuw") { const o = S.render_opdrachten[id]; if (!o) return;
+    if (o.status === "onzeker" && !confirm("Dit stalenbord vertrok misschien al naar OpenAI (en is dan misschien al aangerekend). Kijk bij twijfel eerst het verbruik na. Toch een nieuw stalenbord starten?")) return;
+    return rdSbForm(o.project_id, { ruimte: o.ruimte, referenties: (o.referentie_ids || []).filter(x => S.render_beelden[x]), materialen: o.materialen, punten: o.instructie || "", basis: o.basis_id && S.render_beelden[o.basis_id] ? o.basis_id : null, kwaliteit: o.kwaliteit, legende: o.legende }); }
+  if (a === "ruimte") { const b = S.render_beelden[id]; if (b) rdRuimteForm(b); return; }
 });
 document.addEventListener("change", (e) => {
   const el = e.target; if (!el || !el.dataset) return;

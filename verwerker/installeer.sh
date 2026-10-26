@@ -98,7 +98,20 @@ if security find-generic-password -s BROS-verwerker -a anthropic-api-key >/dev/n
 else read -r -p "  Anthropic API-sleutel instellen voor het conceptverslag? (j/n) " JN; if [ "$JN" = "j" ]; then echo "  API-sleutel (sk-ant-…):"; security add-generic-password -U -s BROS-verwerker -a anthropic-api-key -w; else echo "  overgeslagen: enkel transcript (later: security add-generic-password -U -s BROS-verwerker -a anthropic-api-key -w)"; fi; fi
 
 if security find-generic-password -s BROS-verwerker -a openai-api-key >/dev/null 2>&1; then echo "  OpenAI API-sleutel (renders): aanwezig"
-else read -r -p "  OpenAI API-sleutel instellen voor renders (betaalde beeldgeneratie)? (j/n) " JN; if [ "$JN" = "j" ]; then echo "  OpenAI API-sleutel (sk-…; je ziet niets tijdens het typen):"; security add-generic-password -U -s BROS-verwerker -a openai-api-key -w; else echo "  overgeslagen: renders blijven in de wachtrij tot de sleutel er is (later: security add-generic-password -U -s BROS-verwerker -a openai-api-key -w)"; fi; fi
+else read -r -p "  OpenAI API-sleutel instellen voor renders (betaalde beeldgeneratie)? (j/n) " JN; if [ "$JN" = "j" ]; then
+    # 1.60: verborgen invoer van bash zelf (geen limiet van 128 tekens zoals bij 'security … -w', geen klembord dat iets anders kan bevatten)
+    read -r -s -p "  Plak de OpenAI-sleutel (sk-…) en druk Enter — je ziet niets verschijnen: " SLEUTEL; echo
+    SLEUTEL="$(printf '%s' "$SLEUTEL" | tr -d '[:space:]')"
+    case "$SLEUTEL" in
+      sk-*) if [ "${#SLEUTEL}" -lt 40 ]; then echo "  Dit lijkt geen volledige sleutel (${#SLEUTEL} tekens) — niets bewaard. Voer het script later opnieuw uit."
+            else security add-generic-password -U -s BROS-verwerker -a openai-api-key -w "$SLEUTEL" && echo "  OpenAI-sleutel bewaard (${#SLEUTEL} tekens)"
+              CODE="$(printf 'Authorization: Bearer %s\n' "$SLEUTEL" | curl -s -o /dev/null -w '%{http_code}' -H @- https://api.openai.com/v1/models || true)"   # gratis controle, geen beeldgeneratie
+              case "$CODE" in 200) echo "  OpenAI aanvaardt de sleutel.";; 401) echo "  LET OP: OpenAI weigert deze sleutel (401). Maak een nieuwe aan en voer het script opnieuw uit.";; *) echo "  (sleutel niet kunnen controleren: $CODE)";; esac
+            fi;;
+      *) echo "  Dat is geen OpenAI-sleutel (die begint met sk-) — niets bewaard. Voer het script later opnieuw uit.";;
+    esac
+    SLEUTEL=""; CODE=""
+  else echo "  overgeslagen: renders blijven in de wachtrij tot de sleutel er is (later: installeer.sh opnieuw uitvoeren)"; fi; fi
 
 echo "6/6 Automatisch starten (LaunchAgent be.bros.verwerker)"
 cat > "$PLIST" <<PLEOF

@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """BROS presentatie-generator - A3 staand, BROS-huisstijl.
 (Planbord 1.59: kopie van make_presentatie uit de skill bros-presentatie, met klantnaam, ontwerpversie en datum op de
- cover via --klant/--versie/--datum. Draait op de verwerkingscomputer in de Python-omgeving van Plan2CAD, met PyMuPDF.)
+ cover via --klant/--versie/--datum. 1.60: paginatype stalen: (stalenbord per ruimte); cover en renderpagina's ongewijzigd. Draait op de verwerkingscomputer in de Python-omgeving van Plan2CAD, met PyMuPDF.)
 
 Gebruik:
   python3 make_presentatie.py --assets DIR --out "250926 Presentatie Klant.pdf" [--liggend] \
@@ -15,6 +15,8 @@ Paginatypes (item = type:pad[,pad...]):
   plan:a        witte pagina, plan zo groot mogelijk binnen marges, geen logo
   full:a        beeld vult de volledige pagina (aflopend), geen logo
   moodboard:spec.json   materialenbord genereren (make_moodboard.py, zelfde map) en plaatsen zoals een render
+  stalen:spec.json      stalenbord van een ruimte (Planbord 1.60): {"beeld": pad, "ruimte": "Freya", "legende": ["Behang", ...]}
+                        beeld zoals een render, ruimtenaam en legende in de typografie van de cover tussen beeld en logo
 Een item zonder type wordt als render behandeld.
 --liggend: A3 liggend (1190,6 x 841,9 pt) i.p.v. staand. Cover = 3 stroken links + groot logo rechts,
            duo = twee renders naast elkaar, logo onderaan gecentreerd.
@@ -97,6 +99,29 @@ def parse(p):
     return p, fx
 
 
+def _latijn(t):
+    """Helvetica (ingebouwd) kent enkel Latin-1: typografische tekens vervangen."""
+    t = t.replace("\u2013", "-").replace("\u2014", "-").replace("\u2018", "'").replace("\u2019", "'").replace("\u201c", '"').replace("\u201d", '"').replace("\u2026", "...")
+    return "".join(c if ord(c) < 256 else "?" for c in t)
+
+
+def _regel(pg, tekst, grootte, cx, y, spatie, maxw, kleur):
+    """Eén gecentreerde regel in de typografie van de cover (Helvetica, gespatieerd), verkleind tot hij past."""
+    tekst = _latijn(tekst)
+    if not tekst:
+        return
+    f = fitz.Font("helv")
+    breedte = lambda g: f.text_length(tekst, fontsize=g) + spatie * max(0, len(tekst) - 1)
+    while breedte(grootte) > maxw and grootte > 6:
+        grootte -= 0.5
+    x = cx - breedte(grootte) / 2
+    if spatie:
+        for ch in tekst:
+            pg.insert_text((x, y), ch, fontname="helv", fontsize=grootte, color=kleur); x += f.text_length(ch, fontsize=grootte) + spatie
+    else:
+        pg.insert_text((x, y), tekst, fontname="helv", fontsize=grootte, color=kleur)
+
+
 class Deck:
     def __init__(self, assets, titel=None):
         self.titel = titel or {}
@@ -171,6 +196,44 @@ class Deck:
             cy = min(H / 2, 30 + (LOGO_TOP - 30) / 2)
             r = fitz.Rect(W / 2 - bw / 2, cy - bh / 2, W / 2 + bw / 2, cy + bh / 2)
         put(pg, im, r); self.logo(pg)
+
+    def stalen(self, paths):
+        """Stalenbord van één ruimte (Planbord 1.60). Het beeld staat zoals een render; de ruimtenaam (en eventueel de
+        materiaallegende) komen in de typografie van de cover tussen het beeld en het logo — nooit in het beeld zelf."""
+        import json
+        spec = json.load(open(paths[0], encoding="utf-8"))
+        pg = self.page()
+        im = load(spec["beeld"]); ar = im.width / im.height
+        ruimte = str(spec.get("ruimte") or "").strip()
+        legende = [str(x).strip() for x in (spec.get("legende") or []) if str(x).strip()]
+        if LIGGEND:
+            box = fitz.Rect(40, 34, W - 40, LOGO_TOP - 70)       # onder het beeld: twee regels tekst, dan het logo
+        else:
+            box = fitz.Rect(0, 40, W, LOGO_TOP - 150)
+        bw = min(box.width, box.height * ar); bh = bw / ar
+        cy = H / 2 if not LIGGEND and bh <= 900 and H / 2 + bh / 2 <= box.y1 else box.y0 + box.height / 2
+        r = fitz.Rect(W / 2 - bw / 2, cy - bh / 2, W / 2 + bw / 2, cy + bh / 2)
+        put(pg, im, r)
+        kleur = (0.16, 0.15, 0.14)
+        y = r.y1 + (28 if LIGGEND else 62)
+        if ruimte:
+            _regel(pg, ruimte.upper(), 15 if not LIGGEND else 13, W / 2, y, 2.2, W - 120, kleur)
+        if legende:
+            f = fitz.Font("helv"); maxw = W - 160
+            breed = lambda t, g: f.text_length(_latijn(t), fontsize=g) + 0.6 * max(0, len(_latijn(t)) - 1)
+            for grootte in (9.5, 8.5, 7.5):                    # legende over max. 3 regels (gretig), anders kleiner
+                regels = [""]
+                for x in legende:
+                    kandidaat = (regels[-1] + "  ·  " + x) if regels[-1] else x
+                    if regels[-1] and breed(kandidaat, grootte) > maxw:
+                        regels.append(x)
+                    else:
+                        regels[-1] = kandidaat
+                if len(regels) <= 3:
+                    break
+            for i, t in enumerate(regels[:3]):
+                _regel(pg, t, grootte, W / 2, y + (18 if LIGGEND else 22) + i * (grootte + 4.5), 0.6, W - 120, kleur)
+        self.logo(pg)
 
     def duo(self, paths):
         pg = self.page(); gap = 18
@@ -249,7 +312,7 @@ def main():
     d = Deck(a.assets, {"klant": a.klant, "versie": a.versie, "datum": a.datum})
     for it in a.items:
         t, _, rest = it.partition(":")
-        if not rest or t not in ("cover", "render", "duo", "collage", "plan", "full"):
+        if not rest or t not in ("cover", "render", "duo", "collage", "plan", "full", "stalen"):
             t, rest = "render", it
         getattr(d, t)(rest.split(","))
     d.save(a.out)

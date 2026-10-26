@@ -644,6 +644,8 @@ function planDrive(body) {
    Renders (script 055, v1.59) — voor de verwerkingscomputer (Mac mini)
    Enkel een actieve login met rol 'verwerker' die nu deze render- of presentatieopdracht verwerkt (claim + lease).
    Map: projectmap › Renders/<ruimte> (renders) of Renders/Presentaties (A3-pdf's). Bestanden worden nooit overschreven.
+   1.60 (script 056): ook stalenborden per ruimte in Renders/<ruimte>, met ernaast een tekstbestand (text/plain) met de
+   bevestigde materialen, de gebruikte afspraken en de referentiebeelden.
    soort 'start': uploadsessie (de verwerkingscomputer stuurt het bestand rechtstreeks naar Google). Staat er al een bestand
                   met dezelfde naam en hetzelfde controlegetal (md5), dan krijg je dat terug (hervatten).
    soort 'info':  id, md5 en grootte van een bestand in die map (controle na het opladen).
@@ -669,7 +671,7 @@ function renderDrive(body) {
   };
   if (soort === "start") {
     const naam = schoon(body.naam, 150) || "render"; const grootte = Number(body.grootte) || 0;
-    const mime = /^(image\/(png|jpeg|webp)|application\/pdf)$/.test(String(body.mime || "").trim()) ? String(body.mime).trim() : "application/octet-stream";
+    const mime = /^(image\/(png|jpeg|webp)|application\/pdf|text\/plain)$/.test(String(body.mime || "").trim()) ? String(body.mime).trim() : "application/octet-stream";
     const md5 = /^[0-9a-f]{32}$/.test(String(body.md5 || "")) ? String(body.md5) : "";
     if (!(grootte > 0) || grootte > 200 * 1024 * 1024) return { ok: false, error: "Ongeldige bestandsgrootte." };
     const it = map.getFilesByName(naam);
@@ -1406,7 +1408,7 @@ function onderhoudZeker() {
 }
 function onderhoudInstall() { CacheService.getScriptCache().remove("onderhoud-trigger"); onderhoudZeker(); CacheService.getScriptCache().remove("hartslag"); onderhoud(false); Logger.log("OK — onderhoud draait elk uur (hartslag), back-up en bewaking wekelijks."); }
 function hartslag() {
-  pbAdmin("/rest/v1/instellingen?on_conflict=key", "post", { key: "hartslag", value: { drive: new Date().toISOString(), versie: "1.59.0" } }, "resolution=merge-duplicates,return=minimal");
+  pbAdmin("/rest/v1/instellingen?on_conflict=key", "post", { key: "hartslag", value: { drive: new Date().toISOString(), versie: "1.60.0" } }, "resolution=merge-duplicates,return=minimal");
 }
 function triggersHerstellen() {   // enkel triggers die er eerder al waren (nooit iets aanzetten dat BROS zelf niet installeerde)
   const props = PropertiesService.getScriptProperties();
