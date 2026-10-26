@@ -88,7 +88,7 @@ function rdKaart(o) {
   const [l, c] = RD_STATUS[o.status] || [o.status, "st-offerte"];
   const wie = o.aangevraagd_door ? userById(o.aangevraagd_door).name : "";
   const goed = res && res.goedgekeurd_op;
-  return `<div class="rd-kaart${goed ? " goed" : ""}"><div class="rd-duo">${rdImg(bron, "bron")}${res ? `<button type="button" class="rd-res" data-rd-act="vergelijk" data-id="${o.id}" title="Vergelijken">${rdImg(res)}</button>` : `<div class="rd-img rd-wacht"><span>${esc(l)}${o.status === "bezig" && o.stap ? `<small>${esc(o.stap)}</small>` : ""}</span></div>`}</div>
+  return `<div class="rd-kaart${goed ? " goed" : ""}"><div class="rd-duo">${rdImg(bron, "bron")}${res ? `<button type="button" class="rd-res" data-rd-act="groot" data-id="${o.id}" title="Vergelijken op volledig scherm, met zoom">${rdImg(res)}</button>` : `<div class="rd-img rd-wacht"><span>${esc(l)}${o.status === "bezig" && o.stap ? `<small>${esc(o.stap)}</small>` : ""}</span></div>`}</div>
     <div class="rd-info"><div><span class="pill ${c}">${esc(l)}</span>${goed ? ` <span class="pill done">goedgekeurd</span>` : ""} <b>${esc(o.ruimte)}</b></div>
       <div class="rd-instr" title="${esc(o.instructie)}">${esc(o.instructie)}</div>
       <small class="muted">${esc(wie)} · ${esc(fmtLong(lokDag(o.created_at)))} ${esc(lokUur(o.created_at))} · ${esc(o.model)} · ${esc((RD_KWALITEIT.find(k => k[0] === o.kwaliteit) || [0, o.kwaliteit])[1])}${(o.sfeer_ids || []).length ? ` · ${o.sfeer_ids.length} sfeerbeeld${o.sfeer_ids.length > 1 ? "en" : ""}` : ""}</small>
@@ -210,11 +210,159 @@ function rdBatchHtml() {
 }
 window.addEventListener("beforeunload", (e) => { if (RD.batch && RD.batch.bezig) { e.preventDefault(); e.returnValue = ""; } });
 
+/* ---------- volledig scherm vergelijken met zoom (1.60.1) ----------
+   Naast elkaar (zoom en verschuiven lopen gelijk), schuifregelaar (ontwerp onder, render boven) of één beeld (spatie wisselt).
+   Zoomen: scrollwiel/trackpad naar de cursor, knijpen op gsm/tablet, dubbelklik, + / − / 0 (passend) / 1 (100 %). Esc sluit. */
+const RDV = { open: false, s: 1, x: 0, y: 0, modus: "naast", split: 0.5, beelden: [], wijzers: new Map(), knijp: null };
+async function rdvUrl(b) {
+  const c = RD.urls[b.pad]; if (c && !c.fout && c.tot > Date.now() + 60000) return c.url;
+  try { const { data } = await sb.storage.from("renders").createSignedUrl(b.pad, 3600); if (data && data.signedUrl) { RD.urls[b.pad] = { url: data.signedUrl, tot: Date.now() + 3600 * 1000 }; return data.signedUrl; } } catch (e) { }
+  return "";
+}
+// beelden: [{ b, label }], opt: { titel, opdracht (voor goedkeuren), modus }
+async function rdViewer(beelden, opt) {
+  opt = opt || {}; beelden = beelden.filter(x => x && x.b); if (!beelden.length) return;
+  let modus = opt.modus; try { modus = modus || localStorage.getItem("rdv-modus") || ""; } catch (e) { }
+  if (beelden.length < 2) modus = "een0"; else if (!["naast", "schuif", "een0", "een1"].includes(modus)) modus = "naast";
+  Object.assign(RDV, { open: true, s: 1, x: 0, y: 0, modus, split: 0.5, beelden, opt, wijzers: new Map(), knijp: null, volScherm: false });
+  let el = document.getElementById("rdv"); if (el) el.remove();
+  el = document.createElement("div"); el.id = "rdv"; el.className = "rdv"; el.setAttribute("role", "dialog"); el.setAttribute("aria-label", opt.titel || "Beeld");
+  document.body.appendChild(el);
+  const urls = await Promise.all(beelden.map(x => rdvUrl(x.b)));
+  beelden.forEach((x, i) => { x.url = urls[i]; });
+  rdvTeken();
+  try { if (el.requestFullscreen && !document.fullscreenElement && !/iPhone|iPad|iPod/.test(navigator.userAgent)) await el.requestFullscreen({ navigationUI: "hide" }); } catch (e) { }
+  document.body.classList.add("rdv-aan");
+}
+function rdvTeken() {
+  const el = document.getElementById("rdv"); if (!el) return;
+  const B = RDV.beelden, m = RDV.modus, twee = B.length > 1;
+  const img = (i) => B[i].url ? `<img src="${esc(B[i].url)}" alt="${esc(B[i].label || "")}" draggable="false">` : `<div class="rdv-leeg">Beeld niet beschikbaar</div>`;
+  const doek = (i) => `<div class="rdv-doek">${img(i)}</div>`;
+  const label = (t) => `<span class="rdv-label">${esc(t || "")}</span>`;
+  let podium;
+  if (m === "naast") podium = `<div class="rdv-pane">${doek(0)}${label(B[0].label)}</div><div class="rdv-pane">${doek(1)}${label(B[1].label)}</div>`;
+  else if (m === "schuif") podium = `<div class="rdv-pane">${doek(0)}<div class="rdv-clip">${doek(1)}</div><div class="rdv-split" title="Versleep om te vergelijken"><span>⟷</span></div>${label(B[0].label)}<span class="rdv-label r">${esc(B[1].label || "")}</span></div>`;
+  else { const i = m === "een1" ? 1 : 0; podium = `<div class="rdv-pane">${doek(i)}${label(B[i].label)}</div>`; }
+  const o = RDV.opt.opdracht; const res = o && S.render_beelden[o.resultaat_id];
+  const knop = (mm, t, tip) => `<button type="button" class="${m === mm ? "on" : ""}" data-rdv="modus" data-m="${mm}" title="${esc(tip)}">${t}</button>`;
+  setTimeout(() => document.querySelectorAll("#rdv .rdv-doek img").forEach(i => { if (!i.complete) i.addEventListener("load", rdvToepassen, { once: true }); }), 0);
+  el.innerHTML = `<div class="rdv-bar"><b class="rdv-titel">${esc(RDV.opt.titel || "")}</b>
+      ${twee ? `<div class="rdv-groep">${knop("naast", "Naast elkaar", "Naast elkaar — zoom en verschuiven lopen gelijk")}${knop("schuif", "Schuif", "Schuifregelaar: ontwerp en render over elkaar")}${knop("een0", esc(B[0].label || "1"), "Enkel dit beeld (spatie wisselt)")}${knop("een1", esc(B[1].label || "2"), "Enkel dit beeld (spatie wisselt)")}</div>` : ""}
+      <div class="rdv-groep"><button type="button" data-rdv="uit" title="Uitzoomen (−)" aria-label="Uitzoomen">−</button><button type="button" data-rdv="pas" title="Passend (0)" class="rdv-pct" id="rdv_pct">Passend</button><button type="button" data-rdv="in" title="Inzoomen (+)" aria-label="Inzoomen">+</button><button type="button" data-rdv="echt" title="Werkelijke grootte, 1 pixel = 1 pixel (1)">100 %</button></div>
+      ${res ? `<button type="button" class="rdv-goed${res.goedgekeurd_op ? " on" : ""}" data-rdv="goed">${res.goedgekeurd_op ? "✓ Goedgekeurd" : "Goedkeuren"}</button>` : ""}
+      <button type="button" class="rdv-sluit" data-rdv="sluit" title="Sluiten (Esc)" aria-label="Sluiten">✕</button></div>
+    <div class="rdv-podium${m === "naast" ? " naast" : ""}">${podium}</div>
+    <div class="rdv-hulp">Scrollen of knijpen = zoomen · slepen = verschuiven · dubbelklik = in/uit${twee ? " · spatie = wisselen" : ""} · Esc = sluiten</div>`;
+  rdvToepassen();
+}
+// naast elkaar: links/rechts of boven/onder — wat het grootste beeld geeft (brede renders op een breed scherm: boven elkaar)
+function rdvSchikking() {
+  const pod = document.querySelector("#rdv .rdv-podium.naast"); if (!pod) return;
+  const im = document.querySelector("#rdv .rdv-doek img"); const b0 = RDV.beelden[0] && RDV.beelden[0].b;
+  const ar = im && im.naturalWidth ? im.naturalWidth / im.naturalHeight : b0 && b0.breedte && b0.hoogte ? b0.breedte / b0.hoogte : 1.5;
+  const W = pod.clientWidth, H = pod.clientHeight; if (!W || !H) return;
+  const opp = (w, h) => { const bw = Math.min(w, h * ar); return bw * bw / ar; };
+  const boven = opp(W, H / 2) > opp(W / 2, H) * 1.05;
+  if (pod.classList.contains("boven") !== boven) pod.classList.toggle("boven", boven);
+}
+function rdvPane() { return document.querySelector("#rdv .rdv-pane"); }
+function rdvToepassen() {
+  rdvSchikking();
+  const p = rdvPane(); if (!p) return;
+  const w = p.clientWidth, h = p.clientHeight;
+  RDV.s = Math.min(16, Math.max(1, RDV.s));
+  if (RDV.s <= 1.0001) { RDV.s = 1; RDV.x = 0; RDV.y = 0; }
+  RDV.x = Math.min(0, Math.max(w * (1 - RDV.s), RDV.x)); RDV.y = Math.min(0, Math.max(h * (1 - RDV.s), RDV.y));
+  const t = `translate(${RDV.x}px, ${RDV.y}px) scale(${RDV.s})`;
+  document.querySelectorAll("#rdv .rdv-doek").forEach(d => { d.style.transform = t; });
+  const sx = Math.round(RDV.split * w);
+  const clip = document.querySelector("#rdv .rdv-clip"); if (clip) clip.style.clipPath = `inset(0 0 0 ${sx}px)`;
+  const sp = document.querySelector("#rdv .rdv-split"); if (sp) sp.style.left = sx + "px";
+  const pct = document.getElementById("rdv_pct"); if (pct) { const e = rdvEcht(); pct.textContent = RDV.s === 1 ? "Passend" : (e ? Math.round(RDV.s / e * 100) + " %" : Math.round(RDV.s * 100) + " %"); }
+}
+// schaal waarbij 1 beeldpixel = 1 schermpixel
+function rdvEcht() {
+  const p = rdvPane(); const im = document.querySelector("#rdv .rdv-doek img"); if (!p || !im || !im.naturalWidth) return 0;
+  const ar = im.naturalWidth / im.naturalHeight; const bw = Math.min(p.clientWidth, p.clientHeight * ar);
+  return im.naturalWidth / bw * (1 / (window.devicePixelRatio || 1));
+}
+function rdvZoom(k, px, py) {
+  const p = rdvPane(); if (!p) return;
+  if (px == null) { px = p.clientWidth / 2; py = p.clientHeight / 2; }
+  const s2 = Math.min(16, Math.max(1, RDV.s * k)); const f = s2 / RDV.s;
+  RDV.x = px - (px - RDV.x) * f; RDV.y = py - (py - RDV.y) * f; RDV.s = s2; rdvToepassen();
+}
+function rdvPunt(e) { const pane = (e.target.closest && e.target.closest(".rdv-pane")) || rdvPane(); const r = pane.getBoundingClientRect(); return [e.clientX - r.left, e.clientY - r.top]; }
+function rdvSluit() {
+  const el = document.getElementById("rdv"); if (!el) return;
+  RDV.open = false; el.remove(); document.body.classList.remove("rdv-aan");
+  try { if (document.fullscreenElement) document.exitFullscreen(); } catch (e) { }
+}
+document.addEventListener("click", async (e) => {
+  const k = e.target.closest && e.target.closest("[data-rdv]"); if (!k || !RDV.open) return;
+  const a = k.dataset.rdv;
+  if (a === "sluit") return rdvSluit();
+  if (a === "in") return rdvZoom(1.5);
+  if (a === "uit") return rdvZoom(1 / 1.5);
+  if (a === "pas") { RDV.s = 1; return rdvToepassen(); }
+  if (a === "echt") { const e2 = rdvEcht(); if (e2) { RDV.s = 1; rdvZoom(Math.max(1, e2)); } return; }
+  if (a === "modus") { RDV.modus = k.dataset.m; if (RDV.modus === "naast" || RDV.modus === "schuif") { try { localStorage.setItem("rdv-modus", RDV.modus); } catch (x) { } } const s = RDV.s, x = RDV.x, y = RDV.y; rdvTeken(); Object.assign(RDV, { s, x, y }); rdvToepassen(); return; }
+  if (a === "goed") { const o = RDV.opt.opdracht; const res = o && S.render_beelden[o.resultaat_id]; if (!res) return; await rdGoed(res.id, !res.goedgekeurd_op); const s = RDV.s, x = RDV.x, y = RDV.y; rdvTeken(); Object.assign(RDV, { s, x, y }); rdvToepassen(); }
+});
+document.addEventListener("wheel", (e) => {
+  if (!RDV.open || !e.target.closest || !e.target.closest(".rdv-podium")) return;
+  e.preventDefault(); const [px, py] = rdvPunt(e); rdvZoom(Math.exp(-e.deltaY * (e.ctrlKey ? 0.01 : 0.0015)), px, py);
+}, { passive: false });
+document.addEventListener("dblclick", (e) => {
+  if (!RDV.open || !e.target.closest || !e.target.closest(".rdv-podium") || e.target.closest(".rdv-split")) return;
+  const [px, py] = rdvPunt(e); if (RDV.s > 1.05) { RDV.s = 1; rdvToepassen(); } else rdvZoom(3, px, py);
+});
+document.addEventListener("pointerdown", (e) => {
+  if (!RDV.open || !e.target.closest) return;
+  const split = e.target.closest(".rdv-split"); const pod = e.target.closest(".rdv-podium"); if (!pod) return;
+  e.preventDefault();
+  RDV.wijzers.set(e.pointerId, { x: e.clientX, y: e.clientY, split: !!split && RDV.wijzers.size === 0 });
+  try { e.target.setPointerCapture && e.target.setPointerCapture(e.pointerId); } catch (x) { }
+  if (RDV.wijzers.size === 2) { const [a, b] = [...RDV.wijzers.values()]; RDV.knijp = { d: Math.hypot(a.x - b.x, a.y - b.y), s: RDV.s }; }
+});
+document.addEventListener("pointermove", (e) => {
+  if (!RDV.open) return; const w = RDV.wijzers.get(e.pointerId); if (!w) return;
+  const dx = e.clientX - w.x, dy = e.clientY - w.y;
+  if (w.split) { const p = rdvPane(); const r = p.getBoundingClientRect(); RDV.split = Math.min(1, Math.max(0, (e.clientX - r.left) / r.width)); w.x = e.clientX; rdvToepassen(); return; }
+  w.x = e.clientX; w.y = e.clientY;
+  if (RDV.wijzers.size >= 2 && RDV.knijp) {
+    const [a, b] = [...RDV.wijzers.values()]; const d = Math.hypot(a.x - b.x, a.y - b.y);
+    const pane = rdvPane(); const r = pane.getBoundingClientRect(); const mx = (a.x + b.x) / 2 - r.left, my = (a.y + b.y) / 2 - r.top;
+    if (RDV.knijp.d > 0) rdvZoom((RDV.knijp.s * d / RDV.knijp.d) / RDV.s, mx, my);
+    RDV.x += dx / 2; RDV.y += dy / 2; rdvToepassen(); return;
+  }
+  RDV.x += dx; RDV.y += dy; rdvToepassen();
+});
+const rdvLos = (e) => { if (!RDV.open) return; RDV.wijzers.delete(e.pointerId); if (RDV.wijzers.size < 2) RDV.knijp = null; };
+document.addEventListener("pointerup", rdvLos); document.addEventListener("pointercancel", rdvLos);
+document.addEventListener("keydown", (e) => {
+  if (!RDV.open) return;
+  if (e.key === "Escape") { e.preventDefault(); e.stopPropagation(); return rdvSluit(); }
+  if (e.key === "+" || e.key === "=") { e.preventDefault(); return rdvZoom(1.5); }
+  if (e.key === "-" || e.key === "_") { e.preventDefault(); return rdvZoom(1 / 1.5); }
+  if (e.key === "0") { RDV.s = 1; return rdvToepassen(); }
+  if (e.key === "1") { const e2 = rdvEcht(); if (e2) { RDV.s = 1; rdvZoom(Math.max(1, e2)); } return; }
+  if (e.key === " " && RDV.beelden.length > 1) { e.preventDefault(); RDV.modus = RDV.modus === "een0" ? "een1" : "een0"; const s = RDV.s, x = RDV.x, y = RDV.y; rdvTeken(); Object.assign(RDV, { s, x, y }); rdvToepassen(); }
+}, true);
+document.addEventListener("fullscreenchange", () => { if (RDV.open && !document.fullscreenElement && document.getElementById("rdv") && RDV.volScherm) rdvSluit(); RDV.volScherm = !!document.fullscreenElement; setTimeout(rdvToepassen, 50); });
+window.addEventListener("resize", () => { if (RDV.open) rdvToepassen(); });
+function rdvVergelijk(o) {
+  const bron = S.render_beelden[o.bron_id], res = S.render_beelden[o.resultaat_id]; if (!bron || !res) return;
+  rdViewer([{ b: bron, label: bron.soort === "render" ? "Eerdere render" : "Ontwerp" }, { b: res, label: "Render" }], { titel: `${o.ruimte} — ${fmtLong(lokDag(o.klaar_op || o.created_at))}`, opdracht: o });
+}
+
 /* ---------- vergelijken ---------- */
 function rdVergelijk(o) {
   const bron = S.render_beelden[o.bron_id], res = S.render_beelden[o.resultaat_id]; if (!bron || !res) return;
   const sferen = (o.sfeer_ids || []).map(id => S.render_beelden[id]).filter(Boolean);
-  openModal("Vergelijken — " + o.ruimte, `<div class="rd-vgl"><figure>${rdImg(bron)}<figcaption>Ontwerp${bron.soort === "render" ? " (eerdere render)" : ""}</figcaption></figure><figure>${rdImg(res)}<figcaption>Render · ${esc(fmtLong(lokDag(o.klaar_op || o.created_at)))}${res.breedte ? ` · ${res.breedte}×${res.hoogte}` : ""}</figcaption></figure></div>
+  openModal("Vergelijken — " + o.ruimte, `<div class="actions" style="margin:0 0 8px"><button type="button" class="btn sm primary" data-rd-act="groot" data-id="${o.id}">⤢ Volledig scherm met zoom</button></div>
+    <div class="rd-vgl"><figure><button type="button" class="rd-res" data-rd-act="groot" data-id="${o.id}" title="Volledig scherm met zoom">${rdImg(bron)}</button><figcaption>Ontwerp${bron.soort === "render" ? " (eerdere render)" : ""}</figcaption></figure><figure><button type="button" class="rd-res" data-rd-act="groot" data-id="${o.id}" title="Volledig scherm met zoom">${rdImg(res)}</button><figcaption>Render · ${esc(fmtLong(lokDag(o.klaar_op || o.created_at)))}${res.breedte ? ` · ${res.breedte}×${res.hoogte}` : ""}</figcaption></figure></div>
     <p style="margin:10px 0 4px"><b>Opdracht:</b> ${esc(o.instructie)}</p>
     ${(o.afspraken || []).length ? `<p class="muted" style="margin:0 0 4px;font-size:12.5px">Afspraken: ${o.afspraken.map(a => esc(a.tekst)).join(" · ")}</p>` : ""}
     ${sferen.length ? `<div class="rd-sfeerkeuze klein">${sferen.map(s => rdImg(s)).join("")}</div>` : ""}
@@ -317,7 +465,7 @@ function rdStalenPaneel(p) {
       <div class="rd-info"><div><b>${esc(r)}</b> ${gekozen ? `<span class="pill done">v${gekozen.versie || "?"} in presentatie</span>` : toon ? `<span class="pill st-offerte">nog geen versie gekozen</span>` : ""}${toon && toon.goedgekeurd_op ? ` <span class="pill done">goedgekeurd</span>` : ""}${oud.length ? ` <span class="pill st-on_hold" title="${esc(oud.join("; "))}">mogelijk verouderd</span>` : ""}${laatste && laatste.status !== "klaar" ? ` <span class="pill ${c}">${esc(l)}</span>` : ""}</div>
         <small class="muted">${versies.length ? `${versies.length} versie${versies.length > 1 ? "s" : ""} · laatste ${esc(fmtLong(lokDag(versies[0].created_at)))}` : "Nog geen stalenbord"}${oud.length ? ` · ${esc(oud.join("; "))} — bijwerken is een bewuste keuze (betaald)` : ""}</small>
         ${laatste && ["mislukt", "onzeker"].includes(laatste.status) && laatste.fout ? `<div class="rd-fout">${esc(laatste.fout)}</div>` : ""}
-        <div class="actions">${toon ? `<button class="btn sm" data-rd-act="sb-bekijk" data-id="${toon.id}">Bekijken</button>` : ""}
+        <div class="actions">${toon && !gekozen ? `<button class="btn sm primary" data-rd-act="sb-kies-rij" data-id="${toon.id}" title="Versie ${toon.versie || "?"} in de A3-presentatie gebruiken">Gebruiken in presentatie</button>` : ""}${toon ? `<button class="btn sm" data-rd-act="sb-bekijk" data-id="${toon.id}">Bekijken</button>` : ""}
           ${loopt ? "" : `<button class="btn sm ${toon ? "" : "primary"}" data-rd-act="sb-nieuw" data-pid="${p.id}" data-r="${esc(r)}" ${heeftBeelden ? "" : "disabled"}>${toon ? "Bijwerken…" : "Stalenbord maken"}</button>`}
           ${laatste && ["mislukt", "onzeker", "geannuleerd"].includes(laatste.status) && !loopt ? `<button class="btn sm" data-rd-act="sb-opnieuw" data-id="${laatste.id}">Opnieuw…</button>` : ""}
           ${laatste && laatste.status === "wachtrij" && (isBeheer() || laatste.aangevraagd_door === S.me.id) ? `<button class="btn sm ghost danger" data-rd-act="annuleer" data-id="${laatste.id}">Annuleren</button>` : ""}</div></div></div>`;
@@ -421,8 +569,8 @@ function rdSbBekijk(id) {
   const o = S.render_opdrachten[b.opdracht_id] || {}; const versies = rdSbVersies(b.project_id, b.ruimte); const oud = rdSbVerouderd(b);
   const refs = (o.referentie_ids || []).map(x => S.render_beelden[x]);
   const knop = (act, label, extra) => `<button type="button" class="btn sm ${extra || ""}" data-rd-act="${act}" data-id="${b.id}">${label}</button>`;
-  openModal(`Stalenbord — ${b.ruimte} · versie ${b.versie || "?"}`, `<div class="rd-sbgroot">${rdImg(b)}</div>
-    <div class="actions" style="margin:8px 0">${knop("sb-kies", b.geselecteerd ? "✓ Gekozen voor de presentatie — intrekken" : "Gebruiken in de presentatie", b.geselecteerd ? "" : "primary")}${knop("sb-goed", b.goedgekeurd_op ? "Goedkeuring intrekken" : "Goedkeuren")}${knop("sb-download", "Downloaden")}${b.drive && b.drive.url ? `<a class="btn sm" href="${esc(safeUrl(b.drive.url))}" target="_blank" rel="noopener">Drive ↗</a>` : ""}${knop("sb-corrigeer", "Corrigeren…")}${knop("sb-bijwerken", "Bijwerken…")}</div>
+  openModal(`Stalenbord — ${b.ruimte} · versie ${b.versie || "?"}`, `<button type="button" class="rd-sbgroot rd-res" data-rd-act="sb-groot" data-id="${b.id}" title="Volledig scherm met zoom">${rdImg(b)}</button>
+    <div class="actions" style="margin:8px 0">${knop("sb-kies", b.geselecteerd ? "✓ Gekozen voor de presentatie — intrekken" : "Gebruiken in de presentatie", b.geselecteerd ? "" : "primary")}${knop("sb-goed", b.goedgekeurd_op ? "Goedkeuring intrekken" : "Goedkeuren")}${knop("sb-groot", "⤢ Volledig scherm")}${knop("sb-download", "Downloaden")}${b.drive && b.drive.url ? `<a class="btn sm" href="${esc(safeUrl(b.drive.url))}" target="_blank" rel="noopener">Drive ↗</a>` : ""}${knop("sb-corrigeer", "Corrigeren…")}${knop("sb-bijwerken", "Bijwerken…")}</div>
     ${oud.length ? `<div class="notice" style="margin:0 0 8px"><b>Mogelijk verouderd:</b> ${esc(oud.join("; "))}. Bijwerken start een nieuwe, betaalde versie — enkel als jij daarvoor kiest.</div>` : ""}
     <p class="muted" style="font-size:12.5px;margin:0 0 6px">${esc(fmtLong(lokDag(b.created_at)))} ${esc(lokUur(b.created_at))} · ${esc(o.model || "")} · ${esc((RD_KWALITEIT.find(k => k[0] === o.kwaliteit) || [0, o.kwaliteit || ""])[1])}${b.breedte ? ` · ${b.breedte}×${b.hoogte}` : ""}${b.goedgekeurd_op ? ` · goedgekeurd door ${esc(userById(b.goedgekeurd_door).name || "")}` : ""}${o.basis_id ? ` · correctie van versie ${esc(String((S.render_beelden[o.basis_id] || {}).versie || "?"))}` : ""}</p>
     <p style="margin:0 0 4px"><b>Materialen:</b> ${(o.materialen || []).map(esc).join(" · ") || "—"}</p>
@@ -532,6 +680,8 @@ document.addEventListener("click", async (e) => {
   if (a === "batch-opnieuw") { if (RD.batch && !RD.batch.bezig) rdBatch(); return; }
   if (a === "batch-sluit") { RD.batch = null; render(); return; }
   if (a === "vergelijk") { const o = S.render_opdrachten[id]; if (o) rdVergelijk(o); return; }
+  if (a === "groot") { const o = S.render_opdrachten[id]; if (o) rdvVergelijk(o); return; }   // 1.60.1: volledig scherm met zoom
+  if (a === "sb-groot") { const b = S.render_beelden[id]; if (b) rdViewer([{ b, label: `Stalenbord ${b.ruimte} · v${b.versie || "?"}` }], { titel: `Stalenbord — ${b.ruimte}` }); return; }
   if (a === "goed") return rdGoed(id, el.dataset.v === "1");
   if (a === "download") { const b = S.render_beelden[id]; const o = b && S.render_opdrachten[b.opdracht_id]; const p = b && S.projecten[b.project_id];
     if (b) rdDownload(b, `${(p && p.klant) || "render"} - ${(o && o.ruimte) || b.ruimte || ""} - ${(b.created_at || "").slice(0, 10)}.${(b.pad.split(".").pop() || "png")}`.replace(/[\\/:*?"<>|]+/g, " ")); return; }
@@ -552,6 +702,7 @@ document.addEventListener("click", async (e) => {
   // stalenborden (1.60)
   if (a === "sb-nieuw") { if (MODAL_OPEN()) closeModal(true); return rdSbForm(el.dataset.pid, { ruimte: el.dataset.r || "" }); }
   if (a === "sb-bekijk") return rdSbBekijk(id);
+  if (a === "sb-kies-rij") return rdSbKies(id, true);   // 1.60.1: rechtstreeks vanuit de rij
   if (a === "sb-kies") { const b = S.render_beelden[id]; if (!b) return; await rdSbKies(id, !b.geselecteerd); return rdSbBekijk(id); }
   if (a === "sb-goed") { await rdGoed(id, !(S.render_beelden[id] || {}).goedgekeurd_op); return rdSbBekijk(id); }
   if (a === "sb-download") { const b = S.render_beelden[id]; const p = b && S.projecten[b.project_id];

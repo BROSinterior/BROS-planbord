@@ -2,6 +2,11 @@
 
 De nieuwste versie staat bovenaan. (Vanaf 1.48 houdt `version.json` enkel de laatste versie bij; het Planbord vraagt dat bestand elke 5 minuten op.)
 
+## 1.60.1 — 2026-10-26 (geen databasescript, enkel pushen)
+
+Renders: **vergelijken op volledig scherm met zoom**. Klik op een render (of in Vergelijken op een beeld of op *⤢ Volledig scherm met zoom*) en ontwerp en render vullen het hele scherm. Naast elkaar loopt zoomen en verschuiven in beide beelden gelijk; brede renders komen automatisch boven elkaar als dat een groter beeld geeft. Verder: **Schuif** (ontwerp en render over elkaar met een versleepbare scheidingslijn) en één beeld tegelijk (spatie wisselt). Zoomen met het scrollwiel of trackpad (naar de cursor), knijpen op gsm/tablet, dubbelklik, de knoppen − / + / Passend / 100 % (1 beeldpixel = 1 schermpixel) of de toetsen + − 0 1; slepen verschuift; Esc sluit. Goedkeuren kan rechtstreeks vanuit dat scherm. Ook een stalenbord kan op volledig scherm met zoom.
+Stalenborden: bij een ruimte zonder gekozen versie staat nu rechtstreeks de knop **Gebruiken in presentatie** (vroeger enkel via Bekijken).
+
 ## 1.60.0 — 2026-10-26 (script 056 + verwerker/ opnieuw installeren op de Mac mini; drive/Code.gs optioneel)
 
 Renders: **stalenbord per ruimte**. In het tabblad Renders staat onder de renders *Stalenborden per ruimte*, met per ruimte **Stalenbord maken** (of *Bijwerken…*). Vóór het genereren controleer je de ruimtenaam, de referentiebeelden (voorstel op basis van de ruimte en de bestandsnaam — bv. "Freya 1.jpg" — en aanpasbaar; meerdere zichten van dezelfde ruimte horen in één stalenbord; de aangevinkte beelden kunnen meteen aan die ruimte gekoppeld worden) en een korte materialenlijst (voorstel uit de afspraken "Materiaal: details"). Optioneel aandachtspunten of correcties, die je ook als materiaalafspraak kunt bewaren. Het beeld is één fotorealistische foto van echte stalen — behang, hout, textiel, gelakte of geverfde panelen — op een tafel of bureau uit die ruimte, zonder collage, decoratie of tekst; enkel de bevestigde materialen, de afspraken en correcties gaan voor op kleuren uit de beelden, schaduw of perspectief wordt nooit een materiaal, bedrukt streepjesbehang blijft vlak behang, en nooit een verzonnen merk, productcode, hout- of steensoort. Afspraken blijven strikt per ruimte en per project.

@@ -778,6 +778,35 @@
   .rd-batch .ok { color: var(--ok); } .rd-batch .nok { color: var(--crit); }
   .rd-vgl { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; } .rd-vgl figure { margin: 0; } .rd-vgl .rd-img { aspect-ratio: auto; object-fit: contain; border-radius: 8px; max-height: 62vh; }
   .rd-vgl figcaption { font-size: 12px; color: var(--muted); margin-top: 4px; }
+  /* 1.60.1: renders vergelijken op volledig scherm met zoom */
+  body.rdv-aan { overflow: hidden; }
+  .rdv { position: fixed; inset: 0; z-index: 58; background: #141414; color: #eee; display: flex; flex-direction: column; font-size: 13px; }
+  .rdv-bar { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; padding: 8px 10px; background: #1d1d1d; border-bottom: 1px solid #2c2c2c; }
+  .rdv-titel { flex: 1 1 160px; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 600; }
+  .rdv-groep { display: flex; border: 1px solid #3a3a3a; border-radius: 8px; overflow: hidden; }
+  .rdv-bar button { background: #262626; color: #eee; border: 0; padding: 7px 11px; font: inherit; cursor: pointer; min-height: 34px; }
+  .rdv-groep button + button { border-left: 1px solid #3a3a3a; }
+  .rdv-bar button:hover { background: #333; } .rdv-bar button.on { background: #eee; color: #141414; }
+  .rdv-pct { min-width: 72px; font-variant-numeric: tabular-nums; }
+  .rdv-goed { border: 1px solid #3a3a3a !important; border-radius: 8px; } .rdv-goed.on { background: #2e7d4f !important; color: #fff !important; }
+  .rdv-sluit { border-radius: 8px; font-size: 16px !important; }
+  .rdv-podium { flex: 1; display: flex; gap: 4px; min-height: 0; background: #0d0d0d; }
+  .rdv-pane { position: relative; flex: 1; overflow: hidden; touch-action: none; cursor: grab; user-select: none; -webkit-user-select: none; min-width: 0; }
+  .rdv-pane:active { cursor: grabbing; }
+  .rdv-doek { position: absolute; inset: 0; transform-origin: 0 0; will-change: transform; }
+  .rdv-doek img { width: 100%; height: 100%; object-fit: contain; display: block; pointer-events: none; -webkit-user-drag: none; }
+  .rdv-clip { position: absolute; inset: 0; pointer-events: none; }
+  .rdv-split { position: absolute; top: 0; bottom: 0; width: 2px; margin-left: -1px; background: #fff; cursor: ew-resize; box-shadow: 0 0 6px rgba(0,0,0,.6); }
+  .rdv-split::before { content: ""; position: absolute; top: 0; bottom: 0; left: -14px; right: -14px; }
+  .rdv-split span { position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%); width: 34px; height: 34px; border-radius: 50%; background: #fff; color: #141414; display: grid; place-items: center; font-size: 15px; box-shadow: 0 1px 6px rgba(0,0,0,.5); }
+  .rdv-label { position: absolute; top: 8px; left: 8px; background: rgba(0,0,0,.6); color: #fff; padding: 3px 8px; border-radius: 6px; font-size: 12px; pointer-events: none; }
+  .rdv-label.r { left: auto; right: 8px; }
+  .rdv-leeg { position: absolute; inset: 0; display: grid; place-items: center; color: #999; }
+  .rdv-hulp { padding: 5px 10px; color: #8a8a8a; font-size: 11.5px; text-align: center; background: #1d1d1d; }
+  .rdv-podium.naast.boven { flex-direction: column; }
+  @media (max-width: 640px) { .rdv-hulp { display: none; } .rdv-titel { flex-basis: 100%; } .rdv-bar button { padding: 7px 9px; } }
+  .rd-sbgroot { padding: 0; border: 0; background: none; width: 100%; cursor: zoom-in; }
+  .rd-vgl .rd-res { width: 100%; cursor: zoom-in; }
   /* 1.60: stalenborden per ruimte */
   .rd-sblijst { display: grid; grid-template-columns: repeat(auto-fill, minmax(420px, 1fr)); gap: 12px; }
   .rd-sbrij { display: grid; grid-template-columns: 170px 1fr; gap: 0; border: 1px solid var(--line); border-radius: 12px; overflow: hidden; background: var(--surface); }
@@ -826,26 +855,26 @@
 <div class="toast" id="toast" role="status"></div>
 <div class="loader" id="loader" aria-live="polite"><div class="logo"><i class="base"></i><i class="fill" id="loaderFill"></i></div><div class="pct" id="loaderPct">0%</div><div class="msg" id="loaderMsg">Even geduld…</div></div>
 <script src="vendor/supabase-2.45.4.js"></script>
-<script src="config.js?v=1.60.0"></script>
+<script src="config.js?v=1.60.1"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
-<script src="postcodes.js?v=1.60.0"></script>
-<script src="meetstaat-export.js?v=1.60.0"></script>
-<script src="meetstaat-import.js?v=1.60.0"></script>
+<script src="postcodes.js?v=1.60.1"></script>
+<script src="meetstaat-export.js?v=1.60.1"></script>
+<script src="meetstaat-import.js?v=1.60.1"></script>
 <!-- tekenmodule: deze drie scripts horen bij het tabblad Plannen — niet verwijderen -->
-<script src="vendor/dxf-parser.js?v=1.60.0"></script>
-<script src="symbolen.js?v=1.60.0"></script>
-<script src="tekenen.js?v=1.60.0"></script>
-<script src="agenda.js?v=1.60.0"></script>
-<script src="afspraken.js?v=1.60.0"></script>
-<script src="kp-beheer.js?v=1.60.0"></script>
-<script src="pv-beheer.js?v=1.60.0"></script>
-<script src="af-beheer.js?v=1.60.0"></script>
-<script src="deb-beheer.js?v=1.60.0"></script>
-<script src="wacht.js?v=1.60.0"></script>
-<script src="fin-planning.js?v=1.60.0"></script>
-<script src="vergaderingen.js?v=1.60.0"></script>
-<script src="plan2cad.js?v=1.60.0"></script>
-<script src="renders.js?v=1.60.0"></script>
-<script src="app.js?v=1.60.0"></script>
+<script src="vendor/dxf-parser.js?v=1.60.1"></script>
+<script src="symbolen.js?v=1.60.1"></script>
+<script src="tekenen.js?v=1.60.1"></script>
+<script src="agenda.js?v=1.60.1"></script>
+<script src="afspraken.js?v=1.60.1"></script>
+<script src="kp-beheer.js?v=1.60.1"></script>
+<script src="pv-beheer.js?v=1.60.1"></script>
+<script src="af-beheer.js?v=1.60.1"></script>
+<script src="deb-beheer.js?v=1.60.1"></script>
+<script src="wacht.js?v=1.60.1"></script>
+<script src="fin-planning.js?v=1.60.1"></script>
+<script src="vergaderingen.js?v=1.60.1"></script>
+<script src="plan2cad.js?v=1.60.1"></script>
+<script src="renders.js?v=1.60.1"></script>
+<script src="app.js?v=1.60.1"></script>
 </body>
 </html>
