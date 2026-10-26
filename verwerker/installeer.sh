@@ -43,6 +43,10 @@ download "$VAD_URL" "$MOD/ggml-silero-v6.2.0.bin"
 
 echo "3/6 Programma en instellingen"
 cp "$HIER/bros_verwerker.py" "$APP/bros_verwerker.py"
+if [ -d "$HIER/render" ]; then   # 1.59: A3-presentaties voor de renders (huisstijl + script)
+  rm -rf "$APP/render.nieuw" && cp -R "$HIER/render" "$APP/render.nieuw" && rm -rf "$APP/render" && mv "$APP/render.nieuw" "$APP/render"
+  echo "  presentatieprogramma (renders): ok"
+fi
 if [ ! -f "$APP/config.json" ]; then
   read -r -p "  Supabase Project URL (zoals in config.js): " SBURL
   read -r -p "  Supabase publieke sleutel (anon/publishable, zoals in config.js): " SBKEY
@@ -65,7 +69,18 @@ echo "4/6 Plan2CAD (plannen omzetten naar DXF/DWG, eigen Python-omgeving)"
 if [ -d "$HIER/plan2cad/plan2cad" ]; then
   rm -rf "$APP/plan2cad.nieuw" && mkdir -p "$APP/plan2cad.nieuw" && cp -R "$HIER/plan2cad/plan2cad" "$APP/plan2cad.nieuw/plan2cad"
   rm -rf "$APP/plan2cad" && mv "$APP/plan2cad.nieuw" "$APP/plan2cad"
-  [ -x "$APP/plan2cad-venv/bin/python" ] || "$PY" -m venv "$APP/plan2cad-venv"
+  # 1.58.1: Plan2CAD vraagt Python 3.11 of nieuwer (de vaste PyMuPDF-versie bestaat niet voor de Python 3.9 van macOS)
+  NIEUW_PY=""
+  for k in "$(brew --prefix)/bin/python3.12" "$(brew --prefix python@3.12 2>/dev/null || true)/bin/python3.12" "$(brew --prefix)/bin/python3" "$(command -v python3.12 || true)" "$PY"; do
+    if [ -n "$k" ] && [ -x "$k" ] && "$k" -c 'import sys; sys.exit(0 if sys.version_info >= (3, 11) else 1)' 2>/dev/null; then NIEUW_PY="$k"; break; fi
+  done
+  [ -n "$NIEUW_PY" ] || { echo "  FOUT: geen Python 3.11 of nieuwer gevonden. Voer uit: brew install python@3.12 — en daarna dit script opnieuw."; exit 1; }
+  if [ -x "$APP/plan2cad-venv/bin/python" ] && ! "$APP/plan2cad-venv/bin/python" -c 'import sys; sys.exit(0 if sys.version_info >= (3, 11) else 1)' 2>/dev/null; then
+    echo "  de Python-omgeving van Plan2CAD gebruikte een te oude Python — wordt opnieuw gemaakt"
+    rm -rf "$APP/plan2cad-venv"
+  fi
+  [ -x "$APP/plan2cad-venv/bin/python" ] || "$NIEUW_PY" -m venv "$APP/plan2cad-venv"
+  echo "  Python voor Plan2CAD: $("$APP/plan2cad-venv/bin/python" -c 'import sys; print(sys.version.split()[0])')"
   "$APP/plan2cad-venv/bin/python" -m pip install --quiet --upgrade pip
   if "$APP/plan2cad-venv/bin/python" -m pip install --quiet -r "$HIER/plan2cad/requirements.txt"; then echo "  Plan2CAD en zijn Python-pakketten: ok"
   else echo "  FOUT: de Python-pakketten voor Plan2CAD konden niet geïnstalleerd worden (zie hierboven)"; exit 1; fi
@@ -81,6 +96,9 @@ if security find-generic-password -s BROS-verwerker -a supabase-wachtwoord >/dev
 else echo "  Wachtwoord van de verwerkingslogin (je ziet niets tijdens het typen):"; security add-generic-password -U -s BROS-verwerker -a supabase-wachtwoord -w; fi
 if security find-generic-password -s BROS-verwerker -a anthropic-api-key >/dev/null 2>&1; then echo "  Anthropic API-sleutel: aanwezig"
 else read -r -p "  Anthropic API-sleutel instellen voor het conceptverslag? (j/n) " JN; if [ "$JN" = "j" ]; then echo "  API-sleutel (sk-ant-…):"; security add-generic-password -U -s BROS-verwerker -a anthropic-api-key -w; else echo "  overgeslagen: enkel transcript (later: security add-generic-password -U -s BROS-verwerker -a anthropic-api-key -w)"; fi; fi
+
+if security find-generic-password -s BROS-verwerker -a openai-api-key >/dev/null 2>&1; then echo "  OpenAI API-sleutel (renders): aanwezig"
+else read -r -p "  OpenAI API-sleutel instellen voor renders (betaalde beeldgeneratie)? (j/n) " JN; if [ "$JN" = "j" ]; then echo "  OpenAI API-sleutel (sk-…; je ziet niets tijdens het typen):"; security add-generic-password -U -s BROS-verwerker -a openai-api-key -w; else echo "  overgeslagen: renders blijven mislukken tot de sleutel er is (later: security add-generic-password -U -s BROS-verwerker -a openai-api-key -w)"; fi; fi
 
 echo "6/6 Automatisch starten (LaunchAgent be.bros.verwerker)"
 cat > "$PLIST" <<PLEOF
