@@ -1,6 +1,6 @@
 #!/bin/bash
 # BROS verwerkingscomputer — installatie op de Mac mini (Apple Silicon, macOS). Zie LEESMIJ.md.
-# Vergaderingen & opnames (script 051) en, sinds 1.57, Plannen omzetten met Plan2CAD (script 054).
+# Vergaderingen & opnames (script 051), sinds 1.57 Plannen omzetten met Plan2CAD (script 054) en sinds 1.59 Renders (script 055).
 #   bash installeer.sh              installeren of bijwerken (vraagt de instellingen en geheimen)
 #   bash installeer.sh --modellen   extra spraakmodellen downloaden voor de praktijktest (meet)
 # Verandert geen systeeminstellingen (energie, FileVault, gebruikers): die zet je zelf, zie LEESMIJ.md §4.
@@ -98,7 +98,7 @@ if security find-generic-password -s BROS-verwerker -a anthropic-api-key >/dev/n
 else read -r -p "  Anthropic API-sleutel instellen voor het conceptverslag? (j/n) " JN; if [ "$JN" = "j" ]; then echo "  API-sleutel (sk-ant-…):"; security add-generic-password -U -s BROS-verwerker -a anthropic-api-key -w; else echo "  overgeslagen: enkel transcript (later: security add-generic-password -U -s BROS-verwerker -a anthropic-api-key -w)"; fi; fi
 
 if security find-generic-password -s BROS-verwerker -a openai-api-key >/dev/null 2>&1; then echo "  OpenAI API-sleutel (renders): aanwezig"
-else read -r -p "  OpenAI API-sleutel instellen voor renders (betaalde beeldgeneratie)? (j/n) " JN; if [ "$JN" = "j" ]; then echo "  OpenAI API-sleutel (sk-…; je ziet niets tijdens het typen):"; security add-generic-password -U -s BROS-verwerker -a openai-api-key -w; else echo "  overgeslagen: renders blijven mislukken tot de sleutel er is (later: security add-generic-password -U -s BROS-verwerker -a openai-api-key -w)"; fi; fi
+else read -r -p "  OpenAI API-sleutel instellen voor renders (betaalde beeldgeneratie)? (j/n) " JN; if [ "$JN" = "j" ]; then echo "  OpenAI API-sleutel (sk-…; je ziet niets tijdens het typen):"; security add-generic-password -U -s BROS-verwerker -a openai-api-key -w; else echo "  overgeslagen: renders blijven in de wachtrij tot de sleutel er is (later: security add-generic-password -U -s BROS-verwerker -a openai-api-key -w)"; fi; fi
 
 echo "6/6 Automatisch starten (LaunchAgent be.bros.verwerker)"
 cat > "$PLIST" <<PLEOF
