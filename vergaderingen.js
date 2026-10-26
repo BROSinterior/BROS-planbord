@@ -6,7 +6,7 @@
    gegevens — elk met afspeelbaar bronfragment — en pas na bevestiging taken in de bestaande takenlijst.
    Alles wat de AI maakte, is een CONCEPT tot een bevoegde gebruiker het controleert. Er wordt nooit automatisch iets
    gewijzigd in offertes, bestellingen, meetstaten of facturatie.
-   Later rechtstreeks opnemen via de microfoon: vgOpnameOpladen(v, blob, "microfoon") is het enige wat daarvoor nodig is.
+   1.58: rechtstreeks opnemen via de microfoon (knop ● Opnemen, laptop en telefoon) — zelfde weg: vgOpnameOpladen(v, bestand, "microfoon").
    Laden vóór app.js.
    ===================================================================== */
 const VG = { open: null, tab: "verslag", upload: {}, uitvoer: {}, uitvoerLaden: {}, versies: {}, feedback: {}, audio: {}, bewerk: null, toevoegen: null, concept: {}, zoek: "", stopBij: null, metingen: null, laatsteProject: null };
@@ -56,10 +56,12 @@ function vVergaderingen(p) {
     <td><div class="row-title">${esc(v.onderwerp)}<small>${esc((v.deelnemers || []).map(vgNaam).filter(Boolean).join(", ") || "geen deelnemers ingevuld")}</small></div></td>
     <td>${v.controleur ? `<span class="who-cell">${avatar(v.controleur)}${esc(userById(v.controleur).name)}</span>` : `<span class="muted">nog te bepalen</span>`}</td>
     <td>${vgStatusPill(v)}${v.status === "controle" && n ? `<small class="muted" style="display:block">${n} te beoordelen</small>` : ""}${v.klant_gedeeld_op ? `<small style="display:block;color:var(--ok)">gedeeld met klant</small>` : ""}</td></tr>`; };
-  return vgOverzicht(p) + `<div class="panel"><div class="panel-head"><div><h3>Vergaderingen &amp; opnames</h3><div class="muted" style="font-size:12px;margin-top:2px">${vgSignaal()}</div></div>
-      <div class="actions">${vs.length ? `<button class="btn sm" data-vg-act="volgende" data-pid="${p.id}" title="Nieuwe vergadering met de open taken en beslissingen van eerdere vergaderingen als agenda">+ Opvolgvergadering</button>` : ""}<button class="btn sm primary" data-vg-act="nieuw" data-pid="${p.id}">+ Vergadering</button></div></div>
+  const herstel = Object.values(VGR.herstel).filter(m => m.pid === p.id && S.vergaderingen[m.vid]);
+  const herstelHtml = herstel.length ? `<div class="notice" style="border-color:var(--warn);margin:0 0 16px"><b>Onafgewerkte opname op dit toestel</b> — nog niet (volledig) opgeladen: ${herstel.map(m => `<button type="button" class="wj-t" data-vg-act="open" data-id="${m.vid}">${esc(S.vergaderingen[m.vid].onderwerp)}</button>`).join(", ")}. Open de vergadering om ze op te laden.</div>` : "";
+  return vgOverzicht(p) + herstelHtml + `<div class="panel"><div class="panel-head"><div><h3>Vergaderingen &amp; opnames</h3><div class="muted" style="font-size:12px;margin-top:2px">${vgSignaal()}</div></div>
+      <div class="actions">${vs.length ? `<button class="btn sm" data-vg-act="volgende" data-pid="${p.id}" title="Nieuwe vergadering met de open taken en beslissingen van eerdere vergaderingen als agenda">+ Opvolgvergadering</button>` : ""}<button class="btn sm" data-vg-act="nieuw" data-pid="${p.id}">+ Vergadering</button>${vgrKan() ? `<button class="btn sm primary vg-rec-knop" data-vg-act="rec-snel" data-pid="${p.id}" title="Nu een vergadering opnemen met de microfoon van dit toestel (vandaag, nu) — deelnemers en agenda vul je achteraf aan"><span class="vg-rec-dot"></span> Opnemen</button>` : ""}</div></div>
     ${vs.length ? `<div class="tw"><table class="t"><thead><tr><th>Datum</th><th>Onderwerp</th><th>Controle door</th><th>Status</th></tr></thead><tbody>${vs.map(rij).join("")}</tbody></table></div>`
-      : `<div class="empty"><b>Nog geen vergaderingen</b>Maak een vergadering aan en laad de opname op (van je telefoon of computer). De verwerkingscomputer maakt er een transcript en een conceptverslag van dat jullie daarna controleren.</div>`}</div>`;
+      : `<div class="empty"><b>Nog geen vergaderingen</b>Klik op ● Opnemen om een vergadering meteen op te nemen met dit toestel, of maak een vergadering aan en laad een opname op (van je telefoon of computer). De verwerkingscomputer maakt er een transcript en een conceptverslag van dat jullie daarna controleren.</div>`}</div>`;
 }
 function vgOverzicht(p) {
   const vs = vgOf(p.id); if (!vs.length && !p.intern) return "";
@@ -118,6 +120,7 @@ function vVergadering(v) {
   else if (VG.tab === "transcript") body = vgTranscript(v, u);
   else if (VG.tab === "logboek") body = vgLogboek(v);
   else body = vgVerslag(v, pts, u);
+  if (v.opname && (VGR.herstel[v.id] || (VGR.noodkopie && VGR.noodkopie.vid === v.id))) body = vgrPaneel(v) + body;   // 1.58: oude kopie op dit toestel
   return `<div class="crumb"><button data-vg-act="lijst">Vergaderingen</button><span>›</span><span>${esc(v.onderwerp)}</span></div>
     <div class="page-head" style="margin-bottom:12px"><div><div class="eyebrow">${esc(fmtLong(v.datum))}${v.tijd ? " · " + esc(String(v.tijd).slice(0, 5)) : ""} · ${esc(projName(p))}</div><h2 style="margin:2px 0 6px">${esc(v.onderwerp)}</h2>
       <div class="vg-meta">${vgStatusPill(v)} <span class="muted">Deelnemers:</span> ${deeln} <span class="muted">· Controle door:</span> ${v.controleur ? esc(userById(v.controleur).name) : `<span class="pill late">nog te bepalen</span>`}</div></div>
@@ -131,25 +134,28 @@ function vVergadering(v) {
 
 /* ---------- opname opladen (telefoon of computer) ---------- */
 function vgUploadPaneel(v) {
-  const up = VG.upload[v.id];
-  return `<div class="panel"><div class="panel-head"><h3>Opname opladen</h3></div><div class="panel-body">
+  const up = VG.upload[v.id]; const rec = VGR.actief && VGR.actief.vid === v.id; const herstel = VGR.herstel[v.id] || (VGR.noodkopie && VGR.noodkopie.vid === v.id);
+  return `<div class="panel"><div class="panel-head"><h3>Opname</h3></div><div class="panel-body">
     ${up && up.bezig ? `<p><b>${esc(up.tekst || "Bezig…")}</b> — laat deze pagina open tot het opladen klaar is.</p><div class="bar" style="max-width:420px"><i style="width:${Math.round((up.pct || 0) * 100)}%"></i></div>` : `
     ${up && up.fout ? `<div class="notice" style="border-color:var(--crit);margin:0 0 12px">${esc(up.fout)}</div>` : ""}
+    <h4 class="vg-rec-kop">Rechtstreeks opnemen</h4>${vgrPaneel(v)}
+    ${rec || herstel ? "" : `<h4 class="vg-rec-kop" style="margin-top:20px">Of een bestaande opname opladen</h4>
     <p class="muted" style="margin-top:0">Een bestaande opname van je telefoon (bv. Dictafoon / Voice Memos, WhatsApp-audio) of computer: m4a, mp3, wav, aac, ogg, opus, webm, mp4 of mov. Lange vergaderingen kunnen; het bestand wordt in delen opgeladen.</p>
     <div class="form-grid"><div class="field span2"><label for="vg_file">Bestand</label><input id="vg_file" type="file" accept="audio/*,video/*,.m4a,.mp3,.wav,.aac,.ogg,.opus,.webm,.mp4,.mov,.amr,.3gp,.caf,.flac,.wma"></div>
     <div class="field span2"><label class="sw-row"><input type="checkbox" class="sw" id="vg_ok"><span><b>De deelnemers weten dat de vergadering opgenomen werd</b><small class="muted" style="display:block">Verplicht. De opname, het transcript en het concept zijn enkel zichtbaar voor de projectleden van BROS, nooit automatisch voor de klant.</small></span></label></div>
-    <div class="field span2"><div class="actions"><button class="btn primary" data-vg-act="upload" data-id="${v.id}">Opladen en verwerken</button><span class="muted" style="font-size:12px">${vgSignaal(true)}</span></div></div></div>`}
+    <div class="field span2"><div class="actions"><button class="btn" data-vg-act="upload" data-id="${v.id}">Opladen en verwerken</button><span class="muted" style="font-size:12px">${vgSignaal(true)}</span></div></div></div>`}`}
   </div></div>`;
 }
 async function vgSha256(buf) { if (!(window.crypto && crypto.subtle)) throw new Error("Opladen kan enkel via een beveiligde verbinding (https)."); const h = await crypto.subtle.digest("SHA-256", buf); return [...new Uint8Array(h)].map(b => b.toString(16).padStart(2, "0")).join(""); }
 /** bron: 'bestand' (nu) of later 'microfoon' (MediaRecorder-blob) — zelfde weg. */
 async function vgOpnameOpladen(v, bestand, bron) {
-  if (VG.upload[v.id]?.bezig) return;
-  if (!bestand || !bestand.size) { toast("Kies eerst een opname."); return; }
-  if (bestand.size > 4 * 1024 * 1024 * 1024) { toast("Dit bestand is groter dan 4 GB."); return; }
+  if (VG.upload[v.id]?.bezig) return false;
+  if (!bestand || !bestand.size) { toast("Kies eerst een opname."); return false; }
+  if (bestand.size > 4 * 1024 * 1024 * 1024) { toast("Dit bestand is groter dan 4 GB."); return false; }
+  const mic = bron === "microfoon";
   const DEEL = 20 * 1024 * 1024, n = Math.max(1, Math.ceil(bestand.size / DEEL));
   const uid = Date.now().toString(36) + Math.random().toString(36).slice(2, 8);
-  VG.upload[v.id] = { bezig: true, pct: 0, tekst: "Voorbereiden…" }; render();
+  VG.upload[v.id] = { bezig: true, mic, pct: 0, tekst: "Voorbereiden…" }; render();
   try {
     const delen = [];
     for (let i = 0; i < n; i++) {
@@ -162,15 +168,215 @@ async function vgOpnameOpladen(v, bestand, bron) {
       }
       if (fout) throw new Error(`Deel ${i + 1} van ${n} kon niet opgeladen worden (${fout.message}). Controleer de verbinding en probeer opnieuw.`);
       delen.push({ pad, grootte: blob.size, sha256: sha });
-      VG.upload[v.id] = { bezig: true, pct: (i + 1) / n, tekst: n > 1 ? `Opgeladen: deel ${i + 1} van ${n}` : "Opgeladen" }; render();
+      VG.upload[v.id] = { bezig: true, mic, pct: (i + 1) / n, tekst: n > 1 ? `Opgeladen: deel ${i + 1} van ${n}` : "Opgeladen" }; render();
     }
-    const { data, error } = await sb.rpc("vergadering_opname", { p_id: v.id, p_meta: { naam: bestand.name || "opname", mime: bestand.type || "", grootte: bestand.size, toestemming: true, bron: bron || "bestand", delen } });
+    const { data, error } = await sb.rpc("vergadering_opname", { p_id: v.id, p_meta: { naam: bestand.name || "opname", mime: String(bestand.type || "").split(";")[0].trim(), grootte: bestand.size, toestemming: true, bron: bron || "bestand", delen } });
     if (error) throw new Error(error.message);
     if (data && data.id) S.vergaderingen[data.id] = data;
-    delete VG.upload[v.id]; refetch("verwerkingen"); toast("Opname opgeladen — de verwerkingscomputer neemt ze op.", 5000); render();
-  } catch (e) { VG.upload[v.id] = { fout: (e && e.message) || String(e) }; render(); }
+    delete VG.upload[v.id]; refetch("verwerkingen"); toast("Opname opgeladen — de verwerkingscomputer neemt ze op.", 5000); render(); return true;
+  } catch (e) { VG.upload[v.id] = { fout: ((e && e.message) || String(e)) + (mic ? " De opname blijft op dit toestel bewaard: probeer ‘Opnieuw opladen’." : "") }; render(); return false; }
 }
-window.addEventListener("beforeunload", (e) => { if (Object.values(VG.upload).some(u => u && u.bezig)) { e.preventDefault(); e.returnValue = ""; } });
+window.addEventListener("beforeunload", (e) => { if (vgOpnameBezig()) { e.preventDefault(); e.returnValue = ""; } });   // ook tijdens een opname (1.58)
+
+/* ---------- 1.58: rechtstreeks opnemen met de microfoon (laptop en telefoon) ----------
+   Eén opname tegelijk. De opname loopt door als je in het Planbord naar een ander scherm gaat (balk onderaan).
+   Elke 5 seconden gaat een stukje naar de opslag van dit toestel (IndexedDB): sluit de browser of valt de verbinding weg,
+   dan blijft de opname bewaard en kan je ze later alsnog opladen. Na een geslaagde upload wordt die kopie gewist.
+   Bij het stoppen gaat de opname langs dezelfde weg als een opgeladen bestand (vgOpnameOpladen, bron 'microfoon'). */
+const VGR = { actief: null, herstel: {}, herstelGeladen: false, timer: null, lock: null };
+const VGR_MIMES = ["audio/webm;codecs=opus", "audio/webm", "audio/mp4;codecs=mp4a.40.2", "audio/mp4", "audio/ogg;codecs=opus"];
+const vgrKan = () => !!(navigator.mediaDevices && navigator.mediaDevices.getUserMedia && window.MediaRecorder);
+const vgrBezig = () => !!VGR.actief;
+const vgrExt = (mime) => /mp4|aac|m4a/i.test(mime) ? ".m4a" : /ogg/i.test(mime) ? ".ogg" : ".webm";
+const vgrDuur = (r) => { if (!r) return 0; return Math.floor((r.opgenomen + (r.gepauzeerd || !r.sinds ? 0 : Date.now() - r.sinds)) / 1000); };
+const vgrMb = (b) => (b / 1048576).toLocaleString("nl-BE", { maximumFractionDigits: 1 }) + " MB";
+/* IndexedDB: kopie van de stukjes op dit toestel */
+function vgrDb() {
+  if (VGR.db) return VGR.db;
+  VGR.db = new Promise((ok, nok) => { try { const r = indexedDB.open("bros-opnames", 1);
+    r.onupgradeneeded = () => { const db = r.result; if (!db.objectStoreNames.contains("meta")) db.createObjectStore("meta", { keyPath: "vid" }); if (!db.objectStoreNames.contains("delen")) db.createObjectStore("delen", { keyPath: ["vid", "i"] }); };
+    r.onsuccess = () => ok(r.result); r.onerror = () => nok(r.error); } catch (e) { nok(e); } });
+  VGR.db.catch(() => { VGR.db = null; });
+  return VGR.db;
+}
+async function vgrTx(stores, modus, werk) { const db = await vgrDb(); return new Promise((ok, nok) => { const tx = db.transaction(stores, modus); let uit; try { uit = werk(tx); } catch (e) { nok(e); return; } tx.oncomplete = () => ok(uit); tx.onerror = () => nok(tx.error); tx.onabort = () => nok(tx.error); }); }
+const vgrReq = (q) => new Promise((ok, nok) => { q.onsuccess = () => ok(q.result); q.onerror = () => nok(q.error); });
+async function vgrMetaBewaar(m) { try { await vgrTx(["meta"], "readwrite", tx => tx.objectStore("meta").put(m)); } catch (e) { } }
+async function vgrDeelBewaar(vid, i, blob) { try { await vgrTx(["delen"], "readwrite", tx => tx.objectStore("delen").put({ vid, i, blob })); return true; } catch (e) { return false; } }
+async function vgrWis(vid) { try { await vgrTx(["meta", "delen"], "readwrite", tx => { tx.objectStore("meta").delete(vid); tx.objectStore("delen").delete(IDBKeyRange.bound([vid, -Infinity], [vid, Infinity])); }); } catch (e) { } delete VGR.herstel[vid]; }
+async function vgrHerstelLaden() {
+  try { const db = await vgrDb(); const tx = db.transaction(["meta"], "readonly"); const alle = await vgrReq(tx.objectStore("meta").getAll());
+    VGR.herstel = {}; (alle || []).forEach(m => { if (!VGR.actief || VGR.actief.vid !== m.vid) VGR.herstel[m.vid] = m; }); } catch (e) { VGR.herstel = {}; }
+  VGR.herstelGeladen = true;
+}
+async function vgrHerstelBlob(vid) {
+  const db = await vgrDb(); const tx = db.transaction(["delen"], "readonly");
+  const delen = await vgrReq(tx.objectStore("delen").getAll(IDBKeyRange.bound([vid, -Infinity], [vid, Infinity])));
+  const m = VGR.herstel[vid] || {}; delen.sort((a, b) => a.i - b.i);
+  return new Blob(delen.map(d => d.blob), { type: m.mime || (delen[0] && delen[0].blob.type) || "audio/webm" });
+}
+/* microfoon openen — meteen bij de klik (sommige browsers vragen de toestemming enkel binnen een klik) */
+async function vgrMic() {
+  if (!vgrKan()) { toast("Deze browser kan niet rechtstreeks opnemen. Neem op met je telefoon of computer en laad het bestand op.", 7000); return null; }
+  if (!window.isSecureContext) { toast("Opnemen kan enkel via een beveiligde verbinding (https).", 6000); return null; }
+  try { return await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: false, noiseSuppression: true, autoGainControl: true, channelCount: 1 } }); }
+  catch (e) {
+    const n = e && e.name;
+    toast(n === "NotAllowedError" || n === "SecurityError" ? "De browser kreeg geen toegang tot de microfoon. Sta de microfoon toe (slotje of ‘aA’ naast het adres) en probeer opnieuw."
+      : n === "NotFoundError" ? "Geen microfoon gevonden op dit toestel." : "De microfoon kon niet gestart worden: " + ((e && e.message) || n || e), 9000);
+    return null;
+  }
+}
+/* starten */
+async function vgrStart(v, stream) {
+  const los = () => { if (stream) stream.getTracks().forEach(t => t.stop()); };
+  if (VGR.actief) { los(); toast(VGR.actief.vid === v.id ? "Deze opname loopt al." : "Er loopt al een opname — stop die eerst."); return false; }
+  if (VGR.herstel[v.id]) { los(); toast("Er staat nog een onafgewerkte opname van deze vergadering op dit toestel — laad die eerst op of gooi ze weg.", 7000); return false; }
+  if (!stream) stream = await vgrMic(); if (!stream) return false;
+  if (VGR.actief) { los(); return false; }
+  const mime = VGR_MIMES.find(m => { try { return MediaRecorder.isTypeSupported(m); } catch (e) { return false; } }) || "";
+  let rec; try { rec = new MediaRecorder(stream, mime ? { mimeType: mime, audioBitsPerSecond: 48000 } : { audioBitsPerSecond: 48000 }); }
+  catch (e) { stream.getTracks().forEach(t => t.stop()); toast("Opnemen lukt niet in deze browser: " + ((e && e.message) || e), 8000); return false; }
+  const r = { vid: v.id, pid: v.project_id, onderwerp: v.onderwerp, rec, stream, mime: rec.mimeType || mime || "audio/webm", delen: [], bytes: 0, i: 0, start: Date.now(), sinds: Date.now(), opgenomen: 0, gepauzeerd: false, opslagOk: true, stoppen: null, onderbroken: "" };
+  VGR.actief = r;
+  await vgrMetaBewaar({ vid: v.id, pid: v.project_id, onderwerp: v.onderwerp, mime: r.mime, start: r.start, duur: 0, bytes: 0 });
+  rec.ondataavailable = async (ev) => {
+    if (!ev.data || !ev.data.size || r.weg) return; const i = r.i++; r.delen.push(ev.data); r.bytes += ev.data.size;
+    if (r.opslagOk && !(await vgrDeelBewaar(r.vid, i, ev.data))) r.opslagOk = false;
+    if (r.weg) return vgrWis(r.vid);   // weggegooid terwijl dit stukje bewaard werd
+    if (r.opslagOk) vgrMetaBewaar({ vid: r.vid, pid: r.pid, onderwerp: r.onderwerp, mime: r.mime, start: r.start, duur: vgrDuur(r), bytes: r.bytes });
+  };
+  rec.onstop = () => { r.stream.getTracks().forEach(t => t.stop()); if (r.stoppen) r.stoppen(); };
+  rec.onerror = (ev) => { r.onderbroken = "De opname werd onderbroken" + (ev && ev.error && ev.error.message ? " (" + ev.error.message + ")" : "") + "."; vgrStop(true); };
+  stream.getAudioTracks().forEach(t => { t.onmute = () => { r.stil = true; vgrBalk(); }; t.onunmute = () => { r.stil = false; vgrBalk(); }; t.onended = () => { if (VGR.actief === r && !r.klaar) { r.onderbroken = "De microfoon viel weg (bv. scherm vergrendeld, ander programma of oproep)."; vgrStop(true); } }; });
+  try { rec.start(5000); } catch (e) { stream.getTracks().forEach(t => t.stop()); VGR.actief = null; await vgrWis(v.id); toast("Opnemen lukt niet: " + ((e && e.message) || e), 8000); return false; }
+  vgrNiveau(r); vgrWaak(true); vgrBalk(); clearInterval(VGR.timer); VGR.timer = setInterval(vgrBalk, 500);
+  toast("Opname gestart — laat dit venster open" + (/Mobi|Android|iPhone|iPad/i.test(navigator.userAgent) ? " en het scherm aan" : "") + ".", 5000);
+  render(); return true;
+}
+/* microfoonniveau (klein meterbalkje) */
+function vgrNiveau(r) {
+  try { const Ctx = window.AudioContext || window.webkitAudioContext; if (!Ctx) return; const ctx = new Ctx(); const src = ctx.createMediaStreamSource(r.stream); const an = ctx.createAnalyser(); an.fftSize = 512; src.connect(an);
+    const buf = new Uint8Array(an.fftSize); r.ctx = ctx; r.niveau = () => { an.getByteTimeDomainData(buf); let m = 0; for (let k = 0; k < buf.length; k++) m = Math.max(m, Math.abs(buf[k] - 128)); return Math.min(1, m / 64); };
+    if (ctx.state === "suspended") ctx.resume().catch(() => { }); } catch (e) { }
+}
+/* scherm wakker houden (telefoon): anders stopt de opname vaak bij het vergrendelen */
+async function vgrWaak(aan) {
+  try { if (aan && "wakeLock" in navigator && document.visibilityState === "visible" && !VGR.lock) { VGR.lock = await navigator.wakeLock.request("screen"); VGR.lock.addEventListener("release", () => { VGR.lock = null; }); }
+    if (!aan && VGR.lock) { await VGR.lock.release(); VGR.lock = null; } } catch (e) { }
+}
+document.addEventListener("visibilitychange", () => { if (VGR.actief && document.visibilityState === "visible") { vgrWaak(true); if (VGR.actief.ctx && VGR.actief.ctx.state === "suspended") VGR.actief.ctx.resume().catch(() => { }); } });
+function vgrPauze() {
+  const r = VGR.actief; if (!r || r.klaar) return;
+  try { if (!r.gepauzeerd) { r.rec.pause(); r.opgenomen += Date.now() - r.sinds; r.gepauzeerd = true; } else { r.rec.resume(); r.sinds = Date.now(); r.gepauzeerd = false; } } catch (e) { toast("Pauzeren lukt niet in deze browser."); }
+  vgrBalk(); render();
+}
+/* stoppen: alles samenvoegen en opladen (onderbroken = automatisch gestopt, wat er is blijft bewaard) */
+async function vgrStop(onderbroken) {
+  const r = VGR.actief; if (!r || r.klaar) return; r.klaar = true;
+  if (!r.gepauzeerd) r.opgenomen += Date.now() - r.sinds; r.gepauzeerd = true;
+  await new Promise(ok => { r.stoppen = ok; try { if (r.rec.state !== "inactive") r.rec.stop(); else ok(); } catch (e) { ok(); } setTimeout(ok, 4000); });
+  await new Promise(ok => setTimeout(ok, 300));   // laatste stukje (dataavailable) eerst laten bewaren
+  try { r.ctx && r.ctx.close(); } catch (e) { } vgrWaak(false); clearInterval(VGR.timer); VGR.timer = null;
+  const duur = Math.round(r.opgenomen / 1000);
+  VGR.actief = null;
+  if (!r.bytes) { await vgrWis(r.vid); vgrBalk(); render(); toast(onderbroken ? (r.onderbroken || "De opname werd onderbroken.") + " Er werd niets opgenomen." : "Er werd niets opgenomen.", 7000); return; }
+  if (r.opslagOk) { await vgrMetaBewaar({ vid: r.vid, pid: r.pid, onderwerp: r.onderwerp, mime: r.mime, start: r.start, duur, bytes: r.bytes }); VGR.herstel[r.vid] = { vid: r.vid, pid: r.pid, onderwerp: r.onderwerp, mime: r.mime, start: r.start, duur, bytes: r.bytes }; }
+  if (onderbroken) toast((r.onderbroken || "De opname werd onderbroken.") + " Wat er al opgenomen was (" + vgTijd(duur) + "), wordt nu opgeladen.", 9000);
+  const blob = new Blob(r.delen, { type: r.mime });
+  vgrBalk(); return vgrOpladen(r.vid, blob, r.mime, r.start, !r.opslagOk);
+}
+async function vgrOpladen(vid, blob, mime, start, geenKopie) {
+  if (geenKopie) VGR.noodkopie = { vid, blob, mime, start };   // geen kopie op het toestel: in het geheugen houden tot het opladen lukt
+  const v = S.vergaderingen && S.vergaderingen[vid];
+  if (!v) { toast("De vergadering bestaat niet meer. De opname blijft op dit toestel bewaard.", 8000); render(); return; }
+  if (!["concept", "mislukt"].includes(v.status) || (v.opname && v.status !== "mislukt")) { toast("Deze vergadering heeft al een opname. De nieuwe opname blijft op dit toestel bewaard (Vergaderingen › deze vergadering).", 9000); render(); return; }
+  const d = new Date(start || Date.now()); const p2 = (n) => String(n).padStart(2, "0");
+  const naam = `opname ${d.getFullYear()}-${p2(d.getMonth() + 1)}-${p2(d.getDate())} ${p2(d.getHours())}u${p2(d.getMinutes())}${vgrExt(mime)}`;
+  const f = new File([blob], naam, { type: String(mime || "").split(";")[0] || "audio/webm" });   // zonder ';codecs=…' (het Drive-script aanvaardt enkel type/subtype)
+  const ok = await vgOpnameOpladen(v, f, "microfoon");
+  if (ok) { await vgrWis(vid); if (VGR.noodkopie && VGR.noodkopie.vid === vid) VGR.noodkopie = null; }
+  else if (geenKopie) toast("Opladen mislukt en dit toestel kon geen kopie bewaren — laat dit venster open en probeer ‘Opnieuw opladen’.", 10000);
+  render(); return ok;
+}
+async function vgrAnnuleer() {
+  const r = VGR.actief; if (!r) return;
+  if (!confirm("Opname stoppen en weggooien? Wat opgenomen werd, gaat verloren.")) return;
+  r.klaar = true; r.weg = true;
+  await new Promise(ok => { r.stoppen = ok; try { if (r.rec.state !== "inactive") r.rec.stop(); else ok(); } catch (e) { ok(); } setTimeout(ok, 4000); });
+  r.stream.getTracks().forEach(t => t.stop()); try { r.ctx && r.ctx.close(); } catch (e) { }
+  vgrWaak(false); clearInterval(VGR.timer); VGR.timer = null; VGR.actief = null; await new Promise(ok => setTimeout(ok, 300)); await vgrWis(r.vid); vgrBalk(); render(); toast("Opname weggegooid.");
+}
+/* vaste balk onderaan (in elk scherm zolang de opname loopt of oplaadt) */
+function vgrBalk() {
+  let el = document.getElementById("vgRec"); const r = VGR.actief;
+  const up = r ? null : Object.entries(VG.upload).find(([id, u]) => u && u.bezig && u.mic);
+  const wees = r || up || !S.vergaderingen ? null : Object.values(VGR.herstel).find(m => !S.vergaderingen[m.vid]);   // kopie van een vergadering die niet (meer) bestaat
+  const groot = document.querySelector(".vg-rec-groot .num"); if (groot && r) groot.textContent = vgTijd(vgrDuur(r));
+  if (!r && !up && !wees) { if (el) el.hidden = true; return; }
+  if (!el) { el = document.createElement("div"); el.id = "vgRec"; el.className = "vg-rec"; el.setAttribute("role", "status"); document.body.appendChild(el); }
+  el.hidden = false;
+  if (wees) {
+    const sleutel = "w:" + wees.vid;
+    if (el.dataset.k !== sleutel) { el.dataset.k = sleutel; el.innerHTML = `<span class="vg-rec-dot pauze"></span><span class="vg-rec-t">Onafgewerkte opname op dit toestel</span><span class="muted" style="font-size:12px">${esc(wees.onderwerp || "")}${wees.duur ? " · " + vgTijd(wees.duur) : ""} — de vergadering bestaat niet meer</span><button type="button" class="btn sm" data-vg-act="rec-wees-dl" data-vid="${esc(wees.vid)}">Downloaden</button><button type="button" class="btn sm ghost danger" data-vg-act="rec-wees-weg" data-vid="${esc(wees.vid)}">Weggooien</button>`; }
+    return;
+  }
+  if (r) {
+    const sleutel = "r:" + r.vid + ":" + r.gepauzeerd + ":" + !!r.klaar;
+    if (el.dataset.k !== sleutel) {
+      el.dataset.k = sleutel;
+      el.innerHTML = `<span class="vg-rec-dot${r.gepauzeerd ? " pauze" : ""}"></span><span class="vg-rec-t num"></span><span class="vg-rec-meter"><i></i></span><button type="button" class="vg-rec-ond" data-vg-goto="${r.vid}" title="Naar de vergadering">${esc(r.onderwerp || "Opname")}</button>
+        ${r.klaar ? `<span class="muted">Afronden…</span>` : `<button type="button" class="btn sm" data-vg-act="rec-pauze">${r.gepauzeerd ? "▶ Verder" : "❚❚ Pauze"}</button><button type="button" class="btn sm primary vg-rec-stop" data-vg-act="rec-stop">■ Stop &amp; opladen</button>`}`;
+    }
+    el.querySelector(".vg-rec-t").textContent = vgTijd(vgrDuur(r)) + (r.gepauzeerd ? " · gepauzeerd" : r.stil ? " · ⚠ geen geluid van de microfoon (scherm vergrendeld of oproep?)" : "");
+    const m = el.querySelector(".vg-rec-meter i"); if (m) m.style.width = Math.round((r.gepauzeerd || !r.niveau ? 0 : r.niveau()) * 100) + "%";
+  } else {
+    const [id, u] = up; const v = S.vergaderingen && S.vergaderingen[id]; const sleutel = "u:" + id;
+    if (el.dataset.k !== sleutel) { el.dataset.k = sleutel; el.innerHTML = `<span class="vg-rec-dot pauze"></span><button type="button" class="vg-rec-ond" data-vg-goto="${id}">${esc(v ? v.onderwerp : "Opname")}</button><span class="vg-rec-t"></span><span class="vg-rec-meter up"><i></i></span>`; }
+    el.querySelector(".vg-rec-t").textContent = u.tekst || "Opladen…"; el.querySelector(".vg-rec-meter i").style.width = Math.round((u.pct || 0) * 100) + "%";
+  }
+}
+/* paneel in de vergadering (geen opname): rechtstreeks opnemen, of een onafgewerkte opname van dit toestel opladen */
+function vgrPaneel(v) {
+  const r = VGR.actief && VGR.actief.vid === v.id ? VGR.actief : null; const h = VGR.herstel[v.id]; const nood = VGR.noodkopie && VGR.noodkopie.vid === v.id;
+  if (r) return `<div class="vg-rec-paneel"><div class="vg-rec-groot"><span class="vg-rec-dot${r.gepauzeerd ? " pauze" : ""}"></span><b>${r.gepauzeerd ? "Gepauzeerd" : "Opname loopt"}</b> <span class="num">${vgTijd(vgrDuur(r))}</span></div>
+    <p class="muted" style="margin:6px 0 12px">Laat dit venster open${/Mobi|Android|iPhone|iPad/i.test(navigator.userAgent) ? " en het scherm aan (niet vergrendelen)" : ""}. Je mag wel naar andere schermen van het Planbord gaan: de balk onderaan blijft staan.${r.opslagOk ? "" : " <b>Let op:</b> dit toestel kan geen reservekopie bewaren — sluit de browser niet voor het opladen klaar is."}</p>
+    <div class="actions"><button class="btn primary vg-rec-stop" data-vg-act="rec-stop">■ Stoppen en opladen</button><button class="btn" data-vg-act="rec-pauze">${r.gepauzeerd ? "▶ Verder opnemen" : "❚❚ Pauze"}</button><button class="btn ghost danger" data-vg-act="rec-weg">Weggooien</button></div></div>`;
+  if (h || nood) {
+    const m = h || { duur: 0, bytes: VGR.noodkopie.blob.size, start: VGR.noodkopie.start };
+    return `<div class="notice vg-rec-paneel" style="border-color:var(--warn)"><div><b>Onafgewerkte opname op dit toestel</b> — gestart ${esc(fmtLong(lokDag(new Date(m.start).toISOString())))} ${esc(lokUur(new Date(m.start).toISOString()))}${m.duur ? `, ${vgTijd(m.duur)}` : ""} (${vgrMb(m.bytes || 0)}). Ze werd nog niet (volledig) opgeladen.</div>
+      ${v.opname && v.status !== "mislukt" ? `<p class="muted" style="margin:6px 0 0">Deze vergadering heeft intussen al een opname; deze kopie kan je weggooien.</p>` : ""}
+      <div class="actions" style="margin-top:10px">${v.opname && v.status !== "mislukt" ? "" : `<button class="btn primary" data-vg-act="rec-herstel" data-id="${v.id}">Opnieuw opladen</button>`}<button class="btn ghost danger" data-vg-act="rec-herstel-weg" data-id="${v.id}">Weggooien</button></div></div>`;
+  }
+  if (v.opname && v.status !== "mislukt") return "";
+  if (!vgrKan()) return `<p class="muted" style="margin-top:0">Rechtstreeks opnemen kan niet in deze browser — laad hieronder een opname op.</p>`;
+  return `<div class="vg-rec-paneel"><div class="field"><label class="sw-row"><input type="checkbox" class="sw" id="vg_ok_rec"><span><b>De deelnemers weten dat de vergadering opgenomen wordt</b><small class="muted" style="display:block">Verplicht. De opname, het transcript en het concept zijn enkel zichtbaar voor de projectleden van BROS, nooit automatisch voor de klant.</small></span></label></div>
+    <div class="actions" style="margin-top:10px"><button class="btn primary vg-rec-knop" data-vg-act="rec-start" data-id="${v.id}"><span class="vg-rec-dot"></span> Opname starten</button><span class="muted" style="font-size:12px">${VGR.actief ? "Er loopt al een andere opname." : "De microfoon van dit toestel neemt op; bij het stoppen gaat de opname meteen naar het Planbord."}</span></div></div>`;
+}
+/* snel starten vanuit de lijst: vergadering aanmaken (vandaag, nu) en meteen opnemen */
+function vgrSnelForm(pid) {
+  if (VGR.actief) { toast("Er loopt al een opname — stop die eerst."); return; }
+  if (!vgrKan()) { toast("Deze browser kan niet rechtstreeks opnemen. Maak een vergadering aan en laad een opname op.", 7000); return; }
+  const p = S.projecten[pid]; const n = new Date(); const p2 = (x) => String(x).padStart(2, "0");
+  openModal("Opname starten — " + projName(p), `<div class="form-grid">
+    <div class="field span2"><label for="vgr_ond">Onderwerp</label><input id="vgr_ond" name="onderwerp" required value="${esc("Vergadering " + p2(n.getDate()) + "/" + p2(n.getMonth() + 1))}"></div>
+    <div class="field span2"><label class="sw-row"><input type="checkbox" class="sw" name="ok" value="1" required><span><b>De deelnemers weten dat de vergadering opgenomen wordt</b><small class="muted" style="display:block">Verplicht. Deelnemers, agenda en controleur vul je achteraf aan met ‘Bewerken’.</small></span></label></div></div>`, {
+    saveLabel: "● Opname starten",
+    onSave: async (d) => {
+      if (!d.ok) { toast("Bevestig eerst dat de deelnemers weten dat er opgenomen wordt."); return false; }
+      const stream = await vgrMic(); if (!stream) return false;
+      const row = { project_id: pid, onderwerp: String(d.onderwerp || "").trim() || "Vergadering", datum: todayIso, tijd: p2(n.getHours()) + ":" + p2(n.getMinutes()), deelnemers: [{ soort: "team", id: S.me.id }], agenda: [], controleur: p.lead || S.me.id };
+      let nv; try { nv = await dbInsert("vergaderingen", row); } catch (e) { stream.getTracks().forEach(t => t.stop()); throw e; }
+      VG.open = nv.id; VG.tab = "verslag"; VG.laatsteProject = pid; S.view = "projecten"; S.project = pid; S.ptab = "vergaderingen";
+      setTimeout(() => vgrStart(nv, stream), 0);
+    },
+  });
+}
+/* niet herladen of sluiten tijdens een opname of upload */
+window.vgOpnameBezig = () => vgrBezig() || Object.values(VG.upload).some(u => u && u.bezig);
+(function vgrInit() { const t = setInterval(() => { if (typeof S !== "undefined" && S.ready && S.me) { clearInterval(t); vgrHerstelLaden().then(() => { const ids = Object.keys(VGR.herstel); if (ids.length) { const v = S.vergaderingen && S.vergaderingen[ids[0]]; if (typeof render === "function") render();
+  toast(ids.length === 1 && v ? `Er staat nog een onafgewerkte opname op dit toestel (${v.onderwerp}) — open de vergadering om ze op te laden.` : `Er staan nog ${ids.length} onafgewerkte opnames op dit toestel — open de vergadering om ze op te laden.`, 9000); } }); } }, 1500); })();
+
 
 /* ---------- afspelen: één vaste speler (blijft spelen als het scherm hertekent) ---------- */
 function vgSpeler() {
@@ -203,6 +409,7 @@ async function vgSpeel(v, s, e) {
 const vgSpeeltijd = () => { const el = document.getElementById("vgSpeler"); if (!el || el.hidden) return null; const a = el.querySelector("audio"); return a && a.currentTime ? Math.round(a.currentTime * 10) / 10 : null; };
 /* na elke render (app.js): speler verbergen als je de vergadering verlaat */
 function vgNaRender() {
+  vgrBalk();   // 1.58: opnamebalk bijwerken (ook buiten de vergadering)
   const el = document.getElementById("vgSpeler"); if (!el || el.hidden) return;
   if (!(S.view === "projecten" && S.ptab === "vergaderingen" && VG.open === el.dataset.vg)) { el.hidden = true; el.querySelector("audio").pause(); }
 }
@@ -489,9 +696,21 @@ document.addEventListener("click", async (e) => {
   if (a === "lijst") { VG.open = null; render(); return; }
   if (a === "tab") { VG.tab = el.dataset.t; render(); return; }
   if (a === "nieuw") return vgForm(el.dataset.pid);
+  if (a === "rec-snel") return vgrSnelForm(el.dataset.pid);
+  if (a === "rec-start" && v) { if (!$("#vg_ok_rec")?.checked) { toast("Bevestig eerst dat de deelnemers weten dat er opgenomen wordt."); return; } return vgrStart(v); }
+  if (a === "rec-pauze") return vgrPauze();
+  if (a === "rec-stop") return vgrStop(false);
+  if (a === "rec-weg") return vgrAnnuleer();
+  if (a === "rec-herstel" && v) {
+    if (VGR.noodkopie && VGR.noodkopie.vid === v.id) { const n = VGR.noodkopie; return vgrOpladen(v.id, n.blob, n.mime, n.start, true); }
+    try { const m = VGR.herstel[v.id]; const b = await vgrHerstelBlob(v.id); if (!b.size) { toast("Deze kopie is leeg."); return; } return vgrOpladen(v.id, b, m.mime, m.start, false); } catch (x2) { toast("De kopie op dit toestel kon niet gelezen worden: " + ((x2 && x2.message) || x2), 8000); return; }
+  }
+  if (a === "rec-wees-dl") { const vid = el.dataset.vid; try { const m = VGR.herstel[vid] || {}; const b = await vgrHerstelBlob(vid); const d = new Date(m.start || Date.now()); const l = document.createElement("a"); l.href = URL.createObjectURL(b); l.download = "opname " + d.toISOString().slice(0, 16).replace("T", " ").replace(":", "u") + vgrExt(m.mime || b.type); document.body.appendChild(l); l.click(); setTimeout(() => { URL.revokeObjectURL(l.href); l.remove(); }, 2000); } catch (x2) { toast("Downloaden mislukt: " + ((x2 && x2.message) || x2), 7000); } return; }
+  if (a === "rec-wees-weg") { if (!confirm("Deze opname op dit toestel weggooien? Ze kan niet hersteld worden.")) return; await vgrWis(el.dataset.vid); vgrBalk(); return; }
+  if (a === "rec-herstel-weg" && v) { if (!confirm("De onafgewerkte opname op dit toestel weggooien? Ze kan niet hersteld worden.")) return; if (VGR.noodkopie && VGR.noodkopie.vid === v.id) VGR.noodkopie = null; await vgrWis(v.id); render(); return; }
   if (a === "volgende") return vgVolgende(el.dataset.pid, id || null);
   if (a === "bewerk-vg" && v) return vgForm(v.project_id, v);
-  if (a === "weg" && v) { if (!confirm(`Vergadering "${v.onderwerp}" verwijderen?`)) return; try { await dbDelete("vergaderingen", v.id); VG.open = null; render(); } catch (x2) { } return; }
+  if (a === "weg" && v) { if (VGR.actief && VGR.actief.vid === v.id) { toast("Stop of gooi eerst de opname weg."); return; } if (!confirm(`Vergadering "${v.onderwerp}" verwijderen?`)) return; try { await dbDelete("vergaderingen", v.id); await vgrWis(v.id); VG.open = null; render(); } catch (x2) { } return; }
   if (a === "upload" && v) {
     const f = $("#vg_file")?.files?.[0]; if (!f) { toast("Kies eerst een opname."); return; }
     if (!$("#vg_ok")?.checked) { toast("Bevestig eerst dat de deelnemers weten dat er opgenomen werd."); return; }

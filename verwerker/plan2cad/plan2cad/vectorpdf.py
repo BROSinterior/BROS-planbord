@@ -75,7 +75,10 @@ def pagina_inhoud(pad: str, pagina: int = 0) -> dict:
             raise ValueError(f"Pagina {pagina + 1} bestaat niet - dit document heeft "
                              f"{doc.page_count} pagina('s).")
         page = doc[pagina]
-        blad_opp = abs(page.rect.get_area()) or 1.0
+        # oppervlaktes zelf berekenen: Rect.get_area() bestaat niet in elke PyMuPDF-versie
+        # (op de verwerkingscomputer gaf dat 'Rect' object has no attribute 'get_area')
+        br = page.rect
+        blad_opp = max(1e-9, (br.x1 - br.x0) * (br.y1 - br.y0))
 
         lijnen = rechthoeken = 0
         for d in page.get_drawings():
@@ -88,10 +91,11 @@ def pagina_inhoud(pad: str, pagina: int = 0) -> dict:
         afbeeldingen = []
         for info in page.get_image_info(xrefs=True):
             x0, y0, x1, y1 = info["bbox"]
-            vak = pymupdf.Rect(x0, y0, x1, y1) & page.rect
-            if vak.is_empty:
+            x0, y0, x1, y1 = max(x0, br.x0), max(y0, br.y0), min(x1, br.x1), min(y1, br.y1)
+            if x1 <= x0 or y1 <= y0:
                 continue
-            deel = abs(vak.get_area()) / blad_opp
+            vak = pymupdf.Rect(x0, y0, x1, y1)
+            deel = (x1 - x0) * (y1 - y0) / blad_opp
             if deel < MIN_AFBEELDING:
                 continue
             afbeeldingen.append({

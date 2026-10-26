@@ -3,7 +3,7 @@
    Statische webapp op Supabase (login, live-synchronisatie, rechten)
    ===================================================================== */
 if (window.top !== window.self) { try { window.top.location.replace(window.location.href); } catch (e) { document.documentElement.innerHTML = ""; } }   // niet in een vreemd frame (clickjacking)
-const APP_VERSION = "1.57.1";
+const APP_VERSION = "1.58.0";
 const PROJ_STATUS = { offerte: "In offerte", lopend: "Lopend", on_hold: "On hold", afgerond: "Afgerond", verloren: "Verloren" };
 const KLANTTYPE = { particulier: "Particulier", zakelijk: "Zakelijk" };
 const KLANTCODE = { particulier: "PAR", zakelijk: "ZAK" };
@@ -3992,7 +3992,7 @@ async function checkVersion() {
     if (!j.version || j.version === APP_VERSION) return;
     // eerste keer: stil vers ophalen en herladen (één poging per versie, zodat het nooit blijft herladen als app.js nog niet online staat)
     let tried = ""; try { tried = sessionStorage.getItem("pb-refetch") || ""; } catch (e) { }
-    const bezig = $("#modalBg")?.classList.contains("show") || /^(INPUT|TEXTAREA|SELECT)$/.test(document.activeElement?.tagName || "");
+    const bezig = $("#modalBg")?.classList.contains("show") || /^(INPUT|TEXTAREA|SELECT)$/.test(document.activeElement?.tagName || "") || (typeof vgOpnameBezig === "function" && vgOpnameBezig());   // 1.58: nooit herladen tijdens een opname of upload
     if (tried !== j.version && !bezig) { try { sessionStorage.setItem("pb-refetch", j.version); } catch (e) { } return hardReload(); }
     if (!updateAvailable) { updateAvailable = true; $("#updateBar")?.classList.add("show"); }
   } catch (e) { }

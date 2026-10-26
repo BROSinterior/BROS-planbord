@@ -48,7 +48,7 @@ import urllib.request
 import uuid as uuidlib
 from datetime import datetime, timezone
 
-VERSIE = "1.57.0"
+VERSIE = "1.58.0"
 # vaktermen die het spraakmodel als woordenschat meekrijgt (aan te passen in config.json › "woordenlijst")
 WOORDENLIJST = ["werf", "werfbezoek", "werfvergadering", "meetstaat", "offerte", "meerwerk", "minwerk", "vordering", "oplevering",
                 "schrijnwerker", "aannemer", "bouwheer", "ontwerp", "plannen", "maatwerk", "Planbord"]
@@ -538,9 +538,20 @@ class Audio:
             raise Fout("Dit bestand bevat geen geluid dat we kunnen lezen. Is het wel een audio- of video-opname?", (err or "")[-500:], opnieuw=False)
         a = next(s for s in j["streams"] if s.get("codec_type") == "audio")
         duur = float(j.get("format", {}).get("duration") or a.get("duration") or 0)
+        if duur <= 0:   # 1.58: opnames rechtstreeks uit de browser (webm/opus, gefragmenteerde mp4) hebben geen duur in de kop
+            duur = self.gedecodeerde_duur(pad)
         if duur <= 1:
             raise Fout("De opname is leeg of te kort.", opnieuw=False)
         return {"duur_sec": round(duur, 2), "formaat": "%s %s Hz %s kanaal" % (a.get("codec_name"), a.get("sample_rate"), a.get("channels"))}
+
+    def gedecodeerde_duur(self, pad):
+        """Duur door het geluid één keer te decoderen (laatste 'time=' van ffmpeg). 0 als dat niet lukt."""
+        rc, _, err = self.run([self.cfg["ffmpeg"], "-nostdin", "-v", "info", "-i", pad, "-vn", "-f", "null", "-"], timeout=3600)
+        tijden = re.findall(r"time=(\d+):(\d{2}):(\d{2}(?:\.\d+)?)", err or "")
+        if rc != 0 or not tijden:
+            return 0.0
+        u, m, s = tijden[-1]
+        return int(u) * 3600 + int(m) * 60 + float(s)
 
     def naar_wav(self, bron, doel):
         rc, _, err = self.run([self.cfg["ffmpeg"], "-nostdin", "-y", "-v", "error", "-i", bron, "-vn", "-ac", "1", "-ar", "16000", "-c:a", "pcm_s16le", doel])
@@ -1260,6 +1271,15 @@ class PlanOmzetting:
             t = t.replace(p, "")
         return t
 
+    BESTANDSFOUTEN = ("FileDataError", "FileNotFoundError", "EmptyFileError", "ValueError", "Pagina ")
+
+    def foutmelding(self, fout):
+        """Een kapot of beveiligd bestand is iets anders dan een fout in Plan2CAD zelf: zeg welke van de twee."""
+        t = self.kort(fout or "onbekende fout")
+        if any(t.startswith(x) for x in self.BESTANDSFOUTEN):
+            return "Plan2CAD kon dit bestand niet lezen (beschadigd, beveiligd of geen plan): " + t
+        return "Fout in Plan2CAD op de verwerkingscomputer (niet aan het bestand): " + t + " — meld dit, met de naam van het bestand."
+
     def gegevens(self, g):
         return self.sb.rpc("plan_bestand", {"p_job": self.job_id, "p_claim": self.claim, "p_gegevens": g})
 
@@ -1363,7 +1383,7 @@ class PlanOmzetting:
         if not resultaat:
             raise Fout("Plan2CAD gaf geen resultaat (afgebroken?).", "\n".join(staart)[-3000:], opnieuw=True)
         if not resultaat.get("resultaten"):
-            raise Fout("Plan2CAD kon dit bestand niet lezen (beschadigd, beveiligd of geen plan): " + self.kort(resultaat.get("fout") or "onbekende fout"), str(resultaat.get("detail") or "")[-3000:], opnieuw=False)
+            raise Fout(self.foutmelding(resultaat.get("fout")), str(resultaat.get("detail") or "")[-3000:], opnieuw=False)
         return resultaat
 
     # -- 4. DXF/DWG naar de opslag (voor de tekenmodule) en naar Drive
@@ -1376,7 +1396,7 @@ class PlanOmzetting:
         for n, r in enumerate(lijst):
             basis = {k: r.get(k) for k in ("label", "pagina", "afbeelding", "route")}
             if not r.get("ok"):
-                res.append(dict(basis, ok=False, fout=self.kort(r.get("fout") or "onbekende fout")[:500]))
+                res.append(dict(basis, ok=False, fout=self.foutmelding(r.get("fout"))[:500]))
                 continue
             self.zet("resultaat bewaren (%d/%d)" % (n + 1, len(lijst)), 0.78 + 0.18 * n / max(1, len(lijst)))
             item = dict(basis, ok=True)
@@ -1653,7 +1673,7 @@ def controle(cfg):
     # 1.57: Plannen omzetten (Plan2CAD)
     if plan2cad_status(cfg):
         try:
-            r = subprocess.run([cfg["plan2cad_python"], "-c", "import plan2cad, fitz, ezdxf, cv2, numpy; print(plan2cad.__version__)"],
+            r = subprocess.run([cfg["plan2cad_python"], "-c", "import plan2cad, pymupdf, ezdxf, cv2, numpy; print(plan2cad.__version__, '· pymupdf', pymupdf.__version__, '· ezdxf', ezdxf.__version__, '· opencv', cv2.__version__, '· numpy', numpy.__version__)"],
                                capture_output=True, text=True, timeout=120, env=dict(os.environ, PYTHONPATH=cfg["plan2cad_map"]))
             regel(r.returncode == 0, "Plan2CAD: " + (("versie " + r.stdout.strip()) if r.returncode == 0 else (r.stderr.strip().splitlines() or ["start niet"])[-1]))
         except Exception as e:

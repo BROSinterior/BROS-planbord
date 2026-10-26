@@ -1,6 +1,9 @@
-# Plan2CAD op de verwerkingscomputer (zonder venster): installeer.sh zet dit in een eigen Python-omgeving
-pymupdf>=1.24
-ezdxf>=1.3
-numpy>=1.24
-opencv-contrib-python-headless>=4.9
-pytesseract>=0.3.10
+# Plan2CAD op de verwerkingscomputer (zonder venster): installeer.sh zet dit in een eigen Python-omgeving.
+# Vaste versies: precies de combinatie die getest is. Een nieuwere versie van een pakket kan iets anders doen
+# (1.57.0: een PyMuPDF zonder Rect.get_area() liet het omzetten mislukken). Bijwerken = hier aanpassen, testen,
+# en installeer.sh opnieuw uitvoeren.
+pymupdf==2.0
+ezdxf==1.4.5
+numpy==2.5.3
+opencv-contrib-python-headless==5.0.0.93
+pytesseract==0.3.13
