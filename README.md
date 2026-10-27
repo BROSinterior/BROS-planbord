@@ -207,6 +207,14 @@ Per project het tabblad **Renders** (naast Plannen), enkel voor het team.
 - **Opslag:** privé-opslag `renders` (`<project>/ontwerp|sfeer|render|presentatie/…`), kopie in de projectmap › Renders/<ruimte> en Renders/Presentaties op Drive.
 - **Terugrollen:** de vorige versie van het Planbord terugzetten (GitHub) en op de Mac mini de vorige `verwerker/` installeren; script 055 is enkel toevoegend (bestaande tabellen blijven onaangeroerd). Renders uitschakelen zonder terugrollen: daglimiet op 0.
 
+### Renders per ruimte en standpunt (script 057, v1.61)
+
+- **Installeren:** `sql/057_render_standpunten.sql` (controle `2 | 2 | 0 | 57`), het Planbord pushen en op de Mac mini `verwerker/installeer.sh` opnieuw uitvoeren (verwerker 1.61). Geen nieuw Drive-script. Een oudere verwerker laat nieuwe aanvragen in de wachtrij (niets betaald).
+- **Structuur:** project → ruimte (`render_ruimtes`, vaste id) → standpunt (`render_standpunten`: oorspronkelijk ontwerp, hoofd- en presentatieversie, controlelijst, geldende correcties, omgevingsnotitie) → versies (`render_beelden.standpunt_id`, `versie`, `basis_beeld_id`). Correctie = nieuwe versie in hetzelfde standpunt (ook vanaf een oudere versie).
+- **Rollen in de opdracht:** nieuw → ontwerp = geometrische hoofdbron; correctie → gekozen versie = bewerkingsdoel + oorspronkelijk ontwerp als geometrische referentie; achtergrond = enkel buitenzicht; sfeer = enkel licht. Context: werfadres, verdieping, zijde, kijkrichting, licht (standaard helder), bevestigde controlepunten, geldende correcties.
+- **Automatische controle:** Claude vergelijkt na `render_klaar` met het ontwerp (en de vorige versie) → `render_beelden.controle` ("Controle nodig" = vermoeden). Uit te zetten in Instellingen › Renders.
+- **Migratie:** idempotent, verwijdert niets; onzekere koppelingen onder Nakijken.
+
 ### Stalenborden per ruimte (script 056, v1.60)
 
 - **Installeren:** `sql/056_stalenborden.sql` (controle `3 | 2 | 1 | 56`), daarna het Planbord pushen en op de Mac mini `verwerker/installeer.sh` opnieuw uitvoeren (verwerker 1.60). Optioneel het nieuwe `drive/Code.gs` online zetten: dan opent de materiaallijst naast het stalenbord op Drive als tekst. Een oudere verwerker krijgt geen stalenborden (ze blijven in de wachtrij, er wordt niets betaald).
