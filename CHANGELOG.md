@@ -2,6 +2,10 @@
 
 De nieuwste versie staat bovenaan. (Vanaf 1.48 houdt `version.json` enkel de laatste versie bij; het Planbord vraagt dat bestand elke 5 minuten op.)
 
+## 1.61.1 — 2026-10-28 (geen databasescript; nieuw drive/Code.gs online zetten)
+
+Aannemersportaal, prijsaanvragen: een aannemer dacht dat alles ingevuld was en bleef herinneringen krijgen. Bij prijsvragen met een richtprijs staan de velden al ingevuld met het voorstel van BROS, waardoor het portaal "125 van 125 posten ingevuld" toonde terwijl er nog niet ingediend was (en enkel indienen stopt de herinneringen). Nu: status "Nog niet ingediend" (rood in het overzicht), knop "Nakijken en indienen", bovenaan elke open aanvraag een duidelijke melding met de knop **Prijsopgave indienen** (naast die onderaan), en "nog in te dienen" in Te doen en het projectoverzicht. De herinneringsmail zegt nu ook: staan je prijzen al ingevuld, klik dan op Prijsopgave indienen. De mail aan de projectlead na de laatste herinnering vermeldt dat de prijzen mogelijk ingevuld maar niet ingediend zijn.
+
 ## 1.61.0 — 2026-10-27 (script 057 + verwerker/ opnieuw installeren op de Mac mini; geen nieuw Drive-script)
 
 Renders: **per ruimte en standpunt, met volledige beeldhistoriek**, en ontwerpgetrouwer renderen.
