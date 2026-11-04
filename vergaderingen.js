@@ -126,6 +126,7 @@ function vVergadering(v) {
       <div class="vg-meta">${vgStatusPill(v)} <span class="muted">Deelnemers:</span> ${deeln} <span class="muted">· Controle door:</span> ${v.controleur ? esc(userById(v.controleur).name) : `<span class="pill late">nog te bepalen</span>`}</div></div>
       <div class="actions">${kanSpelen ? `<button class="btn" data-vg-act="speel" data-id="${v.id}" data-s="0">▶ Opname afspelen</button>` : ""}${v.drive_url ? `<a class="btn" href="${esc(safeUrl(v.drive_url))}" target="_blank" rel="noopener" title="Het origineel in de projectmap (Vergaderingen)">Origineel op Drive ↗</a>` : ""}
         ${!vast ? `<button class="btn" data-vg-act="bewerk-vg" data-id="${v.id}">Bewerken</button>` : ""}${v.opname && (v.status === "controle" || v.status === "mislukt") ? `<button class="btn" data-vg-act="opnieuw" data-id="${v.id}">Opnieuw verwerken…</button>` : ""}
+        ${schemaV() >= 59 ? (Object.values(S.notities || {}).some(n => n.vergadering_id === v.id) ? `<button class="btn" data-vg-act="notitie" data-id="${v.id}" title="Het verslag met de to-do's per verantwoordelijke in Notities">📝 Verslag in Notities</button>` : (!v.opname || vast) ? `<button class="btn" data-vg-act="notitie" data-id="${v.id}" title="Maak van deze vergadering een notitie (verslag) met de to-do's per verantwoordelijke">📝 Verslag maken in Notities</button>` : "") : ""}
         <button class="btn" data-vg-act="volgende" data-pid="${v.project_id}" data-id="${v.id}" title="Nieuwe vergadering met de open taken en beslissingen als agenda">Volgende vergadering</button>
         ${v.status === "concept" && !v.opname ? `<button class="btn ghost danger" data-vg-act="weg" data-id="${v.id}">Verwijderen</button>` : ""}</div></div>
     ${banner}${agenda}
@@ -449,7 +450,9 @@ function vgVerslag(v, pts, u) {
   const tedoen = pts.filter(x => x.status === "voorstel").length;
   const afronden = v.status === "controle" ? `<div class="panel vg-afronden"><div class="panel-body"><div>${tedoen ? `<b>Nog ${tedoen} ${tedoen === 1 ? "punt" : "punten"} te beoordelen.</b> Bevestig, corrigeer of wijs elk punt af.` : `<b>Alle punten zijn beoordeeld.</b> Lees de samenvatting nog eens na.`}<div class="muted" style="font-size:12px">${vgMagAfronden(v) ? "Na de controle liggen het verslag en de punten vast (heropenen kan). Ook een tweede AI-controle vervangt deze menselijke controle niet." : `Enkel de controleur (${esc(userById(v.controleur).name || "nog te bepalen")}) of een beheerder kan de controle afronden.`}</div></div>
     <button class="btn primary" data-vg-act="controle" data-id="${v.id}" ${tedoen || !vgMagAfronden(v) ? "disabled" : ""}>Verslag als gecontroleerd markeren</button></div></div>` : "";
-  return samenv + onderw + secties + notitie + afronden;
+  const tds = typeof tdBlokken === "function" ? Object.values(S.taken).filter(t => t.vergadering_id === v.id && t.bundel) : [];
+  const todos = tds.length ? `<div class="panel" style="margin-bottom:16px"><div class="panel-head"><div><h3>To do's per verantwoordelijke</h3><div class="muted" style="font-size:12px;margin-top:2px">Eén taak per persoon met de punten van deze vergadering als checklist.</div></div></div><div class="panel-body">${tdBlokken(tds)}</div></div>` : "";
+  return samenv + onderw + secties + todos + notitie + afronden;
 }
 function vgPuntRij(x, v, vast) {
   const bewerk = VG.bewerk === x.id && !vast; const ai = !!x.uitvoer_id; const o = x.origineel || {};
@@ -459,7 +462,7 @@ function vgPuntRij(x, v, vast) {
   const wie = x.soort === "actie" ? `<div class="vg-wie"><span class="muted">Wie:</span> ${x.verantwoordelijke ? esc(userById(x.verantwoordelijke).name) : `<span class="pill late">nog te bepalen</span>`}${x.verantwoordelijke_tekst && (!x.verantwoordelijke || userById(x.verantwoordelijke).name.toLowerCase().indexOf(x.verantwoordelijke_tekst.toLowerCase().split(" ")[0]) < 0) ? ` <small class="muted">(genoemd: “${esc(x.verantwoordelijke_tekst)}”)</small>` : ""}
       · <span class="muted">Tegen:</span> ${x.deadline ? fmtLong(x.deadline) : `<span class="pill late">nog te bepalen</span>`}${x.deadline_tekst ? ` <small class="muted">(genoemd: “${esc(x.deadline_tekst)}”)</small>` : ""}</div>` : "";
   const status = x.status === "voorstel" ? "" : `<div class="vg-oordeel vg-o-${x.status}">${x.status === "afgewezen" ? "✕ Afgewezen" : x.status === "gecorrigeerd" ? "✎ Gecorrigeerd" : "✓ Juist"}${x.beoordeeld_door ? ` · ${esc(userById(x.beoordeeld_door).name)} ${fmtLong(lokDag(x.beoordeeld_op))}` : ""}${x.reden ? ` · “${esc(x.reden)}”` : ""}${x.status === "gecorrigeerd" && ai && o.tekst && o.tekst !== x.tekst ? `<div class="muted">AI-versie: “${esc(String(o.tekst).slice(0, 300))}”${o.voorwaarden && o.voorwaarden !== x.voorwaarden ? ` — voorwaarde “${esc(o.voorwaarden)}”` : ""}</div>` : ""}</div>`;
-  const taak = x.taak_id ? (S.taken[x.taak_id] ? `<div class="vg-taak">→ ${x.taak_koppeling === "bestaand" ? "Gekoppeld aan taak" : "Taak"}: <button type="button" class="wj-t" data-edit-task="${x.taak_id}">${esc(S.taken[x.taak_id].titel)}</button> <small class="muted">${esc(TASK_STATUS[S.taken[x.taak_id].status] || "")}</small></div>` : `<div class="vg-taak muted">→ taak (niet zichtbaar)</div>`) : "";
+  const taak = x.taak_id ? (S.taken[x.taak_id] ? `<div class="vg-taak">→ ${x.taak_koppeling === "bestaand" ? "Gekoppeld aan taak" : x.taak_koppeling === "bundel" ? "To do in" : "Taak"}: <button type="button" class="wj-t" data-edit-task="${x.taak_id}">${esc(S.taken[x.taak_id].titel)}</button> <small class="muted">${esc(TASK_STATUS[S.taken[x.taak_id].status] || "")}</small>${x.taak_koppeling === "bundel" && typeof tdTag === "function" ? tdTag(S.taken[x.taak_id]) : ""}</div>` : `<div class="vg-taak muted">→ taak (niet zichtbaar)</div>`) : "";
   const w = (x.waarschuwingen || []).length ? `<ul class="vg-wl">${x.waarschuwingen.map(t => `<li>⚠ ${esc(t)}</li>`).join("")}</ul>` : "";
   let knoppen = "";
   if (!vast) {
@@ -478,7 +481,7 @@ function vgActieForm(x, v) {
   const wieSel = `<select class="inline" data-vg-concept="${x.id}" data-f="wie" aria-label="Verantwoordelijke"><option value="">— nog te bepalen —</option>${opts(users().map(u => [u.id, u.name]), vgC(x, "wie", x.verantwoordelijke || ""))}</select>`;
   return `<div class="vg-actie"><div class="vg-actie-velden"><input class="inline" data-vg-concept="${x.id}" data-f="titel" value="${esc(vgC(x, "titel", x.tekst))}" aria-label="Taak">${wieSel}<input class="inline" type="date" data-vg-concept="${x.id}" data-f="eind" value="${esc(vgC(x, "eind", x.deadline || ""))}" aria-label="Deadline" title="Leeg = deadline nog te bepalen"></div>
     ${lijkt.length ? `<div class="vg-lijkt">Lijkt op een bestaande taak: ${lijkt.map(o => `<button class="btn sm" data-vg-act="koppel" data-id="${x.id}" data-taak="${o.t.id}" title="Geen nieuwe taak: dit punt koppelen aan de bestaande taak (er komt een notitie bij)">Koppel aan “${esc(o.t.titel.slice(0, 50))}”</button>`).join(" ")}</div>` : ""}
-    <div class="vg-knop"><button class="btn sm primary" data-vg-act="taak" data-id="${x.id}">✓ Taak maken</button><button class="btn sm" data-vg-act="ok" data-id="${x.id}" title="Juist, maar geen taak nodig">✓ Juist, geen taak</button><button class="btn sm ghost danger" data-vg-act="nee" data-id="${x.id}">✕ Afwijzen</button></div></div>`;
+    <div class="vg-knop">${typeof tdOk === "function" && tdOk() ? `<button class="btn sm primary" data-vg-act="todo" data-id="${x.id}" title="Punt in de to-dotaak van de verantwoordelijke (één taak per persoon voor deze vergadering)">✓ To do</button><button class="btn sm" data-vg-act="taak" data-id="${x.id}" title="Een aparte taak (bv. een groot werk)">Aparte taak</button>` : `<button class="btn sm primary" data-vg-act="taak" data-id="${x.id}">✓ Taak maken</button>`}<button class="btn sm" data-vg-act="ok" data-id="${x.id}" title="Juist, maar geen taak nodig">✓ Juist, geen taak</button><button class="btn sm ghost danger" data-vg-act="nee" data-id="${x.id}">✕ Afwijzen</button></div></div>`;
 }
 function vgBewerkForm(x) {
   return `<div class="vg-bewerk"><textarea class="inline vg-ta" rows="2" data-vg-concept="${x.id}" data-f="tekst">${esc(vgC(x, "tekst", x.tekst))}</textarea>
@@ -563,7 +566,7 @@ function vgForm(pid, v, preset) {
 /* volgende vergadering: open taken en open beslissingen/vragen van eerdere vergaderingen als agenda */
 function vgVolgende(pid, vorigeId) {
   const vorige = vorigeId ? S.vergaderingen[vorigeId] : vgOf(pid)[0];
-  const kand = vgTakenVan(pid).filter(t => t.status !== "done").map(t => ({ soort: "taak", id: t.id, tekst: t.titel }))
+  const kand = vgTakenVan(pid).filter(t => t.status !== "done").flatMap(t => t.bundel && typeof tdPunten === "function" && tdOk() ? tdPunten(t.id).filter(p => !p.klaar).map(p => ({ soort: "taak", id: t.id, tekst: p.tekst + " (" + tdWie(t) + ")" })) : [{ soort: "taak", id: t.id, tekst: t.titel }])
     .concat(vgOpenPunten(pid).map(x => ({ soort: "punt", id: x.id, tekst: (x.soort === "vraag" ? "Open vraag: " : "Beslissing nog open: ") + x.tekst + ((x.voorwaarden || "").trim() ? " (" + x.voorwaarden + ")" : "") })));
   vgForm(pid, null, { onderwerp: vorige ? "Opvolging: " + vorige.onderwerp : "", deelnemers: vorige ? vorige.deelnemers : null, controleur: vorige ? vorige.controleur : null, vorige_id: vorige ? vorige.id : null, kandidaten: kand });
 }
@@ -581,6 +584,48 @@ async function vgRpc(naam, args, ok) {
 async function vgHerlaadPunt(id) { const { data } = await sb.from("vergadering_punten").select("*").eq("id", id).single(); if (data) S.vergadering_punten[id] = data; }
 async function vgPuntPatch(x, patch, ok) {
   try { await dbUpdate("vergadering_punten", x.id, patch); if (ok) toast(ok); } catch (e) { }
+}
+/* 1.63 (script 059): een actiepunt wordt een punt in de to-dotaak van de verantwoordelijke (één taak per persoon per vergadering) */
+async function vgNaarTodo(x) {
+  const c = VG.concept[x.id] || {};
+  const titel = (c.titel ?? x.tekst ?? "").trim(); const wie = c.wie !== undefined ? c.wie : (x.verantwoordelijke || ""); const eind = c.eind !== undefined ? c.eind : (x.deadline || "");
+  if (titel.length < 2) { toast("Geef het punt een omschrijving."); return; }
+  const { data, error } = await sb.rpc("vergadering_punt_todo", { p_punt: x.id, p_titel: titel, p_assignee: wie || null, p_eind: eind || null });
+  if (error) { toast(error.message, 7000); return; }
+  if (data && data.taak_id && typeof tdHerlaad === "function") await tdHerlaad(data.taak_id);
+  await vgHerlaadPunt(x.id); delete VG.concept[x.id];
+  const t = data && S.taken[data.taak_id];
+  toast(data.al ? "Dit punt stond al in een taak — er is niets dubbel gemaakt." : `In de to-do's van ${wie ? userById(wie).name : "nog te bepalen"}${t ? ` (${tdTel(t.id).tot} punten)` : ""}${eind ? "" : " — deadline nog te bepalen"}`, 5000);
+  render();
+}
+/* 1.63: van de vergadering een notitie (verslag) maken in Notities — met de to-do's per verantwoordelijke eraan */
+function vgNotitieTekst(v) {
+  const vs = (v.verslag_gecontroleerd && v.verslag_gecontroleerd.verslag) || v.verslag || {};
+  const pts = vgPunten(v.id).filter(x => !x.verborgen && (x.status === "bevestigd" || x.status === "gecorrigeerd"));
+  const blok = (kop, l) => l.length ? kop + "\n" + l.join("\n") + "\n\n" : "";
+  const besl = pts.filter(x => x.soort === "beslissing").map(x => "- " + x.tekst + ((x.voorwaarden || "").trim() ? " (voorwaarde: " + x.voorwaarden.trim() + ")" : "") + (x.aard && x.aard !== "besloten" ? " [" + (x.aard === "voorgesteld" ? "voorstel" : "besproken") + "]" : ""));
+  return (blok("SAMENVATTING", (vs.samenvatting || "").trim() ? [vs.samenvatting.trim()] : [])
+    + blok("BESPROKEN", (Array.isArray(vs.onderwerpen) ? vs.onderwerpen : []).filter(o => (o.titel || o.tekst)).map(o => "- " + (o.titel || "") + ((o.tekst || "").trim() ? " — " + o.tekst.trim() : "")))
+    + blok("BESLISSINGEN", besl)
+    + blok("OPEN VRAGEN", pts.filter(x => x.soort === "vraag").map(x => "- " + x.tekst))
+    + blok("MOGELIJK MEERWERK", pts.filter(x => x.soort === "meerwerk").map(x => "- " + x.tekst))
+    + "TO DO'S\nPer verantwoordelijke hieronder, als checklist (Taken).").trim();
+}
+async function vgNaarNotitie(v) {
+  const bestaand = Object.values(S.notities || {}).find(n => n.vergadering_id === v.id);
+  if (bestaand) { noteForm(bestaand); return; }
+  const open = vgPunten(v.id).filter(x => !x.verborgen && x.soort === "actie" && x.status === "voorstel").length;
+  if (v.opname && v.status !== "gecontroleerd") { toast("Rond eerst de controle van het verslag af: in Notities komt enkel wat iemand bevestigde.", 6000); return; }
+  if (open && !confirm(`Nog ${open} actiepunt${open === 1 ? "" : "en"} te beoordelen — die komen niet in de to-do's. Toch het verslag maken?`)) return;
+  const pr = S.projecten[v.project_id];
+  if (!(pr && pr.intern) && !confirm("Het verslag komt in Notities en is daar zichtbaar voor het hele team (zoals alle notities) — niet voor de klant, tenzij je het deelt. Verslag maken?")) return;
+  const deeln = (v.deelnemers || []).map(d => vgNaam(d)).filter(Boolean).join(", ");
+  const { data, error } = await sb.rpc("vergadering_notitie", { p_vergadering: v.id, p_titel: v.onderwerp, p_inhoud: vgNotitieTekst(v), p_deelnemers: deeln });
+  if (error) { toast(error.message, 7000); return; }
+  S.notities[data.id] = data;
+  const ts = await sb.from("taken").select("*").eq("vergadering_id", v.id); (ts.data || []).forEach(t => { S.taken[t.id] = t; });
+  const tp = await sb.from("taak_punten").select("*").in("taak_id", (ts.data || []).map(t => t.id).concat(["00000000-0000-0000-0000-000000000000"])); (tp.data || []).forEach(p => { S.taak_punten[p.id] = p; });
+  IDX = null; render(); toast("Verslag gemaakt in Notities — de to-do's hangen eraan", 4000); noteForm(data);
 }
 async function vgNaarTaak(x, bestaande) {
   const c = VG.concept[x.id] || {};
@@ -740,6 +785,8 @@ document.addEventListener("click", async (e) => {
     VG.bewerk = null; delete VG.concept[x.id]; return vgPuntPatch(x, patch);
   }
   if (a === "taak" && x) return vgNaarTaak(x, null);
+  if (a === "todo" && x) return vgNaarTodo(x);
+  if (a === "notitie" && v) return vgNaarNotitie(v);
   if (a === "taak-alsnog" && x) { await vgPuntPatch(x, { status: "voorstel" }); return; }
   if (a === "koppel" && x) { const t = S.taken[el.dataset.taak]; if (!t || !confirm(`Geen nieuwe taak maken, maar dit punt koppelen aan "${t.titel}"? Er komt een notitie bij die taak.`)) return; return vgNaarTaak(x, t.id); }
   if (a === "plus") { VG.toevoegen = id + ":" + el.dataset.soort; render(); setTimeout(() => document.querySelector(`[data-vg-nieuw="nieuw:${id}:${el.dataset.soort}"][data-f="tekst"]`)?.focus(), 30); return; }

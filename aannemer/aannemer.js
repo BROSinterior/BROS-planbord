@@ -53,7 +53,7 @@ async function loadAll() {
       if (r.error) { if (opt) return []; throw new Error(v + ": " + r.error.message); }
       all = all.concat(r.data || []); if (!r.data || r.data.length < PAGE) return all;
     } };
-  const [me, projecten, vs, plannen, verslagen, documenten, planning, planTaken, taken, aanvragen, aanvraagPosten, vragen, team, ik, meetstaat, prijzenMs, fasen, loten, inst, pvProj, afspraken, facturen] = await Promise.all([
+  const [me, projecten, vs, plannen, verslagen, documenten, planning, planTaken, taken, aanvragen, aanvraagPosten, vragen, team, ik, meetstaat, prijzenMs, fasen, loten, inst, pvProj, afspraken, facturen, taakPunten] = await Promise.all([
     sb.from("profiles").select("id,name,email,role").eq("id", S.session.user.id).maybeSingle().then(r => r.data),
     q("aan_project"), q("aan_vaststellingen"), q("aan_werfplannen"), q("aan_werfverslagen"), q("aan_documenten"), q("aan_planning"), q("aan_planning_taken"),
     q("aan_taken"), q("aan_prijsaanvragen"), q("aan_prijsaanvraag_posten"), q("aan_vragen"), q("klant_team", "*", true), q("klant_ik", "*", true), q("aan_meetstaat", "*", true), q("aan_meetstaat_prijzen", "*", true),
@@ -62,12 +62,13 @@ async function loadAll() {
     q("aan_prijsvraag_projecten", "*", true),   // script 037: projecten waarvoor hij enkel een prijsvraag kreeg
     q("aan_afspraken", "*", true),              // script 041: afspraken waarvoor hij uitgenodigd is
     q("aan_facturen", "*", true),               // script 047: zijn facturen
+    q("klant_taak_punten", "*", true),   // 1.63: checklist van een to-dotaak (script 059)
   ]);
   pvProj.filter(x => !projecten.some(p => p.id === x.id)).forEach(x => projecten.push({ id: x.id, nummer: x.nummer, gemeente: x.gemeente, klant: "", naam: "", kandidaat: true, mijn_loten: [] }));
   S.me = me; S.voorbeeldFout = false;
   if (VB.rol) { const vb = await VB.laad(sb); if (vb && me && me.role === "beheer") { S.me = { ...me, role: "aannemer", name: vb.naam }; VB.balk(); } else S.voorbeeldFout = true; }
   S.data = { projecten: projecten.sort((a, b) => (b.nummer || "").localeCompare(a.nummer || "")), vs: vs.sort((a, b) => (b.nr || 0) - (a.nr || 0)), plannen: plannen.sort((a, b) => (a.volgorde || 0) - (b.volgorde || 0)),
-    verslagen: verslagen.sort((a, b) => (b.nr || 0) - (a.nr || 0)), documenten, planning, planTaken, taken, aanvragen: aanvragen.sort((a, b) => (b.created_at || "").localeCompare(a.created_at || "")), aanvraagPosten, vragen: vragen.sort((a, b) => (b.created_at || "").localeCompare(a.created_at || "")),
+    taakPunten, verslagen: verslagen.sort((a, b) => (b.nr || 0) - (a.nr || 0)), documenten, planning, planTaken, taken, aanvragen: aanvragen.sort((a, b) => (b.created_at || "").localeCompare(a.created_at || "")), aanvraagPosten, vragen: vragen.sort((a, b) => (b.created_at || "").localeCompare(a.created_at || "")),
     afspraken, facturen, team, ik, meetstaat, prijzenMs, fasen: fasen.filter(f => f.actief !== false).sort((a, b) => a.nr - b.nr), loten: Object.fromEntries(loten.map(l => [l.nr, l])), inst };
   // 1.46: met meer dan één project start het portaal op de projectenlijst (S.project = null); met één project meteen dat project
   if (S.project && !projecten.some(p => p.id === S.project)) { S.project = null; S.detail = null; S.aanvraag = null; }
@@ -519,7 +520,7 @@ function vVragen(p) {
         <button class="btn primary" type="submit" ${S.bezig ? "disabled" : ""}>${S.bezig ? "Bezig…" : "Versturen naar BROS"}</button></form></div></div>
       ${vr.length ? `<div class="panel"><div class="panel-head"><h2>Je eerdere vragen</h2></div><table class="t"><tbody>${vr.map(v => `<tr><td><b>${esc(v.titel)}</b><div class="muted" style="font-size:13px">${fmt(v.created_at)} · ${ONDERWERP[v.onderwerp] || esc(v.onderwerp)}</div>${v.vraag ? `<div style="font-size:13px;margin-top:4px;white-space:pre-line">${esc(v.vraag)}</div>` : ""}${v.bros_antwoord ? `<div style="font-size:13px;margin-top:6px;padding:8px 10px;background:var(--blue-soft);border-left:3px solid var(--blue);border-radius:8px"><b>Antwoord van BROS${v.beantwoord_naam ? " (" + esc(v.beantwoord_naam) + ")" : ""}${v.beantwoord_op ? " · " + fmt(v.beantwoord_op) : ""}:</b><div style="white-space:pre-line;margin-top:2px">${esc(v.bros_antwoord)}</div></div>` : ""}${v.status === "geweigerd" && v.reden ? `<div style="font-size:13px;margin-top:6px;padding:8px 10px;background:var(--surface-2);border-radius:8px"><b>${v.bros_antwoord ? "Reden" : "Antwoord van BROS"}:</b> ${esc(v.reden)}</div>` : ""}</td><td style="width:1%"><span class="pill ${v.status}">${VR_STATUS[v.status] || esc(v.status)}</span></td></tr>`).join("")}</tbody></table></div>` : ""}
     </div><div class="stack">
-      <div class="panel"><div class="panel-head"><h2>Jouw actiepunten</h2><span class="muted" style="font-size:13px">${tk.filter(t => t.status !== "done").length} open</span></div>${tk.length ? `<table class="t"><tbody>${tk.map(t => `<tr style="${t.status === "done" ? "opacity:.55" : ""}"><td style="width:34px"><input type="checkbox" data-taak="${t.id}" ${t.status === "done" ? "checked" : ""} style="width:18px;height:18px"></td><td>${esc(t.titel)}${t.notitie_titel ? `<div class="muted" style="font-size:12px">uit: ${esc(t.notitie_titel)}</div>` : ""}</td><td class="num muted" style="font-size:13px;${t.status !== "done" && t.eind && t.eind < todayLocal() ? "color:var(--crit)" : ""}">${t.eind ? fmt(t.eind) : ""}</td></tr>`).join("")}</tbody></table>` : `<div class="empty"><b>Geen actiepunten</b>Afspraken uit verslagen die BROS aan jou toewijst, staan hier.</div>`}</div>
+      <div class="panel"><div class="panel-head"><h2>Jouw actiepunten</h2><span class="muted" style="font-size:13px">${tk.filter(t => t.status !== "done").length} open</span></div>${tk.length ? `<table class="t"><tbody>${tk.map(t => { const ps = (D().taakPunten || []).filter(x => x.taak_id === t.id).sort((a, b) => (a.volgorde || 0) - (b.volgorde || 0)); return `<tr style="${t.status === "done" ? "opacity:.55" : ""}"><td style="width:34px">${ps.length ? `<span title="Vink de punten hieronder af">☑</span>` : `<input type="checkbox" data-taak="${t.id}" ${t.status === "done" ? "checked" : ""} style="width:18px;height:18px">`}</td><td>${esc(t.titel)}${t.notitie_titel ? `<div class="muted" style="font-size:12px">uit: ${esc(t.notitie_titel)}</div>` : ""}${ps.length ? `<ul style="list-style:none;margin:6px 0 0;padding:0">${ps.map(x => `<li style="padding:3px 0;${x.klaar ? "color:var(--muted);text-decoration:line-through" : ""}"><label style="display:flex;gap:8px;align-items:flex-start;cursor:pointer"><input type="checkbox" data-punt="${x.id}" ${x.klaar ? "checked" : ""} style="width:18px;height:18px;flex:0 0 auto"><span>${esc(x.tekst)}${x.deadline ? ` <span class="muted" style="font-size:12px">· vóór ${fmt(x.deadline)}</span>` : ""}</span></label></li>`).join("")}</ul>` : ""}</td><td class="num muted" style="font-size:13px;${t.status !== "done" && t.eind && t.eind < todayLocal() ? "color:var(--crit)" : ""}">${t.eind ? fmt(t.eind) : ""}</td></tr>`; }).join("")}</tbody></table>` : `<div class="empty"><b>Geen actiepunten</b>Afspraken uit verslagen die BROS aan jou toewijst, staan hier.</div>`}</div>
     </div></div>`;
 }
 async function vraagVersturen(p, d) {
@@ -890,6 +891,11 @@ document.addEventListener("change", async (e) => {
   if (t.closest && t.closest("#afForm")) { afHerreken(); afSnap(); return; }
   if (t.dataset.pabijlage) { const fs = [...t.files]; t.value = ""; await paBijlagen(t.dataset.pabijlage, fs); return; }
   if (t.dataset.pa) { await prijsBewaar(t); return; }
+  if (t.dataset.punt) { const id = t.dataset.punt, klaar = t.checked; t.disabled = true;   // 1.63: een punt van een to-dotaak
+    const { data, error } = await sb.rpc("klant_taak_punt_klaar", { p_punt: id, p_klaar: klaar });
+    if (error) { toast("Dat lukte niet: " + error.message); t.checked = !klaar; t.disabled = false; return; }
+    const x = (D().taakPunten || []).find(q => q.id === id); if (x) { x.klaar = klaar; if (data && data.status) D().taken.forEach(y => { if (y.id === x.taak_id) y.status = data.status; }); }
+    render(); toast(klaar ? "Afgevinkt — bedankt!" : "Weer open gezet"); return; }
   if (t.dataset.taak) { const id = t.dataset.taak, klaar = t.checked; t.disabled = true;
     const { error } = await sb.rpc("klant_taak_klaar", { p_id: id, p_klaar: klaar });
     if (error) { toast("Dat lukte niet: " + error.message); t.checked = !klaar; t.disabled = false; return; }

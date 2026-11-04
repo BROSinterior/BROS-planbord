@@ -16,7 +16,7 @@ Statische webapp (geen build-stap) op een Supabase-database.
 | `version.json` | versienummer (enkel de laatste versie); de app meldt een nieuwe versie aan wie ze open heeft |
 | `CHANGELOG.md` | versiegeschiedenis (vanaf 1.48 niet meer in version.json) |
 | `vendor/supabase-2.45.4.js` (+ `591.supabase.js`) | de Supabase-bibliotheek, zelf gehost (geen CDN nodig) |
-| `sql/001_init.sql` … `sql/054_*.sql` | databasescripts, in volgorde uit te voeren (`versie_schema` in instellingen bewaakt de volgorde vanaf 022) |
+| `sql/001_init.sql` … `sql/059_*.sql` | databasescripts, in volgorde uit te voeren (`versie_schema` in instellingen bewaakt de volgorde vanaf 022) |
 | `drive/Code.gs` | Google Apps Script dat projectmappen aanmaakt/koppelt op Drive en de meetstaat-export wegschrijft (installatie: zie bovenaan dat bestand) |
 | `drive/YukiArchief.gs` | klein Apps Script voor het account archief@bros.be: leest daar de Yuki-factuurmails en stuurt ze naar het Drive-script (v1.50.1, zie *Yuki-mails uit archief@bros.be*) |
 | `agenda.js` | gedeeld (Planbord en portalen): agendabestand (.ics) en Google Agenda-link voor afspraken (script 041) |
@@ -32,6 +32,9 @@ Statische webapp (geen build-stap) op een Supabase-database.
 | `renders.js` | Planbord: tabblad Renders per project — uploaden en renderen (OpenAI via de verwerkingscomputer), sfeerbibliotheek, materiaalafspraken per ruimte, vergelijken/goedkeuren, stalenborden per ruimte (script 056), A3-presentatie, Instellingen › Renders (script 055) |
 | `plan2cad.js` | Planbord: Plannen omzetten met Plan2CAD — sleepvak bovenaan het tabblad Plannen, wachtrij, resultaten, schaal kiezen of kalibratie uit de tekenmodule overnemen (script 054) |
 | `wacht.js` | Planbord: *Wacht op jou* bovenaan het Overzicht en het accountmenu onder je naam (v1.51) |
+| `todo.js` | Planbord: to-do's per verantwoordelijke — één taak per persoon met de punten als checklist (notities, vergaderingen, taakformulier; script 059, v1.63) |
+| `ontwerp.js` | Planbord: tabblad Ontwerp — ontwerprondes met documenten, publiceren, klantenfeedback met spelden beantwoorden, afspraken en het Budgetkompas (script 059, v1.63) |
+| `klant/ontwerp.js` | klantenportaal: tabbladen Ontwerp (spelden, vragen, versturen, bevestigen) en Budget (wat als), checklists van to-do's (script 059, v1.63) |
 | `deb-beheer.js` | Planbord: tabblad Facturen › Klanten — openstaande facturen, betalingen uit Yuki, betalingsherinneringen goedkeuren (script 048) |
 | `supabase/functions/assistent/` | Edge Function van de AI-assistent (in Supabase te deployen, sleutel als secret) |
 | `next/` | (later) testversie van een volgende update |
@@ -117,6 +120,8 @@ Gebruik per project: projectfiche → Dossier → Contacten → bij de bouwheer 
 - Vereist `sql/013_goedkeuringen.sql` en het nieuwe `drive/Code.gs` (actie `gkmail`).
 
 ## Notities en verslagen (script 014)
+
+> Sinds 1.63 (script 059) worden actiepunten per verantwoordelijke gebundeld tot één to-dotaak met een checklist — zie *Ontwerptraject, Budgetkompas en to-do's per verantwoordelijke*.
 
 - Projectfiche → tabblad **Notities** (+ Notitie) en hoofdnavigatie **Notities** (alle projecten, zoeken, eigen open actiepunten). Soorten: vergadering, werfverslag, bespreking, feedback klant, notitie — elk met een sjabloon (aanwezig, besproken, beslissingen, afspraken, volgende stap) dat je met "Sjabloon invullen" in het verslag zet.
 - Per notitie: datum, aanwezigen (vrije tekst), verslag, verantwoordelijken uit het team én uit de aan het project gekoppelde contacten (aannemers, architect, …), en **actiepunten**: elke regel wordt een taak op het project (wie, deadline, gekoppeld aan de notitie). In de notitie vink je ze af; in de takenlijst staat "📝 <verslag>" bij zo'n taak, en in het taakformulier kan je een taak aan een verslag koppelen. Bij een nieuwe notitie zie je de nog open actiepunten uit vorige verslagen.
@@ -206,6 +211,13 @@ Per project het tabblad **Renders** (naast Plannen), enkel voor het team.
 - **Kosten en veiligheid:** elk beeld heeft een vast aanvraagnummer (request_id): opnieuw versturen na een netwerkfout geeft de bestaande opdracht terug. Daglimiet en model worden in de databank bewaakt. Een onderbroken betaalde aanvraag wordt *Controle nodig* en nooit automatisch herhaald. Een model wijzigen = eerst één proefrender (kosten en resultaat verschillen per model).
 - **Opslag:** privé-opslag `renders` (`<project>/ontwerp|sfeer|render|presentatie/…`), kopie in de projectmap › Renders/<ruimte> en Renders/Presentaties op Drive.
 - **Terugrollen:** de vorige versie van het Planbord terugzetten (GitHub) en op de Mac mini de vorige `verwerker/` installeren; script 055 is enkel toevoegend (bestaande tabellen blijven onaangeroerd). Renders uitschakelen zonder terugrollen: daglimiet op 0.
+
+### Ontwerptraject, Budgetkompas en to-do's per verantwoordelijke (script 059, v1.63)
+
+- **Installeren:** `sql/059_ontwerp_todos.sql` (controle `4 | 1 | 13 | 59`), het Planbord pushen en het nieuwe `drive/Code.gs` plakken (behoud het CONFIG-blok) → Deploy → Manage deployments → Version: New (mails `ontwerpmail` en `klantmelding` soort `ontwerp` / `ontwerp_bevestigd`). Geen update van de Mac mini nodig.
+- **Tabellen:** `ontwerp_rondes` (nummer automatisch, concept → gepubliceerd ⇄ afgesloten, bevestiging enkel door de klant), `ontwerp_documenten` (vaste kopie in de privé-opslag `ontwerp`: `<project>/<ronde>/<id>.<ext>`; vast na publiceren), `ontwerp_feedback` (speld = document + pagina + x/y; antwoord op een vraag; afspraak/wijziging van BROS; reactie en budgetimpact geen/indicatief/akkoord/in_voorstel/vervallen; `klant_keuze`; `signaal`), `taak_punten` (checklist van een to-dotaak, `taken.bundel`). Projecten: `richtbudget`, `budgetgrens`, `budget_op`, `budget_toelichting`, `budget_klant`.
+- **Klant:** views `klant_ontwerp_rondes` / `_documenten` / `_feedback` (concepten enkel voor de auteur; bedragen enkel als het kompas gedeeld is) en `klant_taak_punten`; functies `klant_ontwerp_feedback`, `klant_ontwerp_versturen` (maakt de to-do voor de projectlead), `klant_ontwerp_bevestigen`, `klant_ontwerp_impact`, `klant_taak_punt_klaar`; `budgetkompas(project)` (team, of de klant als het gedeeld is).
+- **To-do's:** `todo_toevoegen` (groepeert per verantwoordelijke), `vergadering_punt_todo`, `todo_punt_los`, `vergadering_notitie`; triggers houden de taak in lijn met haar punten (alles af = klaar, deels = bezig, einddatum = vroegste open deadline).
 
 ### Nieuwste beeldmodel en prompt optimaliseren (script 058, v1.62)
 

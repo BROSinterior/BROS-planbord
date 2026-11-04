@@ -62,6 +62,7 @@ function doPost(e) {
     if (body.action === "invite") return json(portaalInvite(body));
     if (body.action === "share") return json(portaalShare(body));
     if (body.action === "notitiemail") return json(notitieMail(body));
+    if (body.action === "ontwerpmail") return json(ontwerpMail(body));   // 1.63 (script 059): ontwerpronde gepubliceerd → mail aan de klant(en) met portaaltoegang
     if (body.action === "assistentmail") return json(assistentMail(body));   // vanuit de Edge Function (secret), melding aan de verantwoordelijke
     if (body.action === "werfverslagmail") return json(werfverslagMail(body));
     if (body.action === "afspraak") return json(afspraakSync(body));
@@ -444,12 +445,15 @@ function klantMelding(body) {
   if (wie.role !== "klant") return { ok: false, error: "Geen toegang." };
   if (!quotum("klantmelding:" + wie.id, 30, 3600)) return { ok: false, error: "Te veel meldingen in korte tijd." };
   const id = uuid(body.id); const soort = String(body.soort || "");
-  const view = { keuze: "klant_keuzes", meerwerk: "klant_meerwerk_aanvragen", werfpunt: "klant_vaststellingen" }[soort];
+  const view = { keuze: "klant_keuzes", meerwerk: "klant_meerwerk_aanvragen", werfpunt: "klant_vaststellingen", ontwerp: "klant_ontwerp_rondes", ontwerp_bevestigd: "klant_ontwerp_rondes" }[soort];
   if (!view) return { ok: false, error: "Onbekende melding." };
   const rij = (pbReq("/rest/v1/" + view + "?id=eq." + id + "&select=*", "get", null, body.token) || [])[0];
   if (!rij) return { ok: false, error: "Niet gevonden." };
-  if ((soort === "keuze" && rij.status !== "gekozen") || (soort === "meerwerk" && rij.status !== "ingediend") || (soort === "werfpunt" && !rij.te_beoordelen)) return { ok: true, overgeslagen: true };
-  if (!eenmalig("klantmelding:" + soort + ":" + id, 21600)) return { ok: true, al: true };   // één mail per record
+  if ((soort === "keuze" && rij.status !== "gekozen") || (soort === "meerwerk" && rij.status !== "ingediend") || (soort === "werfpunt" && !rij.te_beoordelen) || (soort === "ontwerp_bevestigd" && !rij.bevestigd_op)) return { ok: true, overgeslagen: true };
+  // 1.63: feedback op een ontwerpronde — wat deze klant de laatste 15 minuten verstuurde (één mail per verzending)
+  const fb = soort === "ontwerp" ? (pbReq("/rest/v1/klant_ontwerp_feedback?ronde_id=eq." + id + "&eigen=is.true&verstuurd_op=gte." + encodeURIComponent(new Date(Date.now() - 900000).toISOString()) + "&select=tekst,vraag_id,document_id,pagina,verstuurd_op&order=created_at", "get", null, body.token) || []) : [];
+  if (soort === "ontwerp" && !fb.length) return { ok: true, overgeslagen: true };
+  if (!eenmalig("klantmelding:" + soort + ":" + id + (soort === "ontwerp" ? ":" + fb.map(x => x.verstuurd_op).sort().pop() : ""), 21600)) return { ok: true, al: true };   // één mail per record (per verzending)
   const p = (pbAdmin("/rest/v1/projecten?id=eq." + rij.project_id + "&select=id,nummer,klant,naam,lead", "get") || [])[0] || {};
   const lead = p.lead ? (pbAdmin("/rest/v1/profiles?id=eq." + p.lead + "&select=name,email", "get") || [])[0] : null;
   const naar = (lead && lead.email) || YUKI.REPORT_TO; const proj = (p.klant || "") + (p.naam && p.naam !== p.klant ? " · " + p.naam : "");
@@ -458,6 +462,14 @@ function klantMelding(body) {
     const o = rij.gekozen_optie ? (pbReq("/rest/v1/klant_keuze_opties?id=eq." + rij.gekozen_optie + "&select=naam,meerprijs", "get", null, body.token) || [])[0] : null;
     onderwerp = "Keuze gemaakt: " + rij.onderwerp;
     lijnen = [(rij.ruimte ? rij.ruimte + " · " : "") + rij.onderwerp, "Gekozen: " + (o ? o.naam + (Number(o.meerprijs) ? " (" + (Number(o.meerprijs) > 0 ? "+" : "−") + " € " + Math.abs(Number(o.meerprijs)).toFixed(2).replace(".", ",") + " excl. btw — staat als meer-/minwerk in de meetstaat)" : " (inbegrepen)") : "?"), "Door: " + (rij.gekozen_naam || wie.name)].concat(rij.gekozen_opmerking ? ["Opmerking: " + rij.gekozen_opmerking] : []);
+  } else if (soort === "ontwerp") {
+    onderwerp = "Feedback op ontwerp V" + rij.nummer + (rij.titel ? " — " + rij.titel : "");
+    const vr = {}; (rij.vragen || []).forEach(q => vr[q.id] = q.tekst);
+    lijnen = fb.slice(0, 40).map(x => (x.vraag_id && vr[x.vraag_id] ? "Vraag \"" + vr[x.vraag_id] + "\": " : x.document_id ? "Op het ontwerp" + (x.pagina > 1 ? " (p." + x.pagina + ")" : "") + ": " : "") + x.tekst)
+      .concat([fb.length + " punt" + (fb.length === 1 ? "" : "en") + " — antwoorden en budgetimpact in het Planbord › Ontwerp (er staat een to-do voor de projectlead)."]);
+  } else if (soort === "ontwerp_bevestigd") {
+    onderwerp = "Ontwerp V" + rij.nummer + " bevestigd";
+    lijnen = ["Ontwerp V" + rij.nummer + (rij.titel ? " — " + rij.titel : "") + " werd bevestigd door " + (rij.bevestigd_naam || wie.name) + "."];
   } else if (soort === "meerwerk") {
     onderwerp = "Meerwerk aangevraagd: " + rij.titel;
     lijnen = [rij.titel + (rij.ruimte ? " (" + rij.ruimte + ")" : ""), rij.omschrijving || "", (rij.fotos || []).length ? (rij.fotos.length + " foto('s) — zie het Planbord › Meetstaat") : ""].filter(Boolean);
@@ -1056,16 +1068,52 @@ function notitieMail(body) {
   const p = (pbAdmin("/rest/v1/projecten?id=eq." + n.project_id + "&select=nummer,klant,naam", "get") || [])[0] || {};
   const pcs = pbAdmin("/rest/v1/project_contacten?project_id=eq." + n.project_id + "&rol=in.(bouwheer,contactpersoon)&select=contact_id", "get") || [];
   const klanten = pcs.length ? (pbAdmin("/rest/v1/contacten?id=in.(" + pcs.map(x => x.contact_id).join(",") + ")&user_id=not.is.null&select=naam,email", "get") || []).filter(c => c.email) : [];
-  const taken = pbAdmin("/rest/v1/taken?notitie_id=eq." + n.id + "&select=titel,eind,status,assignee", "get") || [];
+  const taken = pbAdmin("/rest/v1/taken?notitie_id=eq." + n.id + "&select=id,titel,eind,status,assignee,bundel", "get") || [];
+  // 1.63 (script 059): een to-dotaak (één per verantwoordelijke) → haar punten
+  const bIds = taken.filter(t => t.bundel).map(t => t.id); const punten = {};
+  if (bIds.length) (pbAdmin("/rest/v1/taak_punten?taak_id=in.(" + bIds.join(",") + ")&los_taak_id=is.null&select=taak_id,tekst,klaar,deadline&order=volgorde", "get") || []).forEach(x => (punten[x.taak_id] = punten[x.taak_id] || []).push(x));
   const namen = {}; (pbAdmin("/rest/v1/profiles?select=id,name", "get") || []).forEach(u => namen[u.id] = u.name);
   const SOORT = { vergadering: "Vergadering", werfverslag: "Werfverslag", bespreking: "Bespreking", feedback: "Feedback", notitie: "Notitie" };
   const datum = String(n.datum || "").split("-").reverse().join("/");
-  const punten = taken.length ? "<h3 style=\"font-size:15px;margin:18px 0 6px\">Actiepunten</h3><ul style=\"padding-left:18px;margin:0\">" + taken.map(t => "<li>" + (t.status === "done" ? "✅ " : "") + String(t.titel).replace(/</g, "&lt;") + (t.assignee && namen[t.assignee] ? " <span style=\"color:#767D78\">· " + H(namen[t.assignee]) + "</span>" : "") + (t.eind ? " <span style=\"color:#767D78\">· " + String(t.eind).split("-").reverse().join("/") + "</span>" : "") + "</li>").join("") + "</ul>" : "";
+  const dmy = (x) => String(x || "").split("-").reverse().join("/");
+  const lijst = taken.length ? "<h3 style=\"font-size:15px;margin:18px 0 6px\">Actiepunten</h3><ul style=\"padding-left:18px;margin:0\">" + taken.map(t => t.bundel
+      ? "<li><b>" + H(t.assignee && namen[t.assignee] ? namen[t.assignee] : "To do's") + "</b><ul style=\"padding-left:18px;margin:2px 0 6px\">" + (punten[t.id] || []).map(x => "<li>" + (x.klaar ? "✅ " : "") + H(x.tekst) + (x.deadline ? " <span style=\"color:#767D78\">· " + dmy(x.deadline) + "</span>" : "") + "</li>").join("") + "</ul></li>"
+      : "<li>" + (t.status === "done" ? "✅ " : "") + String(t.titel).replace(/</g, "&lt;") + (t.assignee && namen[t.assignee] ? " <span style=\"color:#767D78\">· " + H(namen[t.assignee]) + "</span>" : "") + (t.eind ? " <span style=\"color:#767D78\">· " + dmy(t.eind) + "</span>" : "") + "</li>").join("") + "</ul>" : "";
   const html = "<div style=\"font-family:Helvetica,Arial,sans-serif;font-size:15px;line-height:1.5;color:#1B1E1C;max-width:720px\"><p>Beste,</p><p>Hierbij het verslag <b>" + String(n.titel || SOORT[n.soort]).replace(/</g, "&lt;") + "</b> (" + (SOORT[n.soort] || n.soort) + " van " + datum + ") voor " + H(p.klant || "") + (p.naam && p.naam !== p.klant ? " · " + H(p.naam) : "") + "." + (n.deelnemers ? "<br><span style=\"color:#767D78\">Aanwezig: " + String(n.deelnemers).replace(/</g, "&lt;") + "</span>" : "") + "</p>"
-    + "<div style=\"white-space:pre-line;padding:14px 16px;border:1px solid #DAD8D0;border-radius:10px;background:#F5F4F0\">" + String(n.inhoud || "").replace(/</g, "&lt;") + "</div>" + punten
+    + "<div style=\"white-space:pre-line;padding:14px 16px;border:1px solid #DAD8D0;border-radius:10px;background:#F5F4F0\">" + String(n.inhoud || "").replace(/</g, "&lt;") + "</div>" + lijst
     + "<p style=\"margin-top:20px\">Je vindt dit verslag ook terug in je klantenportaal: <a href=\"" + PORTAAL.URL + "\">" + PORTAAL.URL + "</a></p><p>" + H(wie.name) + " — BROS</p></div>";
-  const tekst = "Beste,\n\nHierbij het verslag " + (n.titel || "") + " (" + datum + ").\n\n" + (n.inhoud || "") + (taken.length ? "\n\nActiepunten:\n" + taken.map(t => "- " + t.titel + (t.assignee && namen[t.assignee] ? " (" + namen[t.assignee] + ")" : "")).join("\n") : "") + "\n\nOok in je portaal: " + PORTAAL.URL + "\n\n" + wie.name + " — BROS";
+  const tekst = "Beste,\n\nHierbij het verslag " + (n.titel || "") + " (" + datum + ").\n\n" + (n.inhoud || "") + (taken.length ? "\n\nActiepunten:\n" + taken.map(t => t.bundel ? (punten[t.id] || []).map(x => "- " + x.tekst + (t.assignee && namen[t.assignee] ? " (" + namen[t.assignee] + ")" : "")).join("\n") : "- " + t.titel + (t.assignee && namen[t.assignee] ? " (" + namen[t.assignee] + ")" : "")).filter(Boolean).join("\n") : "") + "\n\nOok in je portaal: " + PORTAAL.URL + "\n\n" + wie.name + " — BROS";
   const naar = []; klanten.forEach(c => { portaalMail(c.email, "Verslag: " + (n.titel || SOORT[n.soort]) + " · " + datum, tekst.replace("Beste,", "Beste " + c.naam + ","), html.replace("Beste,", "Beste " + String(c.naam).replace(/</g, "&lt;") + ",")); naar.push(c.email); });
+  return { ok: true, naar: naar };
+}
+/** 1.63 (script 059): een ontwerpronde staat klaar in het portaal → mail aan de bouwheer/contactpersoon met portaaltoegang (één keer per publicatie). */
+function ontwerpMail(body) {
+  const wie = caller(body.token, false);
+  const r = (pbAdmin("/rest/v1/ontwerp_rondes?id=eq." + uuid(body.id) + "&select=*", "get") || [])[0];
+  if (!r || r.status === "concept") return { ok: false, error: "Ontwerpronde niet gevonden of nog niet gepubliceerd." };
+  if (!eenmalig("ontwerp:" + r.id + ":" + (r.gepubliceerd_op || ""), 21600)) return { ok: true, al: true, naar: [] };
+  const p = (pbAdmin("/rest/v1/projecten?id=eq." + r.project_id + "&select=nummer,klant,naam", "get") || [])[0] || {};
+  const pcs = pbAdmin("/rest/v1/project_contacten?project_id=eq." + r.project_id + "&rol=in.(bouwheer,contactpersoon)&select=contact_id", "get") || [];
+  const klanten = pcs.length ? (pbAdmin("/rest/v1/contacten?id=in.(" + pcs.map(x => x.contact_id).join(",") + ")&user_id=not.is.null&select=naam,email,taal", "get") || []).filter(c => c.email) : [];
+  const docs = pbAdmin("/rest/v1/ontwerp_documenten?ronde_id=eq." + r.id + "&select=titel,soort,paginas&order=volgorde", "get") || [];
+  const vragen = Array.isArray(r.vragen) ? r.vragen : [];
+  const d = (s) => String(s || "").slice(0, 10).split("-").reverse().join("/");
+  const proj = (p.klant || "") + (p.naam && p.naam !== p.klant ? " · " + p.naam : "");
+  const naar = [];
+  klanten.forEach(c => {
+    const en = c.taal === "en";
+    const titel = "V" + r.nummer + (r.titel ? " — " + r.titel : "");
+    const html = "<div style=\"font-family:Helvetica,Arial,sans-serif;font-size:15px;line-height:1.5;color:#1B1E1C;max-width:680px\"><p>" + (en ? "Dear " : "Beste ") + H(c.naam) + ",</p>"
+      + "<p>" + (en ? "After our design meeting of " + d(r.datum) + ", design <b>" + H(titel) + "</b> for " + H(proj) + " is ready in your client portal."
+                    : "Na ons ontwerpgesprek van " + d(r.datum) + " staat ontwerp <b>" + H(titel) + "</b> voor " + H(proj) + " klaar in je klantenportaal.") + "</p>"
+      + (r.verslag ? "<div style=\"white-space:pre-line;padding:14px 16px;border:1px solid #DAD8D0;border-radius:10px;background:#F5F4F0\">" + H(String(r.verslag).slice(0, 1500)) + (String(r.verslag).length > 1500 ? " …" : "") + "</div>" : "")
+      + (docs.length ? "<p>" + (en ? "In the portal: " : "In het portaal: ") + docs.map(x => H(x.titel || (en ? "document" : "document"))).join(", ") + ".</p>" : "")
+      + (vragen.length ? "<p>" + (en ? "We have " + vragen.length + " question" + (vragen.length === 1 ? "" : "s") + " for you:" : "We hebben " + (vragen.length === 1 ? "een vraag" : vragen.length + " vragen") + " voor je:") + "</p><ul>" + vragen.map(q => "<li>" + H(q.tekst) + "</li>").join("") + "</ul>" : "")
+      + "<p>" + (en ? "Tap the design where you want to comment, and send your feedback when you're done" : "Tik op het ontwerp waar je iets wil zeggen en verstuur je feedback als je klaar bent") + (r.feedback_tot ? (en ? " — preferably by " : " — graag vóór ") + d(r.feedback_tot) : "") + ".</p>"
+      + "<p><a href=\"" + PORTAAL.URL + "\" style=\"display:inline-block;background:#1D1D1F;color:#fff;padding:10px 18px;border-radius:999px;text-decoration:none\">" + (en ? "View the design" : "Bekijk het ontwerp") + "</a></p><p>" + H(wie.name) + " — BROS</p></div>";
+    const tekst = (en ? "Dear " : "Beste ") + c.naam + ",\n\n" + (en ? "Design " + titel + " for " + proj + " is ready in your client portal: " : "Ontwerp " + titel + " voor " + proj + " staat klaar in je klantenportaal: ") + PORTAAL.URL + "\n\n" + (r.verslag || "") + "\n\n" + wie.name + " — BROS";
+    portaalMail(c.email, (en ? "New design ready: " : "Nieuw ontwerp klaar: ") + titel + " · " + proj, tekst, html); naar.push(c.email);
+  });
   return { ok: true, naar: naar };
 }
 /** Werfverslag (pdf gemaakt in het Planbord, in de Supabase-bucket 'werf'): mailen naar aannemers/klant als bijlage, optioneel kopie in de Drive-map Werfcontrole. */
@@ -1409,7 +1457,7 @@ function onderhoudZeker() {
 }
 function onderhoudInstall() { CacheService.getScriptCache().remove("onderhoud-trigger"); onderhoudZeker(); CacheService.getScriptCache().remove("hartslag"); onderhoud(false); Logger.log("OK — onderhoud draait elk uur (hartslag), back-up en bewaking wekelijks."); }
 function hartslag() {
-  pbAdmin("/rest/v1/instellingen?on_conflict=key", "post", { key: "hartslag", value: { drive: new Date().toISOString(), versie: "1.61.1" } }, "resolution=merge-duplicates,return=minimal");
+  pbAdmin("/rest/v1/instellingen?on_conflict=key", "post", { key: "hartslag", value: { drive: new Date().toISOString(), versie: "1.63.0" } }, "resolution=merge-duplicates,return=minimal");
 }
 function triggersHerstellen() {   // enkel triggers die er eerder al waren (nooit iets aanzetten dat BROS zelf niet installeerde)
   const props = PropertiesService.getScriptProperties();
