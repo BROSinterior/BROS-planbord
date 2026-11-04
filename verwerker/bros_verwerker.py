@@ -48,7 +48,7 @@ import urllib.request
 import uuid as uuidlib
 from datetime import datetime, timezone
 
-VERSIE = "1.61.0"
+VERSIE = "1.62.0"
 # vaktermen die het spraakmodel als woordenschat meekrijgt (aan te passen in config.json › "woordenlijst")
 WOORDENLIJST = ["werf", "werfbezoek", "werfvergadering", "meetstaat", "offerte", "meerwerk", "minwerk", "vordering", "oplevering",
                 "schrijnwerker", "aannemer", "bouwheer", "ontwerp", "plannen", "maatwerk", "Planbord"]
@@ -78,6 +78,7 @@ STANDAARD = {
     "plan2cad_timeout": 1200,
     "openai_url": "https://api.openai.com/v1/images/edits",   # 1.59: renders (script 055); de sleutel staat in de sleutelhanger (openai-api-key)
     "render_timeout": 600,
+    "openai_responses_url": "",  # 1.62: leeg = afgeleid van openai_url (…/v1/responses) — prompt optimaliseren
     "render_map": "",            # leeg = <map van config.json>/render (presentatiescript + huisstijl)
     "laag_vertrouwen": 0.45,
     "llm": {"provider": "anthropic", "model": "claude-sonnet-5-5", "max_tokens": 16000, "tweede_controle": False,
@@ -1777,8 +1778,95 @@ def render_formaat(model, breedte, hoogte, lange_zijde):
         return "1536x1024" if r > 1.15 else "1024x1536" if r < 0.87 else "1024x1024"
     L = int(lange_zijde or 2048)
     w, h = (L, L / r) if r >= 1 else (L * r, L)
+    # 1.62: grenzen van GPT Image 2 en 2.5 — randen max. 3840 px, 655 360 tot 8 294 400 pixels, veelvoud van 16, max. 3:1
+    w, h = min(w, 3840), min(h, 3840)
+    pix = w * h
+    if pix > 8294400:
+        f = (8294400 / pix) ** 0.5; w, h = w * f, h * f
+    elif pix < 655360:
+        f = (655360 / pix) ** 0.5; w, h = w * f, h * f
     w, h = max(16, int(round(w / 16)) * 16), max(16, int(round(h / 16)) * 16)
+    while w * h > 8294400:   # afronden naar boven mag het maximum niet overschrijden
+        w, h = (w - 16, h) if w >= h else (w, h - 16)
+    while w * h < 655360 or max(w, h) > 3 * min(w, h):   # en niet onder het minimum of boven 3:1 uitkomen (bv. 2048x672)
+        w, h = (w + 16, h) if w <= h else (w, h + 16)
     return "%dx%d" % (w, h)
+
+
+# 1.62: prompt optimaliseren — een taalmodel van OpenAI bekijkt eerst alle invoerbeelden en schrijft de beeldopdracht
+PROMPT_REGIE = (
+    "You prepare and run ONE image edit for BROS, an interior architecture studio. Read the BROS RENDER BRIEF below and look carefully at "
+    "every input image; each image is preceded by a label with its number and role. Then call the image generation tool exactly once, as an "
+    "edit of input 1, with an optimised, precise prompt that: (1) keeps every rule and constraint of the brief (roles, what must be preserved, "
+    "lighting, materials, corrections, context); (2) names the concrete elements you actually see in input 1 that must stay as they are — "
+    "openings, wall planes, roof slopes, cabinet divisions, shelves, furniture, every light fixture with its position, orientation and "
+    "suspension height, and the decoration; (3) refers to the other inputs only in their stated role; (4) describes the requested change "
+    "concretely and nothing else. Never add objects, styling, light sources or materials the brief does not ask for. Do not reply with text.")
+ROL_LABEL = {"ontwerp": "DESIGN of this viewpoint (geometry authority, edit target)", "versie": "CURRENT RENDER (edit target)",
+             "origineel": "ORIGINAL DESIGN (geometry reference only)", "achtergrond": "EXTERIOR REFERENCE (only the view outside)",
+             "sfeer": "MOOD REFERENCE (only light and atmosphere)"}
+
+
+def openai_render_responses(cfg, sleutel, o, beelden, labels, prompt, formaat, gebruiker, promptmodel):
+    """Eén betaalde aanvraag via de Responses API: het promptmodel bekijkt de beelden, herschrijft de opdracht en roept het
+    beeldmodel aan (image_generation, action edit). NOOIT automatisch opnieuw. Geeft (beeld, verbruik, request_id, herschreven prompt)."""
+    url = cfg.get("openai_responses_url") or re.sub(r"/images/(edits|generations)/?$", "/responses", cfg["openai_url"])
+    inhoud = [{"type": "input_text", "text": PROMPT_REGIE + "\n\nBROS RENDER BRIEF:\n" + prompt}]
+    for (mime, pad), label in zip(beelden, labels):
+        with open(pad, "rb") as f:
+            b64 = base64.b64encode(f.read()).decode()
+        inhoud.append({"type": "input_text", "text": label})
+        inhoud.append({"type": "input_image", "image_url": "data:%s;base64,%s" % (mime, b64)})
+    body = {"model": promptmodel, "input": [{"role": "user", "content": inhoud}], "store": False,
+            "tools": [{"type": "image_generation", "model": o["model"], "quality": o["kwaliteit"], "size": formaat, "output_format": "png", "action": "edit"}],
+            "tool_choice": {"type": "image_generation"}, "max_tool_calls": 1, "parallel_tool_calls": False}   # nooit twee betaalde beelden
+    if gebruiker:
+        body["safety_identifier"] = gebruiker
+    req = urllib.request.Request(url, data=json.dumps(body).encode(), method="POST", headers={"Authorization": "Bearer " + sleutel, "Content-Type": "application/json"})
+    rid = ""
+    try:
+        with urllib.request.urlopen(req, timeout=float(cfg.get("render_timeout") or 600) + 300) as r:   # het promptmodel denkt eerst na: wat meer tijd
+            rid = r.headers.get("x-request-id") or ""
+            raw = r.read(150 * 1024 * 1024 + 1)
+        if len(raw) > 150 * 1024 * 1024:
+            raise RenderFout("Het antwoord van OpenAI was onverwacht groot.", True, rid)
+        j = json.loads(raw)
+        oproepen = [x for x in (j.get("output") or []) if isinstance(x, dict) and x.get("type") == "image_generation_call"]
+        met = [x for x in oproepen if x.get("result")]
+        if not met:
+            tekst = " ".join(c.get("text", "") for x in (j.get("output") or []) if isinstance(x, dict) and x.get("type") == "message" for c in (x.get("content") or []) if isinstance(c, dict)).strip()
+            detail = json.dumps({"status": j.get("status"), "id": j.get("id"), "incomplete": j.get("incomplete_details"), "error": j.get("error"),
+                                 "oproepen": [x.get("status") for x in oproepen]})[:1000]
+            # enkel als het antwoord volledig is én het beeldmodel aantoonbaar niet aangeroepen werd: Mislukt (geen beeld betaald).
+            # Een onvolledig of mislukt antwoord, of een beeldoproep zonder resultaat: misschien wel aangerekend → Controle nodig.
+            zeker = j.get("status") == "completed" and not oproepen
+            raise RenderFout(("OpenAI maakte geen beeld" if zeker else "OpenAI gaf geen beeld terug (status %s) — mogelijk toch aangerekend" % (j.get("status") or "?"))
+                             + (": " + tekst[:300] if tekst else "") + ".", not zeker, rid, detail)
+        if len(met) > 1:
+            log("let op: OpenAI gaf %d beelden terug; enkel het eerste wordt bewaard" % len(met))
+        met = met[0]
+        data = base64.b64decode(met["result"], validate=True)
+        if not (data[:8] == b"\x89PNG\r\n\x1a\n" or data[:3] == b"\xff\xd8\xff" or data[8:12] == b"WEBP"):
+            raise RenderFout("OpenAI gaf geen geldig beeld terug.", True, rid)
+        verbruik = dict(j.get("usage") or {}); verbruik["response_id"] = j.get("id") or ""; verbruik["promptmodel"] = promptmodel
+        if len(oproepen) > 1:
+            verbruik["beeldoproepen"] = len(oproepen)
+        return data, verbruik, rid, (met.get("revised_prompt") or "")
+    except urllib.error.HTTPError as e:
+        rid = (e.headers or {}).get("x-request-id") or rid
+        try:
+            boodschap = (json.loads(e.read() or b"{}").get("error") or {}).get("message") or ""
+        except Exception:
+            boodschap = ""
+        teksten = {400: "OpenAI weigerde deze opdracht", 401: "De OpenAI-sleutel op de Mac mini is ongeldig", 403: "Geen toegang tot dit beeld- of promptmodel (controleer het API-project of de verificatie)",
+                   404: "Dit beeld- of promptmodel bestaat niet (meer) — kies een ander in Instellingen › Renders", 413: "De beelden zijn te groot voor OpenAI",
+                   429: "API-limiet of tegoed bereikt"}
+        melding = teksten.get(e.code, "OpenAI gaf een fout (%s)" % e.code) + (": " + boodschap[:300] if boodschap else "") + "."
+        raise RenderFout(melding, e.code >= 500 or e.code in (408, 409), rid, "HTTP %s %s" % (e.code, boodschap[:1000]))
+    except RenderFout:
+        raise
+    except Exception as e:
+        raise RenderFout("Geen of een onduidelijk antwoord van OpenAI (verbinding of time-out). Mogelijk al aangerekend — er wordt niets automatisch opnieuw verstuurd.", True, rid, repr(e)[:1000])
 
 
 class RenderFout(Exception):
@@ -1910,6 +1998,8 @@ class RenderOpdracht:
         sleutel = self.sleutel if self.sleutel is not None else geheim("openai-api-key", "OPENAI_API_KEY")
         if not sleutel:
             raise Fout("Er staat geen OpenAI-sleutel op de verwerkingscomputer (sleutelhanger). Voer verwerker/installeer.sh uit op de Mac mini. Er werd niets betaald.", opnieuw=True)
+        if self.o.get("kwaliteit") in ("xhigh", "max") and not (self.o.get("model") or "").startswith("gpt-image-2.5"):
+            raise Fout("Kwaliteit \"%s\" bestaat enkel bij gpt-image-2.5. Vraag opnieuw aan met een andere kwaliteit. Er werd niets betaald." % self.o["kwaliteit"], opnieuw=False)
         if self.soort == "stalenbord":
             if not self.referenties:
                 raise Fout("De referentiebeelden van dit stalenbord bestaan niet meer. Er werd niets betaald.", opnieuw=False)
@@ -1958,7 +2048,19 @@ class RenderOpdracht:
         self.stap = "renderen bij OpenAI (%s, %s)" % (self.o["model"], formaat)
         self.voortgang = 0.2
         t1 = time.time()
-        data, verbruik, rid = self.aanvraag(self.cfg, sleutel, self.o, beelden, prompt, formaat, self.o.get("gebruiker") or "")
+        # 1.62: prompt optimaliseren (renders): het promptmodel bekijkt de beelden en herschrijft de opdracht — nog altijd één aanvraag
+        totaal = sum(4 * ((os.path.getsize(p) + 2) // 3) for _, p in beelden)   # zoals verstuurd (base64 in JSON)
+        self.promptmodel = (self.o.get("promptmodel") or "").strip() if (self.soort == "render" and self.o.get("optimaliseren") and self.aanvraag is openai_render
+                                                                         and totaal <= 45 * 1024 * 1024) else ""
+        self.prompt, self.herschreven = prompt, ""
+        self.bewaar_prompt()
+        if self.promptmodel:
+            self.stap = "prompt optimaliseren en renderen (%s → %s, %s)" % (self.promptmodel, self.o["model"], formaat)
+            labels = ["Input %d — %s%s" % (i + 1, ROL_LABEL.get(r, r), (": " + x) if (r == "achtergrond" and x) else (" (version %s)" % x) if (r == "versie" and x) else "")
+                      for i, (r, x) in enumerate(getattr(self, "rollen", []) or [("ontwerp", None)] * len(beelden))]
+            data, verbruik, rid, self.herschreven = openai_render_responses(self.cfg, sleutel, self.o, beelden, labels, prompt, formaat, self.o.get("gebruiker") or "", self.promptmodel)
+        else:
+            data, verbruik, rid = self.aanvraag(self.cfg, sleutel, self.o, beelden, prompt, formaat, self.o.get("gebruiker") or "")
         self.metingen["openai_s"] = round(time.time() - t1, 1)
         # het resultaat eerst lokaal bewaren: wat er ook misloopt, het betaalde beeld blijft op de Mac mini
         ext = ".png" if data[:8] == b"\x89PNG\r\n\x1a\n" else ".jpg" if data[:3] == b"\xff\xd8\xff" else ".webp"
@@ -2009,11 +2111,23 @@ class RenderOpdracht:
                 if poging == 3:
                     raise RenderFout("De render is gemaakt en opgeladen, maar het Planbord kon niet bijgewerkt worden. Het beeld staat op de Mac mini: " + lokaal, True, rid, e.melding)
                 time.sleep(5 * (poging + 1))
+        if self.herschreven:
+            self.bewaar_prompt()
         if self.soort == "render" and self.o.get("controle", True) and self.controle_beelden:
             self.controleer(lokaal)
         shutil.rmtree(self.map, ignore_errors=True)
         self.metingen["totaal_s"] = round(time.time() - t0, 1)
         return {"status": (r or {}).get("status"), "formaat": formaat, "seconden": self.metingen.get("openai_s")}
+
+    def bewaar_prompt(self):
+        """1.62: welke prompt ging er echt naar OpenAI (en hoe herschreef het promptmodel hem) — best effort, nooit een reden om te stoppen."""
+        if self.soort != "render":
+            return
+        try:
+            self.sb.rpc("render_prompt_bewaar", {"p_job": self.job_id, "p_claim": self.claim, "p_prompt": self.prompt or "", "p_herschreven": self.herschreven or "",
+                                                 "p_promptmodel": self.promptmodel or ""}, timeout=30)
+        except Exception as e:
+            log("prompt niet bewaard:", getattr(e, "melding", "") or repr(e))
 
     def controleer(self, lokaal):
         """1.61: automatische controle (Claude, geen beeldgeneratie) PAS NA render_klaar: het betaalde beeld staat al in het Planbord.

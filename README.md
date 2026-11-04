@@ -207,6 +207,12 @@ Per project het tabblad **Renders** (naast Plannen), enkel voor het team.
 - **Opslag:** privé-opslag `renders` (`<project>/ontwerp|sfeer|render|presentatie/…`), kopie in de projectmap › Renders/<ruimte> en Renders/Presentaties op Drive.
 - **Terugrollen:** de vorige versie van het Planbord terugzetten (GitHub) en op de Mac mini de vorige `verwerker/` installeren; script 055 is enkel toevoegend (bestaande tabellen blijven onaangeroerd). Renders uitschakelen zonder terugrollen: daglimiet op 0.
 
+### Nieuwste beeldmodel en prompt optimaliseren (script 058, v1.62)
+
+- **Installeren:** `sql/058_render_modellen.sql` (controle `gpt-image-2.5-sunburst | true | 4 | 58`), het Planbord pushen en op de Mac mini `verwerker/installeer.sh` opnieuw uitvoeren (verwerker 1.62). Geen nieuw Drive-script.
+- **Model:** standaard `gpt-image-2.5-sunburst` (of `gpt-image-2.5-flare`); kwaliteit low/medium/high/xhigh/max (xhigh en max enkel met 2.5); lange zijde 1536–3072 px. Het OpenAI-project moet toegang hebben tot het model (mogelijk organisatieverificatie bij OpenAI).
+- **Prompt optimaliseren** (Instellingen › Renders, standaard aan; promptmodel standaard `gpt-5.5`): één aanvraag via de Responses API met de tool `image_generation` (action edit). Bewaard per opdracht: `prompt_gebruikt`, `prompt_herschreven`, `promptmodel` (`render_prompt_bewaar`). Uit = rechtstreeks naar het beeldmodel zoals in 1.61.
+
 ### Renders per ruimte en standpunt (script 057, v1.61)
 
 - **Installeren:** `sql/057_render_standpunten.sql` (controle `2 | 2 | 0 | 57`), het Planbord pushen en op de Mac mini `verwerker/installeer.sh` opnieuw uitvoeren (verwerker 1.61). Geen nieuw Drive-script. Een oudere verwerker laat nieuwe aanvragen in de wachtrij (niets betaald).
