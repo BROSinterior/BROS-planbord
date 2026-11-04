@@ -97,7 +97,7 @@ Deno.serve(async (req) => {
     // 5. dossier samenstellen (klant-views onder het token van de klant; intern via de tabellen)
     const q = async (view: string, cols = "*") => { const r = await (isKlant ? user : admin).from(view).select(cols).eq("project_id", projectId); return r.data || []; };
     const [fasen, planning, planTaken, meetstaat, vorderingen, docs, notities, taken, gks, verslagen, team, loten] = await Promise.all([
-      admin.from("fasen").select("nr,naam").order("nr").then(r => r.data || []),
+      admin.from("fasen").select("nr,naam,actief").order("nr").then(r => (r.data || []).filter((f: any) => f.actief !== false)),
       isKlant ? q("klant_planning") : admin.from("klant_planning").select("*").eq("project_id", projectId).then(r => r.data || []),
       isKlant ? q("klant_planning_taken") : admin.from("taken").select("id,project_id,fase_nr,titel,start,eind,status").eq("project_id", projectId).eq("timing_klant", true).then(r => r.data || []),
       isKlant ? q("klant_meetstaat") : admin.from("meetstaat_posten_v").select("id,project_id,lot,code,omschrijving,eenheid,hoeveelheid,verkoop_ep,status").eq("project_id", projectId).then(r => (r.data || []).map((x: any) => ({ ...x, prijs: x.verkoop_ep, totaal: (Number(x.hoeveelheid) || 0) * (Number(x.verkoop_ep) || 0) }))),
@@ -110,7 +110,7 @@ Deno.serve(async (req) => {
       admin.from("profiles").select("id,name,functie").eq("active", true).in("role", ["beheer", "medewerker"]).then(r => r.data || []),
       admin.from("loten").select("nr,naam").then(r => r.data || []),
     ]);
-    const faseNaam = (nr: number) => { const f = (fasen as any[]).find(x => x.nr === nr); return f ? `${nr}. ${f.naam}` : String(nr || ""); };
+    const faseNaam = (nr: number) => { const i = (fasen as any[]).findIndex(x => x.nr === nr); return i >= 0 ? `stap ${i + 1}. ${(fasen as any[])[i].naam}` : String(nr || ""); };   // 1.64: stap = plaats in de lijst, zoals in het portaal
     const lotNaam = (nr: number) => { const l = (loten as any[]).find(x => x.nr === nr); return l ? `${nr}. ${l.naam}` : String(nr); };
     const lead = (team as any[]).find(t => t.id === p.lead);
     const toonDatums = cfg.datums !== false;

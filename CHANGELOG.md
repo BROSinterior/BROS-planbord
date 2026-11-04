@@ -2,6 +2,13 @@
 
 De nieuwste versie staat bovenaan. (Vanaf 1.48 houdt `version.json` enkel de laatste versie bij; het Planbord vraagt dat bestand elke 5 minuten op.)
 
+## 1.64.0 — 2026-11-04 (script 060 uitvoeren + pushen; geen nieuw Drive-script, geen update van de Mac mini)
+
+**De projectfase volgt het werk.** De fase die de klant in het portaal ziet ("Je project zit in stap …"), schuift nu vanzelf vooruit: naar de verste fase met een taak van BROS die bezig of klaar is (taken van de klant of een aannemer tellen niet), en minstens naar *Opmeting* zodra de overeenkomst goedgekeurd is en naar *Bespreking voorontwerp* zodra de eerste ontwerpronde gepubliceerd is. Nooit achteruit. Na het afvinken meldt het Planbord "fase → … — de klant ziet nu stap …".
+In de projectfiche staat onder *Fase* nu **Klant ziet: stap … · …**, met waarom (bv. *automatisch: taak „3D-model klaar voor VR” klaar*), *zelf gekozen* of *🔒 vastgezet*. In *Bewerken* kan je de fase nog altijd zelf kiezen en **vastzetten**; een lagere fase kiezen zet ze automatisch vast. Elke wijziging komt in een logboek.
+Bij het uitvoeren van script 060 krijgen alle projecten meteen hun berekende fase (verloren projecten en het interne project niet).
+Portalen: de stappen zijn genummerd volgens hun plaats in de lijst (1 … 8) in plaats van het interne fasenummer (geen "stap 15" meer); de AI-assistent ook, na het opnieuw deployen van `supabase/functions/assistent/index.ts` (optioneel). Een project in een niet-actieve fase verliest die fase niet meer bij het bewaren van het projectformulier.
+
 ## 1.63.1 — 2026-11-04 (geen databasescript, enkel pushen)
 
 Ontwerp, klantenportaal: in een grote pdf-presentatie kon de klant enkel op pagina 1 een opmerking zetten. Een tik of klik opent het opmerkingenvak nu meteen op de juiste plek van elke pagina, zonder de presentatie opnieuw op te bouwen; de pagina's houden hun hoogte (ook terwijl ze nog laden) en een getekende pagina wordt hergebruikt in plaats van opnieuw getekend. Op een iPhone of iPad werkt het tikken op het ontwerp nu ook overal. Hetzelfde voor de weergave in het Planbord.

@@ -16,7 +16,7 @@ Statische webapp (geen build-stap) op een Supabase-database.
 | `version.json` | versienummer (enkel de laatste versie); de app meldt een nieuwe versie aan wie ze open heeft |
 | `CHANGELOG.md` | versiegeschiedenis (vanaf 1.48 niet meer in version.json) |
 | `vendor/supabase-2.45.4.js` (+ `591.supabase.js`) | de Supabase-bibliotheek, zelf gehost (geen CDN nodig) |
-| `sql/001_init.sql` … `sql/059_*.sql` | databasescripts, in volgorde uit te voeren (`versie_schema` in instellingen bewaakt de volgorde vanaf 022) |
+| `sql/001_init.sql` … `sql/060_*.sql` | databasescripts, in volgorde uit te voeren (`versie_schema` in instellingen bewaakt de volgorde vanaf 022) |
 | `drive/Code.gs` | Google Apps Script dat projectmappen aanmaakt/koppelt op Drive en de meetstaat-export wegschrijft (installatie: zie bovenaan dat bestand) |
 | `drive/YukiArchief.gs` | klein Apps Script voor het account archief@bros.be: leest daar de Yuki-factuurmails en stuurt ze naar het Drive-script (v1.50.1, zie *Yuki-mails uit archief@bros.be*) |
 | `agenda.js` | gedeeld (Planbord en portalen): agendabestand (.ics) en Google Agenda-link voor afspraken (script 041) |
@@ -201,6 +201,15 @@ Veel meetstaten zijn met klantprijzen uit Excel ingelezen: kostprijs = klantprij
 - Alleen beheer ziet of wijzigt dit (tabel `ms_raming`, RLS). Klanten, aannemers en medewerkers zien niets; de pdf/Excel voor de klant blijven ongewijzigd.
 
 Activeren: Supabase → SQL Editor → `sql/052_marges_raming.sql` → Run (na 051; controle `1 | 1 | 52`). Optioneel: nieuw `drive/Code.gs` (neemt `ms_raming` mee in de wekelijkse back-up) als `Code.ingevuld.gs` plakken en een nieuwe versie deployen.
+
+## Projectfase volgt het werk (script 060, v1.64)
+
+- **Wat de klant ziet:** de fase van een project is wat de klant in het portaal leest ("Je project zit in stap 4: Ontwerpfase") en wat de aannemer ziet. De **stap** is de plaats in de lijst actieve fasen (1, 2, 3 …), niet het interne fasenummer. In de projectfiche staat onder *Fase* **Klant ziet: stap … · …** met de bron (automatisch + reden, zelf gekozen of 🔒 vastgezet).
+- **Automatisch, alleen vooruit:** de verste actieve fase met een taak van BROS die **bezig of klaar** is (taken van de klant of een aannemer tellen niet); een **goedgekeurde overeenkomst** zet het project minstens op de fase met "opmeting" in de naam; de **eerste gepubliceerde ontwerpronde** minstens op de fase met "voorontwerp" (anders "ontwerp") in de naam. Een fase hernoemen mag, zolang dat woord erin blijft. Niet bij status *verloren*, het interne project of een vastgezette fase. Status terug op lopend of vastzetten uitvinken = meteen herberekend.
+- **Zelf kiezen:** in *Bewerken* blijft *Huidige fase* kiesbaar. Lager kiezen vinkt **vastzetten** aan (anders schuift ze bij het volgende afgevinkte werk weer op); hoger kiezen mag zonder. Een open formulier stuurt de fase enkel mee als je ze zelf wijzigde; zelf kiezen en tegelijk vastzetten uitvinken bewaart jouw keuze (het volgende afgevinkte werk schuift ze weer op).
+- **Databank:** kolommen `projecten.fase_vast`, `fase_bron` (auto/manueel), `fase_reden`, `fase_sinds`; logboek `fase_log` (van → naar, waarom, door wie; enkel het team leest, niemand schrijft rechtstreeks). Functies `project_fase_bereken` en `project_fase_auto` (niet via de API op te roepen) en triggers op `taken`, `goedkeuringen` en `ontwerp_rondes`. Bij het uitvoeren krijgen alle projecten meteen hun berekende fase; de controle geeft `4 | 2 | 3 | 60 | <aantal opgeschoven projecten>`.
+- **AI-assistent (optioneel):** `supabase/functions/assistent/index.ts` opnieuw deployen zodat ook de assistent "stap …" volgens de lijst noemt (zelfde secrets).
+- **Terugzetten:** één project: fase kiezen en vastzetten. Alles: `fase_log` bevat per project de vorige fase (`reden` begint met "eerste berekening:").
 
 ## Renders — BROS Render in het Planbord (script 055, v1.59)
 

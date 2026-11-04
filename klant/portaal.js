@@ -3,7 +3,7 @@
    Leest uitsluitend de klant_*-views (databasescript 011): geen kostprijzen, marges of interne notities.
    ===================================================================== */
 if (window.top !== window.self) { try { window.top.location.replace(window.location.href); } catch (e) { document.documentElement.innerHTML = ""; } }   // niet in een vreemd frame (clickjacking)
-const PORTAAL_VERSION = "1.63.0";
+const PORTAAL_VERSION = "1.64.0";
 const todayLocal = () => { const n = new Date(); return `${n.getFullYear()}-${String(n.getMonth() + 1).padStart(2, "0")}-${String(n.getDate()).padStart(2, "0")}`; };
 const safeUrl = (u) => /^https?:\/\//i.test(String(u || "")) ? u : "#";
 const cfg = window.PLANBORD_CONFIG || {};
@@ -77,6 +77,7 @@ const P = () => D().projecten.find(p => p.id === S.project);
 const voornaam = () => { const ik = D().ik[0]; const n = (ik?.naam || S.me?.name || "").trim(); return n.split(/\s+/)[0] || n; };
 const lotNaam = (nr) => D().loten[nr] ? `${nr}. ${D().loten[nr].naam}` : String(nr);
 const faseNaam = (nr) => D().fasen.find(f => f.nr === nr)?.naam || "";
+const stapNr = (nr) => { const i = D().fasen.findIndex(f => f.nr === nr); return i >= 0 ? i + 1 : null; };   // 1.64: stap = plaats in de lijst (1, 2, 3 …), niet het interne fasenummer
 const isMw = (r) => r.status === "meerwerk" || r.status === "minwerk";
 const telt = (r) => r.status !== "vervallen";
 /* minwerk is altijd een vermindering, ook als de hoeveelheid al negatief ingevuld is (zelfde regel als het Planbord) */
@@ -122,7 +123,7 @@ function vWelkom(p) {
   const inst = D().inst; const fasen = D().fasen; const nu = p.fase_nr;
   const plan = Object.fromEntries(D().planning.filter(x => x.project_id === p.id).map(x => [x.fase_nr, x]));
   const lead = D().team.find(t => t.id === p.lead);
-  const status = p.status === "afgerond" ? "Je project is opgeleverd." : nu ? `Je project zit in stap ${nu}: <b>${esc(faseNaam(nu))}</b>.` : `Status: ${PROJ_STATUS[p.status] || p.status}.`;
+  const status = p.status === "afgerond" ? "Je project is opgeleverd." : nu && stapNr(nu) ? `Je project zit in stap ${stapNr(nu)}: <b>${esc(faseNaam(nu))}</b>.` : `Status: ${PROJ_STATUS[p.status] || p.status}.`;
   const open = D().goedkeuringen.filter(g => g.project_id === p.id && gkOpenVoorMij(g));
   return `<div class="hero"><div class="eyebrow">${esc(p.nummer || "")} · ${nt(p.naam || "")}</div><h1>Welkom, ${esc(voornaam())}</h1>
       <p class="lead">${nt((TAAL === "en" && inst.welkom_en) || inst.welkom || "")}</p></div>
@@ -140,8 +141,8 @@ function vWelkom(p) {
         <p class="muted" style="font-size:13px">${esc([p.adres, [p.postcode, p.gemeente].filter(Boolean).join(" ")].filter(Boolean).join(", "))}${p.start ? ` · gestart ${fmtLang(p.start)}` : ""}${p.eind ? ` · verwachte oplevering ${fmtLang(p.eind)}` : ""}</p></div></div>
       <div class="panel"><div class="panel-head"><h2>Zo werkt het bij BROS</h2></div><div class="panel-body">
         <p class="muted" style="font-size:14px">${nt((TAAL === "en" && inst.werkwijze_en) || inst.werkwijze || "")}</p>
-        <ol class="steps">${fasen.map(f => { const st = p.status === "afgerond" || (nu != null && f.nr < nu) ? "done" : f.nr === nu ? "now" : "todo"; const pl = plan[f.nr];
-          return `<li class="${st}"><span class="n">${st === "done" ? "✓" : f.nr}</span><span class="nm">${esc(f.naam)}</span><span class="when">${st === "now" ? "nu bezig" : pl && pl.start && st !== "done" ? "vanaf " + fmt(pl.start) : pl && pl.eind && st === "done" ? "klaar" : ""}</span></li>`; }).join("")}</ol></div></div>
+        <ol class="steps">${fasen.map((f, i) => { const st = p.status === "afgerond" || (nu != null && f.nr < nu) ? "done" : f.nr === nu ? "now" : "todo"; const pl = plan[f.nr];
+          return `<li class="${st}"><span class="n">${st === "done" ? "✓" : i + 1}</span><span class="nm">${esc(f.naam)}</span><span class="when">${st === "now" ? "nu bezig" : pl && pl.start && st !== "done" ? "vanaf " + fmt(pl.start) : pl && pl.eind && st === "done" ? "klaar" : ""}</span></li>`; }).join("")}</ol></div></div>
     </div><div class="stack">
       ${lead ? `<div class="panel"><div class="panel-head"><h2>Je aanspreekpunt</h2></div><div class="panel-body"><div class="person">${avatar(lead, 56)}<div><b>${esc(lead.name)}</b><div class="muted" style="font-size:13px">${nt(lead.functie || "BROS")}</div>${lead.bio ? `<p style="font-size:13px;color:var(--ink-2);margin-top:6px;white-space:pre-line">${nt(lead.bio.slice(0, 220))}${lead.bio.length > 220 ? "…" : ""}</p>` : ""}</div></div></div></div>` : ""}
       <div class="panel"><div class="panel-head"><h2>Vragen?</h2></div><div class="panel-body"><p style="white-space:pre-line">${nt((TAAL === "en" && inst.contact_en) || inst.contact || "")}</p></div></div>
@@ -380,11 +381,11 @@ function vPlanning(p) {
   const uren = D().uren.filter(u => u.project_id === p.id).sort((a, b) => (b.datum || "").localeCompare(a.datum || "") || (b.tijd_van || "").localeCompare(a.tijd_van || "")); const totU = uren.reduce((s, u) => s + Number(u.uren), 0);
   return `<h1 style="margin-bottom:6px">Planning</h1><p class="muted" style="margin-bottom:16px">De stappen van je project met hun timing. Data zijn een planning en kunnen nog schuiven.</p>
     <div class="panel" style="margin-bottom:16px"><div class="tw"><table class="t"><thead><tr><th>Stap</th><th>Van</th><th>Tot</th><th style="min-width:180px">Verloop</th><th>Status</th></tr></thead><tbody>
-      ${fasen.map(f => { const pl = plan[f.nr]; const st = p.status === "afgerond" || (nu != null && f.nr < nu) ? "done" : f.nr === nu ? "now" : "todo";
+      ${fasen.map((f, i) => { const pl = plan[f.nr]; const st = p.status === "afgerond" || (nu != null && f.nr < nu) ? "done" : f.nr === nu ? "now" : "todo";
         const bar = pl && pl.start && pl.eind && t0 ? `<div class="bar"><i class="${st === "done" ? "done" : ""}" style="left:${Math.round((new Date(pl.start) - t0) / span * 100)}%;width:${Math.max(2, Math.round((new Date(pl.eind) - new Date(pl.start)) / span * 100))}%"></i></div>` : "";
         const taken = (D().planTaken || []).filter(t => t.project_id === p.id && (t.fase_nr || 0) === f.nr).sort((a, b) => (a.volgorde ?? 0) - (b.volgorde ?? 0) || (a.start || "9").localeCompare(b.start || "9"));
         const tbar = (t) => t.start && t.eind && t0 ? `<div class="bar"><i class="${t.status === "done" ? "done" : ""}" style="left:${Math.round((new Date(t.start) - t0) / span * 100)}%;width:${Math.max(2, Math.round((new Date(t.eind) - new Date(t.start)) / span * 100))}%;opacity:.55"></i></div>` : "";
-        return `<tr style="${st === "todo" ? "color:var(--muted)" : ""}"><td><b style="${st === "now" ? "" : "font-weight:600"}">${f.nr}. ${esc(f.naam)}</b>${pl && pl.opmerking ? `<div class="muted" style="font-size:12px">${nt(pl.opmerking)}</div>` : ""}${pl && pl.taken ? `<div class="muted" style="font-size:12px">${pl.klaar} van ${pl.taken} taken klaar</div>` : ""}</td><td class="num">${pl ? fmt(pl.start) : "—"}</td><td class="num">${pl ? fmt(pl.eind) : "—"}</td><td>${bar}</td><td>${st === "done" ? `<span class="pill akkoord">Klaar</span>` : st === "now" ? `<span class="pill meerwerk">Nu bezig</span>` : `<span class="pill grijs">Nog te doen</span>`}</td></tr>` +
+        return `<tr style="${st === "todo" ? "color:var(--muted)" : ""}"><td><b style="${st === "now" ? "" : "font-weight:600"}">${i + 1}. ${esc(f.naam)}</b>${pl && pl.opmerking ? `<div class="muted" style="font-size:12px">${nt(pl.opmerking)}</div>` : ""}${pl && pl.taken ? `<div class="muted" style="font-size:12px">${pl.klaar} van ${pl.taken} taken klaar</div>` : ""}</td><td class="num">${pl ? fmt(pl.start) : "—"}</td><td class="num">${pl ? fmt(pl.eind) : "—"}</td><td>${bar}</td><td>${st === "done" ? `<span class="pill akkoord">Klaar</span>` : st === "now" ? `<span class="pill meerwerk">Nu bezig</span>` : `<span class="pill grijs">Nog te doen</span>`}</td></tr>` +
           taken.map(t => `<tr class="sub" style="${t.status === "done" ? "color:var(--muted)" : ""}"><td style="padding-left:28px">↳ ${nt(t.titel)}</td><td class="num">${fmt(t.start)}</td><td class="num">${fmt(t.eind)}</td><td>${tbar(t)}</td><td>${t.status === "done" ? `<span class="pill akkoord">Klaar</span>` : t.status === "busy" ? `<span class="pill meerwerk">Bezig</span>` : `<span class="pill grijs">Gepland</span>`}</td></tr>`).join(""); }).join("")}
     </tbody></table></div></div>
     <div class="panel"><div class="panel-head"><h2>Gepresteerde uren</h2><span class="num" style="font-weight:700">${nl(totU)} u</span></div>${uren.length ? `<div class="tw"><table class="t"><thead><tr><th>Datum</th><th>Tijd</th><th>Wat</th><th>Wie</th><th class="r">Uren</th></tr></thead><tbody>

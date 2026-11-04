@@ -3,7 +3,7 @@
    Statische webapp op Supabase (login, live-synchronisatie, rechten)
    ===================================================================== */
 if (window.top !== window.self) { try { window.top.location.replace(window.location.href); } catch (e) { document.documentElement.innerHTML = ""; } }   // niet in een vreemd frame (clickjacking)
-const APP_VERSION = "1.63.1";
+const APP_VERSION = "1.64.0";
 const PROJ_STATUS = { offerte: "In offerte", lopend: "Lopend", on_hold: "On hold", afgerond: "Afgerond", verloren: "Verloren" };
 const KLANTTYPE = { particulier: "Particulier", zakelijk: "Zakelijk" };
 const KLANTCODE = { particulier: "PAR", zakelijk: "ZAK" };
@@ -85,6 +85,17 @@ const projCode = (p) => p ? [p.nummer, KLANTCODE[p.klanttype]].filter(Boolean).j
 const faseName = (nr) => nr ? (S.fasen[nr] ? `${nr} · ${S.fasen[nr].naam}` : String(nr)) : "";
 const faseShort = (nr) => nr && S.fasen[nr] ? S.fasen[nr].naam : "";
 const fasenList = () => Object.values(S.fasen).filter(f => f.actief !== false).sort((a, b) => a.nr - b.nr);
+// 1.64 (script 060): wat de klant in het portaal ziet — "stap" = plaats in de lijst actieve fasen, net als in het portaal
+const klantStap = (p) => { if (!p) return ""; if (p.status === "afgerond") return "Opgeleverd"; const i = fasenList().findIndex(f => f.nr === p.fase_nr); return i >= 0 ? `stap ${i + 1} · ${fasenList()[i].naam}` : (PROJ_STATUS[p.status] || p.status || "—"); };
+const faseBron = (p) => { if (schemaV() < 60 || !p) return ""; const op = p.fase_sinds ? " · " + fmtLong(lokDag(p.fase_sinds)) : "";
+  if (p.fase_vast) return "🔒 vastgezet" + op; if (p.fase_bron === "auto") return "automatisch" + (p.fase_reden ? ": " + p.fase_reden : "") + op; if (p.fase_bron === "manueel") return "zelf gekozen" + op + " · schuift verder mee met het werk"; return "schuift automatisch mee met het werk"; };
+// na het afvinken: is de projectfase mee opgeschoven? → project herladen en kort melden
+async function faseNa(pid, f0) {
+  if (schemaV() < 60 || !pid || !S.projecten[pid]) return;
+  const { data } = await sb.from("projecten").select("*").eq("id", pid).maybeSingle(); if (!data) return;
+  S.projecten[pid] = { ...S.projecten[pid], ...data }; renderSoon();
+  if (data.fase_nr !== f0 && data.fase_bron === "auto") toast(`${S.projecten[pid].klant || "Project"}: fase → ${faseName(data.fase_nr)} — de klant ziet nu ${klantStap(data)}`, 5000);
+}
 const projSpan = (p) => { const ts = tasksOf(p.id); const st = [p.start, ...ts.map(t => t.start)].filter(Boolean).sort()[0]; const en = [p.eind, ...ts.map(t => t.eind)].filter(Boolean).sort().pop(); return [st, en]; };
 /* toegewezen aan: teamlid (assignee) of contact zoals de klant of een aannemer (contact_id, sinds script 015) */
 const contactAvatar = (c) => `<span class="avatar" style="background:var(--surface-2);color:var(--ink-2);border:1px solid var(--line-2)" title="${esc(c.naam)}">${esc((c.naam || "?").trim().split(/\s+/).map(w => w[0]).join("").slice(0, 2).toUpperCase())}</span>`;
@@ -238,16 +249,19 @@ async function dbInsert(table, row) {
   const { data, error } = await sb.from(table).insert(row).select().single();
   if (error) { toast("Bewaren mislukt: " + error.message, 5000); error.__toasted = true; throw error; }
   const key = table === "tarieven" ? "user_id" : table === "loten" ? "nr" : "id"; S[table][data[key]] = data; render();
+  if (table === "taken" && (data.status === "busy" || data.status === "done") && data.fase_nr != null) faseNa(data.project_id, S.projecten[data.project_id]?.fase_nr).catch(() => { });   // 1.64: fase schuift mee
   if (table === "taken" && typeof afsNaWijziging === "function") afsNaWijziging(null, data);   // afspraak → agenda + mail (afspraken.js, script 041)
   return data;
 }
 async function dbUpdate(table, id, patch) {
   const key = table === "tarieven" ? "user_id" : table === "loten" ? "nr" : "id";
-  const prev = S[table][id]; const vorig = table === "taken" && prev ? { ...prev } : null; S[table][id] = { ...prev, ...patch }; render();
+  const prev = S[table][id]; const vorig = table === "taken" && prev ? { ...prev } : null; const f0 = prev && (table === "taken" || table === "ontwerp_rondes") ? S.projecten[prev.project_id]?.fase_nr : null; S[table][id] = { ...prev, ...patch }; render();
   const { data, error } = await sb.from(table).update(patch).eq(key, id).select().single();
   if (error) { if (prev === undefined) delete S[table][id]; else S[table][id] = prev; render(); toast("Bewaren mislukt: " + error.message, 5000); error.__toasted = true; throw error; }
   S[table][id] = VIEW_OF[table] ? { ...prev, ...data } : data; render();
   if (VIEW_OF[table] && S.viewsOk !== false) rowRefetch(table, id);
+  if (vorig && (data.status === "busy" || data.status === "done") && data.fase_nr != null && (data.status !== vorig.status || data.fase_nr !== vorig.fase_nr)) faseNa(data.project_id, f0).catch(() => { });   // 1.64: fase schuift mee
+  if (table === "ontwerp_rondes" && prev && prev.status === "concept" && data.status === "gepubliceerd") faseNa(data.project_id, f0).catch(() => { });
   if (table === "taken" && typeof afsNaWijziging === "function") afsNaWijziging(vorig, S[table][id]);   // afspraak gewijzigd (ook via de planning) → agenda + mail
   return data;
 }
@@ -2874,7 +2888,7 @@ function vProjectDetail(p) {
   <div class="page-head"><div>${projCode(p) ? `<div class="eyebrow">${esc(projCode(p))}${p.projecttype ? " · " + esc(p.projecttype) : ""}</div>` : ""}<h1>${esc(projName(p))}</h1><div class="sub">${esc(p.adres || "")}${(p.postcode || p.gemeente) ? (p.adres ? ", " : "") + esc([p.postcode, p.gemeente].filter(Boolean).join(" ")) : ""}</div></div>
     <div class="actions">${projStatusKnop(p)}${p.drive_url ? `<a class="btn" href="${esc(safeUrl(p.drive_url))}" target="_blank" rel="noopener" title="Projectmap openen in Google Drive">📁 Drive-map ↗</a>` : (driveReady() ? `<button class="btn" data-act="drive-link" data-pid="${p.id}" title="Bestaande map op Drive koppelen of zoeken">📁 Drive-map koppelen</button>` : "")}${isBeheer() ? `<button class="btn" data-act="edit-project" data-pid="${p.id}">Bewerken</button>` : ""}<button class="btn" data-act="log-hours" data-pid="${p.id}">+ Uren</button>${msReady() ? `<button class="btn" data-act="ms-open" data-pid="${p.id}" title="${msRows(p.id).length ? "Meetstaat openen" : "Meetstaat aanmaken: loten en posten kiezen"}">${msRows(p.id).length ? "Meetstaat" : "+ Meetstaat"}</button>` : ""}<button class="btn primary" data-act="new-task" data-pid="${p.id}">+ Taak</button></div></div>
   <div class="panel" style="margin-bottom:16px"><div class="panel-body meta">
-    <div><div class="k">Fase</div><div class="v">${esc(faseName(p.fase_nr) || "—")}</div></div>
+    <div><div class="k">Fase</div><div class="v">${esc(faseName(p.fase_nr) || "—")}${schemaV() >= 60 && !p.intern ? `<div class="fase-klant" title="${esc(faseBron(p))}">Klant ziet: <b>${esc(klantStap(p))}</b><small>${esc(faseBron(p))}</small></div>` : ""}</div></div>
     <div><div class="k">Lead</div><div class="v"><span class="who-cell">${p.lead ? avatar(p.lead) : ""}${esc(userById(p.lead).name)}</span></div></div>
     <div><div class="k">Timing</div><div class="v num">${fmtLong(st)} → ${fmtLong(en)}</div></div>
     ${isBeheer() ? `<div><div class="k">Forfait</div><div class="v num">${eur(p.forfait)}</div></div>` : ""}
@@ -3427,7 +3441,8 @@ const projOpts = (sel) => {
   if (!toe.length) return opts(open.map(p => [p.id, lbl(p)]), sel);
   return `<optgroup label="Lopend en in offerte">${opts(open.map(p => [p.id, lbl(p)]), sel)}</optgroup><optgroup label="Afgerond of niet doorgegaan">${opts(toe.map(p => [p.id, lbl(p)]), sel)}</optgroup>`;
 };
-const faseOpts = (sel, allowEmpty) => (allowEmpty ? `<option value="">— geen fase —</option>` : "") + opts(fasenList().map(f => [f.nr, `${f.nr} · ${f.naam}`]), sel);
+const faseOpts = (sel, allowEmpty) => { const l = fasenList().map(f => [f.nr, `${f.nr} · ${f.naam}`]); if (sel && S.fasen[sel] && !l.some(x => x[0] == sel)) l.push([Number(sel), `${sel} · ${S.fasen[sel].naam} (niet actief)`]);   // 1.64: een niet-actieve huidige fase niet stil wissen bij bewaren
+  return (allowEmpty ? `<option value="">— geen fase —</option>` : "") + opts(l, sel); };
 
 /* 1.53: de status van een project wijzigen met een klik op de statusknop (projectenlijst, projectkop, financiële planning) — beheer,
    zoals het projectformulier. Verloren vraagt de reden; een andere status maakt die reden leeg (zoals het formulier). */
@@ -3503,7 +3518,7 @@ function projectForm(p = {}) {
     <div class="field"><label for="f_nr">Projectnummer</label><input id="f_nr" name="nummer" value="${esc(p.nummer || "")}" placeholder="automatisch (jaar + volgnummer)" ${isNew ? "" : ""}><span class="muted" style="font-size:12px">${isNew ? "Leeg laten = automatisch volgend nummer" : "Enkel wijzigen als het echt moet"}</span></div>
     <div class="field"><label for="f_lead">Projectlead</label><select id="f_lead" name="lead">${userOpts(p.lead || S.me.id)}</select></div>
     <div class="field"><label for="f_status">Status</label><select id="f_status" name="status">${opts(Object.entries(PROJ_STATUS), p.status || "offerte")}</select></div>
-    <div class="field"><label for="f_fase">Huidige fase</label><select id="f_fase" name="fase_nr">${faseOpts(p.fase_nr || 1, true)}</select></div>
+    <div class="field"><label for="f_fase">Huidige fase</label><select id="f_fase" name="fase_nr">${faseOpts(p.fase_nr || 1, true)}</select>${schemaV() >= 60 && !isNew ? `<label class="chk"><input type="checkbox" name="fase_vast" id="f_fase_vast" ${p.fase_vast ? "checked" : ""}> vastzetten (niet automatisch laten opschuiven)</label><span class="muted" id="f_fase_hint" style="font-size:12px">${p.fase_vast ? "Vastgezet: de fase blijft staan tot je dit uitvinkt." : "Schuift vanzelf vooruit met het werk: taken bezig/klaar, overeenkomst goedgekeurd, ontwerpronde gepubliceerd."}</span>` : ""}</div>
     <div class="field"><label for="f_forfait">Forfait (€, excl. btw)</label><input id="f_forfait" type="number" step="1" name="forfait" value="${esc(p.forfait ?? "")}"></div>
     <div class="field"><label for="f_start">Start</label><input id="f_start" type="date" name="start" value="${esc(p.start || todayIso)}"></div>
     <div class="field"><label for="f_eind">Geplande oplevering</label><input id="f_eind" type="date" name="eind" value="${esc(p.eind || "")}"></div>
@@ -3530,6 +3545,10 @@ function projectForm(p = {}) {
       // Klantnaam gewijzigd terwijl er nog geen Drive-map gekoppeld is en de mapnaam niet zelf aangepast werd → mapnaam volgt de klantnaam
       if (!isNew && !p.drive_folder_id && row.klant !== (p.klant || "") && row.drive_map === (p.drive_map || "")) row.drive_map = "PROJECTEN/" + row.klant;
       if (schemaV() >= 23) row.assistent = d.assistent === "on";
+      if (schemaV() >= 60 && !isNew) {   // 1.64: fase enkel meesturen als ze echt gewijzigd werd (anders overschrijft een open formulier een automatisch opgeschoven fase)
+        row.fase_vast = d.fase_vast === "on";
+        if (!$("#f_fase")?.dataset.gewijzigd) delete row.fase_nr;
+      }
       if (schemaV() >= 51 && isBeheer() && !!d.intern !== !!p.intern) {   // 1.54 (script 051): er is maar één intern project
         const ander = Object.values(S.projecten).find(x => x.intern && x.id !== p.id);
         if (d.intern && ander) { toast(`"${ander.klant}" is al het interne project. Zet het daar eerst uit.`, 6000); return false; }
@@ -3554,6 +3573,14 @@ function projectForm(p = {}) {
     onDelete: isNew ? null : async () => { if (typeof afsVoorVerwijderen === "function") for (const t of Object.values(S.taken).filter(t => t.project_id === p.id && (t.afspraak || t.agenda_event_id))) await afsVoorVerwijderen(t); await dbDelete("projecten", p.id); Object.values(S.taken).filter(t => t.project_id === p.id).forEach(t => delete S.taken[t.id]); Object.values(S.uren).filter(h => h.project_id === p.id).forEach(h => delete S.uren[h.id]); S.project = null; render(); toast("Project verwijderd"); },
   });
   wirePostcode();
+  const fSel = $("#f_fase"), fVast = $("#f_fase_vast"), fHint = $("#f_fase_hint");
+  if (fSel && fVast && fHint) {   // 1.64: lager kiezen dan nu → vastzetten, anders schuift ze bij het volgende afgevinkte werk weer op
+    const nu = () => Number(S.projecten[p.id]?.fase_nr ?? p.fase_nr ?? 0);   // de fase kan intussen automatisch opgeschoven zijn
+    const lager = () => fSel.dataset.gewijzigd && Number(fSel.value || 0) < nu();
+    const tip = () => { fHint.textContent = fVast.checked ? "Vastgezet: de fase blijft staan tot je dit uitvinkt." : lager() ? "Let op: niet vastgezet → schuift bij het volgende afgevinkte werk weer op." : "Schuift vanzelf vooruit met het werk: taken bezig/klaar, overeenkomst goedgekeurd, ontwerpronde gepubliceerd."; };
+    fSel.addEventListener("change", () => { fSel.dataset.gewijzigd = "1"; if (lager()) fVast.checked = true; tip(); });
+    fVast.addEventListener("change", tip);
+  }
   const cidSel = $("#f_cid"); if (cidSel) cidSel.addEventListener("change", () => { const c = S.contacten[cidSel.value]; if (!c) return; const f = $("#mform"); const set = (n, v) => { const el = f.querySelector(`[name="${n}"]`); if (el) el.value = v || ""; };
     set("klant", c.naam); set("bedrijf", c.bedrijf); set("btw_nummer", c.btw_nummer); set("contact", c.contactpersoon); set("adres", c.adres); set("postcode", c.postcode); set("gemeente", c.gemeente); set("gsm1", c.gsm); set("gsm2", c.tel); set("email1", c.email); set("email2", c.email2);
     const kt = f.querySelector(`input[name="klanttype"][value="${c.klanttype || "particulier"}"]`); if (kt) kt.checked = true; f.dispatchEvent(new Event("change")); });
