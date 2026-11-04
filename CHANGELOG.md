@@ -2,6 +2,10 @@
 
 De nieuwste versie staat bovenaan. (Vanaf 1.48 houdt `version.json` enkel de laatste versie bij; het Planbord vraagt dat bestand elke 5 minuten op.)
 
+## 1.63.1 — 2026-11-04 (geen databasescript, enkel pushen)
+
+Ontwerp, klantenportaal: in een grote pdf-presentatie kon de klant enkel op pagina 1 een opmerking zetten. Een tik of klik opent het opmerkingenvak nu meteen op de juiste plek van elke pagina, zonder de presentatie opnieuw op te bouwen; de pagina's houden hun hoogte (ook terwijl ze nog laden) en een getekende pagina wordt hergebruikt in plaats van opnieuw getekend. Op een iPhone of iPad werkt het tikken op het ontwerp nu ook overal. Hetzelfde voor de weergave in het Planbord.
+
 ## 1.63.0 — 2026-11-04 (script 059 + nieuw drive/Code.gs online zetten; geen update van de Mac mini nodig)
 
 **Ontwerptraject met klantenfeedback.** Nieuw tabblad **Ontwerp** op de projectfiche en in het klantenportaal, los van het dossier. Na elk ontwerpgesprek maak je een ronde (V1, V2, …) met een verslag voor de klant, een interne notitie, open vragen, een datum tegen wanneer je feedback vraagt en de documenten: een A3-presentatie of renders uit Renders, of pdf's en beelden van je computer. Het Planbord bewaart een vaste kopie (opslag `ontwerp`), dus de chronologie blijft kloppen, ook als het origineel later wijzigt; na publiceren liggen de documenten vast (nieuwe documenten = nieuwe ronde). **Publiceren** zet de ronde in het portaal en mailt de klant.

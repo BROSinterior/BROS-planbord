@@ -9,7 +9,7 @@
    + open (indicatief, open keuzes en voorstellen) = verwacht eindbudget, met de budgetgrens van de klant.
    Niets wijzigt vanzelf de meetstaat: bindend wordt het via de bestaande keuzes en de akkoord-knop.
    ===================================================================== */
-const O = { open: null, urls: {}, pdf: {}, kompas: {}, kLaden: {}, sel: null, hl: null };
+const O = { open: null, urls: {}, pdf: {}, kompas: {}, kLaden: {}, sel: null, hl: null, asp: {}, doek: {} };
 const oOk = () => typeof schemaV === "function" && schemaV() >= 59 && !!S.ontwerp_rondes;
 const O_REACTIE = { open: "Nog te beantwoorden", aangepast: "Aangepast", niet_mogelijk: "Niet mogelijk", afspraak: "Afspraak", genoteerd: "Genoteerd" };
 const O_IMPACT = { geen: "Geen budgetimpact", indicatief: "Indicatief (vork)", akkoord: "Akkoord (bedrag ligt vast)", in_voorstel: "In een meerwerkvoorstel", vervallen: "Vervallen" };
@@ -178,8 +178,8 @@ function oViewer(docs, pins, o = {}) {
     const paginas = d.soort === "pdf" ? Array.from({ length: Math.max(1, d.paginas || 1) }, (_, i) => i + 1) : [1];
     return `<div class="panel o-doc" style="margin-bottom:14px" data-o-doc="${d.id}"><div class="panel-head"><h3>${esc(d.titel || "Document")} <small class="muted" style="font-weight:400">${d.soort === "pdf" ? d.paginas + " pagina" + (d.paginas === 1 ? "" : "'s") : "beeld"}${pp.length ? " · " + pp.length + " speld" + (pp.length === 1 ? "" : "en") : ""}</small></h3>
       <div class="actions"><button class="btn ghost sm" data-o-act="titel" data-id="${d.id}">Titel</button>${o.beheer ? `<button class="btn ghost sm danger" data-o-act="doc-weg" data-id="${d.id}">Verwijderen</button>` : ""}</div></div>
-      <div class="o-pags">${paginas.map(n => `<div class="o-pg" data-o-pg="${d.id}" data-p="${n}" ${d.breedte && d.hoogte && d.soort !== "pdf" ? `style="aspect-ratio:${d.breedte}/${d.hoogte}"` : ""}>${d.soort === "pdf" ? `<canvas></canvas>${paginas.length > 1 ? `<span class="o-pnr">${n}</span>` : ""}` : `<img alt="${esc(d.titel)}" loading="lazy">`}
-        ${pp.filter(f => (f.pagina || 1) === n && f.x != null).map(f => `<button type="button" class="o-pin${f.reactie_status !== "open" ? " ok" : ""}${O.hl === f.id ? " hl" : ""}" style="left:${Number(f.x) * 100}%;top:${Number(f.y) * 100}%" data-o-act="speld" data-id="${f.id}" title="${esc(f.tekst.slice(0, 120))}">${o.nr && o.nr[f.id] || "•"}</button>`).join("")}</div>`).join("")}</div></div>`; }).join("");
+      <div class="o-pags">${paginas.map(n => { const asp = O.asp[d.pad + "#" + n] || (d.breedte && d.hoogte ? `${d.breedte}/${d.hoogte}` : ""); return `<div class="o-pg" data-o-pg="${d.id}" data-p="${n}" ${asp ? `style="aspect-ratio:${asp}"` : ""}>${d.soort === "pdf" ? `<canvas></canvas>${paginas.length > 1 ? `<span class="o-pnr">${n}</span>` : ""}` : `<img alt="${esc(d.titel)}" loading="lazy">`}
+        ${pp.filter(f => (f.pagina || 1) === n && f.x != null).map(f => `<button type="button" class="o-pin${f.reactie_status !== "open" ? " ok" : ""}${O.hl === f.id ? " hl" : ""}" style="left:${Number(f.x) * 100}%;top:${Number(f.y) * 100}%" data-o-act="speld" data-id="${f.id}" title="${esc(f.tekst.slice(0, 120))}">${o.nr && o.nr[f.id] || "•"}</button>`).join("")}</div>`; }).join("")}</div></div>`; }).join("");
 }
 /* na elke weergave: beelden en pdf-pagina's laden (enkel wat zichtbaar wordt) */
 let oObs = null;
@@ -193,12 +193,17 @@ async function oLaadPg(el) {
   try {
     const url = await oUrl(d.pad);
     if (d.soort !== "pdf") { const img = el.querySelector("img"); if (img) img.src = url; return; }
+    const pk = d.pad + "#" + (Number(el.dataset.p) || 1); const c = el.querySelector("canvas"); if (!c) return;
+    const klaar = O.doek[pk];
+    if (klaar && klaar !== c && klaar.width >= Math.max(320, el.clientWidth || 0) * 0.9) { c.replaceWith(klaar); return; }   // al getekend: hetzelfde doek terugzetten (geen tweede kopie in het geheugen)
     const pdfjs = await loadPdfJs(); const key = d.pad;
     O.pdf[key] = O.pdf[key] || pdfjs.getDocument({ url, isEvalSupported: false }).promise;
     const doc = await O.pdf[key]; const page = await doc.getPage(Number(el.dataset.p) || 1);
-    const v1 = page.getViewport({ scale: 1 }); el.style.aspectRatio = `${v1.width}/${v1.height}`;
-    const w = Math.max(320, el.clientWidth || 800); const dpr = Math.min(2, window.devicePixelRatio || 1); const vp = page.getViewport({ scale: w / v1.width * dpr });
-    const c = el.querySelector("canvas"); c.width = vp.width; c.height = vp.height; await page.render({ canvasContext: c.getContext("2d"), viewport: vp }).promise;
+    const v1 = page.getViewport({ scale: 1 }); O.asp[pk] = `${v1.width}/${v1.height}`; el.style.aspectRatio = O.asp[pk];
+    const w = Math.max(320, el.clientWidth || 800); const dpr = Math.min(1.75, window.devicePixelRatio || 1); const vp = page.getViewport({ scale: w / v1.width * dpr });
+    const off = document.createElement("canvas"); off.width = vp.width; off.height = vp.height; await page.render({ canvasContext: off.getContext("2d"), viewport: vp }).promise;
+    O.doek[pk] = off; const nu = el.isConnected ? el.querySelector("canvas") : document.querySelector(`.o-pg[data-o-pg="${d.id}"][data-p="${el.dataset.p}"] canvas`);
+    if (nu && nu !== off) nu.replaceWith(off);
   } catch (e) { el.classList.add("fout"); el.setAttribute("title", "Kon niet geladen worden: " + (e && e.message || e)); }
 }
 

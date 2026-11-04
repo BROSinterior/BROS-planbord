@@ -7,7 +7,7 @@
    en hoe het budget veranderde. Bedragen excl. btw; indicatief tot een keuze of voorstel goedgekeurd is.
    Gebruikt de views klant_ontwerp_* en klant_taak_punten en de functies klant_ontwerp_* / budgetkompas.
    ===================================================================== */
-const KO = { pop: null, urls: {}, pdf: {}, kompas: {}, watals: {}, bezig: false };
+const KO = { pop: null, urls: {}, pdf: {}, kompas: {}, watals: {}, bezig: false, asp: {}, doek: {} };   // asp/doek: verhouding en getekende pagina per document+pagina (vaste opbouw bij opnieuw tekenen)
 const koRondes = (p) => (D().ontwerpRondes || []).filter(r => r.project_id === p.id).sort((a, b) => b.nummer - a.nummer);
 const koDocs = (rid) => (D().ontwerpDocs || []).filter(d => d.ronde_id === rid).sort((a, b) => (a.volgorde || 0) - (b.volgorde || 0));
 const koFb = (rid) => (D().ontwerpFeedback || []).filter(f => f.ronde_id === rid).sort((a, b) => (a.created_at || "").localeCompare(b.created_at || ""));
@@ -132,9 +132,10 @@ function koRonde(p, r) {
 function koDoc(d, pins, nr, kan) {
   const pp = pins.filter(f => f.document_id === d.id); const paginas = d.soort === "pdf" ? Array.from({ length: Math.max(1, d.paginas || 1) }, (_, i) => i + 1) : [1];
   return `<div class="panel ko-doc" style="margin-bottom:16px"><div class="panel-head"><h2 style="font-size:16px">${nt(d.titel || "Document")}</h2><span class="muted" style="font-size:13px">${d.soort === "pdf" ? d.paginas + " pagina" + (d.paginas === 1 ? "" : "'s") : ""}</span></div>
-    <div class="ko-pags">${paginas.map(n => `<div class="ko-pg${kan ? " kan" : ""}" data-ko-pg="${d.id}" data-p="${n}" ${d.breedte && d.hoogte && d.soort !== "pdf" ? `style="aspect-ratio:${d.breedte}/${d.hoogte}"` : ""}>${d.soort === "pdf" ? `<canvas></canvas>${paginas.length > 1 ? `<span class="ko-pnr">${n}</span>` : ""}` : `<img alt="" loading="lazy">`}
+    <div class="ko-pags">${paginas.map(n => { const asp = KO.asp[d.pad + "#" + n] || (d.breedte && d.hoogte ? `${d.breedte}/${d.hoogte}` : "");
+      return `<div class="ko-pg${kan ? " kan" : ""}" data-ko-pg="${d.id}" data-p="${n}" ${asp ? `style="aspect-ratio:${asp}"` : ""}>${d.soort === "pdf" ? `<canvas></canvas>${paginas.length > 1 ? `<span class="ko-pnr">${n}</span>` : ""}` : `<img alt="" loading="lazy">`}
       ${pp.filter(f => (f.pagina || 1) === n && f.x != null).map(f => `<button type="button" class="ko-pin${f.eigen && !f.verstuurd_op ? " concept" : f.reactie_status && f.reactie_status !== "open" ? " ok" : ""}" style="left:${Number(f.x) * 100}%;top:${Number(f.y) * 100}%" data-act="ko-pin" data-id="${f.id}" title="${esc(f.tekst.slice(0, 100))}">${nr[f.id]}</button>`).join("")}
-      ${KO.pop && KO.pop.doc === d.id && KO.pop.p === n ? koPop() : ""}</div>`).join("")}</div></div>`;
+      ${KO.pop && KO.pop.doc === d.id && KO.pop.p === n ? koPop() : ""}</div>`; }).join("")}</div></div>`;
 }
 function koPop() {
   const o = KO.pop; const f = o.id && (D().ontwerpFeedback || []).find(x => x.id === o.id);
@@ -142,6 +143,17 @@ function koPop() {
   if (f && (!f.eigen || f.verstuurd_op)) return `<div class="ko-pop${links ? " l" : ""}${onder ? " o" : ""}" style="left:${o.x * 100}%;top:${o.y * 100}%"><div style="white-space:pre-line">${nt(f.tekst)}</div><div class="muted" style="font-size:12px">${esc(f.auteur_naam || "")} · ${fmt(f.verstuurd_op || f.created_at)}</div>${f.reactie ? `<div class="ko-reactie"><b>BROS:</b> ${nt(f.reactie)}</div>` : ""}<div class="gk-actions"><button type="button" class="btn sm" data-act="ko-pop-dicht">Sluiten</button></div></div>`;
   return `<form class="ko-pop${links ? " l" : ""}${onder ? " o" : ""}" style="left:${o.x * 100}%;top:${o.y * 100}%" data-ko-pop><textarea name="tekst" rows="3" maxlength="4000" placeholder="Wat wil je hier aanpassen of vragen?">${esc(f ? f.tekst : "")}</textarea>
     <div class="gk-actions"><button type="submit" class="btn primary sm">Bewaren</button>${f ? `<button type="button" class="btn ghost sm" data-act="ko-weg" data-id="${f.id}">Verwijderen</button>` : ""}<button type="button" class="btn ghost sm" data-act="ko-pop-dicht">Annuleren</button></div></form>`;
+}
+/* het opmerkingenvak rechtstreeks in de juiste pagina zetten (niet alles opnieuw tekenen: de pagina blijft waar ze is) */
+function koPlaatsPop() {
+  document.querySelectorAll(".ko-pop").forEach(x => x.remove());
+  const o = KO.pop; if (!o) return;
+  const el = document.querySelector(`.ko-pg[data-ko-pg="${o.doc}"][data-p="${o.p}"]`); if (!el) { render(true); return; }
+  el.insertAdjacentHTML("beforeend", koPop());
+  const pop = el.querySelector(".ko-pop"); if (!pop) return;
+  if (typeof TAAL !== "undefined" && TAAL === "en" && typeof vertaal === "function") vertaal(pop);
+  const t = pop.querySelector("textarea");
+  setTimeout(() => { const r = pop.getBoundingClientRect(); if (r.top < 70 || r.bottom > window.innerHeight) pop.scrollIntoView({ block: "center", behavior: "smooth" }); if (t) t.focus({ preventScroll: true }); }, 20);
 }
 /* beelden en pdf-pagina's laden zodra ze in beeld komen */
 let koObs = null;
@@ -156,11 +168,16 @@ async function koLaadPg(el) {
   try {
     const url = await koUrl(d.pad);
     if (d.soort !== "pdf") { const img = el.querySelector("img"); if (img) img.src = url; return; }
+    const key = d.pad + "#" + (Number(el.dataset.p) || 1); const c = el.querySelector("canvas"); if (!c) return;
+    const klaar = KO.doek[key];
+    if (klaar && klaar !== c && klaar.width >= Math.max(300, el.clientWidth || 0) * 0.9) { c.replaceWith(klaar); return; }   // al getekend: hetzelfde doek terugzetten (geen tweede kopie in het geheugen)   // al getekend: meteen tonen
     const pdfjs = await koPdfJs(); KO.pdf[d.pad] = KO.pdf[d.pad] || pdfjs.getDocument({ url, isEvalSupported: false }).promise;
     const doc = await KO.pdf[d.pad]; const page = await doc.getPage(Number(el.dataset.p) || 1);
-    const v1 = page.getViewport({ scale: 1 }); el.style.aspectRatio = `${v1.width}/${v1.height}`;
-    const w = Math.max(300, el.clientWidth || 800); const dpr = Math.min(2, window.devicePixelRatio || 1); const vp = page.getViewport({ scale: w / v1.width * dpr });
-    const c = el.querySelector("canvas"); c.width = vp.width; c.height = vp.height; await page.render({ canvasContext: c.getContext("2d"), viewport: vp }).promise;
+    const v1 = page.getViewport({ scale: 1 }); KO.asp[key] = `${v1.width}/${v1.height}`; el.style.aspectRatio = KO.asp[key];
+    const w = Math.max(300, el.clientWidth || 800); const dpr = Math.min(1.75, window.devicePixelRatio || 1); const vp = page.getViewport({ scale: w / v1.width * dpr });
+    const off = document.createElement("canvas"); off.width = vp.width; off.height = vp.height; await page.render({ canvasContext: off.getContext("2d"), viewport: vp }).promise;
+    KO.doek[key] = off; const nu = el.isConnected ? el.querySelector("canvas") : document.querySelector(`.ko-pg[data-ko-pg="${d.id}"][data-p="${el.dataset.p}"] canvas`);
+    if (nu && nu !== off) nu.replaceWith(off);
   } catch (e) { el.classList.add("fout"); }
 }
 
@@ -187,15 +204,14 @@ document.addEventListener("click", async (e) => {
   if (!el) {   // tikken op een pagina = nieuwe speld (enkel bij een open ronde)
     const pg = e.target.closest && e.target.closest(".ko-pg.kan"); if (!pg || e.target.closest(".ko-pop")) return;
     const rc = pg.getBoundingClientRect(); const x = (e.clientX - rc.left) / rc.width, y = (e.clientY - rc.top) / rc.height; if (!(x >= 0 && x <= 1 && y >= 0 && y <= 1)) return;
-    KO.pop = { doc: pg.dataset.koPg, p: Number(pg.dataset.p) || 1, x: Math.round(x * 100000) / 100000, y: Math.round(y * 100000) / 100000 }; render(true);
-    setTimeout(() => { const t = document.querySelector(".ko-pop textarea"); if (t) t.focus(); }, 30); return;
+    KO.pop = { doc: pg.dataset.koPg, p: Number(pg.dataset.p) || 1, x: Math.round(x * 100000) / 100000, y: Math.round(y * 100000) / 100000 }; koPlaatsPop(); return;
   }
   const a = el.dataset.act, id = el.dataset.id;
   if (a === "ko-open") { S.oOpen = id; KO.pop = null; render(); return; }
   if (a === "ko-lijst") { S.oOpen = null; KO.pop = null; render(); return; }
-  if (a === "ko-pop-dicht") { KO.pop = null; render(true); return; }
+  if (a === "ko-pop-dicht") { KO.pop = null; koPlaatsPop(); return; }
   if (a === "ko-pin" || a === "ko-bewerk") { const f = (D().ontwerpFeedback || []).find(x => x.id === id); if (!f) return;
-    if (f.document_id && f.x != null) { KO.pop = { doc: f.document_id, p: f.pagina || 1, x: Number(f.x), y: Number(f.y), id }; render(true); const t = document.querySelector(".ko-pop"); if (t) t.scrollIntoView({ block: "center", behavior: "smooth" }); }
+    if (f.document_id && f.x != null) { KO.pop = { doc: f.document_id, p: f.pagina || 1, x: Number(f.x), y: Number(f.y), id }; koPlaatsPop(); }
     else if (a === "ko-bewerk") { const t = prompt("Je opmerking:", f.tekst); if (t == null) return; if (await koBewaar({ p_id: id, p_ronde: null, p_document: null, p_pagina: null, p_x: null, p_y: null, p_vraag: "", p_tekst: t }, t.trim() ? "Aangepast" : "Verwijderd")) render(true); }
     return; }
   if (a === "ko-toon") { const t = document.querySelector(`.ko-pin[data-id="${id}"]`); if (t) { t.scrollIntoView({ block: "center", behavior: "smooth" }); t.classList.add("hl"); setTimeout(() => t.classList.remove("hl"), 1600); } return; }
@@ -250,7 +266,7 @@ document.addEventListener("change", async (e) => {
   const st = document.createElement("style");
   st.textContent = `.ko-tijdlijn{display:grid;gap:10px}.ko-ronde{display:flex;gap:14px;align-items:center;text-align:left;width:100%;border:1px solid var(--line);background:var(--surface);border-radius:16px;padding:14px 16px;cursor:pointer;font:inherit;color:inherit;box-shadow:var(--card)}
   .ko-v{font-family:var(--font-display);font-size:24px;font-weight:700;min-width:46px}
-  .ko-pags{display:grid;gap:10px;padding:10px}.ko-pg{position:relative;background:var(--surface-2);border-radius:8px;overflow:visible;min-height:120px}.ko-pg.kan{cursor:crosshair}
+  .ko-pags{display:grid;gap:10px;padding:10px}.ko-pg{position:relative;background:var(--surface-2);border-radius:8px;overflow:visible;min-height:120px}.ko-pg.kan{cursor:crosshair}@media (hover:none){.ko-pg.kan{cursor:pointer}}
   .ko-pg img,.ko-pg canvas{display:block;width:100%;height:auto;border-radius:8px}.ko-pnr{position:absolute;right:8px;bottom:6px;font-size:11px;background:rgba(255,255,255,.85);color:#000;border-radius:8px;padding:1px 6px}
   .ko-pg.fout::after{content:"Kon niet geladen worden";position:absolute;inset:0;display:flex;align-items:center;justify-content:center;color:var(--crit)}
   .ko-pin{position:absolute;transform:translate(-50%,-100%);min-width:28px;height:28px;border-radius:14px 14px 14px 2px;border:2px solid #fff;background:var(--ink);color:var(--surface);font-weight:700;font-size:13px;cursor:pointer;box-shadow:0 2px 8px rgba(0,0,0,.35);padding:0 7px;z-index:2}
