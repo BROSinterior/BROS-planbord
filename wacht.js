@@ -69,6 +69,20 @@ function wjFacturen() {
   return uit;
 }
 
+/* 1.66.1: je eigen open taken die (nog) niet in "Wacht op jou" staan — zodat "Alles bij" niet leest alsof je geen deadlines hebt */
+function wjKomend() {
+  const mijn = Object.values(S.taken).filter(t => t.status !== "done" && t.assignee === S.me.id && !wjInLijst(t));
+  const met = mijn.filter(t => wjTaakDag(t)).sort((a, b) => (wjTaakDag(a) || "").localeCompare(wjTaakDag(b) || "") || (a.titel || "").localeCompare(b.titel || ""));
+  return { n: mijn.length, met, zonder: mijn.length - met.length };
+}
+function wjVolgendeHtml() {
+  const k = wjKomend(); if (!k.n) return "";
+  const t = k.met[0]; const p = t && S.projecten[t.project_id];
+  const eerst = t ? `Je eerstvolgende deadline: <button type="button" class="wj-t" data-edit-task="${t.id}" style="display:inline">${esc(t.titel)}</button> — <b>${esc(wjDagLabel(wjTaakDag(t)))}</b>${p ? ` <span class="muted">(${esc(wjProj(p.id))})</span>` : ""}. ` : "";
+  const rest = `${k.n === 1 ? "1 open taak" : k.n + " open taken"} op jouw naam${k.zonder ? ` (waarvan ${k.zonder} zonder deadline)` : ""} — zie <a href="#" data-wj-act="naar-mijn">Mijn volgende taken</a>.`;
+  return `<div class="wj-volgende muted" style="font-size:12.5px;margin-top:6px">${eerst}${rest}</div>`;
+}
+
 /** Staat deze (eigen) taak al in "Wacht op jou"? (te laat, of vandaag/morgen) — app.js toont ze dan niet nog eens bij Mijn volgende taken. */
 function wjInLijst(t) { return isLate(t) || wjBinnenkort(t); }
 /* ---------- weergave ---------- */
@@ -111,7 +125,7 @@ function vWachtOpJou() {
     + wjGroep("extern", "Van klanten en aannemers", extern.map(wjItemRij), "", verborgen && !WJ.toonVerborgen ? `<button class="wj-meer" data-wj-act="verborgen">${verborgen} verborgen — toon</button>` : WJ.toonVerborgen && verborgen ? `<button class="wj-meer" data-wj-act="verborgen">Verborgen weer verbergen</button>` : "")
     + wjGroep("fact", "Facturen", fact.map(wjItemRij));
   return `<div class="panel wj" id="wachtopjou"><div class="panel-head"><h3>Wacht op jou${totaal ? ` <span class="cnt" style="background:var(--crit);color:#fff">${totaal}</span>` : ""}</h3><span class="muted" style="font-size:12px">${totaal ? "alles wat een actie van jou vraagt, uit alle projecten" : ""}</span></div>
-    ${totaal ? `<div class="wj-grid">${groepen}</div>` : `<div class="wj-klaar"><span aria-hidden="true">✓</span><div><b>Alles bij.</b> ${team ? "Geen te late taken in het hele team" : "Niets wacht op jou — geen te late taken"}, geen open vragen van klanten of aannemers.${undo ? " " + undo : ""}${isBeheer() ? ` <button class="wj-meer" data-wj-act="team" data-v="${team ? "0" : "1"}">${team ? "Terug naar mijn taken" : "Bekijk het hele team"}</button>` : ""}${verborgen ? ` <button class="wj-meer" data-wj-act="verborgen">${verborgen} verborgen — toon</button>` : ""}</div></div>`}</div>`;
+    ${totaal ? `<div class="wj-grid">${groepen}</div>${team || laat.length || nu.length ? "" : `<div class="panel-body" style="padding-top:0">${wjVolgendeHtml()}</div>`}` : `<div class="wj-klaar"><span aria-hidden="true">✓</span><div><b>Alles bij.</b> ${team ? "Geen te late taken in het hele team" : "Niets te laat en niets voor vandaag of morgen"}, geen open vragen van klanten of aannemers.${undo ? " " + undo : ""}${team ? "" : wjVolgendeHtml()}${isBeheer() ? ` <button class="wj-meer" data-wj-act="team" data-v="${team ? "0" : "1"}">${team ? "Terug naar mijn taken" : "Bekijk het hele team"}</button>` : ""}${verborgen ? ` <button class="wj-meer" data-wj-act="verborgen">${verborgen} verborgen — toon</button>` : ""}</div></div>`}</div>`;
 }
 
 /* ---------- acties ---------- */
@@ -163,6 +177,7 @@ document.addEventListener("click", (e) => {
   if (d.wjAct === "weg") { wjZetWeg(d.k, d.s, Number(d.d) || 0); return render(); }
   if (d.wjAct === "verborgen") { WJ.toonVerborgen = !WJ.toonVerborgen; return render(); }
   if (d.wjAct === "nav") { S.view = d.view; S.project = null; if (d.ft) S.factTab = d.ft; render(); window.scrollTo({ top: 0 }); return; }
+  if (d.wjAct === "naar-mijn") { e.preventDefault(); const g = document.getElementById("mijn-taken"); if (g) g.scrollIntoView({ behavior: "smooth", block: "start" }); return; }
   if (d.wjAct === "naar-laat") { if (isBeheer() && !wjTeam()) { WJ.teamSessie = true; render(); } const g = document.getElementById("wj-laat") || document.getElementById("wachtopjou"); if (g) g.scrollIntoView({ behavior: "smooth", block: "start" }); }
 });
 

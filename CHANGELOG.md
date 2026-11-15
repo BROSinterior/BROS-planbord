@@ -2,6 +2,10 @@
 
 De nieuwste versie staat bovenaan. (Vanaf 1.48 houdt `version.json` enkel de laatste versie bij; het Planbord vraagt dat bestand elke 5 minuten op.)
 
+## 1.66.1 — 2026-11-15 (enkel pushen; geen script, geen nieuw Drive-script)
+
+**Overzicht: "Wacht op jou" duidelijker.** "Wacht op jou" toont bewust enkel wat nu een actie vraagt: je te late taken en wat vandaag of de volgende werkdag valt. Had je verder alleen taken met een latere deadline, dan stond er "Niets wacht op jou — geen te late taken", wat las alsof je geen deadlines had. Nu staat er "Niets te laat en niets voor vandaag of morgen", met je **eerstvolgende deadline** (klik opent de taak) en hoeveel open taken je op je naam hebt (en hoeveel daarvan zonder deadline), met een link naar **Mijn volgende taken**. Dat blok toont nu ook "10 van N" als er meer dan tien zijn.
+
 ## 1.66.0 — 2026-11-13 (script 062 uitvoeren, nieuw drive/Code.gs online zetten, pushen; geen update van de Mac mini)
 
 **Klantenportaal: meetstaat en facturatie aan elkaar gekoppeld.** In de meetstaat staat per post een kolom **Gefactureerd**: hoeveel van die post al gefactureerd is (cumulatief) en in welke facturen (Voorschot, #1, #2 …; een klik opent Facturatie). Bovenaan staat ook het totaal gefactureerd. In Facturatie zie je bij een betaalde factuur de betaaldatum.

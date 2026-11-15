@@ -1,1 +1,1 @@
-{"version": "1.66.0", "date": "2026-11-13", "notes": "Klantenportaal: in de meetstaat per post wat al gefactureerd is, en een bankdossier (verbouwlening) per factuur of volledig, plus Excel. Planbord: Facturen › Yuki-koppeling om niet-gekoppelde Yuki-facturen manueel te koppelen. Script 062 + nieuw drive/Code.gs."}
+{"version": "1.66.1", "date": "2026-11-15", "notes": "Overzicht: 'Wacht op jou' toont bij 'Alles bij' je eerstvolgende deadline en hoeveel open taken je nog hebt, zodat het niet lijkt alsof je geen deadlines hebt."}

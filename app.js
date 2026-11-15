@@ -3,7 +3,7 @@
    Statische webapp op Supabase (login, live-synchronisatie, rechten)
    ===================================================================== */
 if (window.top !== window.self) { try { window.top.location.replace(window.location.href); } catch (e) { document.documentElement.innerHTML = ""; } }   // niet in een vreemd frame (clickjacking)
-const APP_VERSION = "1.66.0";
+const APP_VERSION = "1.66.1";
 const PROJ_STATUS = { offerte: "In offerte", lopend: "Lopend", on_hold: "On hold", afgerond: "Afgerond", verloren: "Verloren" };
 const KLANTTYPE = { particulier: "Particulier", zakelijk: "Zakelijk" };
 const KLANTCODE = { particulier: "PAR", zakelijk: "ZAK" };
@@ -2801,7 +2801,7 @@ function vOverzicht() {
   const wk0 = mondayOf(todayIso), wk1 = addDays(wk0, 6);
   const weekHours = hoursOf(h => h.datum >= wk0 && h.datum <= wk1);
   const wj = typeof vWachtOpJou === "function";   // 1.51: wat al in "Wacht op jou" staat (te laat, vandaag en morgen) niet nog eens tonen
-  const mine = open.filter(t => t.assignee === S.me.id && !(wj && wjInLijst(t))).sort((a, b) => (a.eind || "9").localeCompare(b.eind || "9")).slice(0, 10);
+  const mineVol = open.filter(t => t.assignee === S.me.id && !(wj && wjInLijst(t))).sort((a, b) => (a.eind || "9").localeCompare(b.eind || "9")), mineAll = mineVol.length, mine = mineVol.slice(0, 10);
   return `
   <div class="page-head"><div><div class="eyebrow">Week ${weekNr(todayIso)} · ${fmtLong(todayIso)}</div><h1>Overzicht</h1></div>
     <div class="actions"><button class="btn" data-act="new-task">+ Taak</button><button class="btn" data-act="log-hours">+ Uren</button>${isBeheer() ? `<button class="btn primary" data-act="new-project">+ Project</button>` : ""}</div></div>
@@ -2814,7 +2814,7 @@ function vOverzicht() {
   </div>
   ${hartslagMelding()}${vWeekkaart()}
   <div class="grid two">
-    <div class="panel"><div class="panel-head"><h3>${wj ? "Mijn volgende taken" : "Mijn taken"}</h3><button class="btn ghost sm" data-nav="taken">Alle taken →</button></div>
+    <div class="panel" id="mijn-taken"><div class="panel-head"><h3>${wj ? "Mijn volgende taken" : "Mijn taken"}${mineAll > mine.length ? ` <span class="muted" style="font-size:12px;font-weight:400">${mine.length} van ${mineAll}</span>` : ""}</h3><button class="btn ghost sm" data-nav="taken">Alle taken →</button></div>
       ${mine.length ? `<div class="tw"><table class="t"><thead><tr><th></th><th>Taak</th><th>Project</th><th>Deadline</th><th class="r">Uren</th><th>Status</th></tr></thead><tbody>${mine.map(t => taskRow(t, true)).join("")}</tbody></table></div>` : `<div class="empty"><b>${wj ? "Niets meer gepland voor jou" : "Niets open voor jou"}</b>${wj ? "Wat te laat is of vandaag en morgen valt, staat hierboven bij Wacht op jou." : "Maak een taak aan of laat er een aan jou toewijzen."}</div>`}
     </div>
     <div class="panel"><div class="panel-head"><h3>Uren per project</h3><span class="muted" style="font-size:12px">gepresteerd / gepland</span></div>
