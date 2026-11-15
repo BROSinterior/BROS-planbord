@@ -6,6 +6,10 @@
    ===================================================================== */
 (function () {
   const exact = {
+    // 1.66 (script 062): bankdossier
+    "⤓ Voor de bank": "⤓ For the bank", "⤓ Volledig bankdossier (pdf)": "⤓ Complete bank file (pdf)", "⤓ Excel": "⤓ Excel", "facturen": "invoices",
+    "Verbouwlening? Bezorg je bank alles in één keer": "Renovation loan? Give your bank everything at once",
+    "Met de knop Voor de bank bij een factuur maak je één pdf met de vorderingsstaat (wat de factuur dekt per onderdeel, wat al gefactureerd is en wat nog rest, met de verklaring van BROS) en de factuur zelf. Of download alles in één dossier, of als Excel.": "The For the bank button next to an invoice makes one pdf with the statement of progress (what the invoice covers per part, what has already been invoiced and what remains, with BROS's statement) and the invoice itself. Or download everything in one file, or as Excel.",
     // 1.63 (script 059): ontwerp, budget en to-do's
     "Ontwerp": "Design", "Budget": "Budget", "Gemaakte afspraken": "Agreements made", "Nog geen ontwerp gedeeld": "No design shared yet",
     "Na het eerste ontwerpgesprek vind je hier de presentatie.": "After the first design meeting you will find the presentation here.",

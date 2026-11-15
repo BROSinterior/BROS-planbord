@@ -1,1 +1,1 @@
-{"version": "1.64.0", "date": "2026-11-04", "notes": "De projectfase schuift automatisch mee met het werk en de mijlpalen; in de projectfiche zie je wat de klant ziet (\"Klant ziet: stap 4 · …\"). Script 060 uitvoeren."}
+{"version": "1.66.0", "date": "2026-11-13", "notes": "Klantenportaal: in de meetstaat per post wat al gefactureerd is, en een bankdossier (verbouwlening) per factuur of volledig, plus Excel. Planbord: Facturen › Yuki-koppeling om niet-gekoppelde Yuki-facturen manueel te koppelen. Script 062 + nieuw drive/Code.gs."}

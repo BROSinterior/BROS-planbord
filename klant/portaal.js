@@ -3,7 +3,7 @@
    Leest uitsluitend de klant_*-views (databasescript 011): geen kostprijzen, marges of interne notities.
    ===================================================================== */
 if (window.top !== window.self) { try { window.top.location.replace(window.location.href); } catch (e) { document.documentElement.innerHTML = ""; } }   // niet in een vreemd frame (clickjacking)
-const PORTAAL_VERSION = "1.64.0";
+const PORTAAL_VERSION = "1.66.0";
 const todayLocal = () => { const n = new Date(); return `${n.getFullYear()}-${String(n.getMonth() + 1).padStart(2, "0")}-${String(n.getDate()).padStart(2, "0")}`; };
 const safeUrl = (u) => /^https?:\/\//i.test(String(u || "")) ? u : "#";
 const cfg = window.PLANBORD_CONFIG || {};
@@ -94,6 +94,39 @@ function vordCalc(v) {
   const btw2 = locked && v.btw_bedrag != null ? Number(v.btw_bedrag) : Math.abs(excl) > 0.005 ? bedrag * (btw / excl) : btw;
   return { excl: bedrag, btw: btw2, incl: bedrag + btw2, perLot, loten: Object.keys(perLot).filter(l => Math.abs(perLot[l]) > 0.005).map(Number) };
 }
+
+/* 1.66: per verstuurde factuur het aandeel per post (post-% overschrijft lot-%). Is een factuur bevroren op een ander bedrag dan de
+   berekening (meetstaat later gewijzigd), dan schalen de percentages evenredig, zodat alles exact op het factuurbedrag uitkomt.
+   Eén bron voor de vorderingsstaat, de kolom "Gefactureerd" in de meetstaat, het bankdossier en de Excel. */
+const verstuurd = (p) => D().vorderingen.filter(v => v.project_id === p.id && v.status !== "opgemaakt").sort((a, b) => a.nr - b.nr || (a.datum || "").localeCompare(b.datum || ""));
+const factLabel = (v) => v.nr === 0 ? "Voorschot" : "#" + v.nr;
+const factNaam = (v) => v.factuurnummer ? "factuur " + v.factuurnummer : (v.nr === 0 ? "voorschotfactuur" : "factuur #" + v.nr);
+function vordKaart(vs, rows) {
+  const rg = {};
+  vs.forEach(v => { const lot = {}, post = {}; D().regels.filter(r => r.vordering_id === v.id).forEach(r => { if (r.post_id) post[r.post_id] = Number(r.pct); else lot[r.lot] = Number(r.pct); });
+    const berekend = rows.filter(r => (v.soort === "meerwerk") === isMw(r)).reduce((s, r) => { const x = post[r.id] ?? lot[r.lot]; return s + (x == null ? 0 : x * signed(r)); }, 0);
+    const vast = v.status !== "opgemaakt" && v.bedrag_excl != null; const f = vast && Math.abs(berekend) > 0.005 ? Number(v.bedrag_excl) / berekend : 1;
+    rg[v.id] = { lot, post, f, perPost: Object.keys(post).length > 0 }; });
+  const pctVan = (v, r) => { if ((v.soort === "meerwerk") !== isMw(r)) return null; const x = rg[v.id].post[r.id] ?? rg[v.id].lot[r.lot]; return x == null ? null : x * rg[v.id].f; };
+  const bedrag = (v, r) => { const x = pctVan(v, r); return x == null ? 0 : x * signed(r); };
+  // in centen, zo verdeeld (grootste rest) dat de posten van een factuur exact optellen tot het factuurbedrag — wat niet aan een post
+  // toe te wijzen is (bv. een factuur zonder percentages), komt in 'rest'
+  const cMemo = {};
+  const centen = (v) => { if (cMemo[v.id]) return cMemo[v.id];
+    const exact = rows.filter(r => (v.soort === "meerwerk") === isMw(r)).map(r => ({ id: r.id, x: bedrag(v, r) * 100 }));
+    const doel = Math.round(vordCalc(v).excl * 100); const som = exact.reduce((t, e) => t + e.x, 0); const per = {}; let rest = 0;
+    if (Math.abs(som) < 0.5) rest = doel;
+    else { const f = doel / som; const fl = exact.map(e => { const y = e.x * f; const b = Math.floor(y + 1e-9); return { id: e.id, b, frac: y - b }; });
+      let over = doel - fl.reduce((t, e) => t + e.b, 0); fl.forEach(e => { per[e.id] = e.b; });
+      fl.slice().sort((a, b) => b.frac - a.frac).forEach(e => { if (over > 0) { per[e.id]++; over--; } }); rest = over; }
+    return cMemo[v.id] = { per, rest };
+  };
+  const bedragC = (v, r) => (centen(v).per[r.id] || 0) / 100;
+  const restC = (v) => centen(v).rest / 100;
+  const cumul = (r, totEnMet) => vs.filter(v => !totEnMet || vs.indexOf(v) <= vs.indexOf(totEnMet)).reduce((t, v) => t + bedragC(v, r), 0);
+  return { pctVan, bedrag, bedragC, restC, cumul, rg };
+}
+const pct2 = (x) => nl(Math.round(x * 10000) / 100, 2) + " %";   // 2 decimalen, zodat % × bedrag klopt met het getoonde bedrag
 
 /* ---------- weergave ---------- */
 function render(houdScroll) { renderNl(houdScroll); if (TAAL === "en") { vertaal(document.body); if (typeof taalObs !== "undefined") taalObs.takeRecords(); } document.documentElement.lang = TAAL; }   // takeRecords: niet nog eens vertalen wat render al deed
@@ -259,7 +292,10 @@ async function gkBeslisIn(id, akkoord, naam, opmerking, form, m) {
 function avatar(t, size = 40) { return t.foto_url ? `<img class="avatar" style="width:${size}px;height:${size}px" src="${esc(safeUrl(t.foto_url))}" alt="">` : `<span class="avatar" style="width:${size}px;height:${size}px;background:${esc(t.color || "#2A4DD0")};font-size:${Math.round(size / 3)}px">${esc(t.initials || "")}</span>`; }
 
 function vMeetstaat(p) {
-  const rows = msRows(); if (!rows.length) return `<h1 style="margin-bottom:16px">Meetstaat</h1><div class="panel"><div class="empty"><b>Nog geen meetstaat</b>Zodra we de meetstaat van je project opmaken, verschijnt ze hier.</div></div>`;
+  const rows = msRows(); const vs = verstuurd(p); const K = vs.length ? vordKaart(vs, rows) : null;   // 1.66: per post wat er al gefactureerd is
+  const fCel = (r) => { if (!K || !Number(r.totaal)) return `<td></td>`; const c = K.cumul(r); const b = signed(r); const in_ = vs.filter(v => K.pctVan(v, r));
+    return `<td class="r num gefact">${in_.length ? `<b>${pct2(b ? c / b : 0)}</b><div class="fact-chips">${in_.map(v => `<button class="fact-chip ${v.status}" data-tab="facturatie" title="${esc(factNaam(v))} · ${fmt(v.datum)} · ${pct2(K.pctVan(v, r))} = ${eur(K.bedragC(v, r))}">${factLabel(v)}</button>`).join("")}</div>` : `<span class="muted">—</span>`}</td>`; };
+  if (!rows.length) return `<h1 style="margin-bottom:16px">Meetstaat</h1><div class="panel"><div class="empty"><b>Nog geen meetstaat</b>Zodra we de meetstaat van je project opmaken, verschijnt ze hier.</div></div>`;
   const contract = rows.filter(r => !isMw(r)).reduce((s, r) => s + Number(r.totaal), 0), mw = rows.filter(isMw).reduce((s, r) => s + signed(r), 0);
   const btwTot = rows.reduce((s, r) => s + signed(r) * (Number(r.btw) || 0), 0);
   const offerteOpen = rows.some(r => r.status === "offerte");
@@ -268,13 +304,13 @@ function vMeetstaat(p) {
   const lotBlok = (lot) => { let rs = rows.filter(r => r.lot === lot); const som = rs.reduce((s, r) => s + signed(r), 0); let groep = null;
     if (perRuimte) rs = rs.slice().sort((a, b) => (rk(a) === "" ? 1 : 0) - (rk(b) === "" ? 1 : 0) || rk(a).localeCompare(rk(b), "nl", { sensitivity: "base" }) || (a.volgorde ?? 0) - (b.volgorde ?? 0) || (a.code || "").localeCompare(b.code || ""));
     const kopVan = (r) => perRuimte ? (rk(r) || "Zonder ruimte") : r.groep;
-    return `<div class="panel"><div class="panel-head"><h3>${nt(lotNaam(lot))}</h3><span class="num" style="font-weight:700">${eur(som)}</span></div><div class="tw"><table class="t"><thead><tr><th style="width:60px">Nr</th><th>Omschrijving</th><th class="r">Hoev.</th><th class="r">Prijs</th><th class="r">Totaal</th><th>Status</th></tr></thead><tbody>
-      ${rs.map(r => { const isGroep = !Number(r.hoeveelheid) && !Number(r.prijs) && !r.code && (r.groep || r.omschrijving); let g = ""; const kop = kopVan(r); if (kop && kop !== groep) { groep = kop; const sub = perRuimte ? rs.filter(x => kopVan(x) === kop).reduce((s, x) => s + signed(x), 0) : null; g = `<tr class="groep"><td colspan="5">${esc(kop)}</td><td class="r num" style="text-transform:none;letter-spacing:0">${perRuimte ? eur(sub) : ""}</td></tr>`; }
-        if (isGroep && !r.groep && !perRuimte) return `<tr class="groep"><td colspan="6">${nt(r.omschrijving)}</td></tr>`;
-        return g + `<tr><td class="num muted" style="font-size:12px">${esc(r.code)}</td><td>${nt(r.omschrijving).replace(/\n/g, "<br>")}${r.locatie && !perRuimte ? `<div class="muted" style="font-size:12px">${nt(r.locatie)}</div>` : ""}</td><td class="r num">${Number(r.hoeveelheid) ? nl(r.hoeveelheid, 2) + " " + esc(r.eenheid) : ""}</td><td class="r num">${Number(r.prijs) ? eur(r.prijs) : ""}</td><td class="r num">${Number(r.totaal) ? eur(signed(r)) : ""}</td><td><span class="pill ${r.status}">${(TAAL === "en" && r.status === "akkoord" ? "Approved" : MS_STATUS[r.status]) || esc(r.status)}</span>${r.akkoord_op ? `<div class="muted" style="font-size:11px">✓ ${fmt(r.akkoord_op)}</div>` : ""}</td></tr>`; }).join("")}
+    return `<div class="panel"><div class="panel-head"><h3>${nt(lotNaam(lot))}</h3><span class="num" style="font-weight:700">${eur(som)}</span></div><div class="tw"><table class="t"><thead><tr><th style="width:60px">Nr</th><th>Omschrijving</th><th class="r">Hoev.</th><th class="r">Prijs</th><th class="r">Totaal</th>${K ? `<th class="r" title="Wat van deze post al gefactureerd is (cumulatief) en in welke facturen">Gefactureerd</th>` : ""}<th>Status</th></tr></thead><tbody>
+      ${rs.map(r => { const isGroep = !Number(r.hoeveelheid) && !Number(r.prijs) && !r.code && (r.groep || r.omschrijving); let g = ""; const kop = kopVan(r); if (kop && kop !== groep) { groep = kop; const sub = perRuimte ? rs.filter(x => kopVan(x) === kop).reduce((s, x) => s + signed(x), 0) : null; g = `<tr class="groep"><td colspan="${K ? 6 : 5}">${esc(kop)}</td><td class="r num" style="text-transform:none;letter-spacing:0">${perRuimte ? eur(sub) : ""}</td></tr>`; }
+        if (isGroep && !r.groep && !perRuimte) return `<tr class="groep"><td colspan="${K ? 7 : 6}">${nt(r.omschrijving)}</td></tr>`;
+        return g + `<tr><td class="num muted" style="font-size:12px">${esc(r.code)}</td><td>${nt(r.omschrijving).replace(/\n/g, "<br>")}${r.locatie && !perRuimte ? `<div class="muted" style="font-size:12px">${nt(r.locatie)}</div>` : ""}</td><td class="r num">${Number(r.hoeveelheid) ? nl(r.hoeveelheid, 2) + " " + esc(r.eenheid) : ""}</td><td class="r num">${Number(r.prijs) ? eur(r.prijs) : ""}</td><td class="r num">${Number(r.totaal) ? eur(signed(r)) : ""}</td>${K ? fCel(r) : ""}<td><span class="pill ${r.status}">${(TAAL === "en" && r.status === "akkoord" ? "Approved" : MS_STATUS[r.status]) || esc(r.status)}</span>${r.akkoord_op ? `<div class="muted" style="font-size:11px">✓ ${fmt(r.akkoord_op)}</div>` : ""}</td></tr>`; }).join("")}
     </tbody></table></div></div>`; };
   return `<div style="display:flex;justify-content:space-between;align-items:flex-start;gap:12px;flex-wrap:wrap"><h1 style="margin-bottom:6px">Meetstaat</h1><div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap"><button class="btn sm" data-act="ms-pdf" title="De meetstaat zoals je ze hier ziet, als pdf">⤓ Pdf</button><div class="seg-btn"><button class="btn sm ${perRuimte ? "primary" : ""}" data-act="ms-ruimte" data-on="1">Per ruimte</button><button class="btn sm ${perRuimte ? "" : "primary"}" data-act="ms-ruimte" data-on="0">Per nummer</button></div></div></div><p class="muted" style="margin-bottom:16px">Alle posten van je project met de afgesproken prijzen (excl. btw)${perRuimte ? ", per lot gegroepeerd per ruimte" : ""}. ${offerteOpen ? "Posten met status <b>Offerte</b> wachten nog op je akkoord; " : ""}<b>Meerwerk</b> en <b>minwerk</b> zijn wijzigingen na het contract.</p>
-    <div class="kpis"><div class="kpi"><div class="k">Contract excl. btw</div><div class="v num">${eur(contract, 0)}</div></div><div class="kpi"><div class="k">Meer-/minwerk</div><div class="v num">${mw ? eur(mw, 0) : "—"}</div></div><div class="kpi"><div class="k">Btw</div><div class="v num">${eur(btwTot, 0)}</div><div class="muted" style="font-size:12px">${p.btw_tarief ? p.btw_tarief + " % op je project" : ""}</div></div><div class="kpi"><div class="k">Totaal incl. btw</div><div class="v num">${eur(contract + mw + btwTot, 0)}</div></div></div>
+    <div class="kpis"><div class="kpi"><div class="k">Contract excl. btw</div><div class="v num">${eur(contract, 0)}</div></div><div class="kpi"><div class="k">Meer-/minwerk</div><div class="v num">${mw ? eur(mw, 0) : "—"}</div></div><div class="kpi"><div class="k">Btw</div><div class="v num">${eur(btwTot, 0)}</div><div class="muted" style="font-size:12px">${p.btw_tarief ? p.btw_tarief + " % op je project" : ""}</div></div><div class="kpi"><div class="k">Totaal incl. btw</div><div class="v num">${eur(contract + mw + btwTot, 0)}</div></div>${K ? (() => { const g = vs.reduce((t, v) => t + vordCalc(v).excl, 0); return `<div class="kpi"><div class="k">Gefactureerd</div><div class="v num">${eur(g, 0)}</div><div class="muted" style="font-size:12px">${contract + mw ? pct(g / (contract + mw)) : "—"} excl. btw · <a href="#" data-tab="facturatie">facturen</a></div></div>`; })() : ""}</div>
     <div class="stack">${lots.map(lotBlok).join("")}</div>`;
 }
 
@@ -325,8 +361,10 @@ function vFacturatie(p) {
   const gefact = calcs.reduce((s, x) => s + x.c.excl, 0), betaald = calcs.filter(x => x.v.status === "betaald").reduce((s, x) => s + x.c.incl, 0), open = calcs.filter(x => x.v.status !== "betaald").reduce((s, x) => s + x.c.incl, 0);
   return `<h1 style="margin-bottom:6px">Facturatie</h1><p class="muted" style="margin-bottom:16px">Je facturen en wat er nog volgt. We factureren een voorschot bij ondertekening en daarna per afgewerkt onderdeel; meerwerk factureren we apart.</p>
     <div class="kpis"><div class="kpi"><div class="k">Contract + meerwerk</div><div class="v num">${eur(contract + mw, 0)}</div><div class="muted" style="font-size:12px">excl. btw</div></div><div class="kpi"><div class="k">Gefactureerd</div><div class="v num">${eur(gefact, 0)}</div><div class="muted" style="font-size:12px">${contract + mw ? pct(gefact / (contract + mw)) : "—"} excl. btw</div></div><div class="kpi"><div class="k">Nog te factureren</div><div class="v num">${eur(contract + mw - gefact, 0)}</div><div class="muted" style="font-size:12px">excl. btw</div></div><div class="kpi"><div class="k">Open te betalen</div><div class="v num" style="${open > 0.5 ? "color:var(--warn)" : ""}">${open > 0.5 ? eur(open, 0) : "—"}</div><div class="muted" style="font-size:12px">betaald ${eur(betaald, 0)} incl. btw</div></div></div>
+    ${vs.length ? `<div class="panel bank-paneel" style="margin-bottom:16px"><div class="panel-body"><div class="bank-in"><div><h3 style="margin:0 0 4px">Verbouwlening? Bezorg je bank alles in één keer</h3><p class="muted" style="font-size:13px;margin:0">Met de knop Voor de bank bij een factuur maak je één pdf met de vorderingsstaat (wat de factuur dekt per onderdeel, wat al gefactureerd is en wat nog rest, met de verklaring van BROS) en de factuur zelf. Of download alles in één dossier, of als Excel.</p></div>
+      <div class="bank-knoppen"><button class="btn primary sm" data-act="bank-dossier">⤓ Volledig bankdossier (pdf)</button><button class="btn sm" data-act="bank-excel">⤓ Excel</button></div></div></div></div>` : ""}
     <div class="panel" style="margin-bottom:16px"><div class="panel-head"><h2>Facturen</h2></div>${vs.length ? `<div class="tw"><table class="t"><thead><tr><th>Nr</th><th>Datum</th><th>Omschrijving</th><th>Onderdelen</th><th class="r">Excl. btw</th><th class="r">Btw</th><th class="r">Incl. btw</th><th>Status</th></tr></thead><tbody>
-      ${calcs.map(({ v, c }) => `<tr><td class="num">${v.nr === 0 ? "V" : v.nr}</td><td class="num">${fmt(v.datum)}</td><td><b>${(v.omschrijving ? nt(v.omschrijving) : esc(VORD_SOORT[v.soort]))}</b>${v.factuurnummer ? `<div class="muted" style="font-size:12px">factuur ${esc(v.factuurnummer)}${factuurDoc(v) ? ` · <a href="${esc(safeUrl(factuurDoc(v).url))}" target="_blank" rel="noopener">pdf</a>` : ""}</div>` : ""}</td><td class="muted" style="font-size:12px;max-width:260px">${v.soort === "voorschot" ? "alle onderdelen" : nt(c.loten.map(lotNaam).join(", "))}</td><td class="r num">${eur(c.excl)}</td><td class="r num">${eur(c.btw)}</td><td class="r num"><b>${eur(c.incl)}</b></td><td><span class="pill ${v.status}">${VORD_STATUS[v.status] || esc(v.status)}</span>${v.status === "verzonden" ? `${v.vervaldag ? `<div class="muted" style="font-size:12px;${vervallen(v) ? "color:var(--crit)" : ""}">${vervallen(v) ? "vervallen sinds" : "vóór"} ${fmt(v.vervaldag)}</div>` : ""}${c.incl > 0.005 ? `<div><button class="btn sm ${S.betaal === v.id ? "" : "primary"}" style="margin-top:4px" data-act="betaal" data-id="${v.id}">Betalen</button></div>` : ""}` : ""}</td></tr>`).join("")}
+      ${calcs.map(({ v, c }) => `<tr><td class="num">${v.nr === 0 ? "V" : v.nr}</td><td class="num">${fmt(v.datum)}</td><td><b>${(v.omschrijving ? nt(v.omschrijving) : esc(VORD_SOORT[v.soort]))}</b>${v.factuurnummer ? `<div class="muted" style="font-size:12px">factuur ${esc(v.factuurnummer)}${factuurDoc(v) ? ` · <a href="${esc(safeUrl(factuurDoc(v).url))}" target="_blank" rel="noopener">pdf</a>` : ""}</div>` : ""}</td><td class="muted" style="font-size:12px;max-width:260px">${v.soort === "voorschot" ? "alle onderdelen" : nt(c.loten.map(lotNaam).join(", "))}</td><td class="r num">${eur(c.excl)}</td><td class="r num">${eur(c.btw)}</td><td class="r num"><b>${eur(c.incl)}</b></td><td><span class="pill ${v.status}">${VORD_STATUS[v.status] || esc(v.status)}</span>${v.status === "betaald" && v.betaald_op ? `<div class="muted" style="font-size:12px">op ${fmt(v.betaald_op)}</div>` : ""}${v.status === "verzonden" ? `${v.vervaldag ? `<div class="muted" style="font-size:12px;${vervallen(v) ? "color:var(--crit)" : ""}">${vervallen(v) ? "vervallen sinds" : "vóór"} ${fmt(v.vervaldag)}</div>` : ""}${c.incl > 0.005 ? `<div><button class="btn sm ${S.betaal === v.id ? "" : "primary"}" style="margin-top:4px" data-act="betaal" data-id="${v.id}">Betalen</button></div>` : ""}` : ""}<div><button class="btn sm ghost bank-knop" style="margin-top:4px" data-act="bank-pdf" data-id="${v.id}" title="Vorderingsstaat + factuur in één pdf, om aan je bank te bezorgen (verbouwlening)">⤓ Voor de bank</button></div></td></tr>`).join("")}
       <tr class="tot"><td colspan="4">Totaal gefactureerd</td><td class="r num">${eur(gefact)}</td><td class="r num">${eur(calcs.reduce((s, x) => s + x.c.btw, 0))}</td><td class="r num">${eur(calcs.reduce((s, x) => s + x.c.incl, 0))}</td><td></td></tr></tbody></table></div>` : `<div class="empty"><b>Nog geen facturen</b>Zodra we een factuur versturen, vind je ze hier terug.</div>`}</div>
     ${S.betaal && vs.some(v => v.id === S.betaal && v.status === "verzonden") ? vBetalen(vs.find(v => v.id === S.betaal)) : ""}
     ${vs.length ? vordMatrix(p, vs) : ""}${vAanFacturen(p)}`;
@@ -350,24 +388,17 @@ async function aanfPdf(path) {
 /* vorderingsstaat per onderdeel: welk deel van elk lot (en elke post) in welke factuur zat, wat cumulatief gefactureerd is en wat nog rest */
 function vordMatrix(p, vs) {
   const rows = msRows(); if (!rows.length) return "";
-  const pct1 = (x) => nl(Math.round(x * 10000) / 100, 2) + " %"; /* 2 decimalen, zodat % × bedrag klopt met het getoonde bedrag */
-  // per vordering: % per post (post-% overschrijft lot-%)
-  // per vordering: % per post (post-% overschrijft lot-%). Is de factuur bevroren op een ander bedrag dan de berekening (meetstaat later gewijzigd),
-  // dan worden de percentages evenredig geschaald zodat de kolom precies op het factuurbedrag uitkomt — zo kloppen matrix, facturenlijst en 'nog te factureren' met elkaar.
-  const rg = {}; vs.forEach(v => { const lot = {}, post = {}; D().regels.filter(r => r.vordering_id === v.id).forEach(r => { if (r.post_id) post[r.post_id] = Number(r.pct); else lot[r.lot] = Number(r.pct); });
-    const berekend = rows.filter(r => (v.soort === "meerwerk") === isMw(r)).reduce((s, r) => { const x = post[r.id] ?? lot[r.lot]; return s + (x == null ? 0 : x * signed(r)); }, 0);
-    const vast = v.status !== "opgemaakt" && v.bedrag_excl != null; const f = vast && Math.abs(berekend) > 0.005 ? Number(v.bedrag_excl) / berekend : 1;   // zelfde schaling als het Planbord
-    rg[v.id] = { lot, post, f }; });
-  const pctVan = (v, r) => { if ((v.soort === "meerwerk") !== isMw(r)) return null; const x = rg[v.id].post[r.id] ?? rg[v.id].lot[r.lot]; return x == null ? null : x * rg[v.id].f; };
+  const pct1 = pct2;
+  const K = vordKaart(vs, rows); const pctVan = K.pctVan;
   S.vlOpen = S.vlOpen || {};
   const blok = (soort) => { const rs = rows.filter(r => isMw(r) === (soort === "meerwerk") && Number(r.totaal)); if (!rs.length) return ""; const lots = [...new Set(rs.map(r => r.lot))];
     return lots.map(l => { const lr = rs.filter(r => r.lot === l); const base = lr.reduce((s, r) => s + signed(r), 0); const key = soort + l; const open = !!S.vlOpen[key];
-      const cel = (v, items) => { let amt = 0, any = false; items.forEach(r => { const x = pctVan(v, r); if (x != null) { any = true; amt += x * signed(r); } }); const b = items.reduce((s, r) => s + signed(r), 0); return `<td class="c num">${any && b ? `${pct1(amt / b)}<div class="muted" style="font-size:11px">${eur(amt)}</div>` : `<span class="muted">·</span>`}</td>`; };
-      const inv = lr.reduce((s, r) => s + vs.reduce((t, v) => t + (pctVan(v, r) || 0) * signed(r), 0), 0);
+      const cel = (v, items) => { let amt = 0, any = false; items.forEach(r => { const x = pctVan(v, r); if (x != null) { any = true; amt += K.bedragC(v, r); } }); const b = items.reduce((s, r) => s + signed(r), 0); return `<td class="c num">${any && b ? `${pct1(amt / b)}<div class="muted" style="font-size:11px">${eur(amt)}</div>` : `<span class="muted">·</span>`}</td>`; };
+      const inv = lr.reduce((s, r) => s + vs.reduce((t, v) => t + K.bedragC(v, r), 0), 0);
       return `<tr style="cursor:pointer" data-act="vl-toggle" data-key="${key}"><td><span class="muted" style="display:inline-block;width:14px">${open ? "▾" : "▸"}</span><b>${nt(lotNaam(l))}</b>${soort === "meerwerk" ? ` <span class="pill meerwerk">meerwerk</span>` : ""}<div class="muted" style="font-size:12px;margin-left:14px">${lr.length} post${lr.length === 1 ? "" : "en"}</div></td><td class="r num">${eur(base)}</td>${vs.map(v => cel(v, lr)).join("")}<td class="c num"><b>${pct1(base ? inv / base : 0)}</b></td><td class="r num ${Math.abs(base - inv) < 0.5 ? "muted" : ""}">${eur(base - inv)}</td></tr>` +
-        (open ? lr.map(r => { const amt = signed(r); const invP = vs.reduce((t, v) => t + (pctVan(v, r) || 0) * amt, 0); return `<tr class="sub"><td style="padding-left:28px"><span class="muted num" style="font-size:11px">${esc(r.code)}</span> ${nt(r.omschrijving)}${r.locatie ? ` <span class="muted">· ${nt(r.locatie)}</span>` : ""}</td><td class="r num">${eur(amt)}</td>${vs.map(v => cel(v, [r])).join("")}<td class="c num">${pct1(amt ? invP / amt : 0)}</td><td class="r num ${Math.abs(amt - invP) < 0.5 ? "muted" : ""}">${eur(amt - invP)}</td></tr>`; }).join("") : ""); }).join(""); };
+        (open ? lr.map(r => { const amt = signed(r); const invP = vs.reduce((t, v) => t + K.bedragC(v, r), 0); return `<tr class="sub"><td style="padding-left:28px"><span class="muted num" style="font-size:11px">${esc(r.code)}</span> ${nt(r.omschrijving)}${r.locatie ? ` <span class="muted">· ${nt(r.locatie)}</span>` : ""}</td><td class="r num">${eur(amt)}</td>${vs.map(v => cel(v, [r])).join("")}<td class="c num">${pct1(amt ? invP / amt : 0)}</td><td class="r num ${Math.abs(amt - invP) < 0.5 ? "muted" : ""}">${eur(amt - invP)}</td></tr>`; }).join("") : ""); }).join(""); };
   const tot = (soort) => rows.filter(r => isMw(r) === (soort === "meerwerk")).reduce((s, r) => s + signed(r), 0);
-  const totRow = (label, soort) => { const base = tot(soort); const perV = vs.map(v => rows.filter(r => isMw(r) === (soort === "meerwerk")).reduce((s, r) => s + (pctVan(v, r) || 0) * signed(r), 0)); const inv = perV.reduce((a, b) => a + b, 0); return `<tr class="tot"><td>${label}</td><td class="r num">${eur(base)}</td>${perV.map(x => `<td class="c num">${x ? eur(x) : ""}</td>`).join("")}<td class="c num">${pct1(base ? inv / base : 0)}</td><td class="r num">${eur(base - inv)}</td></tr>`; };
+  const totRow = (label, soort) => { const base = tot(soort); const perV = vs.map(v => rows.filter(r => isMw(r) === (soort === "meerwerk")).reduce((s, r) => s + K.bedragC(v, r), 0) + ((v.soort === "meerwerk") === (soort === "meerwerk") ? K.restC(v) : 0)); const inv = perV.reduce((a, b) => a + b, 0); return `<tr class="tot"><td>${label}</td><td class="r num">${eur(base)}</td>${perV.map(x => `<td class="c num">${x ? eur(x) : ""}</td>`).join("")}<td class="c num">${pct1(base ? inv / base : 0)}</td><td class="r num">${eur(base - inv)}</td></tr>`; };
   const heeftMw = rows.some(r => isMw(r) && Number(r.totaal));
   return `<div class="panel"><div class="panel-head"><div><h2>Wat is per onderdeel gefactureerd?</h2><div class="muted" style="font-size:13px">Per lot het aandeel dat in elke factuur zat; klik op een lot voor de posten. Bedragen excl. btw.</div></div></div>
     <div class="tw"><table class="t"><thead><tr><th>Lot / post</th><th class="r">Basis</th>${vs.map(v => `<th class="c" style="min-width:110px"><span class="pill ${v.status}">${v.nr === 0 ? "Voorschot" : "#" + v.nr}</span><div style="font-weight:600;margin-top:4px">${(v.omschrijving ? nt(v.omschrijving) : esc(VORD_SOORT[v.soort]))}</div><div class="muted" style="font-weight:400">${fmt(v.datum)}${v.factuurnummer ? " · " + esc(v.factuurnummer) : ""}</div></th>`).join("")}<th class="c">Cumul.</th><th class="r">Rest</th></tr></thead><tbody>
@@ -423,7 +454,7 @@ const laadPdfLib = () => laadScript("https://cdn.jsdelivr.net/npm/pdf-lib@1.17.1
 async function logoPng() {
   try { const img = await new Promise((res, rej) => { const i = new Image(); i.onload = () => res(i); i.onerror = rej; i.src = "../logo-mark.svg"; }); const c = document.createElement("canvas"); c.width = 600; c.height = 181; c.getContext("2d").drawImage(img, 0, 0, 600, 181); return c.toDataURL("image/png"); } catch (e) { return null; }
 }
-const pdfTekst = (t) => String(t ?? "").replace(/→/g, "->").replace(/[“”]/g, '"').replace(/[‘’]/g, "'").replace(/[•·]/g, "-").replace(/[\u00a0\u202f]/g, " ").replace(/[^\x09\x0a\x0d\x20-\x7e\u00a0-\u00ff€]/g, "");
+const pdfTekst = (t) => String(t ?? "").replace(/→/g, "->").replace(/[–—]/g, "-").replace(/[“”]/g, '"').replace(/[‘’]/g, "'").replace(/[•·]/g, "-").replace(/[\u00a0\u202f]/g, " ").replace(/[^\x09\x0a\x0d\x20-\x7e\u00a0-\u00ff€]/g, "");
 const projTitel = (p) => `${p.klant || ""}${p.naam && p.naam !== p.klant ? " - " + p.naam : ""}`;
 function bewaarPdf(bytesOfBlob, naam) {
   const blob = bytesOfBlob instanceof Blob ? bytesOfBlob : new Blob([bytesOfBlob], { type: "application/pdf" });
@@ -526,6 +557,183 @@ async function dossierPdf(p, knop) {
     toast(fouten.length ? `Pdf gedownload — niet opgenomen: ${fouten.join(", ")}` : "Pdf gedownload", fouten.length ? 9000 : 3500);
     S.dossier = null; render();
   } catch (e) { toast("Pdf maken mislukt: " + (e.message || e), 7000); if (knop) { knop.disabled = false; render(); } }
+}
+/* ---------- 1.66 (script 062): bankdossier voor een verbouwlening ----------
+   Per factuur één pdf "voor de bank": de vorderingsstaat (wat deze factuur dekt per onderdeel, wat vroeger gefactureerd is, het
+   cumulatief en wat nog rest, met de verklaring van de projectverantwoordelijke) gevolgd door de factuur-pdf zelf.
+   Daarnaast het volledige dossier (overzicht + alle facturen) en een Excel met meetstaat, facturen en per post wat gefactureerd is. */
+const bedrijfInfo = () => { const i = D().inst || {}; return { naam: i.bedrijf_naam || i.begunstigde || "BROS", adres: i.bedrijf_adres || "", btw: i.bedrijf_btw || "" }; };
+const leadNaam = (p) => (D().team.find(t => t.id === p.lead) || {}).name || "";
+const factStatus = (v) => v.status === "betaald" ? "Betaald" + (v.betaald_op ? " op " + fmt(v.betaald_op) : "") : "Te betalen" + (v.vervaldag ? " vóór " + fmt(v.vervaldag) : "");
+function bankBasis(p) {
+  const rows = msRows(); const vs = verstuurd(p); const K = vordKaart(vs, rows);
+  const contract = rows.filter(r => !isMw(r)).reduce((t, r) => t + signed(r), 0), mw = rows.filter(isMw).reduce((t, r) => t + signed(r), 0);
+  const btwTot = rows.reduce((t, r) => t + signed(r) * (Number(r.btw) || 0), 0);
+  const calcs = vs.map(v => ({ v, c: vordCalc(v) }));
+  const gef = calcs.reduce((t, x) => t + x.c.excl, 0), gefIncl = calcs.reduce((t, x) => t + x.c.incl, 0), betaald = calcs.filter(x => x.v.status === "betaald").reduce((t, x) => t + x.c.incl, 0);
+  return { rows, vs, K, contract, mw, totaal: contract + mw, btwTot, calcs, gef, gefIncl, betaald, open: gefIncl - betaald };
+}
+/* gemeenschappelijke opmaak (jsPDF, A4, mm) */
+async function bankDoc(titelRechts) {
+  const jsPDF = await laadJsPdf(); const doc = new jsPDF({ unit: "mm", format: "a4", compress: true }); const logo = await logoPng();
+  const T = { doc, W: 210, H: 297, M: 14, y: 26, ink: [29, 29, 31], muted: [120, 120, 126], line: [220, 220, 224], soft: [242, 242, 244] };
+  T.CW = T.W - 2 * T.M;
+  T.kop = () => { if (logo) doc.addImage(logo, "PNG", T.M, 10, 26, 7.8); doc.setFont("helvetica", "normal"); doc.setFontSize(8); doc.setTextColor(...T.muted); doc.text(pdfTekst(titelRechts), T.W - T.M, 15, { align: "right" }); doc.setDrawColor(...T.line); doc.line(T.M, 20, T.W - T.M, 20); T.y = 26; };
+  T.nodig = (h, kop) => { if (T.y + h > T.H - 18) { doc.addPage(); T.kop(); if (kop) kop(); } };
+  T.tekst = (t, x, opt = {}) => { doc.setFont("helvetica", opt.vet ? "bold" : "normal"); doc.setFontSize(opt.size || 9); doc.setTextColor(...(opt.kleur || T.ink)); doc.text(pdfTekst(t), x, opt.y ?? T.y, opt.align ? { align: opt.align } : undefined); };
+  T.blok = (kolommen) => {   // twee of meer kolommen met label/waarde-lijnen
+    const bw = T.CW / kolommen.length; let hMax = 0;
+    kolommen.forEach((k, i) => { let yy = T.y; const x = T.M + i * bw; T.tekst(k.titel.toUpperCase(), x, { y: yy, size: 7.5, vet: true, kleur: T.muted }); yy += 4.5;
+      k.lijnen.filter(l => l && l[1]).forEach(([lab, val]) => { const ls = doc.splitTextToSize(pdfTekst(val), bw - 30); T.tekst(lab, x, { y: yy, size: 8.5, kleur: T.muted }); doc.setFont("helvetica", "normal"); doc.setTextColor(...T.ink); doc.text(ls, x + 28, yy); yy += Math.max(1, ls.length) * 4.2; });
+      hMax = Math.max(hMax, yy - T.y); });
+    T.y += hMax + 3;
+  };
+  T.voet = (links) => { const n = doc.getNumberOfPages(); for (let i = 1; i <= n; i++) { doc.setPage(i); doc.setFont("helvetica", "normal"); doc.setFontSize(7.5); doc.setTextColor(...T.muted); doc.text(pdfTekst(links), T.M, T.H - 8); doc.text(`${i} / ${n}`, T.W - T.M, T.H - 8, { align: "right" }); } };
+  T.kop(); return T;
+}
+const partijen = (p) => { const b = bedrijfInfo(); const lead = leadNaam(p);
+  return [{ titel: "Opdrachtgever", lijnen: [["Naam", p.klant || ""], ["Werfadres", [p.adres, [p.postcode, p.gemeente].filter(Boolean).join(" ")].filter(Boolean).join(", ")], ["Project", [p.nummer, p.naam && p.naam !== p.klant ? p.naam : ""].filter(Boolean).join(" · ")]] },
+          { titel: "Aannemer / ontwerper", lijnen: [["Naam", b.naam], ["Adres", b.adres], ["Btw-nummer", b.btw], ["Verantwoordelijke", lead]] }]; };
+/* de vorderingsstaat bij één factuur, als losse pdf (ArrayBuffer) */
+async function vorderingsstaatPdf(p, v, B) {
+  const idx = B.vs.indexOf(v); const c = vordCalc(v); const scope = B.rows.filter(r => isMw(r) === (v.soort === "meerwerk") && Number(r.totaal));
+  const T = await bankDoc(`${projTitel(p)} - Vorderingsstaat ${factNaam(v)}`); const { doc } = T;
+  T.tekst("Vorderingsstaat", T.M, { y: T.y + 5, size: 20, vet: true }); T.y += 11;
+  T.tekst(`bij ${factNaam(v)} van ${fmtLang(v.datum)} - vorderingsstaat ${idx + 1} van ${B.vs.length} - toestand van de meetstaat op ${fmt(todayLocal())}`, T.M, { size: 10.5, kleur: T.muted }); T.y += 8;
+  T.blok(partijen(p));
+  T.blok([{ titel: "Factuur", lijnen: [["Nummer", v.factuurnummer || (v.nr === 0 ? "voorschot" : "#" + v.nr)], ["Datum", fmt(v.datum)], ["Soort", VORD_SOORT[v.soort] || v.soort], ["Omschrijving", v.omschrijving || ""]] },
+          { titel: "Bedrag", lijnen: [["Excl. btw", eur(c.excl)], ["Btw", eur(c.btw)], ["Incl. btw", eur(c.incl)], ["Status", factStatus(v)], ["Mededeling", v.mededeling || ""]] }]);
+  // tabel per onderdeel (lot): basis, vorige facturen, deze factuur, cumulatief, rest
+  const cols = [["Onderdeel", 54, "l"], ["Basis", 24, "r"], ["Vorige facturen", 26, "r"], ["Deze factuur", 26, "r"], ["Cumulatief", 28, "r"], ["Rest", 24, "r"]];
+  const xs = []; let x = T.M; cols.forEach(k => { xs.push(x); x += k[1]; });
+  const kop = () => { doc.setFont("helvetica", "bold"); doc.setFontSize(7.5); doc.setTextColor(...T.muted); cols.forEach((k, i) => doc.text(k[0].toUpperCase(), k[2] === "r" ? xs[i] + k[1] - 1 : xs[i] + 1, T.y + 3, { align: k[2] === "r" ? "right" : "left" })); doc.setDrawColor(...T.line); doc.line(T.M, T.y + 4.5, T.W - T.M, T.y + 4.5); T.y += 6.5; };
+  const vorige = B.vs.slice(0, idx);
+  const som = (items, f) => items.reduce((t, r) => t + f(r), 0);
+  const zelfde = (w) => (w.soort === "meerwerk") === (v.soort === "meerwerk");
+  const cellen = (items, extra) => { const basis = som(items, r => signed(r)); const vor = som(items, r => vorige.reduce((t, w) => t + B.K.bedragC(w, r), 0)) + (extra ? extra.vor : 0); const deze = som(items, r => B.K.bedragC(v, r)) + (extra ? extra.deze : 0); const cum = vor + deze;
+    const pc = (a) => basis ? pct2(a / basis) : ""; return { basis, waarden: [[eur(basis), ""], [eur(vor), pc(vor)], [eur(deze), pc(deze)], [eur(cum), pc(cum)], [eur(basis - cum), ""]], deze }; };
+  const lijn = (label, items, opt = {}) => { const cc = cellen(items, opt.extra); if (opt.alleenAls && Math.abs(cc.deze) < 0.005) return;
+    const ls = doc.splitTextToSize(pdfTekst(label), cols[0][1] - (opt.inspring ? 6 : 2)); const h = Math.max(ls.length * 3.8, 7.6) + 1.6; T.nodig(h, kop);
+    if (opt.tot) { doc.setFillColor(...T.soft); doc.rect(T.M, T.y - 0.5, T.CW, h, "F"); }
+    doc.setFont("helvetica", opt.vet || opt.tot ? "bold" : "normal"); doc.setFontSize(opt.inspring ? 7.8 : 8.5); doc.setTextColor(...T.ink); doc.text(ls, xs[0] + (opt.inspring ? 5 : 1), T.y + 3);
+    cc.waarden.forEach(([e, pc], i) => { const k = cols[i + 1]; doc.setFont("helvetica", (opt.vet || opt.tot || i === 2) ? "bold" : "normal"); doc.setFontSize(opt.inspring ? 7.8 : 8.5); doc.setTextColor(...T.ink); doc.text(pdfTekst(e), xs[i + 1] + k[1] - 1, T.y + 3, { align: "right" }); if (pc) { doc.setFont("helvetica", "normal"); doc.setFontSize(7); doc.setTextColor(...T.muted); doc.text(pdfTekst(pc), xs[i + 1] + k[1] - 1, T.y + 6.6, { align: "right" }); } });
+    doc.setDrawColor(...T.line); doc.line(T.M, T.y + h - 0.5, T.W - T.M, T.y + h - 0.5); T.y += h; };
+  T.nodig(20); T.tekst(v.soort === "meerwerk" ? "Meer- en minwerk per onderdeel" : "Aanneming per onderdeel", T.M, { size: 11, vet: true, y: T.y + 4 }); T.y += 8; kop();
+  const lots = [...new Set(scope.map(r => r.lot))];
+  lots.forEach(l => { const lr = scope.filter(r => r.lot === l); lijn(lotNaam(l), lr, { vet: true });
+    if (B.K.rg[v.id].perPost && lr.some(r => B.K.rg[v.id].post[r.id] != null)) lr.forEach(r => lijn(`${r.code ? r.code + "  " : ""}${r.omschrijving}${r.locatie ? " (" + r.locatie + ")" : ""}`, [r], { inspring: true, alleenAls: true })); });
+  const rest = { vor: vorige.filter(zelfde).reduce((t, w) => t + B.K.restC(w), 0), deze: B.K.restC(v) };
+  if (Math.abs(rest.vor) > 0.005 || Math.abs(rest.deze) > 0.005) lijn("Niet over de onderdelen verdeeld", [], { extra: rest });
+  lijn(v.soort === "meerwerk" ? "Totaal meer-/minwerk" : "Totaal aanneming (contract)", scope, { tot: true, extra: rest });
+  // samenvatting over het hele project
+  const gefTot = B.vs.slice(0, idx + 1).reduce((t, w) => t + vordCalc(w).excl, 0);
+  T.nodig(34); T.y += 5;
+  [["Totaal aanneming incl. meer-/minwerk (excl. btw)", eur(B.totaal)], ["Gefactureerd tot en met deze factuur (excl. btw)", `${eur(gefTot)}  (${B.totaal ? pct2(gefTot / B.totaal) : "-"})`], ["Nog te factureren (excl. btw)", eur(B.totaal - gefTot)]]
+    .forEach(([k, w], i) => { T.tekst(k, T.M + 60, { size: 9.5, vet: i === 1 }); T.tekst(w, T.W - T.M, { size: 9.5, vet: i === 1, align: "right" }); T.y += 5.5; });
+  // verklaring
+  const b = bedrijfInfo(); const lead = leadNaam(p);
+  const verkl = v.soort === "voorschot"
+    ? `${b.naam} verklaart dat deze factuur een voorschot is bij de start van de werken, zoals voorzien in de overeenkomst. Ze heeft geen betrekking op reeds uitgevoerde werken.`
+    : `${b.naam} verklaart dat de werken waarop deze vorderingsstaat betrekking heeft, uitgevoerd zijn zoals hierboven gefactureerd. Tot en met deze factuur is ${B.totaal ? pct2(gefTot / B.totaal) : "-"} van de aanneming (incl. meer- en minwerk) gefactureerd.`;
+  const ondert = `Opgemaakt op ${fmtLang(todayLocal())}${lead ? ` door ${lead}, projectverantwoordelijke,` : ""} namens ${b.naam}.`;
+  const vl = doc.splitTextToSize(pdfTekst(verkl), T.CW - 8); const hV = vl.length * 4.3 + 15; T.nodig(hV + 4); T.y += 3;
+  doc.setDrawColor(...T.line); doc.setFillColor(...T.soft); doc.roundedRect(T.M, T.y, T.CW, hV, 2, 2, "FD");
+  T.tekst("VERKLARING", T.M + 4, { y: T.y + 5, size: 7.5, vet: true, kleur: T.muted }); doc.setFont("helvetica", "normal"); doc.setFontSize(9); doc.setTextColor(...T.ink); doc.text(vl, T.M + 4, T.y + 10);
+  T.tekst(ondert, T.M + 4, { y: T.y + 10 + vl.length * 4.3 + 1, size: 8.5, kleur: T.muted }); T.y += hV + 4;
+  T.nodig(10); doc.setFont("helvetica", "normal"); doc.setFontSize(7.5); doc.setTextColor(...T.muted);
+  doc.text(doc.splitTextToSize(pdfTekst("Bedragen in euro, excl. btw tenzij anders vermeld. Basis = de waarde van het onderdeel volgens de meetstaat. Een factuur met een vast bedrag wordt evenredig over de onderdelen verdeeld. " + (factuurDoc(v) ? "De factuur zelf volgt na deze vorderingsstaat." : "De factuur-pdf zit niet in het portaal: vraag ze aan BROS.")), T.CW), T.M, T.y + 3);
+  T.voet(`${b.naam} - vorderingsstaat bij ${factNaam(v)} - opgemaakt via het klantenportaal op ${fmt(todayLocal())}`);
+  return doc.output("arraybuffer");
+}
+/* het overzicht vooraan in het volledige dossier */
+async function bankOverzichtPdf(p, B) {
+  const T = await bankDoc(`${projTitel(p)} - Bankdossier`); const { doc } = T;
+  T.tekst("Bankdossier", T.M, { y: T.y + 5, size: 22, vet: true }); T.y += 11;
+  T.tekst(`Facturen en vorderingsstaten van de verbouwing - toestand op ${fmtLang(todayLocal())}`, T.M, { size: 10.5, kleur: T.muted }); T.y += 8;
+  T.blok(partijen(p));
+  const kern = [["Aanneming volgens contract", B.contract], ["Meer- en minwerk", B.mw], ["Totaal aanneming", B.totaal], ["Btw", B.btwTot], ["Totaal incl. btw", B.totaal + B.btwTot]];
+  T.tekst("Kerncijfers", T.M, { size: 11, vet: true, y: T.y + 4 }); T.y += 8;
+  kern.forEach(([k, w], i) => { T.tekst(k, T.M, { size: 9.5, vet: i === 2 || i === 4 }); T.tekst(eur(w), T.M + 95, { size: 9.5, vet: i === 2 || i === 4, align: "right" }); T.y += 5.2; });
+  T.y += 2;
+  [["Gefactureerd (excl. btw)", `${eur(B.gef)}  (${B.totaal ? pct2(B.gef / B.totaal) : "-"})`], ["Gefactureerd (incl. btw)", eur(B.gefIncl)], ["Betaald", eur(B.betaald)], ["Nog te betalen", eur(B.open)], ["Nog te factureren (excl. btw)", eur(B.totaal - B.gef)]]
+    .forEach(([k, w]) => { T.tekst(k, T.M, { size: 9.5 }); T.tekst(w, T.M + 95, { size: 9.5, align: "right" }); T.y += 5.2; });
+  T.y += 4; T.nodig(24); T.tekst("Facturen", T.M, { size: 11, vet: true, y: T.y + 4 }); T.y += 8;
+  const cols = [["Factuur", 30, "l"], ["Datum", 20, "l"], ["Omschrijving", 46, "l"], ["Excl. btw", 24, "r"], ["Incl. btw", 24, "r"], ["Status", 38, "l"]];
+  const xs = []; let x = T.M; cols.forEach(k => { xs.push(x); x += k[1]; });
+  const kop = () => { doc.setFont("helvetica", "bold"); doc.setFontSize(7.5); doc.setTextColor(...T.muted); cols.forEach((k, i) => doc.text(k[0].toUpperCase(), k[2] === "r" ? xs[i] + k[1] - 1 : xs[i] + 1, T.y + 3, { align: k[2] === "r" ? "right" : "left" })); doc.setDrawColor(...T.line); doc.line(T.M, T.y + 4.5, T.W - T.M, T.y + 4.5); T.y += 6.5; };
+  kop();
+  B.calcs.forEach(({ v, c }) => { const oms = doc.splitTextToSize(pdfTekst(v.omschrijving || VORD_SOORT[v.soort] || ""), cols[2][1] - 2); const h = Math.max(1, oms.length) * 3.9 + 2.4; T.nodig(h, kop);
+    const w = [v.factuurnummer || (v.nr === 0 ? "voorschot" : "#" + v.nr), fmt(v.datum), null, eur(c.excl), eur(c.incl), factStatus(v)];
+    doc.setFont("helvetica", "normal"); doc.setFontSize(8.5); doc.setTextColor(...T.ink);
+    cols.forEach((k, i) => { if (i === 2) doc.text(oms, xs[i] + 1, T.y + 3.2); else doc.text(pdfTekst(w[i]), k[2] === "r" ? xs[i] + k[1] - 1 : xs[i] + 1, T.y + 3.2, { align: k[2] === "r" ? "right" : "left" }); });
+    doc.setDrawColor(...T.line); doc.line(T.M, T.y + h, T.W - T.M, T.y + h); T.y += h; });
+  T.nodig(12); doc.setFont("helvetica", "bold"); doc.setFontSize(8.5); doc.setTextColor(...T.ink); doc.text("Totaal", xs[0] + 1, T.y + 4); doc.text(pdfTekst(eur(B.gef)), xs[3] + cols[3][1] - 1, T.y + 4, { align: "right" }); doc.text(pdfTekst(eur(B.gefIncl)), xs[4] + cols[4][1] - 1, T.y + 4, { align: "right" }); T.y += 10;
+  T.nodig(20); T.tekst("Inhoud van dit dossier", T.M, { size: 11, vet: true, y: T.y + 4 }); T.y += 8;
+  B.vs.forEach((v, i) => { T.nodig(6); T.tekst(`${i + 1}.  Vorderingsstaat en ${factNaam(v)} (${fmt(v.datum)})${factuurDoc(v) ? "" : " - factuur-pdf niet in het portaal"}`, T.M, { size: 9 }); T.y += 5; });
+  const b = bedrijfInfo(); T.voet(`${b.naam} - bankdossier - opgemaakt via het klantenportaal op ${fmt(todayLocal())}`);
+  return doc.output("arraybuffer");
+}
+/* pdf samenstellen: stukken (ArrayBuffer of { factuur: v }) achter elkaar; een ontbrekende factuur-pdf wordt gemeld, niet fataal */
+async function bankSamenstellen(stukken, naam, knop) {
+  const oud = knop ? knop.textContent : ""; const zet = (t) => { if (knop) knop.textContent = t; }; if (knop) knop.disabled = true;
+  const fouten = [];
+  try {
+    const PDFLib = await laadPdfLib(); const uit = await PDFLib.PDFDocument.create();
+    const voeg = async (bytes) => { const src = await PDFLib.PDFDocument.load(bytes, { ignoreEncryption: true }); (await uit.copyPages(src, src.getPageIndices())).forEach(pg => uit.addPage(pg)); };
+    let i = 0;
+    for (const st of stukken) {
+      i++; if (st && st.factuur) { const v = st.factuur; const d = factuurDoc(v); zet(`Factuur ${v.factuurnummer || v.nr}… (${i}/${stukken.length})`);
+        if (!d) { fouten.push(factNaam(v) + " (geen pdf in het portaal)"); continue; }
+        try { const f = await haalDocument(d); if (f.mime !== "application/pdf") throw new Error("geen pdf"); await voeg(f.bytes); } catch (e) { fouten.push(factNaam(v)); }
+      } else { zet(`Pdf maken… (${i}/${stukken.length})`); await voeg(await st); }
+    }
+    zet("Pdf bewaren…"); bewaarPdf(await uit.save(), naam);
+    toast(fouten.length ? `Pdf gedownload — niet opgenomen: ${fouten.join(", ")}` : "Pdf gedownload", fouten.length ? 9000 : 3500);
+  } catch (e) { toast("Pdf maken mislukt: " + (e.message || e), 7000); }
+  finally { if (knop) { knop.disabled = false; knop.textContent = oud; } }
+}
+function bankFactuurPdf(p, vid, knop) {
+  const B = bankBasis(p); const v = B.vs.find(x => x.id === vid); if (!v) return;
+  return bankSamenstellen([vorderingsstaatPdf(p, v, B), { factuur: v }], `Voor de bank - ${factNaam(v)} - ${projTitel(p)}.pdf`, knop);
+}
+function bankDossierPdf(p, knop) {
+  const B = bankBasis(p); if (!B.vs.length) return;
+  const stukken = [bankOverzichtPdf(p, B)]; B.vs.forEach(v => { stukken.push(vorderingsstaatPdf(p, v, B)); stukken.push({ factuur: v }); });
+  return bankSamenstellen(stukken, `Bankdossier ${projTitel(p)} ${todayLocal()}.pdf`, knop);
+}
+const laadXlsx = () => laadScript("https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js", "XLSX");
+async function bankExcel(p, knop) {
+  const oud = knop ? knop.textContent : ""; if (knop) { knop.disabled = true; knop.textContent = "Excel maken…"; }
+  try {
+    const XLSX = await laadXlsx(); const B = bankBasis(p); const b = bedrijfInfo(); const r2x = (n) => Math.round(Number(n || 0) * 100) / 100;
+    const wb = XLSX.utils.book_new();
+    const ov = [["Bankdossier", projTitel(p)], ["Toestand op", fmt(todayLocal())], [], ["Opdrachtgever", p.klant || ""], ["Werfadres", [p.adres, [p.postcode, p.gemeente].filter(Boolean).join(" ")].filter(Boolean).join(", ")], ["Project", [p.nummer, p.naam].filter(Boolean).join(" · ")],
+      ["Aannemer / ontwerper", b.naam], ["Adres", b.adres], ["Btw-nummer", b.btw], ["Projectverantwoordelijke", leadNaam(p)], [],
+      ["Aanneming volgens contract (excl. btw)", r2x(B.contract)], ["Meer- en minwerk (excl. btw)", r2x(B.mw)], ["Totaal aanneming (excl. btw)", r2x(B.totaal)], ["Btw", r2x(B.btwTot)], ["Totaal incl. btw", r2x(B.totaal + B.btwTot)], [],
+      ["Gefactureerd (excl. btw)", r2x(B.gef)], ["Gefactureerd (incl. btw)", r2x(B.gefIncl)], ["Betaald", r2x(B.betaald)], ["Nog te betalen", r2x(B.open)], ["Nog te factureren (excl. btw)", r2x(B.totaal - B.gef)]];
+    const ws1 = XLSX.utils.aoa_to_sheet(ov); ws1["!cols"] = [{ wch: 38 }, { wch: 48 }]; XLSX.utils.book_append_sheet(wb, ws1, "Overzicht");
+    const fk = [["Factuur", "Datum", "Soort", "Omschrijving", "Excl. btw", "Btw", "Incl. btw", "Status", "Betaald op", "Vervaldag", "Mededeling", "Pdf in portaal"]].concat(B.calcs.map(({ v, c }) => [v.factuurnummer || (v.nr === 0 ? "voorschot" : "#" + v.nr), v.datum || "", VORD_SOORT[v.soort] || v.soort, v.omschrijving || "", r2x(c.excl), r2x(c.btw), r2x(c.incl), v.status === "betaald" ? "Betaald" : "Te betalen", v.betaald_op || "", v.vervaldag || "", v.mededeling || "", factuurDoc(v) ? "ja" : "nee"]));
+    const ws2 = XLSX.utils.aoa_to_sheet(fk); ws2["!cols"] = [{ wch: 14 }, { wch: 11 }, { wch: 16 }, { wch: 36 }, { wch: 12 }, { wch: 11 }, { wch: 12 }, { wch: 11 }, { wch: 11 }, { wch: 11 }, { wch: 22 }, { wch: 8 }]; XLSX.utils.book_append_sheet(wb, ws2, "Facturen");
+    const fl = B.vs.map(v => v.factuurnummer || (v.nr === 0 ? "voorschot" : "#" + v.nr));
+    const ms = [["Lot", "Nr", "Omschrijving", "Locatie", "Hoeveelheid", "Eenheid", "Prijs", "Totaal excl. btw", "Status"].concat(fl.map(f => "Factuur " + f), ["Gefactureerd", "Gefactureerd %", "Rest"])]
+      .concat(B.rows.filter(r => Number(r.totaal)).map(r => { const per = B.vs.map(v => r2x(B.K.bedragC(v, r))); const cum = per.reduce((t, a) => t + a, 0); const tot = signed(r);
+        return [lotNaam(r.lot), r.code || "", r.omschrijving || "", r.locatie || "", Number(r.hoeveelheid) || 0, r.eenheid || "", Number(r.prijs) || 0, r2x(tot), MS_STATUS[r.status] || r.status].concat(per, [r2x(cum), tot ? Math.round(cum / tot * 10000) / 100 : 0, r2x(tot - cum)]); }));
+    if (B.vs.some(v => Math.abs(B.K.restC(v)) > 0.005)) { const per = B.vs.map(v => r2x(B.K.restC(v))); ms.push(["", "", "Niet over de onderdelen verdeeld", "", "", "", "", 0, ""].concat(per, [r2x(per.reduce((t, a) => t + a, 0)), "", ""])); }
+    const ws3 = XLSX.utils.aoa_to_sheet(ms); ws3["!cols"] = [{ wch: 26 }, { wch: 8 }, { wch: 48 }, { wch: 16 }, { wch: 10 }, { wch: 7 }, { wch: 10 }, { wch: 13 }, { wch: 10 }].concat(fl.map(() => ({ wch: 13 })), [{ wch: 13 }, { wch: 9 }, { wch: 12 }]);
+    XLSX.utils.book_append_sheet(wb, ws3, "Meetstaat en facturatie");
+    const lots = [...new Set(B.rows.map(r => r.lot))];
+    const pl = [["Onderdeel", "Contract / meerwerk", "Basis"].concat(fl, ["Cumulatief", "Rest"])];
+    ["contract", "meerwerk"].forEach(soort => lots.forEach(l => { const lr = B.rows.filter(r => r.lot === l && isMw(r) === (soort === "meerwerk") && Number(r.totaal)); if (!lr.length) return;
+      const basis = lr.reduce((t, r) => t + signed(r), 0); const per = B.vs.map(v => r2x(lr.reduce((t, r) => t + B.K.bedragC(v, r), 0))); const cum = per.reduce((t, a) => t + a, 0);
+      pl.push([lotNaam(l), soort === "meerwerk" ? "meer-/minwerk" : "contract", r2x(basis)].concat(per, [r2x(cum), r2x(basis - cum)])); }));
+    if (B.vs.some(v => Math.abs(B.K.restC(v)) > 0.005)) { const per = B.vs.map(v => r2x(B.K.restC(v))); pl.push(["Niet over de onderdelen verdeeld", "", 0].concat(per, [r2x(per.reduce((t, a) => t + a, 0)), ""])); }
+    const ws4 = XLSX.utils.aoa_to_sheet(pl); ws4["!cols"] = [{ wch: 30 }, { wch: 14 }, { wch: 12 }].concat(fl.map(() => ({ wch: 13 })), [{ wch: 13 }, { wch: 12 }]); XLSX.utils.book_append_sheet(wb, ws4, "Per onderdeel");
+    const out = XLSX.write(wb, { bookType: "xlsx", type: "array" });
+    const blob = new Blob([out], { type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" }); const url = URL.createObjectURL(blob); const a = document.createElement("a");
+    a.href = url; a.download = `Bankdossier ${projTitel(p)} ${todayLocal()}.xlsx`.replace(/[\\/:*?"<>|]+/g, "-"); document.body.appendChild(a); a.click(); a.remove(); setTimeout(() => URL.revokeObjectURL(url), 8000);
+    toast("Excel gedownload");
+  } catch (e) { toast("Excel maken mislukt: " + (e.message || e), 6000); }
+  finally { if (knop) { knop.disabled = false; knop.textContent = oud; } }
 }
 /* ---------- AI-assistent: vragen over het eigen dossier ---------- */
 const assistentAan = (p) => !!(D().assistent && D().assistent.actief !== false && p && p.assistent !== false);
@@ -644,6 +852,9 @@ document.addEventListener("click", (e) => {
   if (el.dataset.act === "gk-toon") { S.gkOpen = S.gkOpen === el.dataset.id ? null : el.dataset.id; render(); }
   if (el.dataset.act === "note-toggle") { S.noteOpen = S.noteOpen === el.dataset.id ? null : el.dataset.id; render(); }
   if (el.dataset.act === "ms-pdf") { const p = D().projecten.find(x => x.id === S.project); if (p) msPdf(p, el); return; }
+  if (el.dataset.act === "bank-pdf") { const p = D().projecten.find(x => x.id === S.project); if (p) bankFactuurPdf(p, el.dataset.id, el); return; }   // 1.66: bankdossier
+  if (el.dataset.act === "bank-dossier") { const p = D().projecten.find(x => x.id === S.project); if (p) bankDossierPdf(p, el); return; }
+  if (el.dataset.act === "bank-excel") { const p = D().projecten.find(x => x.id === S.project); if (p) bankExcel(p, el); return; }
   if (el.dataset.act === "dos-start") { const p = D().projecten.find(x => x.id === S.project); S.dossier = { sel: new Set(D().documenten.filter(d => d.project_id === p.id && pdfBaar(d)).map(d => d.id)), ms: msRows().length > 0, wv: new Set() }; render(); return; }
   if (el.dataset.act === "dos-stop") { S.dossier = null; render(); return; }
   if (el.dataset.act === "dos-alles") { const p = D().projecten.find(x => x.id === S.project); const alle = D().documenten.filter(d => d.project_id === p.id && pdfBaar(d)); const aan = !alle.every(d => S.dossier.sel.has(d.id)); S.dossier.sel = new Set(aan ? alle.map(d => d.id) : []); render(); return; }

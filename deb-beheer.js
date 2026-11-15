@@ -14,12 +14,13 @@ const debNr = (v) => v.factuurnummer || (v.nr === 0 ? "voorschot" : "#" + v.nr);
 const debProj = (pid) => { const p = S.projecten[pid]; return p ? `<a href="#" data-open="${esc(p.id)}" data-optab="facturatie">${esc(p.nummer ? p.nummer + " · " : "")}${esc(projName(p))}</a>` : "—"; };
 const debEd = () => (S.debEdit = S.debEdit || {});   // niet-bewaarde aanpassingen aan een herinnering (blijven bij een nieuwe weergave)
 function vFactuurTab() {
-  const sub = S.factTab = S.factTab || (debOk() && (debTeDoen().length || !(typeof afbTeDoen === "function" && afbTeDoen().length)) ? "klanten" : "aannemers");   // eenmaal gekozen blijft het staan (niet verspringen na goedkeuren)
+  const nY = typeof yukiTeDoen === "function" ? yukiTeDoen() : 0;   // 1.66 (script 062): Yuki-koppeling
+  const sub = S.factTab = S.factTab || (debOk() && debTeDoen().length ? "klanten" : nY ? "yuki" : debOk() && !(typeof afbTeDoen === "function" && afbTeDoen().length) ? "klanten" : "aannemers");   // eenmaal gekozen blijft het staan (niet verspringen na goedkeuren)
   const nK = debTeDoen().length, nA = typeof afbTeDoen === "function" ? afbTeDoen().length : 0;
   const knop = (k, l, n) => `<button class="btn sm ${sub === k ? "primary" : ""}" data-deb-act="tab" data-t="${k}">${l}${n ? ` <span class="cnt" style="background:var(--crit);color:#fff">${n}</span>` : ""}</button>`;
-  return `<div class="page-head"><div><div class="eyebrow">Opvolging</div><h1>Facturen</h1><div class="sub">${sub === "klanten" ? "Je facturen aan klanten: wat openstaat, wat Yuki als betaald ziet, en betalingsherinneringen die op je goedkeuring wachten — niets vertrekt zonder jouw klik." : "Facturen die aannemers in hun portaal opladen."}</div></div></div>
-    <div style="display:flex;gap:8px;margin-bottom:16px">${knop("klanten", "Klanten", nK)}${knop("aannemers", "Aannemers", nA)}</div>
-    ${sub === "aannemers" ? (typeof vAankoop === "function" ? vAankoop(true) : "") : vDebiteuren()}`;
+  return `<div class="page-head"><div><div class="eyebrow">Opvolging</div><h1>Facturen</h1><div class="sub">${sub === "yuki" ? "Facturen uit Yuki die nog niet bij een vordering hangen, en verstuurde facturen zonder factuurnummer of pdf." : sub === "klanten" ? "Je facturen aan klanten: wat openstaat, wat Yuki als betaald ziet, en betalingsherinneringen die op je goedkeuring wachten — niets vertrekt zonder jouw klik." : "Facturen die aannemers in hun portaal opladen."}</div></div></div>
+    <div style="display:flex;gap:8px;margin-bottom:16px">${knop("klanten", "Klanten", nK)}${knop("aannemers", "Aannemers", nA)}${typeof yukiOk === "function" && isBeheer() ? knop("yuki", "Yuki-koppeling", nY) : ""}</div>
+    ${sub === "yuki" ? (typeof vYukiKoppeling === "function" ? vYukiKoppeling() : "") : sub === "aannemers" ? (typeof vAankoop === "function" ? vAankoop(true) : "") : vDebiteuren()}`;
 }
 function vDebiteuren() {
   if (!debOk()) return `<div class="panel"><div class="empty"><b>${isBeheer() ? "Nog niet beschikbaar" : "Enkel voor beheerders"}</b>${isBeheer() ? "Voer databasescript <code>sql/048_debiteuren.sql</code> uit." : ""}</div></div>`;

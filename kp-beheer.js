@@ -94,7 +94,7 @@ function kzForm(k, pid) {
       toast(isNew ? "Keuze aangemaakt" : "Keuze bewaard");
     },
     onDelete: isNew ? null : async () => {
-      if (k.meerwerk_post && S.meetstaat_posten[k.meerwerk_post] && !confirm("Uit deze keuze kwam een meer-/minwerkpost in de meetstaat. Die blijft staan — verwijder ze zelf als dat nodig is. Doorgaan?")) throw new Error("geannuleerd");
+      if (k.meerwerk_post && S.meetstaat_posten[k.meerwerk_post] && !confirm(schemaV() >= 61 ? "Uit deze keuze kwam een meer-/minwerkpost in de meetstaat, goedgekeurd door de klant. Die blijft staan; schrappen kan via minwerk (± op de post). Doorgaan?" : "Uit deze keuze kwam een meer-/minwerkpost in de meetstaat. Die blijft staan — verwijder ze zelf als dat nodig is. Doorgaan?")) throw new Error("geannuleerd");
       await dbDelete("keuzes", k.id); toast("Keuze verwijderd");
     },
   });
@@ -134,6 +134,12 @@ async function kzHeropen(id) {
   const post = k.meerwerk_post && S.meetstaat_posten[k.meerwerk_post];
   if (post && Object.values(S.vordering_regels || {}).some(r => r.post_id === post.id)) return toast(`De post ${post.code} uit deze keuze staat al in een vordering. Zet ze zelf op vervallen of maak een minwerk; heropenen kan dan niet automatisch.`, 8000);
   if (!confirm(`De klant opnieuw laten kiezen voor "${k.onderwerp}"?${post ? `\n\nDe ${post.status} post ${post.code} (${eur2(rowSigned(post))}) uit deze keuze wordt uit de meetstaat verwijderd.` : ""}`)) return;
+  if (schemaV() >= 61) {   // 1.65: de keuzepost ligt vast (goedgekeurd door de klant) → keuze en post in één keer via de databank
+    const { data, error } = await sb.rpc("keuze_heropenen", { p_keuze: id });
+    if (error) return toast("Niet heropend: " + error.message, 8000);
+    if (data) S.keuzes[id] = data; if (post) delete S.meetstaat_posten[post.id];
+    render(); toast("Keuze staat weer open voor de klant"); return;
+  }
   try { await dbUpdate("keuzes", id, { status: "open", gekozen_optie: null, gekozen_op: null, gekozen_naam: "", gekozen_door: null, gekozen_opmerking: "", meerwerk_post: null }); } catch (e) { return; }
   if (post) { const { error } = await sb.from("meetstaat_posten").delete().eq("id", post.id); if (error) toast("Keuze heropend, maar de post " + post.code + " kon niet verwijderd worden: " + error.message, 8000); else delete S.meetstaat_posten[post.id]; }
   render(); toast("Keuze staat weer open voor de klant");

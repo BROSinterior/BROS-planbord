@@ -46,12 +46,13 @@ function doPost(e) {
     if (body.action === "opname") return json(opnameDrive(body));   // 1.54 (script 051): de verwerkingscomputer (login met rol verwerker, lopende opdracht) bewaart opnames en transcripten in de projectmap
     if (body.action === "plan") return json(planDrive(body));
     if (body.action === "render") return json(renderDrive(body));   // 1.59 (script 055): de verwerkingscomputer bewaart renders en A3-presentaties in Renders/ van de projectmap   // 1.57 (script 054): de verwerkingscomputer bewaart omgezette plannen (Plan2CAD) in Plannen/DXF van de projectmap
-    if (body.action === "bestand") return json(portaalBestand(body)); // klant/aannemer: een gedeeld document ophalen om er een pdf-dossier van te maken (login + toegang gecontroleerd) // team (token): aannemer verwittigen dat hij aan een project gekoppeld is (met uitnodiging als hij nog geen login heeft)
+    if (body.action === "bestand") return json(portaalBestand(body));
     if (body.action === "yukimails" || body.action === "yukizoeklijst") {   // 1.50.1: het archief-script (archief@bros.be) — met een EIGEN secret (ARCHIEF_SECRET), niet het Drive-secret van het team
       if (!archiefSecretOk(body.archief_secret)) return json({ ok: false, error: "Geen toegang (ARCHIEF_SECRET klopt niet)." });
       return json(body.action === "yukimails" ? yukiMailsVanArchief(body) : { ok: true, nummers: yukiZoeklijst(body.dagen) });
     }
     if (!body.secret || body.secret !== CONFIG.SECRET) return json({ ok: false, error: "Geen toegang (secret klopt niet)." });
+    if (body.action === "factuurpdf") return json(factuurPdf(body));   // 1.66 (script 062): beheer (secret + token) koppelt een factuur-pdf (wachtende Yuki-pdf of zelf opgeladen) aan een verstuurde factuur → Documenten/Facturen, gedeeld met de klant
     if (body.action === "ping") return json({ ok: true, info: "Verbinding en secret in orde.", projecten: DriveApp.getFolderById(CONFIG.PROJECTEN_FOLDER_ID).getName(), sjabloon: DriveApp.getFolderById(CONFIG.SJABLOON_FOLDER_ID).getName() });
     // Drive-acties: naast het secret ook een geldig teamlogin vereist (het secret alleen volstaat niet meer), en enkel mappen onder PROJECTEN
     if (body.action === "create") { caller(body.token, false); return json(createOrLink(String(body.klant || "").trim(), true)); }
@@ -1678,7 +1679,8 @@ function yukiMailsVanArchief(body) {
     if (String(x.onderwerp || "").indexOf("Factuur van BROS") < 0) { res[id] = "overgeslagen"; return; }
     if (x.echt !== true) {   // handtekening niet bevestigd in archief@: nooit automatisch verwerken
       const t = String(x.tekst || ""); const dat = t.match(/Datum\s*:\s*(\d{2})-(\d{2})-(\d{4})/); res[id] = "verdacht"; const vnr = ((t.match(/Factuurnummer\s*:\s*([0-9A-Za-z\-\/]+)/) || [])[1] || "").trim();
-      if (body.zoek && vnr) yukiZoekResultaat(vnr, "verdacht");   // gevonden maar handtekening niet bevestigd: niet elke 6 uur opnieuw zoeken, apart melden
+      if (body.zoek && vnr) yukiZoekResultaat(vnr, "verdacht");
+      if (!body.zoek && vnr) yukiBewaarVerdacht({ factuurnummer: vnr, tekst: t, klant: (String(x.onderwerp || "").match(/Factuur voor\s+(.+)$/) || [])[1] || "" });   // 1.66: zichtbaar in het Planbord (Facturen › Yuki-koppeling)   // gevonden maar handtekening niet bevestigd: niet elke 6 uur opnieuw zoeken, apart melden
       if (!body.zoek && !oud(dat ? dat[3] + "-" + dat[2] + "-" + dat[1] : null) && meldEenmaal("archrap-" + (vnr || id) + "-verdacht", 7)) melden.push({ factuurnummer: ((t.match(/Factuurnummer\s*:\s*([0-9A-Za-z\-\/]+)/) || [])[1] || "?").trim(), klant: (String(x.onderwerp).match(/Factuur voor\s+(.+)$/) || [])[1] || String(x.van || ""), totaal_incl: yukiNum((t.match(/Totaalbedrag\s*:\s*EUR\s*([0-9\.\s]+,\d{2})/) || [])[1] || "0,00"), resultaat: "te bekijken", reden: "afzender niet bevestigd door Gmail in archief@bros.be (geen geldige Yuki-handtekening) — niet automatisch verwerkt. Komt hij echt van Yuki, koppel hem dan zelf in het Planbord." });
       return; }
     let f = null; try { f = yukiParse(yukiBerichtShim(x)); } catch (e) { }
@@ -2226,7 +2228,7 @@ function yukiSync() {
     if (!yukiEcht(m)) { const body = m.getPlainBody() || ""; verdacht.push({ thread: t, factuurnummer: ((body.match(/Factuurnummer\s*:\s*([0-9A-Za-z\-\/]+)/) || [])[1] || "?").trim(), klant: (m.getSubject().match(/Factuur voor\s+(.+)$/) || [])[1] || m.getFrom(), totaal_incl: yukiNum((body.match(/Totaalbedrag\s*:\s*EUR\s*([0-9\.\s]+,\d{2})/) || [])[1] || "0,00"), resultaat: "te bekijken", reden: "afzender niet bevestigd door Gmail (geen geldige Yuki-handtekening) — niet automatisch verwerkt. Komt hij echt van Yuki, koppel hem dan zelf in het Planbord." }); return; }
     const f = yukiParse(m); if (f) { f.thread = t; facturen.push(f); }
   }));
-  verdacht.forEach(v => v.thread.addLabel(labelCheck));
+  verdacht.forEach(v => { v.thread.addLabel(labelCheck); yukiBewaarVerdacht(v); });
   if (!facturen.length) { if (verdacht.length) yukiRapporteer(verdacht.map(v => { const o = Object.assign({}, v); delete o.thread; return o; })); return Logger.log("Geen facturen herkend in " + threads.length + " mails."); }
   // zelfde factuur in meerdere mails (bv. doorgestuurd én via filter): één keer verwerken, alle mails labelen
   const perNr = {}; facturen.forEach(f => { (perNr[f.factuurnummer] = perNr[f.factuurnummer] || []).push(f); });
@@ -2408,7 +2410,7 @@ function yukiKoppel(facturen) {
   const TOL = YUKI.TOL; const rapport = [];
   facturen.forEach(f => {
     const nr = f.factuurnummer, incl = f.totaal_incl; const out = Object.assign({}, f); delete out.pdfBlob;
-    if (bestaand[nr]) { out.resultaat = "al gekoppeld";
+    if (bestaand[nr]) { out.resultaat = "al gekoppeld"; out.vordering_id = bestaand[nr].id || null; out.project_id = bestaand[nr].project_id || null;
       // factuurnummer stond er al (manueel ingevuld): de betaalgegevens wel nog aanvullen
       const bv = bestaand[nr]; if (bv.id && (!bv.mededeling || !bv.vervaldag || !bv.factuur_document)) { try { yukiBetaalgegevens(f, bv, projecten.find(x => x.id === bv.project_id) || {}, token, bv.bedrag_excl); } catch (e) { } }
       rapport.push(out); return; }
@@ -2423,7 +2425,7 @@ function yukiKoppel(facturen) {
     if (exact.length === 1) v = exact[0];
     else if (!exact.length && f.excl != null) { const e2 = kandV.filter(x => (x.status === "opgemaakt" || x.btw_bedrag == null || x.btw_bedrag === "") && Math.abs(calcOf(x).excl - f.excl) <= TOL); if (e2.length === 1) v = e2[0]; }   // bevroren bedrag mét btw: enkel op het totaal
     // geen automatische koppeling meer bij een afwijkend bedrag (veiligheid: een vervalste mail kan zo niets wijzigen) — wel melden
-    if (!v) { out.resultaat = "niet gevonden"; out.project = proj ? proj.klant : null; out.reden = proj ? (exact.length > 1 ? exact.length + " vorderingen met precies dit bedrag — koppel ze zelf in het Planbord" : kandV.length === 1 ? "bedrag wijkt af van de openstaande vordering (berekend " + calcOf(kandV[0]).incl.toFixed(2) + " incl.) — koppel ze zelf in het Planbord" : "geen openstaande vordering met dit bedrag") : "project niet herkend"; rapport.push(out); return; }
+    if (!v) { out.resultaat = "niet gevonden"; out.project = proj ? proj.klant : null; out.project_id = proj ? proj.id : null; out.reden = proj ? (exact.length > 1 ? exact.length + " vorderingen met precies dit bedrag — koppel ze zelf in het Planbord" : kandV.length === 1 ? "bedrag wijkt af van de openstaande vordering (berekend " + calcOf(kandV[0]).incl.toFixed(2) + " incl.) — koppel ze zelf in het Planbord" : "geen openstaande vordering met dit bedrag") : "project niet herkend"; rapport.push(out); return; }
     const c = calcOf(v);
     const bedrag = f.excl != null ? f.excl : (Math.abs(c.incl - incl) <= TOL ? c.excl : Math.round(incl / (1 + (c.excl ? c.btw / c.excl : 0.06)) * 100) / 100);
     const patch = { factuurnummer: nr, datum: f.datum || v.datum, bedrag_excl: bedrag, status: v.status === "betaald" ? "betaald" : "verzonden" };   // 1.56.3: een al betaalde factuur blijft betaald
@@ -2435,10 +2437,89 @@ function yukiKoppel(facturen) {
     Object.assign(v, patch); bestaand[nr] = v;
     const p = projecten.find(x => x.id === v.project_id) || {};
     const betaal = yukiBetaalgegevens(f, v, p, token, bedrag); if (betaal) opm = (opm ? opm + "; " : "") + betaal;
-    Object.assign(out, { resultaat: "gekoppeld", project: p.klant, projectnummer: p.nummer, vordering_nr: v.nr, vordering_soort: v.soort, berekend_incl: c.incl, bedrag_excl: bedrag, opmerking: opm });
+    Object.assign(out, { resultaat: "gekoppeld", project: p.klant, projectnummer: p.nummer, project_id: p.id, vordering_id: v.id, vordering_nr: v.nr, vordering_soort: v.soort, berekend_incl: c.incl, bedrag_excl: bedrag, opmerking: opm });
     rapport.push(out);
   });
+  // 1.66 (script 062): elke factuur bewaren in yuki_facturen — wat niet gekoppeld raakte, verschijnt in het Planbord (Facturen › Yuki-koppeling)
+  facturen.forEach(f => { const out = rapport.find(r => r.factuurnummer === f.factuurnummer); if (!out) return;
+    try { yukiBewaar(f, out); } catch (e) { out.opmerking = (out.opmerking ? out.opmerking + "; " : "") + "niet bewaard voor het Planbord (" + String(e.message || e).slice(0, 100) + ")"; } });
   return rapport;
+}
+/** 1.66: één Yuki-factuur in yuki_facturen zetten (upsert op factuurnummer; genegeerd/notitie/handmatig blijven staan).
+ *  Is ze niet gekoppeld, of wel maar zonder gedeelde pdf, dan wacht de pdf in PROJECTEN/_Yuki facturen te koppelen. */
+const YUKI_WACHTMAP = "_Yuki facturen te koppelen";
+let yukiTabelMemo = null;   // bestaat yuki_facturen (script 062)? één keer per uitvoering nakijken
+function yukiTabelOk() {
+  if (yukiTabelMemo === null) { try { pbAdmin("/rest/v1/yuki_facturen?select=id&limit=1", "get"); yukiTabelMemo = true; } catch (e) { yukiTabelMemo = false; } }
+  return yukiTabelMemo;
+}
+function yukiBewaar(f, out) {
+  if (!PORTAAL.SERVICE_KEY || !yukiTabelOk()) return;   // script 062 nog niet uitgevoerd: niets doen (de rapportmail blijft)
+  const lock = LockService.getScriptLock(); const slot = lock.tryLock(20000);   // brosburo en archief tegelijk: na elkaar
+  try {
+    const nr = String(f.factuurnummer).trim();
+    const res = out.resultaat === "gekoppeld" || out.resultaat === "al gekoppeld" ? "gekoppeld" : out.resultaat === "twijfel" ? "twijfel" : "niet_gevonden";
+    const oud = (pbAdmin("/rest/v1/yuki_facturen?factuurnummer=eq." + encodeURIComponent(nr) + "&select=id,resultaat,pdf_drive_id", "get") || [])[0] || null;
+    if (oud && oud.resultaat === "gekoppeld" && res !== "gekoppeld") return;   // al gekoppeld (automatisch of door BROS): nooit terugdraaien
+    const rij = { factuurnummer: nr, datum: f.datum || null, klant: String(f.klant || "").slice(0, 200), onderwerp: String(f.onderwerp || "").slice(0, 300),
+      totaal_incl: f.totaal_incl != null ? f.totaal_incl : null, excl: f.excl != null ? f.excl : null, btw: f.btw != null ? f.btw : null, mededeling: f.mededeling || null, vervaldag: f.vervaldag || null,
+      projectnummers: (f.projectnummers || []).slice(0, 10), resultaat: res, reden: String(out.reden || out.opmerking || "").slice(0, 500), voorstel_project: out.project_id || null,
+      vordering_id: res === "gekoppeld" ? (out.vordering_id || null) : null, mail_id: String(f.mail || f.mailId || "").slice(0, 200) || null, updated_at: new Date().toISOString() };
+    if (oud) Object.keys(rij).forEach(k => { const leeg = rij[k] === null || ((k === "klant" || k === "onderwerp") && rij[k] === "") || (k === "projectnummers" && !rij[k].length); if (leeg && k !== "vordering_id" && k !== "voorstel_project") delete rij[k]; });   // bestaande gegevens niet leegmaken
+    let zonderPdf = res !== "gekoppeld";
+    if (res === "gekoppeld" && out.vordering_id) { try { const v = (pbAdmin("/rest/v1/vorderingen?id=eq." + out.vordering_id + "&select=factuur_document", "get") || [])[0]; zonderPdf = !!v && !v.factuur_document; } catch (e) { } }
+    if (f.pdfBlob && zonderPdf && !(oud && oud.pdf_drive_id)) {
+      try { const map = subfolder(DriveApp.getFolderById(CONFIG.PROJECTEN_FOLDER_ID), YUKI_WACHTMAP); const naam = "Factuur " + nr.replace(/[\\\/:*?"<>|]/g, "-") + ".pdf";
+        const b = map.getFilesByName(naam); let file = null; while (b.hasNext() && !file) { const x = b.next(); if (!x.isTrashed()) file = x; }
+        if (!file) file = map.createFile(f.pdfBlob.copyBlob ? f.pdfBlob.copyBlob().setName(naam) : f.pdfBlob.setName(naam));
+        rij.pdf_drive_id = file.getId();
+      } catch (e) { rij.reden = (rij.reden ? rij.reden + "; " : "") + "pdf niet bewaard (" + String(e.message || e).slice(0, 80) + ")"; }
+    }
+    if (f.pdfBlob && zonderPdf) { try { rij.pdf_verdacht = yukiPdfVerdacht(f) || (res === "gekoppeld" ? "pdf niet automatisch gedeeld" : ""); } catch (e) { } }
+    pbAdmin("/rest/v1/yuki_facturen?on_conflict=factuurnummer", "post", rij, "resolution=merge-duplicates,return=minimal");
+  } finally { if (slot) lock.releaseLock(); }
+}
+/** 1.66: een mail die niet bevestigd van Yuki komt (handtekening) — enkel melden, nooit automatisch iets wijzigen. Een bestaande rij blijft. */
+function yukiBewaarVerdacht(x) {
+  if (!PORTAAL.SERVICE_KEY || !x || !x.factuurnummer || x.factuurnummer === "?" || !yukiTabelOk()) return;
+  const tot = x.totaal_incl != null ? x.totaal_incl : (String(x.tekst || "").match(/Totaalbedrag\s*:\s*EUR\s*([0-9\.\s]+,\d{2})/) || [])[1];
+  try { pbAdmin("/rest/v1/yuki_facturen?on_conflict=factuurnummer", "post", { factuurnummer: String(x.factuurnummer).trim(), klant: String(x.klant || "").slice(0, 200), totaal_incl: tot != null ? (typeof tot === "number" ? tot : yukiNum(tot)) : null,
+    resultaat: "verdacht", reden: "De handtekening van Yuki werd niet bevestigd (mogelijk vervalst of doorgestuurd): niets automatisch gedaan. Kijk de mail na voor je koppelt." }, "resolution=ignore-duplicates,return=minimal"); } catch (e) { }
+}
+/** 1.66: factuur-pdf bij een verstuurde factuur zetten (enkel beheer): de wachtende Yuki-pdf ({ yuki }) of een opgeladen pdf ({ vordering, base64 }).
+ *  De pdf gaat naar Documenten/Facturen van het project, wordt gedeeld met de klant (zoals bij Yuki) en hangt aan de factuur (bankdossier, betalen). */
+function factuurPdf(body) {
+  try { caller(body.token, true); } catch (e) { return { ok: false, error: "Enkel een beheerder kan een factuur-pdf koppelen." }; }
+  let y = null, vid = null, blob = null, file = null;
+  if (body.yuki) { y = (pbAdmin("/rest/v1/yuki_facturen?id=eq." + uuid(body.yuki) + "&select=*", "get") || [])[0]; if (!y) return { ok: false, error: "Yuki-factuur niet gevonden." };
+    if (!y.vordering_id || y.resultaat !== "gekoppeld") return { ok: false, error: "Koppel de factuur eerst aan een vordering." }; vid = y.vordering_id;
+    if (y.pdf_drive_id) { try { file = DriveApp.getFileById(y.pdf_drive_id); } catch (e) { file = null; } }
+    if (!file && y.mail_id && !/^archief:/.test(y.mail_id)) { try { const m = GmailApp.getMessageById(y.mail_id); const a = m && m.getAttachments().find(x => /\.pdf$/i.test(x.getName()) && /factuur/i.test(x.getName())); if (a) blob = a.copyBlob(); } catch (e) { } }
+    if (!file && !blob) return { ok: false, error: "De pdf van deze Yuki-factuur is niet (meer) beschikbaar. Laad ze zelf op bij de factuur." };
+  } else {
+    vid = uuid(body.vordering); const b64 = String(body.base64 || ""); if (!b64) return { ok: false, error: "Geen pdf meegestuurd." };
+    blob = Utilities.newBlob(Utilities.base64Decode(b64), "application/pdf", "factuur.pdf");
+    if (blob.getBytes().length > 20e6) return { ok: false, error: "De pdf is te groot (max. 20 MB)." };
+    if (String.fromCharCode.apply(null, blob.getBytes().slice(0, 4)) !== "%PDF") return { ok: false, error: "Dit is geen pdf." };
+  }
+  const v = (pbAdmin("/rest/v1/vorderingen?id=eq." + vid + "&select=id,project_id,nr,factuurnummer,status", "get") || [])[0];
+  if (!v) return { ok: false, error: "Factuur niet gevonden." };
+  if (v.status === "opgemaakt") return { ok: false, error: "Deze vordering is nog niet verstuurd." };
+  if (y && String(v.factuurnummer || "").trim() !== String(y.factuurnummer).trim()) return { ok: false, error: "Het factuurnummer van de vordering verschilt van de Yuki-factuur." };
+  const p = (pbAdmin("/rest/v1/projecten?id=eq." + v.project_id + "&select=id,drive_folder_id", "get") || [])[0];
+  if (!p || !p.drive_folder_id) return { ok: false, error: "Dit project heeft nog geen Drive-map." };
+  onderProjecten(p.drive_folder_id);
+  const map = subfolder(DriveApp.getFolderById(p.drive_folder_id), "Documenten/Facturen");
+  const naam = "Factuur " + String(v.factuurnummer || (v.nr === 0 ? "voorschot" : v.nr)).replace(/[\\\/:*?"<>|]/g, "-") + ".pdf";
+  if (file) { file.moveTo(map); file.setName(naam); } else file = map.createFile(blob.setName(naam));
+  file.setSharing(DriveApp.Access.ANYONE_WITH_LINK, DriveApp.Permission.VIEW);
+  const nu = new Date().toISOString();
+  const rij = { project_id: p.id, drive_id: file.getId(), naam: naam, pad: "Documenten/Facturen", url: file.getUrl(), mime: "application/pdf", grootte: file.getSize(), gewijzigd: nu, gesynct_op: nu, gedeeld: true, gedeeld_op: nu, gemeld_klant: true };
+  const d = pbAdmin("/rest/v1/documenten?on_conflict=project_id,drive_id", "post", rij, "resolution=merge-duplicates,return=representation");
+  const docId = d && d[0] ? d[0].id : null; if (!docId) return { ok: false, error: "Document niet geregistreerd." };
+  pbAdmin("/rest/v1/vorderingen?id=eq." + v.id, "patch", { factuur_document: docId }, "return=minimal");
+  if (y) pbAdmin("/rest/v1/yuki_facturen?id=eq." + y.id, "patch", { pdf_drive_id: file.getId(), pdf_verdacht: "", updated_at: nu }, "return=minimal");
+  return { ok: true, document: docId, url: file.getUrl(), naam: naam };
 }
 function yukiRapporteer(rapport) {
   const lijn = r => "• Factuur " + r.factuurnummer + " (" + (r.klant || "?") + ", € " + (r.totaal_incl || 0).toFixed(2) + " incl.): " + r.resultaat +

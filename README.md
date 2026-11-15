@@ -16,7 +16,7 @@ Statische webapp (geen build-stap) op een Supabase-database.
 | `version.json` | versienummer (enkel de laatste versie); de app meldt een nieuwe versie aan wie ze open heeft |
 | `CHANGELOG.md` | versiegeschiedenis (vanaf 1.48 niet meer in version.json) |
 | `vendor/supabase-2.45.4.js` (+ `591.supabase.js`) | de Supabase-bibliotheek, zelf gehost (geen CDN nodig) |
-| `sql/001_init.sql` … `sql/060_*.sql` | databasescripts, in volgorde uit te voeren (`versie_schema` in instellingen bewaakt de volgorde vanaf 022) |
+| `sql/001_init.sql` … `sql/062_*.sql` | databasescripts, in volgorde uit te voeren (`versie_schema` in instellingen bewaakt de volgorde vanaf 022) |
 | `drive/Code.gs` | Google Apps Script dat projectmappen aanmaakt/koppelt op Drive en de meetstaat-export wegschrijft (installatie: zie bovenaan dat bestand) |
 | `drive/YukiArchief.gs` | klein Apps Script voor het account archief@bros.be: leest daar de Yuki-factuurmails en stuurt ze naar het Drive-script (v1.50.1, zie *Yuki-mails uit archief@bros.be*) |
 | `agenda.js` | gedeeld (Planbord en portalen): agendabestand (.ics) en Google Agenda-link voor afspraken (script 041) |
@@ -201,6 +201,19 @@ Veel meetstaten zijn met klantprijzen uit Excel ingelezen: kostprijs = klantprij
 - Alleen beheer ziet of wijzigt dit (tabel `ms_raming`, RLS). Klanten, aannemers en medewerkers zien niets; de pdf/Excel voor de klant blijven ongewijzigd.
 
 Activeren: Supabase → SQL Editor → `sql/052_marges_raming.sql` → Run (na 051; controle `1 | 1 | 52`). Optioneel: nieuw `drive/Code.gs` (neemt `ms_raming` mee in de wekelijkse back-up) als `Code.ingevuld.gs` plakken en een nieuwe versie deployen.
+
+## Bankdossier in het klantenportaal en Yuki-koppeling (script 062 + drive/Code.gs, v1.66)
+
+- **Installeren:** `sql/062_bankdossier_yuki.sql` (controle `1 | 1 | 1 | 62`), het nieuwe `drive/Code.gs` plakken (behoud het CONFIG- en YUKI-blok, of gebruik `drive/Code.ingevuld.gs`) → Deploy → Manage deployments → Version: New, en pushen. Bij Instellingen › Klantenportaal de bedrijfsgegevens voor het bankdossier invullen.
+- **Klantenportaal:** kolom Gefactureerd in de meetstaat (zelfde rekenregel als de vorderingsstaat: post-% boven lot-%, een bevroren factuurbedrag evenredig verdeeld); bij Facturatie per factuur **Voor de bank** (vorderingsstaat + factuur-pdf via het Drive-script, actie `bestand`), **Volledig bankdossier** en **Excel** (SheetJS). `klant_vorderingen` toont nu ook `betaald_op`. De pdf's worden in de browser gemaakt; het Planbord bewaart er niets van.
+- **Yuki-koppeling (enkel beheer):** tabel `yuki_facturen` (één rij per Yuki-factuur: bedragen, mededeling, vervaldag, resultaat `gekoppeld` / `niet_gevonden` / `twijfel` / `verdacht`, reden, herkend project, `pdf_drive_id`, `genegeerd`). Het Drive-script schrijft ze bij elke ronde (`yukiBewaar`, met de secret key); een niet-gekoppelde factuur-pdf wacht in `PROJECTEN/_Yuki facturen te koppelen`. Manueel koppelen: `yuki_koppel(yuki, vordering, excl)` (bedrag excl. van Yuki als het gekend is; btw = totaal − excl; oude vervaldag → geen automatische herinneringen). De pdf delen of opladen gaat via de actie `factuurpdf` van het Drive-script (secret + login van een beheerder): naar Documenten/Facturen, gedeeld met de klant, als document aan de factuur.
+
+## Goedgekeurde meetstaat ligt vast (script 061, v1.65)
+
+- **Wat ligt vast:** elke post met een goedkeuring uit het portaal (`meetstaat_posten.akkoord_op`: offerte, meerwerkvoorstel, overeenkomst of keuze). Niet te wijzigen: omschrijving, locatie, hoeveelheid, eenheid, prijstype, btw, lot, nummer, status en de klantprijs; niet te verwijderen. Wel: kostprijs (marge wordt herrekend, klantprijs blijft op de cent), vakman, bestellen/leveren, leverancier, artikelnr., interne opmerking, volgorde en groep. Bewaakt in de databank (triggers `meetstaat_post_vast`, `meetstaat_prijs_vast` — de klantprijs geldt ook voor de functies van prijsvragen en aannemers); een andere lotmarge zet de marge van goedgekeurde posten vast (`loten_marge_vastleggen`). Met de hand op Akkoord gezette posten (zonder portaalgoedkeuring) blijven vrij.
+- **Vaste meetstaat:** na een goedgekeurde offerte (of overeenkomst met posten) worden nieuwe posten meerwerk/minwerk en kan enkel nog een meerwerkvoorstel (trigger `goedkeuring_meetstaat_vast`). Excel-import voegt dan toe als meerwerk (vervangen kan niet meer zodra er goedgekeurde posten zijn). Keurt de klant een offerte goed, dan worden andere open offertevoorstellen ingetrokken (`goedkeuring_andere_offertes_in`); soort en project van een beslist voorstel liggen vast.
+- **± op een post:** `meetstaat_wijziging(post, 'hoeveelheid' | 'schrappen' | 'vervangen', hoeveelheid, omschrijving)` maakt de meer-/minwerkpost(en) voor het verschil met dezelfde klantprijs; `meetstaat_posten.herkomst_post_id` verwijst naar de originele post (code `3.12-M1`, `-M2` …; `herkomst_soort` = hoeveelheid, schrappen, vervangen of nieuw). Rekent met eerdere wijzigingen op dezelfde post; een post wordt maar één keer vervangen.
+- **Terug:** het goedgekeurde voorstel annuleren (beheer, script 050) of een keuze heropenen (`keuze_heropenen`: keuze open en keuzepost weg in één keer; niet als de post al in een vordering staat of er meer-/minwerk op staat). Controle bij het uitvoeren: `2 | 4 | 5 | 61 | <aantal goedgekeurde posten>`.
 
 ## Projectfase volgt het werk (script 060, v1.64)
 

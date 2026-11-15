@@ -212,6 +212,15 @@
   .meta { display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap: 12px 20px; }
   .meta .k { font-size: 11px; letter-spacing: .06em; text-transform: uppercase; color: var(--muted); font-weight: 600; }
   .meta .v { margin-top: 2px; }
+  .ms-vast-t { display: block; padding: 5px 6px; color: var(--ink); cursor: not-allowed; }
+  .ms-vast-t.num { text-align: right; font-variant-numeric: tabular-nums; }
+  tr.ms-vast > td { background: color-mix(in srgb, var(--ok, #2e7d32) 4%, transparent); }
+  .pill.ms-slot { font-size: 11px; white-space: nowrap; }
+  .ms-herkomst { display: block; font-size: 11px; padding: 0 6px; }
+  .ms-vast-banner { margin-top: 8px; padding: 8px 10px; border-radius: 8px; font-size: 12.5px; line-height: 1.45; background: color-mix(in srgb, var(--ok, #2e7d32) 9%, transparent); border: 1px solid color-mix(in srgb, var(--ok, #2e7d32) 28%, transparent); color: var(--ink); }
+  .mw-res { display: grid; gap: 6px; font-size: 13px; padding: 8px 10px; border-radius: 8px; background: var(--surface-2); }
+  .yk-vergelijk { font-size: 13px; padding: 8px 10px; border-radius: 8px; background: var(--surface-2); }
+  .yk-vergelijk.afw { background: color-mix(in srgb, var(--warn, #b26a00) 12%, transparent); }
   .fase-klant { margin-top: 4px; font-size: 12px; color: var(--muted); line-height: 1.35; }
   .fase-klant b { color: var(--ink, inherit); font-weight: 600; }
   .fase-klant small { display: block; font-size: 11px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 260px; }
@@ -877,28 +886,29 @@
 <div class="toast" id="toast" role="status"></div>
 <div class="loader" id="loader" aria-live="polite"><div class="logo"><i class="base"></i><i class="fill" id="loaderFill"></i></div><div class="pct" id="loaderPct">0%</div><div class="msg" id="loaderMsg">Even geduld…</div></div>
 <script src="vendor/supabase-2.45.4.js"></script>
-<script src="config.js?v=1.64.0"></script>
+<script src="config.js?v=1.66.0"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
-<script src="postcodes.js?v=1.64.0"></script>
-<script src="meetstaat-export.js?v=1.64.0"></script>
-<script src="meetstaat-import.js?v=1.64.0"></script>
+<script src="postcodes.js?v=1.66.0"></script>
+<script src="meetstaat-export.js?v=1.66.0"></script>
+<script src="meetstaat-import.js?v=1.66.0"></script>
 <!-- tekenmodule: deze drie scripts horen bij het tabblad Plannen — niet verwijderen -->
-<script src="vendor/dxf-parser.js?v=1.64.0"></script>
-<script src="symbolen.js?v=1.64.0"></script>
-<script src="tekenen.js?v=1.64.0"></script>
-<script src="agenda.js?v=1.64.0"></script>
-<script src="afspraken.js?v=1.64.0"></script>
-<script src="kp-beheer.js?v=1.64.0"></script>
-<script src="pv-beheer.js?v=1.64.0"></script>
-<script src="af-beheer.js?v=1.64.0"></script>
-<script src="deb-beheer.js?v=1.64.0"></script>
-<script src="wacht.js?v=1.64.0"></script>
-<script src="fin-planning.js?v=1.64.0"></script>
-<script src="vergaderingen.js?v=1.64.0"></script>
-<script src="plan2cad.js?v=1.64.0"></script>
-<script src="renders.js?v=1.64.0"></script>
-<script src="todo.js?v=1.64.0"></script>
-<script src="ontwerp.js?v=1.64.0"></script>
-<script src="app.js?v=1.64.0"></script>
+<script src="vendor/dxf-parser.js?v=1.66.0"></script>
+<script src="symbolen.js?v=1.66.0"></script>
+<script src="tekenen.js?v=1.66.0"></script>
+<script src="agenda.js?v=1.66.0"></script>
+<script src="afspraken.js?v=1.66.0"></script>
+<script src="kp-beheer.js?v=1.66.0"></script>
+<script src="pv-beheer.js?v=1.66.0"></script>
+<script src="af-beheer.js?v=1.66.0"></script>
+<script src="deb-beheer.js?v=1.66.0"></script>
+<script src="yuki-beheer.js?v=1.66.0"></script>
+<script src="wacht.js?v=1.66.0"></script>
+<script src="fin-planning.js?v=1.66.0"></script>
+<script src="vergaderingen.js?v=1.66.0"></script>
+<script src="plan2cad.js?v=1.66.0"></script>
+<script src="renders.js?v=1.66.0"></script>
+<script src="todo.js?v=1.66.0"></script>
+<script src="ontwerp.js?v=1.66.0"></script>
+<script src="app.js?v=1.66.0"></script>
 </body>
 </html>

@@ -3,7 +3,7 @@
    Statische webapp op Supabase (login, live-synchronisatie, rechten)
    ===================================================================== */
 if (window.top !== window.self) { try { window.top.location.replace(window.location.href); } catch (e) { document.documentElement.innerHTML = ""; } }   // niet in een vreemd frame (clickjacking)
-const APP_VERSION = "1.64.0";
+const APP_VERSION = "1.66.0";
 const PROJ_STATUS = { offerte: "In offerte", lopend: "Lopend", on_hold: "On hold", afgerond: "Afgerond", verloren: "Verloren" };
 const KLANTTYPE = { particulier: "Particulier", zakelijk: "Zakelijk" };
 const KLANTCODE = { particulier: "PAR", zakelijk: "ZAK" };
@@ -140,8 +140,8 @@ function telFmt(s) {
 let toastT; function toast(msg, ms = 2800) { const t = $("#toast"); t.textContent = msg; t.classList.add("show"); clearTimeout(toastT); toastT = setTimeout(() => t.classList.remove("show"), Math.max(2800, ms)); }
 
 /* ---------- data laden en live houden ---------- */
-const TABLES = { profiles: "profiles", tarieven: "tarieven", fasen: "fasen", standaardtaken: "standaardtaken", projecten: "projecten", taken: "taken", uren: "uren", documenten: "documenten", instellingen: "instellingen", loten: "loten", posten: "posten", meetstaat_posten: "meetstaat_posten", vorderingen: "vorderingen", vordering_regels: "vordering_regels", contacten: "contacten", project_contacten: "project_contacten", goedkeuringen: "goedkeuringen", notities: "notities", werfbezoeken: "werfbezoeken", vaststellingen: "vaststellingen", klant_timing: "klant_timing", werfplannen: "werfplannen", werfverslagen: "werfverslagen", taak_voorstellen: "taak_voorstellen", assistent_berichten: "assistent_berichten", prijsaanvragen: "prijsaanvragen", prijsaanvraag_regels: "prijsaanvraag_regels", tekenplannen: "tekenplannen", aannemer_meetstaten: "aannemer_meetstaten", aannemer_meetstaat_posten: "aannemer_meetstaat_posten", keuzes: "keuzes", keuze_opties: "keuze_opties", meerwerk_aanvragen: "meerwerk_aanvragen", werf_fotos: "werf_fotos", werf_updates: "werf_updates", woningdossier: "woningdossier", prijsvragen: "prijsvragen", prijsvraag_gunningen: "prijsvraag_gunningen", goedkeuring_tekenaars: "goedkeuring_tekenaars", aannemer_facturen: "aannemer_facturen", betaalherinneringen: "betaalherinneringen", fin_plan: "fin_plan", fin_vaste_kosten: "fin_vaste_kosten", fin_instellingen: "fin_instellingen", vergaderingen: "vergaderingen", vergadering_punten: "vergadering_punten", verwerkingen: "verwerkingen", verwerker_status: "verwerker_status", ms_raming: "ms_raming", document_aannemers: "document_aannemers", plan_omzettingen: "plan_omzettingen", render_beelden: "render_beelden", render_opdrachten: "render_opdrachten", render_afspraken: "render_afspraken", render_presentaties: "render_presentaties", render_ruimtes: "render_ruimtes", render_standpunten: "render_standpunten", taak_punten: "taak_punten", ontwerp_rondes: "ontwerp_rondes", ontwerp_documenten: "ontwerp_documenten", ontwerp_feedback: "ontwerp_feedback" };   // 1.59: renders (script 055) · 1.63: to-do's en ontwerptraject (script 059)
-const OPTIONAL_TABLES = ["tarieven", "documenten", "instellingen", "loten", "posten", "meetstaat_posten", "vorderingen", "vordering_regels", "contacten", "project_contacten", "goedkeuringen", "notities", "werfbezoeken", "vaststellingen", "klant_timing", "werfplannen", "werfverslagen", "taak_voorstellen", "assistent_berichten", "prijsaanvragen", "prijsaanvraag_regels", "tekenplannen", "aannemer_meetstaten", "aannemer_meetstaat_posten", "keuzes", "keuze_opties", "meerwerk_aanvragen", "werf_fotos", "werf_updates", "woningdossier", "prijsvragen", "prijsvraag_gunningen", "goedkeuring_tekenaars", "aannemer_facturen", "betaalherinneringen", "fin_plan", "fin_vaste_kosten", "fin_instellingen", "vergaderingen", "vergadering_punten", "verwerkingen", "verwerker_status", "ms_raming", "document_aannemers", "plan_omzettingen", "render_beelden", "render_opdrachten", "render_afspraken", "render_presentaties", "render_ruimtes", "render_standpunten", "taak_punten", "ontwerp_rondes", "ontwerp_documenten", "ontwerp_feedback"]; // ontbreken zolang het bijbehorende sql-script niet is uitgevoerd
+const TABLES = { profiles: "profiles", tarieven: "tarieven", fasen: "fasen", standaardtaken: "standaardtaken", projecten: "projecten", taken: "taken", uren: "uren", documenten: "documenten", instellingen: "instellingen", loten: "loten", posten: "posten", meetstaat_posten: "meetstaat_posten", vorderingen: "vorderingen", yuki_facturen: "yuki_facturen", vordering_regels: "vordering_regels", contacten: "contacten", project_contacten: "project_contacten", goedkeuringen: "goedkeuringen", notities: "notities", werfbezoeken: "werfbezoeken", vaststellingen: "vaststellingen", klant_timing: "klant_timing", werfplannen: "werfplannen", werfverslagen: "werfverslagen", taak_voorstellen: "taak_voorstellen", assistent_berichten: "assistent_berichten", prijsaanvragen: "prijsaanvragen", prijsaanvraag_regels: "prijsaanvraag_regels", tekenplannen: "tekenplannen", aannemer_meetstaten: "aannemer_meetstaten", aannemer_meetstaat_posten: "aannemer_meetstaat_posten", keuzes: "keuzes", keuze_opties: "keuze_opties", meerwerk_aanvragen: "meerwerk_aanvragen", werf_fotos: "werf_fotos", werf_updates: "werf_updates", woningdossier: "woningdossier", prijsvragen: "prijsvragen", prijsvraag_gunningen: "prijsvraag_gunningen", goedkeuring_tekenaars: "goedkeuring_tekenaars", aannemer_facturen: "aannemer_facturen", betaalherinneringen: "betaalherinneringen", fin_plan: "fin_plan", fin_vaste_kosten: "fin_vaste_kosten", fin_instellingen: "fin_instellingen", vergaderingen: "vergaderingen", vergadering_punten: "vergadering_punten", verwerkingen: "verwerkingen", verwerker_status: "verwerker_status", ms_raming: "ms_raming", document_aannemers: "document_aannemers", plan_omzettingen: "plan_omzettingen", render_beelden: "render_beelden", render_opdrachten: "render_opdrachten", render_afspraken: "render_afspraken", render_presentaties: "render_presentaties", render_ruimtes: "render_ruimtes", render_standpunten: "render_standpunten", taak_punten: "taak_punten", ontwerp_rondes: "ontwerp_rondes", ontwerp_documenten: "ontwerp_documenten", ontwerp_feedback: "ontwerp_feedback" };   // 1.59: renders (script 055) · 1.63: to-do's en ontwerptraject (script 059)
+const OPTIONAL_TABLES = ["yuki_facturen", "tarieven", "documenten", "instellingen", "loten", "posten", "meetstaat_posten", "vorderingen", "vordering_regels", "contacten", "project_contacten", "goedkeuringen", "notities", "werfbezoeken", "vaststellingen", "klant_timing", "werfplannen", "werfverslagen", "taak_voorstellen", "assistent_berichten", "prijsaanvragen", "prijsaanvraag_regels", "tekenplannen", "aannemer_meetstaten", "aannemer_meetstaat_posten", "keuzes", "keuze_opties", "meerwerk_aanvragen", "werf_fotos", "werf_updates", "woningdossier", "prijsvragen", "prijsvraag_gunningen", "goedkeuring_tekenaars", "aannemer_facturen", "betaalherinneringen", "fin_plan", "fin_vaste_kosten", "fin_instellingen", "vergaderingen", "vergadering_punten", "verwerkingen", "verwerker_status", "ms_raming", "document_aannemers", "plan_omzettingen", "render_beelden", "render_opdrachten", "render_afspraken", "render_presentaties", "render_ruimtes", "render_standpunten", "taak_punten", "ontwerp_rondes", "ontwerp_documenten", "ontwerp_feedback"]; // ontbreken zolang het bijbehorende sql-script niet is uitgevoerd
 const rowKey = (t, r) => t === "fasen" || t === "loten" ? r.nr : t === "klant_timing" ? r.project_id + "|" + r.fase_nr : t === "tarieven" ? r.user_id : t === "instellingen" ? r.key : t === "prijsvraag_gunningen" ? r.prijsvraag_id + "|" + r.post_id : t === "vordering_regels" ? (r.id || r.vordering_id + "|" + r.lot + "|" + (r.post_id || "")) : t === "verwerker_status" ? r.naam : t === "document_aannemers" ? r.document_id + "|" + r.contact_id : r.id;
 function ingest(table, rows) {
   if (table === "standaardtaken") { S.standaardtaken = rows.sort((a, b) => a.fase_nr - b.fase_nr || a.volgorde - b.volgorde); return; }
@@ -184,7 +184,7 @@ async function loadAll() {
 }
 function subscribe() {
   // Eén kanaal per tabel: als één tabel niet in de realtime-publicatie zit, blijven de andere werken.
-  ["profiles", "tarieven", "fasen", "standaardtaken", "projecten", "taken", "uren", "documenten", "loten", "posten", "meetstaat_posten", "meetstaat_prijzen", "vorderingen", "vordering_regels", "contacten", "project_contacten", "goedkeuringen", "notities", "werfbezoeken", "vaststellingen", "klant_timing", "werfplannen", "werfverslagen", "taak_voorstellen", "assistent_berichten", "prijsaanvragen", "prijsaanvraag_regels", "tekenplannen", "aannemer_meetstaten", "keuzes", "keuze_opties", "meerwerk_aanvragen", "werf_fotos", "werf_updates", "woningdossier", "prijsvragen", "prijsvraag_gunningen", "goedkeuring_tekenaars", "aannemer_facturen", "betaalherinneringen", "fin_plan", "fin_vaste_kosten", "fin_instellingen", "vergaderingen", "vergadering_punten", "verwerkingen", "verwerker_status", "ms_raming", "document_aannemers", "plan_omzettingen", "render_beelden", "render_opdrachten", "render_afspraken", "render_presentaties", "render_ruimtes", "render_standpunten", "taak_punten", "ontwerp_rondes", "ontwerp_documenten", "ontwerp_feedback"].forEach(t => {
+  ["profiles", "tarieven", "fasen", "standaardtaken", "projecten", "taken", "uren", "documenten", "loten", "posten", "meetstaat_posten", "meetstaat_prijzen", "vorderingen", ...(schemaV() >= 62 && isBeheer() ? ["yuki_facturen"] : []), "vordering_regels", "contacten", "project_contacten", "goedkeuringen", "notities", "werfbezoeken", "vaststellingen", "klant_timing", "werfplannen", "werfverslagen", "taak_voorstellen", "assistent_berichten", "prijsaanvragen", "prijsaanvraag_regels", "tekenplannen", "aannemer_meetstaten", "keuzes", "keuze_opties", "meerwerk_aanvragen", "werf_fotos", "werf_updates", "woningdossier", "prijsvragen", "prijsvraag_gunningen", "goedkeuring_tekenaars", "aannemer_facturen", "betaalherinneringen", "fin_plan", "fin_vaste_kosten", "fin_instellingen", "vergaderingen", "vergadering_punten", "verwerkingen", "verwerker_status", "ms_raming", "document_aannemers", "plan_omzettingen", "render_beelden", "render_opdrachten", "render_afspraken", "render_presentaties", "render_ruimtes", "render_standpunten", "taak_punten", "ontwerp_rondes", "ontwerp_documenten", "ontwerp_feedback"].forEach(t => {
     const ch = sb.channel("pb-" + t);
     ch.on("postgres_changes", { event: "*", schema: "public", table: t }, (payload) => {
       if (S.bulk) { (S.bulkGemist = S.bulkGemist || new Set()).add(t === "meetstaat_prijzen" ? "meetstaat_posten" : t); return; }   // tijdens een bulkactie niet per rij herbouwen; erna worden de gemiste tabellen herladen (bulkKlaar)
@@ -748,6 +748,14 @@ function vProjectContacten(p) {
 
 /* ---------- Meetstaat: loten, postenbibliotheek en meetstaatregels per project ---------- */
 const MS_STATUS = { offerte: "Offerte", akkoord: "Akkoord", meerwerk: "Meerwerk", minwerk: "Minwerk", vervallen: "Vervallen" };
+// 1.65 (script 061): een post die de klant in het portaal goedkeurde, ligt vast; na een goedgekeurde offerte is de meetstaat 'vast'
+// (nieuwe posten = meerwerk/minwerk, wijzigen via ± op de post). Posten die met de hand op Akkoord staan, blijven vrij.
+const msVast = (r) => !!r && !!r.akkoord_op && schemaV() >= 61;
+const msVastAkkoord = (pid) => schemaV() < 61 ? null : Object.values(S.goedkeuringen || {}).filter(g => g.project_id === pid && g.status === "akkoord" && (g.soort === "offerte" || g.soort === "overeenkomst") && (g.posten || []).length > 0).sort((a, b) => (a.beslist_op || "").localeCompare(b.beslist_op || ""))[0] || null;
+const msProjVast = (pid) => !!msVastAkkoord(pid);
+const MS_VAST_F = ["omschrijving", "locatie", "hoeveelheid", "eenheid", "btw", "status", "marge", "code", "lot", "prijstype"];
+const msKinderen = (r) => Object.values(S.meetstaat_posten).filter(x => x.herkomst_post_id === r.id && x.status !== "vervallen" && x.herkomst_soort !== "nieuw");   // (een vervangende post telt niet mee)
+const msHuidig = (r) => (Number(r.hoeveelheid) || 0) + msKinderen(r).reduce((s, x) => s + (x.status === "meerwerk" ? Number(x.hoeveelheid) || 0 : x.status === "minwerk" ? -Math.abs(Number(x.hoeveelheid) || 0) : 0), 0);
 const EENHEDEN = ["m2", "lm", "m3", "stk", "sog", "uur", "dag", "week", "rol", "zak", "%", "PM"];
 const msReady = () => Object.keys(S.loten).length > 0;
 const lotenList = () => Object.values(S.loten).filter(l => l.actief !== false).sort((a, b) => a.nr - b.nr);
@@ -890,7 +898,7 @@ function vMeetstaat(p) {
   if (!msReady()) return `<div class="panel"><div class="empty"><b>Meetstaat nog niet beschikbaar</b>Voer eerst databasescript <code>sql/007_meetstaat.sql</code> uit in Supabase (SQL Editor). Daarna verschijnen hier de loten en de postenbibliotheek.</div></div>`;
   // klantweergave: kostprijs, marge en btw-kolom verbergen (bv. tijdens een bespreking met de klant) — onthouden per browser
   if (S.prijsFout) return `<div class="panel"><div class="empty"><b>Prijzen niet correct geladen</b>De prijzen van de meetstaat konden niet opgehaald worden (de databank was even niet bereikbaar of er liep net een databasescript). Herlaad de pagina (⌘⌥R) — tot dan worden er geen bedragen getoond om fouten te vermijden.</div></div>`;
-  const rows = msRows(p.id); const beheer = isBeheer() && !S.msKlant;
+  const rows = msRows(p.id); const beheer = isBeheer() && !S.msKlant; const projVast = msProjVast(p.id); const vastG = projVast ? msVastAkkoord(p.id) : null;
   const ra = msRaming(p.id); const t = msTotals(p.id, ra); const marges = !!(ra && beheer && S.msMarges);   // 1.55: geraamde marges (script 052)
   const byLot = {}; rows.forEach(r => (byLot[r.lot] = byLot[r.lot] || []).push(r));
   const lots = Object.keys(byLot).map(Number).sort((a, b) => a - b);
@@ -910,18 +918,20 @@ function vMeetstaat(p) {
   const body = lots.map(nr => { const g = byLot[nr]; const sub = g.filter(msTelt).reduce((s, r) => s + rowSigned(r), 0); const subk = g.filter(msTelt).reduce((s, r) => s + (ra && beheer && ra.rij[r.id] ? ra.rij[r.id].kost : kostSigned(r)), 0); let lastGroep = null;
     return `<tr class="ms-lot"><td colspan="${cols}"><div style="display:flex;justify-content:space-between;align-items:center;gap:8px;flex-wrap:wrap"><span>${esc(lotName(nr))} <span class="muted num" style="font-weight:400">${g.length} posten${beheer ? ` · kost ${eur(subk)}` : ""} · <b>${eur(sub)}</b> excl. btw</span></span>${marges ? msrLotCtl(p.id, nr, ra) : ""}<span class="actions"><button class="btn ghost sm" data-act="ms-add-post" data-pid="${p.id}" data-lot="${nr}">+ Post</button><button class="btn ghost sm danger" data-act="ms-del-lot" data-pid="${p.id}" data-lot="${nr}" title="Alle posten van dit lot verwijderen">✕</button></span></div></td></tr>` +
       g.map((r, i) => { const kop = perRuimte ? ((r.locatie || "").trim() || "Zonder ruimte") : r.groep; const gh = kop && kop !== lastGroep ? `<tr class="ms-groep"><td></td><td colspan="${cols - 1}">${esc(kop)}${perRuimte ? ` <span class="muted" style="font-weight:400;text-transform:none;letter-spacing:0">· ${g.filter(x => (perRuimte ? ((x.locatie || "").trim() || "Zonder ruimte") : x.groep) === kop).length} posten · ${eur(g.filter(x => msTelt(x) && ((x.locatie || "").trim() || "Zonder ruimte") === kop).reduce((s, x) => s + rowSigned(x), 0))}</span>` : ""}</td></tr>` : ""; lastGroep = kop || lastGroep; const dead = r.status === "vervallen";
-        return gh + `<tr class="${dead ? "ms-dead" : ""}" data-msrow="${r.id}" data-lot="${nr}"><td class="drag" style="width:26px">${perRuimte ? `<span class="muted" title="Volgorde wijzigen kan in de gewone weergave (Per ruimte uit)">·</span>` : `<span class="grip" draggable="true" data-drag="${r.id}" title="Sleep om de volgorde te wijzigen">⋮⋮</span>`}<span class="updown">${perRuimte ? "" : `<button class="btn ghost sm" data-act="ms-move" data-id="${r.id}" data-dir="-1" ${i === 0 ? "disabled" : ""} aria-label="Omhoog">▲</button>`}${perRuimte ? "" : `<button class="btn ghost sm" data-act="ms-move" data-id="${r.id}" data-dir="1" ${i === g.length - 1 ? "disabled" : ""} aria-label="Omlaag">▼</button>`}</span></td><td class="num muted" style="width:52px">${esc(r.code)}</td>
-        <td style="min-width:260px">${inp(r, "omschrijving", "wide")}</td>
-        <td style="width:110px">${inp(r, "locatie", "", 'placeholder="locatie"')}</td>
-        <td style="width:84px">${num(r, "hoeveelheid")}</td>
-        <td style="width:82px">${sel(r, "eenheid", opts(EENHEDEN.map(e => [e, e]), r.eenheid))}</td>
-        ${marges ? msrPostCellen(r, ra) : beheer ? `<td style="width:96px">${num(r, "eenheidsprijs")}</td><td style="width:64px"><input class="inline num" data-ms="${r.id}" data-f="marge" type="text" inputmode="decimal" autocomplete="off" placeholder="${pctVeld(Number(S.loten[r.lot]?.marge) || 0)}" value="${pctVeld(r.marge)}" title="Marge % (leeg = marge van het lot)"></td>` : ""}
+        const vast = msVast(r); const ouder = r.herkomst_post_id ? S.meetstaat_posten[r.herkomst_post_id] : null; const kids = vast ? msKinderen(r) : [];
+        const tekst = (v, cls = "") => `<span class="ms-vast-t ${cls}" title="Goedgekeurd door de klant — ligt vast">${v}</span>`;
+        return gh + `<tr class="${dead ? "ms-dead" : ""}${vast ? " ms-vast" : ""}" data-msrow="${r.id}" data-lot="${nr}"><td class="drag" style="width:26px">${perRuimte ? `<span class="muted" title="Volgorde wijzigen kan in de gewone weergave (Per ruimte uit)">·</span>` : `<span class="grip" draggable="true" data-drag="${r.id}" title="Sleep om de volgorde te wijzigen">⋮⋮</span>`}<span class="updown">${perRuimte ? "" : `<button class="btn ghost sm" data-act="ms-move" data-id="${r.id}" data-dir="-1" ${i === 0 ? "disabled" : ""} aria-label="Omhoog">▲</button>`}${perRuimte ? "" : `<button class="btn ghost sm" data-act="ms-move" data-id="${r.id}" data-dir="1" ${i === g.length - 1 ? "disabled" : ""} aria-label="Omlaag">▼</button>`}</span></td><td class="num muted" style="width:52px;white-space:nowrap">${esc(r.code)}</td>
+        <td style="min-width:260px">${vast ? tekst(esc(r.omschrijving)) : inp(r, "omschrijving", "wide")}${ouder ? `<small class="muted ms-herkomst">↳ ${r.herkomst_soort === "nieuw" ? "vervangt" : esc(MS_STATUS[r.status] || r.status).toLowerCase() + " op"} post ${esc(ouder.code)}</small>` : ""}</td>
+        <td style="width:110px">${vast ? tekst(esc(r.locatie || "")) : inp(r, "locatie", "", 'placeholder="locatie"')}</td>
+        <td style="width:84px">${vast ? tekst(nl(r.hoeveelheid, 2), "num") + (kids.length ? `<small class="muted ms-herkomst" title="Na de meer- en minwerken op deze post">nu ${nl(msHuidig(r), 2)}</small>` : "") : num(r, "hoeveelheid")}</td>
+        <td style="width:82px">${vast ? tekst(esc(r.eenheid)) : sel(r, "eenheid", opts(EENHEDEN.map(e => [e, e]), r.eenheid))}</td>
+        ${marges ? msrPostCellen(r, ra) : beheer ? `<td style="width:96px">${num(r, "eenheidsprijs")}</td><td style="width:64px">${vast ? tekst(pctVeld(r.marge != null && r.marge !== "" ? r.marge : Number(S.loten[r.lot]?.marge) || 0), "num") : `<input class="inline num" data-ms="${r.id}" data-f="marge" type="text" inputmode="decimal" autocomplete="off" placeholder="${pctVeld(Number(S.loten[r.lot]?.marge) || 0)}" value="${pctVeld(r.marge)}" title="Marge % (leeg = marge van het lot)">`}</td>` : ""}
         <td class="r num" style="width:96px" title="Eenheidsprijs voor de klant">${eur2(msVerkoopEP(r))}</td>
         <td class="r num" style="width:104px"><b>${eur2(rowSigned(r))}</b></td>
-        ${beheer ? `<td style="width:76px">${sel(r, "btw", opts([[0.06, "6 %"], [0.21, "21 %"], [0, "0 %"]], Number(r.btw)))}</td>` : ""}
-        <td style="width:104px">${sel(r, "status", opts(Object.entries(MS_STATUS), r.status))}${r.akkoord_op ? `<small class="muted" style="display:block;color:var(--ok)" title="Goedgekeurd door de klant in het portaal">✓ klant ${fmt(lokDag(r.akkoord_op))}</small>` : ""}</td>
-        <td class="r" style="width:36px"><button class="btn ghost sm danger" data-act="ms-del" data-id="${r.id}" aria-label="Verwijderen">✕</button></td></tr>`; }).join(""); }).join("");
-  return kpi + (typeof vMeerwerkAanvragen === "function" ? vMeerwerkAanvragen(p) : "") + vGoedkeuringen(p) + (typeof vPrijsvragen === "function" ? vPrijsvragen(p) : vPrijsaanvragen(p)) + vAanMeetstaten(p) + `<div class="panel"><div class="panel-head"><div><h3>Meetstaat</h3><div class="muted" style="font-size:12px;margin-top:2px">${rows.length ? `${rows.length} posten in ${lots.length} loten` : "Nog leeg"} · klik in een veld om het te wijzigen, bewaard bij verlaten van het veld</div></div>
+        ${beheer ? `<td style="width:76px">${vast ? tekst(Math.round(Number(r.btw) * 100) + " %") : sel(r, "btw", opts([[0.06, "6 %"], [0.21, "21 %"], [0, "0 %"]], Number(r.btw)))}</td>` : ""}
+        <td style="width:104px">${vast ? `<span class="pill ms-slot" title="Goedgekeurd door de klant — ligt vast">🔒 ${esc(MS_STATUS[r.status] || r.status)}</span>` : sel(r, "status", opts(Object.entries(MS_STATUS).filter(([k]) => !projVast || !["offerte", "akkoord"].includes(k) || k === r.status), r.status))}${r.akkoord_op ? `<small class="muted" style="display:block;color:var(--ok)" title="Goedgekeurd door de klant in het portaal">✓ klant ${fmt(lokDag(r.akkoord_op))}</small>` : ""}</td>
+        <td class="r" style="width:36px">${vast ? (["akkoord", "meerwerk"].includes(r.status) ? `<button class="btn ghost sm" data-act="ms-wijzig" data-id="${r.id}" title="Wijzigen via meer- of minwerk (hoeveelheid, schrappen of vervangen)" aria-label="Wijzigen via meer- of minwerk">±</button>` : "") : `<button class="btn ghost sm danger" data-act="ms-del" data-id="${r.id}" aria-label="Verwijderen">✕</button>`}</td></tr>`; }).join(""); }).join("");
+  return kpi + (typeof vMeerwerkAanvragen === "function" ? vMeerwerkAanvragen(p) : "") + vGoedkeuringen(p) + (typeof vPrijsvragen === "function" ? vPrijsvragen(p) : vPrijsaanvragen(p)) + vAanMeetstaten(p) + `<div class="panel"><div class="panel-head"><div><h3>Meetstaat</h3><div class="muted" style="font-size:12px;margin-top:2px">${rows.length ? `${rows.length} posten in ${lots.length} loten` : "Nog leeg"} · klik in een veld om het te wijzigen, bewaard bij verlaten van het veld</div>${projVast ? `<div class="ms-vast-banner">🔒 <b>Goedgekeurd door de klant${vastG && vastG.beslist_op ? " op " + fmtLong(lokDag(vastG.beslist_op)) : ""}.</b> De goedgekeurde posten liggen vast: een wijziging gaat via meer- of minwerk (knop ± op de post), nieuwe posten worden meerwerk.</div>` : ""}</div>
       <div class="actions">${isBeheer() && rows.length ? `<select class="btn sm" data-act="ms-btw-alles" data-pid="${p.id}" title="Het btw-tarief van alle posten van dit project in één keer zetten"><option value="">Btw alles…</option><option value="0.06">alles op 6 %</option><option value="0.21">alles op 21 %</option><option value="0">alles op 0 %</option></select><select class="btn sm" data-act="ms-marge-alles" data-pid="${p.id}" title="De marge van alle posten van dit project in één keer zetten (goedgekeurde posten houden hun klantprijs, tenzij je kiest om ze mee te nemen)"><option value="">Marge alles…</option><option value="10">alles op 10 %</option><option value="15">alles op 15 %</option><option value="20">alles op 20 %</option><option value="ander">ander %…</option><option value="lot">lotmarge (eigen marge leegmaken)</option></select>` : ""}<button class="btn sm ${S.msRuimte ? "primary" : ""}" data-act="ms-ruimte" title="Posten per lot groeperen per ruimte (alfabetisch), enkel in deze weergave — de nummering en de export veranderen niet">${S.msRuimte ? "Per ruimte ✓" : "Per ruimte"}</button>${msRamingKlaar() && rows.length && !S.msKlant ? `<button class="btn sm ${S.msMarges ? "primary" : ""}" data-act="ms-marges" title="Per lot en per post aanduiden of er een offerte van een aannemer achter zit, en hoeveel marge BROS heeft op de rest (de klantprijs verandert niet)">${S.msMarges ? "Marges ✓" : "Marges"}</button>` : ""}${isBeheer() ? `<button class="btn sm ${S.msKlant ? "primary" : ""}" data-act="ms-klant" title="Kostprijs, marge en btw-kolom verbergen, bv. als je de meetstaat met de klant overloopt (sneltoets: K)">${S.msKlant ? "👁 Klantweergave aan" : "Klantweergave"}</button>` : ""}${schemaV() >= 13 && rows.some(r => gkKandidaat(r)) ? `<button class="btn sm" data-act="gk-new" data-pid="${p.id}" title="Offerte of meerwerk bevroren ter goedkeuring in het klantenportaal zetten">Ter goedkeuring voorleggen</button>` : ""}${isBeheer() ? `<button class="btn sm" data-act="ms-import" data-pid="${p.id}" title="Een bestaande meetstaat (Excel, elk BROS-sjabloon) inlezen als posten">Importeren uit Excel</button>` : ""}${rows.length ? `<button class="btn sm" data-act="ms-export" data-pid="${p.id}" title="Excel in het BROS-sjabloon aanmaken in Documenten/Meetstaat van de projectmap">Exporteren naar Drive (Excel)</button><button class="btn sm" data-act="ms-pdf" data-pid="${p.id}" title="Meetstaat als pdf: klantversie of interne versie, per lot of per ruimte">Pdf</button>` : ""}<button class="btn sm" data-act="ms-add-post" data-pid="${p.id}">+ Post</button><button class="btn sm primary" data-act="ms-add-lot" data-pid="${p.id}">+ Lot toevoegen</button></div></div>
     ${marges && rows.length ? msrInfo(p, t, ra) : ""}${rows.length ? `<div class="tw"><table class="t ms${marges ? " ms-marges" : ""}"><thead><tr><th></th><th>Nr</th><th>Omschrijving</th><th>Locatie</th><th>Hoev.</th><th>Eenh.</th>${marges ? `<th title="Zit er een offerte van een aannemer achter deze post?">Bron</th><th title="Marge zonder aannemersofferte: % op de kostprijs of een bedrag in €">Marge</th>` : beheer ? `<th title="Kostprijs / aannemersprijs excl. btw">Kost EP</th><th>Marge</th>` : ""}<th class="r">Klant EP</th><th class="r">Totaal excl.</th>${beheer ? `<th>Btw</th>` : ""}<th>Status</th><th></th></tr></thead><tbody>${body}</tbody></table></div>` : `<div class="empty"><b>Nog geen posten</b>Voeg een lot toe (met de standaardposten) of kies losse posten uit de bibliotheek.</div>`}</div>`;
 }
@@ -1003,9 +1013,10 @@ function msPdfForm(pid) {
 }
 /* btw van alle posten van een project in één keer (beheer): ook het btw-tarief op de projectfiche volgt mee */
 async function msBtwAlles(pid, btw) {
-  const rows = msRows(pid).filter(r => Number(r.btw) !== btw); const p = S.projecten[pid];
-  if (!rows.length) { toast("Alle posten staan al op " + Math.round(btw * 100) + " %"); return; }
-  if (!confirm(`Btw van alle ${msRows(pid).length} posten van ${p.klant} op ${Math.round(btw * 100)} % zetten? (${rows.length} posten veranderen; verzonden facturen blijven bevroren.)`)) return;
+  const nVast = msRows(pid).filter(r => Number(r.btw) !== btw && msVast(r)).length;   // 1.65: goedgekeurde posten liggen vast
+  const rows = msRows(pid).filter(r => Number(r.btw) !== btw && !msVast(r)); const p = S.projecten[pid];
+  if (!rows.length) { toast(nVast ? `De overige ${nVast} posten zijn goedgekeurd door de klant en liggen vast (btw inbegrepen).` : "Alle posten staan al op " + Math.round(btw * 100) + " %", 6000); return; }
+  if (!confirm(`Btw van alle ${msRows(pid).length} posten van ${p.klant} op ${Math.round(btw * 100)} % zetten? (${rows.length} posten veranderen; verzonden facturen blijven bevroren.)${nVast ? `\n\n${nVast} post${nVast === 1 ? "" : "en"} die de klant goedkeurde, blijven zoals ze zijn.` : ""}`)) return;
   S.bulk = true;
   try {
     for (let i = 0; i < rows.length; i += 100) { const ids = rows.slice(i, i + 100).map(r => r.id); const { error } = await sb.from("meetstaat_posten").update({ btw, updated_at: new Date().toISOString() }).in("id", ids); if (error) throw error; ids.forEach(id => { if (S.meetstaat_posten[id]) S.meetstaat_posten[id].btw = btw; }); }
@@ -1020,7 +1031,7 @@ async function msMargeAlles(pid, keuze) {
   if (keuze === "ander") { const t = prompt("Marge voor alle posten van " + p.klant + " (in %):", "10"); if (t == null) return; pct = leesGetal(t); if (pct == null || Number.isNaN(pct) || pct <= -100 || pct > 1000) { toast("Geef een geldig % (bv. 10)."); return; } }
   else if (keuze !== "lot") pct = Number(keuze);
   const marge = pct == null ? null : Math.round(pct * MARGE_DEC / 100) / MARGE_DEC;
-  const alle = msRows(pid).filter(r => r.status !== "vervallen");
+  const alle = msRows(pid).filter(r => r.status !== "vervallen" && !msVast(r));   // 1.65: door de klant goedgekeurde posten liggen vast (klantprijs blijft)
   const goed = alle.filter(r => ["akkoord", "meerwerk", "minwerk"].includes(r.status));
   const label = pct == null ? "de lotmarge" : nl(pct, 2) + " %";
   const open = alle.length - goed.length;
@@ -1048,12 +1059,13 @@ async function msReorder(pid, lot, movedId, targetId, before) {
   // groep van de nieuwe buur overnemen, zodat de post niet als losse groepskop verschijnt
   const buur = rows[to - 1] || rows[to + 1]; const groep = buur ? (buur.groep || "") : (moved.groep || "");
   const patches = [];
-  rows.forEach((r, i) => { const code = `${lot}.${i + 1}`; const volg = (i + 1) * 10; const g = r.id === moved.id ? groep : (r.groep || "");
+  const codesVast = rows.some(msVast);   // 1.65: de klant keurde posten met hun nummer goed → nummers blijven, enkel de volgorde schuift
+  rows.forEach((r, i) => { const code = codesVast ? r.code : `${lot}.${i + 1}`; const volg = (i + 1) * 10; const g = r.id === moved.id ? groep : (r.groep || "");
     if (r.code !== code || (r.volgorde ?? 0) !== volg || (r.groep || "") !== g) patches.push({ id: r.id, code, volgorde: volg, groep: g }); });
   if (!patches.length) return;
   S.bulk = true;
   patches.forEach(x => Object.assign(S.meetstaat_posten[x.id], x)); render();
-  try { await Promise.all(patches.map(x => sb.from("meetstaat_posten").update({ code: x.code, volgorde: x.volgorde, groep: x.groep, updated_at: new Date().toISOString() }).eq("id", x.id).then(r => { if (r.error) throw r.error; }))); toast("Volgorde en nummers aangepast"); }
+  try { await Promise.all(patches.map(x => sb.from("meetstaat_posten").update({ ...(codesVast ? {} : { code: x.code }), volgorde: x.volgorde, groep: x.groep, updated_at: new Date().toISOString() }).eq("id", x.id).then(r => { if (r.error) throw r.error; }))); toast(codesVast ? "Volgorde aangepast (de nummers blijven: dit lot bevat goedgekeurde posten)" : "Volgorde en nummers aangepast"); }
   catch (e) { toast("Volgorde niet bewaard: " + e.message, 6000); }
   finally { bulkKlaar(); await msRefetch(rows.map(r => r.id)); }
 }
@@ -1922,7 +1934,9 @@ function vGoedkeuringen(p) {
 }
 function gkForm(pid, soortVoorkeur) {
   const p = S.projecten[pid]; const rows = msRows(pid).filter(gkKandidaat);
-  const off = rows.filter(r => r.status === "offerte"), mw = rows.filter(isMw);
+  const vastM = msProjVast(pid);   // 1.65: na een goedgekeurde offerte enkel nog meerwerkvoorstellen
+  const off = vastM ? [] : rows.filter(r => r.status === "offerte"), mw = rows.filter(isMw);
+  if (vastM && !mw.length) { toast("De meetstaat is goedgekeurd door de klant: er zijn geen meer- of minwerkposten om voor te leggen. Gebruik ± op een post of voeg een post toe (die wordt meerwerk).", 8000); return; }
   const soort = soortVoorkeur && (soortVoorkeur === "meerwerk" ? mw.length : off.length) ? soortVoorkeur : (off.length ? "offerte" : "meerwerk");
   const klanten = contactsOf(pid).filter(x => ["bouwheer", "contactpersoon"].includes(x.rol) && x.c.user_id);
   const lijst = (rs) => rs.map(r => `<label class="chk"><input type="checkbox" name="post" value="${r.id}" checked> <span>${esc(r.code)} ${esc(r.omschrijving)}${r.locatie ? ` <small class="muted">· ${esc(r.locatie)}</small>` : ""}<small class="muted" style="display:block">${nl(r.hoeveelheid, 2)} ${esc(r.eenheid)} × ${eur2(msVerkoopEP(r))} = <b>${eur2(rowSigned(r))}</b>${isMw(r) ? ` · ${MS_STATUS[r.status]}` : ""}</small></span></label>`).join("");
@@ -2000,6 +2014,8 @@ function msRowFromPost(pid, x, lot, i) {
 }
 async function msInsert(rows, strikt) {
   if (!rows.length) return [];
+  const naarMw = rows.filter(r => ["offerte", "akkoord"].includes(r.status) && msProjVast(r.project_id)).length;   // 1.65: goedgekeurde meetstaat → nieuwe posten zijn meerwerk
+  if (naarMw) { rows = rows.map(r => ["offerte", "akkoord"].includes(r.status) && msProjVast(r.project_id) ? { ...r, status: "meerwerk" } : r); setTimeout(() => toast(`De meetstaat is goedgekeurd door de klant: ${naarMw === 1 ? "de nieuwe post staat" : `de ${naarMw} nieuwe posten staan`} op Meerwerk.`, 6000), 400); }
   const v12 = schemaV() >= 12;
   const clean = v12 ? rows.map(({ eenheidsprijs, marge, ...r }) => r) : rows;
   const { data, error } = await sb.from("meetstaat_posten").insert(clean).select();
@@ -2053,11 +2069,56 @@ function msAddPostForm(pid, lot) {
   const sync = () => { $("#ap_list").innerHTML = listHtml(Number($("#ap_lot").value), $("#ap_q").value.trim()); };
   $("#ap_lot").addEventListener("change", sync); $("#ap_q").addEventListener("input", sync);
 }
+/* 1.65 (script 061): een goedgekeurde post wijzigen via meer- of minwerk — de databank maakt de post(en) voor het verschil,
+   met dezelfde klantprijs en een verwijzing naar de originele post; de klant keurt ze daarna goed in een meerwerkvoorstel */
+function msWijzigForm(id) {
+  const r = S.meetstaat_posten[id]; if (!r || !msVast(r)) return;
+  if (!["akkoord", "meerwerk"].includes(r.status)) return toast("Enkel een goedgekeurde offerte- of meerwerkpost kan je zo wijzigen.");
+  const nu = msHuidig(r), ep = msVerkoopEP(r), kids = msKinderen(r), eh = esc(r.eenheid);
+  openModal(`Post ${r.code} wijzigen via meer- of minwerk`, `<div class="form-grid">
+    <div class="field span2"><div class="ms-vast-banner" style="margin:0">🔒 <b>${esc(r.omschrijving)}</b>${r.locatie ? ` · ${esc(r.locatie)}` : ""}<br>Goedgekeurd door de klant op ${fmtLong(lokDag(r.akkoord_op))}: ${nl(r.hoeveelheid, 2)} ${eh} × ${eur2(ep)}${kids.length ? ` · na ${kids.length} wijziging${kids.length === 1 ? "" : "en"} nu <b>${nl(nu, 2)} ${eh}</b>` : ""}.</div></div>
+    <div class="field span2"><label>Wat verandert er?</label>
+      <label class="chk"><input type="radio" name="soort" value="hoeveelheid" checked> Andere hoeveelheid</label>
+      <label class="chk"><input type="radio" name="soort" value="schrappen" ${nu <= 0 ? "disabled" : ""}> Schrappen (alles als minwerk)</label>
+      <label class="chk"><input type="radio" name="soort" value="vervangen"> Vervangen door iets anders (minwerk + een nieuwe meerwerkpost)</label></div>
+    <div class="field" data-w="hoeveelheid"><label for="mw_h">Nieuwe hoeveelheid (${eh})</label><input id="mw_h" name="hoeveelheid" type="text" inputmode="decimal" autocomplete="off" value="${getalVeld(nu)}"></div>
+    <div class="field span2" data-w="vervangen" style="display:none"><label for="mw_o">Omschrijving van de nieuwe post</label><input id="mw_o" name="omschrijving" value="${esc(r.omschrijving)}"></div>
+    <div class="field" data-w="vervangen" style="display:none"><label for="mw_vh">Hoeveelheid van de nieuwe post (${eh})</label><input id="mw_vh" name="vhoeveelheid" type="text" inputmode="decimal" autocomplete="off" value="${getalVeld(nu > 0 ? nu : r.hoeveelheid)}"></div>
+    <div class="field span2"><div id="mw_res" class="mw-res"></div>
+      <p class="muted" style="font-size:12px;margin:6px 0 0">De nieuwe posten krijgen de goedgekeurde klantprijs en een verwijzing naar post ${esc(r.code)}. Ze zijn nog niet goedgekeurd: leg ze voor via <b>Ter goedkeuring voorleggen › Meerwerkvoorstel</b>.</p></div>
+  </div>`, {
+    saveLabel: "Meer-/minwerk aanmaken",
+    onSave: async (d) => {
+      const soort = d.soort || "hoeveelheid"; const args = { p_post: id, p_soort: soort, p_hoeveelheid: null, p_omschrijving: null };
+      if (soort === "hoeveelheid") { const h = leesGetal(d.hoeveelheid); if (h == null || Number.isNaN(h) || h < 0) { toast("Geef de nieuwe hoeveelheid (0 of meer), bv. 12,5"); return false; } if (Math.abs(h - nu) < 1e-9) { toast("Dat is de huidige hoeveelheid."); return false; } args.p_hoeveelheid = h; }
+      if (soort === "vervangen") { const h = leesGetal(d.vhoeveelheid); if (h == null || Number.isNaN(h) || h <= 0) { toast("Geef de hoeveelheid van de nieuwe post."); return false; } args.p_hoeveelheid = h; args.p_omschrijving = (d.omschrijving || "").trim() || r.omschrijving; }
+      const { data, error } = await sb.rpc("meetstaat_wijziging", args);
+      if (error) { toast("Niet gelukt: " + error.message, 7000); return false; }
+      const ids = (data && data.ids) || []; await msRefetch(ids);
+      const nieuw = ids.map(x => S.meetstaat_posten[x]).filter(Boolean);
+      toast(nieuw.map(x => `${MS_STATUS[x.status]} ${x.code}: ${eur2(rowSigned(x))}`).join(" · ") + (soort === "vervangen" ? " — kijk de prijs van de nieuwe post na" : ""), 7000);
+    },
+  });
+  const f = $("#mform"); const res = $("#mw_res");
+  const toon = () => {
+    const soort = f.querySelector('input[name="soort"]:checked')?.value || "hoeveelheid";
+    f.querySelectorAll("[data-w]").forEach(el => { el.style.display = el.dataset.w === soort ? "" : "none"; });
+    const regel = (st, h, oms) => `<div><span class="pill ${st === "minwerk" ? "late" : "st-offerte"}">${MS_STATUS[st]}</span> ${nl(h, 2)} ${eh} × ${eur2(ep)} = <b>${eur2((st === "minwerk" ? -1 : 1) * r2(h * ep))}</b>${oms ? ` <span class="muted">· ${esc(oms)}</span>` : ""}</div>`;
+    let html = "";
+    if (soort === "hoeveelheid") { const h = leesGetal($("#mw_h").value); if (h == null || Number.isNaN(h) || h < 0) html = `<span class="muted">Geef een hoeveelheid.</span>`; else { const dlt = Math.round((h - nu) * 1000) / 1000; html = !dlt ? `<span class="muted">Geen verschil met nu (${nl(nu, 2)} ${eh}).</span>` : regel(dlt > 0 ? "meerwerk" : "minwerk", Math.abs(dlt)); } }
+    else if (soort === "schrappen") html = regel("minwerk", nu);
+    else { const h = leesGetal($("#mw_vh").value); html = (nu > 0 ? regel("minwerk", nu) : "") + (h == null || Number.isNaN(h) || h <= 0 ? `<span class="muted">Geef de hoeveelheid van de nieuwe post.</span>` : regel("meerwerk", h, ($("#mw_o").value || "").trim() || r.omschrijving).replace("</div>", ` <span class="muted">(voorlopig dezelfde prijs)</span></div>`)); }
+    res.innerHTML = html;
+  };
+  f.addEventListener("input", toon); f.addEventListener("change", toon); toon();
+}
 let MARGE_DEC = 1e4;   // decimalen van de marge per post: 8 sinds script 033 (gezet bij elke bewerking)
 async function msEdit(id, f, raw) {
   MARGE_DEC = schemaV() >= 33 ? 1e8 : 1e4;
   const r = S.meetstaat_posten[id]; if (!r) return;
   const terug = (msg) => { toast(msg, 6000); renderPending = false; document.activeElement?.blur?.(); render(); };
+  if (msVast(r) && MS_VAST_F.includes(f)) return terug(`Post ${r.code} is goedgekeurd door de klant en ligt vast. Een wijziging gaat via meer- of minwerk: knop ± op de post.`);
+  if (f === "status" && !msVast(r) && ["offerte", "akkoord"].includes(raw) && msProjVast(r.project_id)) return terug("De meetstaat is goedgekeurd door de klant: deze post kan enkel meerwerk, minwerk of vervallen zijn.");
   let v = raw;
   if (["hoeveelheid", "eenheidsprijs", "btw", "marge"].includes(f)) {
     const n = leesGetal(raw);
@@ -2074,6 +2135,7 @@ async function msEdit(id, f, raw) {
   if (goed && f === "eenheidsprijs" && schemaV() >= 12) {
     // nieuwe kostprijs (bv. een andere aannemer): klantprijs behouden door de marge te herrekenen
     if (v > 0 && ep > 0) { const m = Math.round((ep / v - 1) * MARGE_DEC) / MARGE_DEC; if (m >= -1 && m <= 10 && r2(v * (1 + m)) === ep) extra = { marge: m }; }
+    if (!extra && msVast(r)) return terug(`Post ${r.code} is goedgekeurd aan ${eur2(ep)} per ${r.eenheid}: die klantprijs ligt vast en kan met deze kostprijs niet behouden blijven. Een andere klantprijs gaat via meer- of minwerk (±).`);
     if (!extra && !confirm(`${r.code} ${r.omschrijving}\n\nDeze post is goedgekeurd aan ${eur2(ep)} per ${r.eenheid}. Met deze kostprijs kan die klantprijs niet behouden blijven — de klantprijs verandert. Doorgaan?`)) { render(); return; }
   }
   if (goed && f === "marge" && !confirm(`${r.code} ${r.omschrijving}\n\nDeze post is goedgekeurd aan ${eur2(ep)} per ${r.eenheid}. Een andere marge verandert die klantprijs. Doorgaan?`)) { render(); return; }
@@ -2099,6 +2161,8 @@ async function msEdit(id, f, raw) {
 const msGefactureerd = (ids) => { const set = new Set(Object.values(S.vordering_regels || {}).map(r => r.post_id).filter(Boolean)); return ids.filter(id => set.has(id)).length; };
 async function msDelLot(pid, lot) {
   const ids = msRows(pid).filter(r => r.lot === lot).map(r => r.id);
+  const nVast = msRows(pid).filter(r => r.lot === lot && msVast(r)).length;
+  if (nVast) { toast(`${lotName(lot)} bevat ${nVast} post${nVast === 1 ? "" : "en"} die de klant goedkeurde — die liggen vast. Schrappen gaat via minwerk (± op de post).`, 8000); return; }
   const gf = msGefactureerd(ids); if (gf) { toast(`${gf} post${gf === 1 ? "" : "en"} van dit lot sta${gf === 1 ? "at" : "an"} al in een vordering — verwijderen zou die facturen wijzigen. Zet ze op Vervallen.`, 9000); return; }
   if (!confirm(`${lotName(lot)}: alle ${ids.length} posten verwijderen uit deze meetstaat?`)) return;
   const { error } = await sb.from("meetstaat_posten").delete().in("id", ids);
@@ -2517,8 +2581,8 @@ async function msImportFile(pid, file) {
     ${ov ? `<tr><td class="num">21</td><td>Onvoorziene kost / extra budget (10 %) <span class="muted">uit het blad OVERZICHT</span></td><td class="r num">1</td><td class="r num">${eur(ov)}</td></tr>` : ""}
     <tr class="tot"><td></td><td><b>Totaal</b></td><td class="r num"><b>${parsed.posts}</b></td><td class="r num"><b>${eur(parsed.totaal + (ov || 0))}</b></td></tr></tbody></table></div>
     <div class="form-grid" style="margin-top:12px">
-      <div class="field"><label for="mi_status">Status van de posten</label><select id="mi_status" name="status"><option value="akkoord">Akkoord (getekend contract)</option><option value="offerte">Offerte</option></select></div>
-      ${existing ? `<div class="field"><label for="mi_mode">Dit project heeft al ${existing} posten</label><select id="mi_mode" name="mode"><option value="replace">Bestaande posten vervangen</option><option value="append">Toevoegen aan de bestaande posten</option></select></div>` : `<div class="field"><label>Bestaande posten</label><div class="muted" style="padding:7px 0">Nog geen — alles wordt nieuw aangemaakt.</div></div>`}
+      ${msProjVast(pid) ? `<div class="field span2"><div class="ms-vast-banner" style="margin:0">🔒 De meetstaat is goedgekeurd door de klant: de posten uit dit bestand komen erbij als <b>meerwerk</b>; de bestaande posten blijven staan.</div><input type="hidden" name="status" value="meerwerk"><input type="hidden" name="mode" value="append"></div>` : `<div class="field"><label for="mi_status">Status van de posten</label><select id="mi_status" name="status"><option value="akkoord">Akkoord (getekend contract)</option><option value="offerte">Offerte</option></select></div>`}
+      ${msProjVast(pid) ? "" : msRows(pid).some(msVast) ? `<div class="field"><label>Dit project heeft al ${existing} posten</label><div class="muted" style="padding:7px 0;font-size:13px">De nieuwe posten komen erbij — vervangen kan niet: de klant keurde al posten goed.</div><input type="hidden" name="mode" value="append"></div>` : existing ? `<div class="field"><label for="mi_mode">Dit project heeft al ${existing} posten</label><select id="mi_mode" name="mode"><option value="replace">Bestaande posten vervangen</option><option value="append">Toevoegen aan de bestaande posten</option></select></div>` : `<div class="field"><label>Bestaande posten</label><div class="muted" style="padding:7px 0">Nog geen — alles wordt nieuw aangemaakt.</div></div>`}
       ${ov ? `<div class="field span2"><label class="chk"><input type="checkbox" name="budget21" value="1" checked> Onvoorziene kost (10 %) overnemen als post in lot 21</label></div>` : ""}
     </div>
     <div class="muted" style="font-size:12px;margin-top:10px">De eenheidsprijs in de Excel is de klantprijs: die komt binnen als prijs met marge 0 %, zodat de totalen exact gelijk blijven. Vul daarna per post de echte kost en marge in. Lege sjabloonregels worden overgeslagen.</div>
@@ -2603,7 +2667,7 @@ async function lotEdit(nr, f, raw, checked) {
   const v = Math.round(n * 100) / 10000;   // % → fractie (de lotmarge heeft 4 decimalen: 12,35 % = 0,1235)
   if (Math.abs((Number(l.marge) || 0) - v) < 1e-9) return;
   // posten die de klant al goedkeurde en geen eigen marge hebben, krijgen anders stilletjes een andere klantprijs
-  const geraakt = Object.values(S.meetstaat_posten).filter(r => r.lot === nr && msTelt(r) && (r.marge == null || r.marge === "") && ["akkoord", "meerwerk", "minwerk"].includes(r.status));
+  const geraakt = Object.values(S.meetstaat_posten).filter(r => r.lot === nr && msTelt(r) && !msVast(r) && (r.marge == null || r.marge === "") && ["akkoord", "meerwerk", "minwerk"].includes(r.status));   // 1.65: posten met een goedkeuring uit het portaal houden hun klantprijs (de databank zet hun marge vast)
   if (geraakt.length) { const np = new Set(geraakt.map(r => r.project_id)).size;
     if (!confirm(`Let op: ${geraakt.length} goedgekeurde post${geraakt.length > 1 ? "en" : ""} (akkoord, meer- of minwerk) in ${np} project${np > 1 ? "en" : ""} volg${geraakt.length > 1 ? "en" : "t"} de marge van dit lot. Hun klantprijs verandert dan mee, terwijl de klant een andere prijs goedkeurde.\n\nGeef die posten eerst een eigen marge in de meetstaat als hun prijs moet blijven.\n\nToch de marge van ${lotName(nr)} wijzigen naar ${nl(n, 2)} %?`)) { render(); return; } }
   try { await dbUpdate("loten", nr, { marge: v }); } catch (e) { return; }
@@ -2623,7 +2687,7 @@ const docIcon = (m, n) => /spreadsheet|excel/.test(m) ? "xls" : /word|document/.
 /* ---------- render root ---------- */
 const TABS = [["overzicht", "Overzicht"], ["projecten", "Projecten"], ["aankoop", "Facturen", "beheer"], ["taken", "Taken"], ["planning", "Planning"], ["uren", "Uren"], ["contacten", "Contacten"], ["notities", "Notities"], ["voorstellen", "Voorstellen"], ["team", "Team"], ["rapporten", "Rapporten"], ["instellingen", "Instellingen", "beheer"]];
 const ACCT_TABS = ["team", "instellingen"];   // 1.51: in het accountmenu (wacht.js) i.p.v. de bovenbalk
-const factTeDoen = () => (typeof afbTeDoen === "function" ? afbTeDoen().length : 0) + (typeof debTeDoen === "function" ? debTeDoen().length : 0);   // 1.50: badge op Facturen
+const factTeDoen = () => (typeof afbTeDoen === "function" ? afbTeDoen().length : 0) + (typeof debTeDoen === "function" ? debTeDoen().length : 0) + (typeof yukiTeDoen === "function" ? yukiTeDoen() : 0);   // 1.66: + Yuki-koppeling   // 1.50: badge op Facturen
 let renderPending = false;
 function render() {
   // niet herbouwen terwijl iemand in een inline-veld typt (realtime-update van een collega zou de invoer wissen); zoekvelden regelen hun eigen focus
@@ -3169,6 +3233,10 @@ function vPortaalBeheer() {
       <div class="field"><label for="po_iban">IBAN</label><input id="po_iban" autocomplete="off" spellcheck="false" placeholder="BE.. .... .... ...." value="${esc(c.iban ? ibanFmt(c.iban) : "")}"></div>
       <div class="field"><label for="po_bic">BIC (optioneel)</label><input id="po_bic" autocomplete="off" spellcheck="false" value="${esc(c.bic || "")}"></div>
       <div class="field"><label for="po_begunstigde">Begunstigde (naam op de rekening)</label><input id="po_begunstigde" autocomplete="off" value="${esc(c.begunstigde || "")}" placeholder="bv. BROS BV"></div>` : ""}
+      ${schemaV() >= 62 ? `<div class="field span2" style="border-top:1px solid var(--line);padding-top:10px"><label>Bedrijfsgegevens op het bankdossier</label><div class="muted" style="font-size:12px">De klant downloadt in het portaal (Facturatie) een dossier voor zijn bank bij een verbouwlening: per factuur de vorderingsstaat met de factuur-pdf. Deze gegevens staan bovenaan, samen met de verklaring van de projectverantwoordelijke.</div></div>
+      <div class="field"><label for="po_bnaam">Bedrijfsnaam</label><input id="po_bnaam" autocomplete="off" value="${esc(c.bedrijf_naam || "")}" placeholder="bv. BROS BV"></div>
+      <div class="field"><label for="po_bbtw">Ondernemings-/btw-nummer</label><input id="po_bbtw" autocomplete="off" value="${esc(c.bedrijf_btw || "")}" placeholder="BE 0123.456.789"></div>
+      <div class="field span2"><label for="po_badres">Adres</label><input id="po_badres" autocomplete="off" value="${esc(c.bedrijf_adres || "")}" placeholder="bv. Kloosterstraat 165, 2000 Antwerpen"></div>` : ""}
       <div class="field span2"><div class="actions"><button class="btn primary" data-act="portaal-save">Bewaren</button><span class="muted" style="font-size:12px">Teamfoto's, functie en biografie voor "Wie is wie": Team → Bewerken.</span></div></div>
     </div>${metLogin.length ? `<div class="tw" style="margin-top:12px"><table class="t"><thead><tr><th>Wie</th><th>Portaal</th><th>E-mail</th><th>Projecten</th><th>Uitgenodigd</th><th>Laatste bezoek</th></tr></thead><tbody>${metLogin.map(k => { const aan = rolVan(k) === "aannemer"; return `<tr class="click" data-contact="${k.id}"><td>${esc(k.naam)}</td><td><span class="pill ${aan ? "st-on_hold" : "st-lopend"}">${aan ? "aannemer" : "klant"}</span></td><td class="muted" style="font-size:12px">${esc(k.email)}</td><td class="muted" style="font-size:12px">${projectsOfContact(k.id).filter(x => aan ? !KLANT_ROLLEN.includes(x.rol) : KLANT_ROLLEN.includes(x.rol)).map(x => esc(x.p.klant)).join(", ") || "—"}</td><td class="num">${k.portaal_sinds ? fmtLong(lokDag(k.portaal_sinds)) : "—"}</td><td class="num">${k.portaal_login ? fmtLong(lokDag(k.portaal_login)) : "nog niet"}</td></tr>`; }).join("")}</tbody></table></div>` : ""}</div></div>`;
 }
@@ -3182,6 +3250,7 @@ async function portaalSaveSettings() {
     if (iban && !ben) { toast("Vul ook de begunstigde in (de naam op de rekening).", 6000); return; }
     Object.assign(value, { iban, bic, begunstigde: ben.slice(0, 70) });
   }
+  if ($("#po_bnaam")) Object.assign(value, { bedrijf_naam: $("#po_bnaam").value.trim().slice(0, 120), bedrijf_btw: $("#po_bbtw").value.trim().slice(0, 40), bedrijf_adres: $("#po_badres").value.trim().slice(0, 200) });   // 1.66: bankdossier
   const { data, error } = await sb.from("instellingen").upsert({ key: "portaal", value, updated_at: new Date().toISOString() }).select().single();
   if (error) { toast("Bewaren mislukt: " + error.message); return; } S.instellingen.portaal = data; render(); toast("Portaalteksten bewaard");
 }
@@ -3905,7 +3974,8 @@ document.addEventListener("click", (e) => {
   if (d.act === "ms-add-lot") return msAddLotForm(d.pid);
   if (d.act === "ms-open") { S.ptab = "meetstaat"; render(); if (!msRows(d.pid).length) msAddLotForm(d.pid); return; }
   if (d.act === "ms-add-post") return msAddPostForm(d.pid, d.lot ? Number(d.lot) : null);
-  if (d.act === "ms-del") { const r = S.meetstaat_posten[d.id]; if (r && msGefactureerd([d.id])) { toast("Deze post staat al in een vordering — verwijderen zou de factuur wijzigen. Zet hem op Vervallen.", 8000); return; } if (r && confirm(`"${r.omschrijving}" verwijderen?`)) dbDelete("meetstaat_posten", d.id).catch(() => { }); return; }
+  if (d.act === "ms-wijzig") return msWijzigForm(d.id);
+  if (d.act === "ms-del") { const r = S.meetstaat_posten[d.id]; if (msVast(r)) { toast(`Post ${r.code} is goedgekeurd door de klant en ligt vast. Schrappen gaat via minwerk (± op de post).`, 7000); return; } if (r && msGefactureerd([d.id])) { toast("Deze post staat al in een vordering — verwijderen zou de factuur wijzigen. Zet hem op Vervallen.", 8000); return; } if (r && confirm(`"${r.omschrijving}" verwijderen?`)) dbDelete("meetstaat_posten", d.id).catch(() => { }); return; }
   if (d.act === "ms-del-lot") return msDelLot(d.pid, Number(d.lot));
   if (d.act && /^(kz|mwa)-/.test(d.act) && typeof kpBeheerAct === "function") return kpBeheerAct(d);
   if (d.act && /^(vg|wd)-/.test(d.act) && typeof kpFase3Act === "function" && kpFase3Act(d, el)) return;
