@@ -3,7 +3,7 @@
    Statische webapp op Supabase (login, live-synchronisatie, rechten)
    ===================================================================== */
 if (window.top !== window.self) { try { window.top.location.replace(window.location.href); } catch (e) { document.documentElement.innerHTML = ""; } }   // niet in een vreemd frame (clickjacking)
-const APP_VERSION = "1.66.1";
+const APP_VERSION = "1.67.0";
 const PROJ_STATUS = { offerte: "In offerte", lopend: "Lopend", on_hold: "On hold", afgerond: "Afgerond", verloren: "Verloren" };
 const KLANTTYPE = { particulier: "Particulier", zakelijk: "Zakelijk" };
 const KLANTCODE = { particulier: "PAR", zakelijk: "ZAK" };
@@ -293,7 +293,7 @@ async function driveCall(action, payload) {
   const c = driveCfg(); if (!c.url) throw new Error("Drive-koppeling niet ingesteld (Instellingen → Drive).");
   if (!/^https:\/\/script\.google\.com\/macros\/s\/[A-Za-z0-9_-]+\/exec$/.test(c.url)) throw new Error("De Drive-URL in Instellingen is geen geldige Apps Script-webapp (https://script.google.com/macros/s/…/exec).");
   /* tijdslimiet: een hangend Drive-script mag het Planbord niet eindeloos laten wachten (laadbalk op 92 %) */
-  const limiet = ["list", "create", "link", "put", "template"].includes(action) ? 90000 : 45000;
+  const limiet = ["list", "create", "link", "put", "template", "factuurpdf"].includes(action) ? 90000 : 45000;   // 1.67: factuurpdf kan een projectmap aanmaken
   const ac = new AbortController(); const tm = setTimeout(() => ac.abort(), limiet);
   let j;
   try {
@@ -4114,7 +4114,7 @@ async function checkVersion() {
 async function boot() {
   try { const sv = JSON.parse(localStorage.getItem("bros.sort") || "null"); if (sv && sv.key) S.sort = sv; S.msKlant = localStorage.getItem("bros.msKlant") === "1"; S.msMarges = localStorage.getItem("bros.msMarges") === "1"; S.msRuimte = localStorage.getItem("bros.msRuimte") === "1"; } catch (e) { }
   if (location.hash === "#voorstellen") { S.view = "voorstellen"; history.replaceState(null, "", location.pathname); }
-  if (location.hash === "#aankoop" || location.hash === "#aankoop-aannemers") { S.view = "aankoop"; if (location.hash === "#aankoop-aannemers") S.factTab = "aannemers"; history.replaceState(null, "", location.pathname); }   // links uit de mails over facturen (1.49/1.50)
+  if (location.hash === "#aankoop" || location.hash === "#aankoop-aannemers" || location.hash === "#aankoop-yuki") { S.view = "aankoop"; if (location.hash === "#aankoop-aannemers") S.factTab = "aannemers"; if (location.hash === "#aankoop-yuki") S.factTab = "yuki"; history.replaceState(null, "", location.pathname); }   // links uit de mails over facturen (1.49/1.50)
   try { const st = JSON.parse(sessionStorage.getItem("pb-state") || "null"); sessionStorage.removeItem("pb-state"); if (st && st.view) { S.view = st.view; S.project = st.project || null; S.ptab = st.ptab || "taken"; } } catch (e) { }
   render();
   if (!configured) return;

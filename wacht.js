@@ -66,6 +66,8 @@ function wjFacturen() {
   const uit = []; const nK = typeof debTeDoen === "function" ? debTeDoen().length : 0, nA = typeof afbTeDoen === "function" ? afbTeDoen().length : 0;
   if (nK) uit.push({ k: "fk", stempel: nK, ic: "€", toon: "warn", titel: nK === 1 ? "1 betalingsherinnering wacht op je goedkeuring" : nK + " betalingsherinneringen wachten op je goedkeuring", sub: "Facturen › Klanten — er vertrekt niets zonder jouw akkoord", nav: "aankoop", ft: "klanten" });
   if (nA) uit.push({ k: "fa", stempel: nA, ic: "€", toon: "accent", titel: nA === 1 ? "1 aannemersfactuur te behandelen" : nA + " aannemersfacturen te behandelen", sub: "Facturen › Aannemers — goedkeuren, vraag stellen of betaald zetten", nav: "aankoop", ft: "aannemers" });
+  const nY = typeof yukiTeDoen === "function" ? yukiTeDoen() : 0;   // 1.67: Yuki-koppeling
+  if (nY) uit.push({ k: "fy", stempel: nY, ic: "€", toon: "accent", titel: nY === 1 ? "1 factuur wacht op één klik" : nY + " facturen wachten op één klik", sub: "Facturen › Yuki-koppeling — koppelen of de pdf bij de klant zetten; alles staat klaar", nav: "aankoop", ft: "yuki" });
   return uit;
 }
 
