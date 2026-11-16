@@ -100,7 +100,7 @@ function wjTaakRij(t, opties) {
     <div class="wj-acts">${knoppen}</div></div>`;
 }
 function wjItemRij(it) {
-  const doel = it.nav ? `data-wj-act="nav" data-view="${esc(it.nav)}" data-ft="${esc(it.ft || "")}"` : `data-open="${esc(it.pid)}" data-optab="${esc(it.tab)}"${it.vg ? ` data-vg-open="${esc(it.vg)}"` : ""}`;
+  const doel = it.nav ? `data-wj-act="nav" data-view="${esc(it.nav)}" data-ft="${esc(it.ft || "")}"${it.week ? ` data-week="${esc(it.week)}"` : ""}` : `data-open="${esc(it.pid)}" data-optab="${esc(it.tab)}"${it.vg ? ` data-vg-open="${esc(it.vg)}"` : ""}`;
   return `<div class="wj-it wj-${it.toon}"><span class="wj-ic" aria-hidden="true">${esc(it.ic)}</span>
     <div class="wj-tx"><button type="button" class="wj-t" ${doel}>${esc(it.titel)}</button><small>${esc(it.sub)}${it.wanneer ? " · " + esc(wjGeleden(it.wanneer)) : ""}</small></div>
     <div class="wj-acts"><button class="btn sm ghost" ${doel}>Openen</button>${it.nav ? "" : `<button class="btn sm ghost" data-wj-act="weg" data-k="${esc(it.k)}" data-s="${esc(it.stempel || "")}" data-d="${it.info ? "" : "3"}" title="${it.info ? "Verbergen tot er iets verandert" : "3 dagen verbergen"}">${it.info ? "Gezien" : "Later"}</button>`}</div></div>`;
@@ -116,16 +116,18 @@ function vWachtOpJou() {
   if (!S.me) return "";
   const { laat, nu } = wjTaken(); const w = wjWeg();
   const allesExtern = wjExtern(), extern = allesExtern.filter(it => WJ.toonVerborgen || !wjVerborgen(it, w)); const fact = wjFacturen();
+  const uwItems = typeof uwWachtItems === "function" ? uwWachtItems() : [];   // 1.69: afspraken nog als uren te bevestigen
   const verborgen = allesExtern.length - extern.length; const team = wjTeam();
   const verzetbaar = laat.filter(wjBulkOk); const ma = wjVolgendeMaandag();
   const undo = WJ.undo ? `<div class="wj-undo">${WJ.undo.lijst.length === 1 ? `"${esc(WJ.undo.lijst[0].titel)}" verzet naar ${fmtLong(WJ.undo.naar)}` : `${WJ.undo.lijst.length} taken verzet naar ${fmtLong(WJ.undo.naar)}`}. <button class="btn sm ghost" data-wj-act="undo">Ongedaan maken</button><button class="btn sm ghost" data-wj-act="undo-weg" aria-label="Sluiten">✕</button></div>` : "";
   const teamKnop = isBeheer() ? `<div class="wj-seg" role="group" aria-label="Wiens taken"><button class="${team ? "" : "on"}" aria-pressed="${team ? "false" : "true"}" data-wj-act="team" data-v="0">Mijn</button><button class="${team ? "on" : ""}" aria-pressed="${team ? "true" : "false"}" data-wj-act="team" data-v="1">Team</button></div>` : "";
   const bulk = verzetbaar.length > 1 ? `<div class="wj-bulk"><button class="btn sm" data-wj-act="alles" data-naar="${ma}" ${WJ.bezig ? "disabled" : ""}>${WJ.bezig ? "Bezig…" : `Alle ${verzetbaar.length} naar maandag ${fmt(ma)}`}</button><span class="muted">${laat.length > verzetbaar.length ? (laat.length - verzetbaar.length) + " blijven staan (afspraak of taak van een aannemer/klant) · " : ""}je kan het daarna ongedaan maken</span></div>` : "";
-  const totaal = laat.length + nu.length + extern.length + fact.length;
+  const totaal = laat.length + nu.length + extern.length + fact.length + uwItems.length;
   const groepen = wjGroep("laat", team ? "Te laat — hele team" : "Te laat", laat.map(t => wjTaakRij(t, { wie: team })), teamKnop, laat.length ? undo + bulk : undo, "Niets te laat — mooi zo.")
     + wjGroep("nu", wjMorgen() !== addDays(todayIso, 1) ? "Vandaag tot " + ["zondag", "maandag", "dinsdag", "woensdag", "donderdag", "vrijdag", "zaterdag"][pd(wjMorgen()).getUTCDay()] : "Vandaag en morgen", nu.map(t => wjTaakRij(t)))
     + wjGroep("extern", "Van klanten en aannemers", extern.map(wjItemRij), "", verborgen && !WJ.toonVerborgen ? `<button class="wj-meer" data-wj-act="verborgen">${verborgen} verborgen — toon</button>` : WJ.toonVerborgen && verborgen ? `<button class="wj-meer" data-wj-act="verborgen">Verborgen weer verbergen</button>` : "")
-    + wjGroep("fact", "Facturen", fact.map(wjItemRij));
+    + wjGroep("fact", "Facturen", fact.map(wjItemRij))
+    + wjGroep("uren", "Uren", uwItems.map(wjItemRij));
   return `<div class="panel wj" id="wachtopjou"><div class="panel-head"><h3>Wacht op jou${totaal ? ` <span class="cnt" style="background:var(--crit);color:#fff">${totaal}</span>` : ""}</h3><span class="muted" style="font-size:12px">${totaal ? "alles wat een actie van jou vraagt, uit alle projecten" : ""}</span></div>
     ${totaal ? `<div class="wj-grid">${groepen}</div>${team || laat.length || nu.length ? "" : `<div class="panel-body" style="padding-top:0">${wjVolgendeHtml()}</div>`}` : `<div class="wj-klaar"><span aria-hidden="true">✓</span><div><b>Alles bij.</b> ${team ? "Geen te late taken in het hele team" : "Niets te laat en niets voor vandaag of morgen"}, geen open vragen van klanten of aannemers.${undo ? " " + undo : ""}${team ? "" : wjVolgendeHtml()}${isBeheer() ? ` <button class="wj-meer" data-wj-act="team" data-v="${team ? "0" : "1"}">${team ? "Terug naar mijn taken" : "Bekijk het hele team"}</button>` : ""}${verborgen ? ` <button class="wj-meer" data-wj-act="verborgen">${verborgen} verborgen — toon</button>` : ""}</div></div>`}</div>`;
 }
@@ -178,7 +180,7 @@ document.addEventListener("click", (e) => {
   if (d.wjAct === "team") { WJ.teamSessie = null; try { localStorage.setItem("bros.wj.team", d.v); } catch (x) { } WJ.undo = null; return render(); }
   if (d.wjAct === "weg") { wjZetWeg(d.k, d.s, Number(d.d) || 0); return render(); }
   if (d.wjAct === "verborgen") { WJ.toonVerborgen = !WJ.toonVerborgen; return render(); }
-  if (d.wjAct === "nav") { S.view = d.view; S.project = null; if (d.ft) S.factTab = d.ft; render(); window.scrollTo({ top: 0 }); return; }
+  if (d.wjAct === "nav") { S.view = d.view; S.project = null; if (d.ft) S.factTab = d.ft; if (d.week) { S.weekStart = d.week; S.hoursUser = null; } render(); window.scrollTo({ top: 0 }); return; }
   if (d.wjAct === "naar-mijn") { e.preventDefault(); const g = document.getElementById("mijn-taken"); if (g) g.scrollIntoView({ behavior: "smooth", block: "start" }); return; }
   if (d.wjAct === "naar-laat") { if (isBeheer() && !wjTeam()) { WJ.teamSessie = true; render(); } const g = document.getElementById("wj-laat") || document.getElementById("wachtopjou"); if (g) g.scrollIntoView({ behavior: "smooth", block: "start" }); }
 });

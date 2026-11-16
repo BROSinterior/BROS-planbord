@@ -3,7 +3,7 @@
    Statische webapp op Supabase (login, live-synchronisatie, rechten)
    ===================================================================== */
 if (window.top !== window.self) { try { window.top.location.replace(window.location.href); } catch (e) { document.documentElement.innerHTML = ""; } }   // niet in een vreemd frame (clickjacking)
-const APP_VERSION = "1.68.0";
+const APP_VERSION = "1.69.0";
 const PROJ_STATUS = { offerte: "In offerte", lopend: "Lopend", on_hold: "On hold", afgerond: "Afgerond", verloren: "Verloren" };
 const KLANTTYPE = { particulier: "Particulier", zakelijk: "Zakelijk" };
 const KLANTCODE = { particulier: "PAR", zakelijk: "ZAK" };
@@ -2693,6 +2693,7 @@ function render() {
   // niet herbouwen terwijl iemand in een inline-veld typt (realtime-update van een collega zou de invoer wissen); zoekvelden regelen hun eigen focus
   const a = document.activeElement;
   if (a && a.classList && a.classList.contains("inline") && !a.hasAttribute("data-noteq") && !a.hasAttribute("data-werff") && !a.hasAttribute("data-filter") && !a.hasAttribute("data-cfilter") && !a.hasAttribute("data-projq") && $("#app").contains(a)) { renderPending = true; return; }
+  if (typeof uwBezig === "function" && uwBezig()) { renderPending = true; return; }   // 1.69: niet hertekenen terwijl er een urenblok gesleept wordt
   renderPending = false; refreshToday(); buildIndex();
   const app = $("#app");
   if (!configured) { app.innerHTML = `<div class="login"><div class="card"><h1>BROS Planbord</h1><p>De app is nog niet gekoppeld aan de database. Vul <code>config.js</code> in (Project URL en anon public-sleutel uit Supabase) en herlaad.</p></div></div>`; return; }
@@ -3044,7 +3045,9 @@ function ganttHtml(ps, opt = {}) {
 }
 
 /* ---------- Uren ---------- */
-function vUren() {
+/* 1.69: Uren = weekagenda (uren-week.js); "Lijst" is de vroegere weergave hieronder */
+function vUren() { return typeof vUrenWeek === "function" ? vUrenWeek() : vUrenLijst(""); }
+function vUrenLijst(extra) {
   const u = S.hoursUser || S.me.id, ws = S.weekStart, we = addDays(ws, 6);
   const entries = Object.values(S.uren).filter(h => h.user_id === u && h.datum >= ws && h.datum <= we).sort((a, b) => a.datum.localeCompare(b.datum) || String(a.tijd_van || "").localeCompare(String(b.tijd_van || "")));
   const perDay = Array.from({ length: 7 }, (_, i) => { const d = addDays(ws, i); return { d, sum: entries.filter(h => h.datum === d).reduce((s, h) => s + Number(h.uren || 0), 0) }; });
@@ -3053,7 +3056,7 @@ function vUren() {
   const allTot = users().map(x => ({ u: x, d: hoursOf(h => h.user_id === x.id && h.datum >= ws && h.datum <= we) }));
   return `
   <div class="page-head"><div><div class="eyebrow">Urenregistratie</div><h1>Uren</h1></div>
-    <div class="actions"><select data-hours-user>${users().map(x => `<option value="${x.id}" ${x.id === u ? "selected" : ""}>${esc(x.name)}</option>`).join("")}</select>
+    <div class="actions">${extra || ""}<select data-hours-user>${users().map(x => `<option value="${x.id}" ${x.id === u ? "selected" : ""}>${esc(x.name)}</option>`).join("")}</select>
       <span class="week-nav"><button class="btn sm" data-wnav="-7" aria-label="Vorige week">‹</button><span class="lbl">wk ${weekNr(ws)} · ${fmt(ws)} – ${fmt(we)}</span><button class="btn sm" data-wnav="7" aria-label="Volgende week">›</button></span>
       <button class="btn" data-act="export-hours" title="Alle uren als CSV (opent in Excel)">Exporteren</button>
       <button class="btn primary" data-act="log-hours">+ Uren registreren</button></div></div>

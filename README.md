@@ -202,6 +202,12 @@ Veel meetstaten zijn met klantprijzen uit Excel ingelezen: kostprijs = klantprij
 
 Activeren: Supabase → SQL Editor → `sql/052_marges_raming.sql` → Run (na 051; controle `1 | 1 | 52`). Optioneel: nieuw `drive/Code.gs` (neemt `ms_raming` mee in de wekelijkse back-up) als `Code.ingevuld.gs` plakken en een nieuwe versie deployen.
 
+## Uren als weekagenda (uren-week.js, v1.69 — geen databasescript)
+
+- **Weergaven:** Agenda (standaard), Team en Lijst (`vUrenLijst` in app.js, de vroegere tabel); de keuze blijft per browser (`bros.uw.modus`). app.js `vUren` roept `vUrenWeek` aan; `render()` wacht zolang er gesleept wordt (`uwBezig`).
+- **Agenda:** `uren` met `tijd_van` (en `tijd_tot`, anders van + uren) als blokken, 1 px per minuut, per kwartier; overlappende blokken naast elkaar. Slepen bewaart `datum`, `tijd_van`, `tijd_tot` (verlengen ook `uren`) via `dbUpdate`; nieuw via `hoursForm` met voorinvulling. Bewerken enkel voor jezelf of als beheer (zoals de RLS van `uren`).
+- **Afspraken:** `taken` met `afspraak` en `assignee` = de medewerker; geboekt = er bestaat een `uren`-rij met die `taak_id`, dezelfde medewerker en `datum = start`. "Niet gewerkt" wordt per browser onthouden (`bros.uw.weg.<user>`). `uwWachtItems()` geeft het item voor Wacht op jou.
+
 ## Eigen beelden in de A3-presentatie (script 063, v1.68)
 
 - **Installeren:** `sql/063_presentatie_eigen_beelden.sql` uitvoeren (controle `1 | 2 | 63`) en pushen. De Mac mini en het Drive-script veranderen niet: de verwerkingscomputer haalt elk gekozen beeld op via `pad` en controleert `sha256`, ongeacht de soort.

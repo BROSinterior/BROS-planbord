@@ -781,6 +781,49 @@
   .rd-sk input, .rd-pk input { position: absolute; top: 6px; left: 6px; z-index: 1; width: 18px; height: 18px; }
   .rd-sk input:checked + .rd-img, .rd-pk input:checked + .rd-img { outline: 3px solid var(--accent); outline-offset: -3px; }
   .rd-pres { display: grid; grid-template-columns: repeat(auto-fill, minmax(130px, 1fr)); gap: 10px; max-height: 360px; overflow: auto; }
+  /* 1.69: uren als weekagenda (uren-week.js) */
+  .uw-seg { margin-right: 4px; }
+  .uw-panel { padding: 0; overflow: hidden; }
+  .uw-scroll { overflow-x: auto; -webkit-overflow-scrolling: touch; }
+  .uw { display: grid; grid-template-columns: 52px repeat(var(--n), minmax(118px, 1fr)); min-width: calc(52px + var(--n) * 118px); }
+  .uw-hoek { position: sticky; left: 0; z-index: 3; background: var(--surface); border-bottom: 1px solid var(--line); display: flex; align-items: flex-end; justify-content: center; padding: 6px 2px; font-size: 11.5px; font-weight: 600; }
+  .uw-zl { font-weight: 400; color: var(--muted); font-size: 10.5px; text-align: center; line-height: 1.2; align-items: center; }
+  .uw-dk { position: relative; padding: 8px 8px 10px; border-bottom: 1px solid var(--line); border-left: 1px solid var(--line); display: flex; justify-content: space-between; align-items: baseline; gap: 6px; font-size: 13px; }
+  .uw-dk span { color: var(--muted); font-size: 12px; } .uw-dk.vandaag b { color: var(--accent); }
+  .uw-dk i { position: absolute; left: 0; bottom: 0; height: 3px; background: var(--accent); opacity: .55; } .uw-dk i.vol { background: var(--ok); opacity: 1; }
+  .uw-zr { border-left: 1px solid var(--line); border-bottom: 1px solid var(--line); padding: 4px; display: flex; flex-wrap: wrap; gap: 4px; align-content: flex-start; }
+  .uw-z { border: 0; border-left: 3px solid var(--k); background: color-mix(in srgb, var(--k) 12%, var(--surface)); border-radius: 6px; padding: 2px 6px; font-size: 11.5px; cursor: pointer; color: var(--ink); text-align: left; max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .uw-uren { position: sticky; left: 0; z-index: 2; background: var(--surface); }
+  .uw-uren span { position: absolute; right: 6px; transform: translateY(-50%); font-size: 10.5px; color: var(--muted); font-variant-numeric: tabular-nums; }
+  .uw-uren span:first-child { transform: none; }
+  .uw-dag { position: relative; border-left: 1px solid var(--line); background-image: repeating-linear-gradient(to bottom, var(--line) 0, var(--line) 1px, transparent 1px, transparent 30px), repeating-linear-gradient(to bottom, transparent 0, transparent 30px, color-mix(in srgb, var(--line) 45%, transparent) 30px, color-mix(in srgb, var(--line) 45%, transparent) 31px, transparent 31px, transparent 60px); background-size: 100% 60px; }
+  .uw-dag.mag { cursor: crosshair; } .uw-dag.vandaag { background-color: color-mix(in srgb, var(--accent) 4%, transparent); }
+  .uw-b, .uw-a { position: absolute; border-radius: 7px; padding: 3px 6px; overflow: hidden; font-size: 12px; line-height: 1.25; box-sizing: border-box; }
+  .uw-b { background: color-mix(in srgb, var(--k) 16%, var(--surface)); border-left: 4px solid var(--k); color: var(--ink); cursor: pointer; box-shadow: 0 1px 2px rgba(0,0,0,.06); }
+  .uw-b.mag { cursor: grab; } .uw-b.sleept { cursor: grabbing; box-shadow: 0 6px 18px rgba(0,0,0,.18); z-index: 5; opacity: .95; }
+  .uw-b b, .uw-a b { display: block; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; font-weight: 600; }
+  .uw-b small, .uw-a small { display: block; color: var(--muted); font-size: 11px; }
+  .uw-b.kort b { display: inline; } .uw-b.kort small { display: inline; margin-left: 4px; }
+  .uw-rek { position: absolute; left: 0; right: 0; bottom: 0; height: 7px; cursor: ns-resize; }
+  .uw-b.mag:hover .uw-rek { background: linear-gradient(transparent, color-mix(in srgb, var(--k) 35%, transparent)); }
+  .uw-a { border: 1.5px dashed var(--k); background: color-mix(in srgb, var(--k) 5%, var(--surface)); color: var(--ink); cursor: default; z-index: 1; }
+  .uw-a.open { border-style: dashed; background: repeating-linear-gradient(-45deg, color-mix(in srgb, var(--k) 7%, var(--surface)) 0 6px, var(--surface) 6px 12px); }
+  .uw-a-k { display: flex; gap: 4px; flex-wrap: wrap; margin-top: 4px; } .uw-a-k .btn { padding: 2px 7px; font-size: 11.5px; min-height: 0; }
+  .uw-gepland { font-size: 10.5px; color: var(--muted); }
+  .uw-geest { position: absolute; left: 2px; right: 2px; background: color-mix(in srgb, var(--accent) 18%, transparent); border: 1.5px solid var(--accent); border-radius: 7px; font-size: 11.5px; padding: 3px 6px; pointer-events: none; z-index: 4; color: var(--accent); font-weight: 600; }
+  .uw-nu { position: absolute; left: 0; right: 0; height: 2px; background: var(--crit); z-index: 3; pointer-events: none; } .uw-nu::before { content: ""; position: absolute; left: -4px; top: -3px; width: 8px; height: 8px; border-radius: 50%; background: var(--crit); }
+  body.uw-sleept, body.uw-sleept * { user-select: none !important; -webkit-user-select: none !important; }
+  .uw-voet { display: flex; flex-wrap: wrap; gap: 8px 14px; align-items: center; padding: 10px 14px; border-top: 1px solid var(--line); font-size: 12.5px; }
+  .uw-leg { display: inline-flex; align-items: center; gap: 6px; } .uw-leg i { width: 10px; height: 10px; border-radius: 3px; background: var(--k); }
+  .uw-tip { margin-left: auto; font-size: 12px; }
+  .uw-melding { margin-bottom: 12px; display: block; } .uw-melding .btn { margin-left: 6px; }
+  .uw-elders { font-size: 12.5px; margin: -4px 0 10px; }
+  .uw-team td.uw-tc-td { padding: 4px; } .uw-team th.vandaag { color: var(--accent); }
+  .uw-tc { width: 100%; min-width: 64px; border: 1px solid var(--line); background: var(--surface); border-radius: 8px; padding: 5px 6px; cursor: pointer; text-align: left; display: flex; flex-direction: column; gap: 4px; color: var(--ink); }
+  .uw-tc:hover { border-color: var(--accent); } .uw-tc.leeg .num { color: var(--crit); font-weight: 600; }
+  .uw-st { display: flex; height: 6px; border-radius: 3px; overflow: hidden; background: var(--surface-2); }
+  .uw-wie { display: inline-flex; align-items: center; gap: 6px; padding-left: 0; }
+  @media (max-width: 640px) { .uw { grid-template-columns: 44px repeat(var(--n), minmax(104px, 1fr)); min-width: calc(44px + var(--n) * 104px); } .uw-tip { display: none; } }
   /* 1.68: eigen beelden (script 063) */
   .rd-eigen { display: grid; grid-template-columns: repeat(auto-fill, minmax(170px, 1fr)); gap: 12px; }
   .rd-eg { margin: 0; display: flex; flex-direction: column; gap: 4px; min-width: 0; }
@@ -895,29 +938,30 @@
 <div class="toast" id="toast" role="status"></div>
 <div class="loader" id="loader" aria-live="polite"><div class="logo"><i class="base"></i><i class="fill" id="loaderFill"></i></div><div class="pct" id="loaderPct">0%</div><div class="msg" id="loaderMsg">Even geduld…</div></div>
 <script src="vendor/supabase-2.45.4.js"></script>
-<script src="config.js?v=1.68.0"></script>
+<script src="config.js?v=1.69.0"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
-<script src="postcodes.js?v=1.68.0"></script>
-<script src="meetstaat-export.js?v=1.68.0"></script>
-<script src="meetstaat-import.js?v=1.68.0"></script>
+<script src="postcodes.js?v=1.69.0"></script>
+<script src="meetstaat-export.js?v=1.69.0"></script>
+<script src="meetstaat-import.js?v=1.69.0"></script>
 <!-- tekenmodule: deze drie scripts horen bij het tabblad Plannen — niet verwijderen -->
-<script src="vendor/dxf-parser.js?v=1.68.0"></script>
-<script src="symbolen.js?v=1.68.0"></script>
-<script src="tekenen.js?v=1.68.0"></script>
-<script src="agenda.js?v=1.68.0"></script>
-<script src="afspraken.js?v=1.68.0"></script>
-<script src="kp-beheer.js?v=1.68.0"></script>
-<script src="pv-beheer.js?v=1.68.0"></script>
-<script src="af-beheer.js?v=1.68.0"></script>
-<script src="deb-beheer.js?v=1.68.0"></script>
-<script src="yuki-beheer.js?v=1.68.0"></script>
-<script src="wacht.js?v=1.68.0"></script>
-<script src="fin-planning.js?v=1.68.0"></script>
-<script src="vergaderingen.js?v=1.68.0"></script>
-<script src="plan2cad.js?v=1.68.0"></script>
-<script src="renders.js?v=1.68.0"></script>
-<script src="todo.js?v=1.68.0"></script>
-<script src="ontwerp.js?v=1.68.0"></script>
-<script src="app.js?v=1.68.0"></script>
+<script src="vendor/dxf-parser.js?v=1.69.0"></script>
+<script src="symbolen.js?v=1.69.0"></script>
+<script src="tekenen.js?v=1.69.0"></script>
+<script src="agenda.js?v=1.69.0"></script>
+<script src="afspraken.js?v=1.69.0"></script>
+<script src="kp-beheer.js?v=1.69.0"></script>
+<script src="pv-beheer.js?v=1.69.0"></script>
+<script src="af-beheer.js?v=1.69.0"></script>
+<script src="deb-beheer.js?v=1.69.0"></script>
+<script src="yuki-beheer.js?v=1.69.0"></script>
+<script src="wacht.js?v=1.69.0"></script>
+<script src="uren-week.js?v=1.69.0"></script>
+<script src="fin-planning.js?v=1.69.0"></script>
+<script src="vergaderingen.js?v=1.69.0"></script>
+<script src="plan2cad.js?v=1.69.0"></script>
+<script src="renders.js?v=1.69.0"></script>
+<script src="todo.js?v=1.69.0"></script>
+<script src="ontwerp.js?v=1.69.0"></script>
+<script src="app.js?v=1.69.0"></script>
 </body>
 </html>
