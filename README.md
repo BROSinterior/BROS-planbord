@@ -202,6 +202,12 @@ Veel meetstaten zijn met klantprijzen uit Excel ingelezen: kostprijs = klantprij
 
 Activeren: Supabase → SQL Editor → `sql/052_marges_raming.sql` → Run (na 051; controle `1 | 1 | 52`). Optioneel: nieuw `drive/Code.gs` (neemt `ms_raming` mee in de wekelijkse back-up) als `Code.ingevuld.gs` plakken en een nieuwe versie deployen.
 
+## Eigen beelden in de A3-presentatie (script 063, v1.68)
+
+- **Installeren:** `sql/063_presentatie_eigen_beelden.sql` uitvoeren (controle `1 | 2 | 63`) en pushen. De Mac mini en het Drive-script veranderen niet: de verwerkingscomputer haalt elk gekozen beeld op via `pad` en controleert `sha256`, ongeacht de soort.
+- **Databank:** `render_beelden.soort` 'eigen' (opslag `renders/<project>/eigen/<bestand>`, opslagregel en `rd_bestand_weg_ok` uitgebreid); `render_eigen_bewaar(project, pad, naam, mime, grootte, sha256, breedte, hoogte, ruimte)` registreert na het opladen (idempotent op pad), `render_eigen_bewerk(beeld, naam, ruimte)`; `render_presentatie_maak` aanvaardt ook 'eigen'. Verwijderen via `rb_weg` (wie het oplaadde of beheer).
+- **Planbord (renders.js):** blok Eigen beelden bij Renders (beide weergaven) en in het presentatievenster opladen + aanvinken (`RD.pres.volgorde`); omzetten naar JPEG in de browser (max. 6000 px) als het formaat niet PNG/JPEG/WebP is of het bestand groter is dan 48 MB.
+
 ## Facturen koppelen zonder typwerk (drive/Code.gs, v1.67 — geen databasescript)
 
 - **Installeren:** het nieuwe `drive/Code.gs` plakken (behoud het CONFIG- en YUKI-blok, of gebruik `drive/Code.ingevuld.gs`) → Deploy → Manage deployments → Version: New, en pushen. Het archief-script (`drive/YukiArchief.gs` in archief@bros.be) blijft ongewijzigd.

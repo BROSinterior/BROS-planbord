@@ -2,6 +2,10 @@
 
 De nieuwste versie staat bovenaan. (Vanaf 1.48 houdt `version.json` enkel de laatste versie bij; het Planbord vraagt dat bestand elke 5 minuten op.)
 
+## 1.68.0 — 2026-11-16 (script 063 uitvoeren + pushen; geen nieuw Drive-script, geen update van de Mac mini)
+
+**Eigen beelden in de A3-presentatie.** Bij Renders van een project staat een nieuw blok **Eigen beelden**: voeg zelf beelden toe — renders uit een ander programma (Enscape, Twinmotion, SketchUp …), foto's of referenties — met eventueel een ruimte. Ook rechtstreeks in het venster **A3-presentatie** (+ Beelden toevoegen): ze worden meteen aangevinkt en achteraan toegevoegd, en je kiest de volgorde zoals bij de renders (de nummering loopt door; de eerste drie vormen de cover). Met **Stalenborden per ruimte** komen eigen beelden met een ruimte bij het stalenbord van die ruimte. Er wordt niets gegenereerd of aangerekend. PNG, JPEG en WebP tot 48 MB; andere formaten die de browser kan openen (bv. HEIC van een iPhone in Safari) worden omgezet naar JPEG. Per beeld: volledig scherm, naam/ruimte aanpassen, downloaden, verwijderen (niet zolang het in een presentatie zit die nog gemaakt wordt). De A3-presentatie kan nu ook met enkel eigen beelden.
+
 ## 1.67.0 — 2026-11-16 (nieuw drive/Code.gs online zetten + pushen; geen databasescript, geen update van de Mac mini)
 
 **Facturen koppelen zonder typwerk.** Facturen › Yuki-koppeling stelt per Yuki-factuur zelf het project en de vordering voor, en zegt hoe zeker dat is: **✓ Zeker** (project herkend via projectnummer, klantnaam of het script, en het bedrag klopt), **Voorstel op bedrag** (klant niet herkend, maar maar één vordering in alle projecten heeft precies dit bedrag — kijk de klant na), **bedrag wijkt af** (de enige open vordering van het project) of **controleer** (de vordering werd pas lang na de factuur aangemaakt). Nakijken en op **Koppelen** klikken; niets in te vullen. Met **Alle zekere koppelen** gaan alle zekere voorstellen in één keer (één bevestiging met de volledige lijst).

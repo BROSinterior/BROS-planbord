@@ -9,6 +9,8 @@
    1.60 (script 056): stalenbord per ruimte — een fotorealistische foto van echte stalen (enkel de materialen van die ruimte)
    met dezelfde wachtrij, toestemming, daglimiet en bescherming tegen dubbel betalen; versies, keuze voor de presentatie en
    de optie "Stalenborden per ruimte opnemen" in de A3-presentatie (nooit een beeldgeneratie bij het maken van de pdf).
+   1.68 (script 063): eigen beelden (renders uit een ander programma, foto's, referenties) toevoegen bij Renders en in de
+   A3-presentatie opnemen, tussen de renders in de gekozen volgorde — nooit een beeldgeneratie, geen kosten.
    Laden vóór app.js. Gebruikt uit app.js: S, sb, esc, toast, render, openModal, closeModal, opts, schemaV, isBeheer,
    userById, fmtLong, lokDag, lokUur, todayIso, dbInsert, dbUpdate, dbDelete, nl, projName; uit vergaderingen.js: vgVerwerker.
    ===================================================================== */
@@ -81,12 +83,13 @@ function vRenders(p) {
   const zicht = RD.filter && ruimtes.includes(RD.filter) ? ops.filter(o => o.ruimte === RD.filter) : ops;
   const batch = RD.batch && RD.batch.pid === p.id ? rdBatchHtml() : "";
   return `<div class="panel"><div class="panel-head"><div><h3>Renders</h3><div class="muted" style="font-size:12px;margin-top:2px">${rdSignaal()} · ${esc(cfg.model)} · vandaag ${nV}/${cfg.daglimiet} renders</div></div>
-      <div class="actions"><button class="btn sm" data-rd-act="pres-nieuw" data-pid="${p.id}" ${rdBeelden(p.id).some(b => b.soort === "render" || b.soort === "ontwerp") ? "" : "disabled"}>A3-presentatie</button><button class="btn sm primary" data-rd-act="nieuw" data-pid="${p.id}">Uploaden en renderen</button></div></div>
+      <div class="actions"><button class="btn sm" data-rd-act="pres-nieuw" data-pid="${p.id}" ${rdBeelden(p.id).some(b => b.soort === "render" || b.soort === "ontwerp" || b.soort === "eigen") ? "" : "disabled"}>A3-presentatie</button><button class="btn sm primary" data-rd-act="nieuw" data-pid="${p.id}">Uploaden en renderen</button></div></div>
     ${batch}
     ${ruimtes.length > 1 ? `<div class="rd-chips"><button class="${RD.filter ? "" : "on"}" data-rd-act="filter" data-r="">Alle ruimtes</button>${ruimtes.map(r => `<button class="${RD.filter === r ? "on" : ""}" data-rd-act="filter" data-r="${esc(r)}">${esc(r)}</button>`).join("")}</div>` : ""}
     ${zicht.length ? `<div class="rd-grid">${zicht.map(rdKaart).join("")}</div>` : `<div class="empty"><b>Nog geen renders</b>Klik op <b>Uploaden en renderen</b>: kies de ruimte en je ontwerpbeelden (bv. uit SketchUp of Vectorworks), eventueel sfeerbeelden, en de verwerkingscomputer maakt er fotorealistische renders van.</div>`}
   </div>
   ${rdSbOk() ? rdStalenPaneel(p) : ""}
+  ${rdEigenPaneel(p)}
   <div class="grid two rd-onder">${rdSfeerPaneel(p)}${rdAfsprakenPaneel(p)}</div>
   ${rdPresentatiesPaneel(p)}`;
 }
@@ -668,7 +671,7 @@ function vRendersStd(p) {
   const onzeker = rdStandpunten(p.id).filter(s => s.koppeling === "onzeker"); const los = rdLos(p.id);
   const batch = RD.batch && RD.batch.pid === p.id ? rdBatchHtml() : "";
   return `<div class="panel"><div class="panel-head"><div><h3>Renders</h3><div class="muted" style="font-size:12px;margin-top:2px">${rdSignaal()} · ${esc(cfg.model)} · vandaag ${nV}/${cfg.daglimiet} beelden</div></div>
-      <div class="actions"><button class="btn sm" data-rd-act="pres-nieuw" data-pid="${p.id}" ${rdBeelden(p.id).some(b => b.soort === "render" || b.soort === "ontwerp") ? "" : "disabled"}>A3-presentatie</button><button class="btn sm" data-rd-act="sb-nieuw" data-pid="${p.id}" data-r="">+ Stalenbord</button><button class="btn sm primary" data-rd-act="nieuw" data-pid="${p.id}">Nieuw standpunt renderen</button></div></div>
+      <div class="actions"><button class="btn sm" data-rd-act="pres-nieuw" data-pid="${p.id}" ${rdBeelden(p.id).some(b => b.soort === "render" || b.soort === "ontwerp" || b.soort === "eigen") ? "" : "disabled"}>A3-presentatie</button><button class="btn sm" data-rd-act="sb-nieuw" data-pid="${p.id}" data-r="">+ Stalenbord</button><button class="btn sm primary" data-rd-act="nieuw" data-pid="${p.id}">Nieuw standpunt renderen</button></div></div>
     ${batch}
     ${ruimtes.length > 1 || onzeker.length || los.length ? `<div class="rd-chips"><button class="${RD.filter ? "" : "on"}" data-rd-act="filter" data-r="">Alle ruimtes</button>${ruimtes.map(r => `<button class="${RD.filter === r.id ? "on" : ""}" data-rd-act="filter" data-r="${r.id}">${esc(r.naam)}</button>`).join("")}${onzeker.length || los.length ? `<button class="${RD.filter === "nakijken" ? "on" : ""} rd-chip-let" data-rd-act="filter" data-r="nakijken">Nakijken (${onzeker.length + los.length})</button>` : ""}</div>` : ""}
     ${onzeker.length || los.length ? `<div class="notice rd-batch" style="display:block"><b>Historiek nakijken.</b> De bestaande renders werden automatisch per standpunt gegroepeerd op basis van hun opdrachten (niet op bestandsnaam). ${onzeker.length ? `${onzeker.length} standpunt${onzeker.length > 1 ? "en hebben" : " heeft"} een onzekere koppeling` : ""}${onzeker.length && los.length ? " en " : ""}${los.length ? `${los.length} beeld${los.length > 1 ? "en zijn" : " is"} niet gekoppeld` : ""}. <button class="btn sm" data-rd-act="filter" data-r="nakijken">Nakijken</button></div>` : ""}
@@ -677,6 +680,7 @@ function vRendersStd(p) {
   ${rdSbSignaal() ? `<div style="margin-top:12px">${rdSbSignaal()}</div>` : ""}
   ${RD.filter === "nakijken" ? rdNakijken(p, onzeker, los) : zicht.map(r => rdRuimteSectie(p, r)).join("")}
   ${!RD.filter && los.length ? rdLosPaneel(p, los) : ""}
+  ${RD.filter === "nakijken" ? "" : rdEigenPaneel(p)}
   <div class="grid two rd-onder">${rdSfeerPaneel(p)}${rdAfsprakenPaneel(p)}</div>
   ${rdPresentatiesPaneel(p)}`;
 }
@@ -944,8 +948,11 @@ function rdPresForm(pid) {
     <div class="field"><label for="rp_o">Formaat</label><select id="rp_o" name="liggend">${opts([["0", "A3 staand (huisstijl)"], ["1", "A3 liggend"]], vorige && vorige.liggend ? "1" : "0")}</select></div>
     <div class="field span2"><label>Beelden <small class="muted" style="font-weight:400">— aanvinken in de volgorde waarin ze in de presentatie komen; de eerste drie vormen de cover${std ? ". Standaard per standpunt de gekozen presentatie- of hoofdversie, per ruimte." : ""}</small></label>
       ${std ? `<label class="chk" style="margin:0 0 6px"><input type="checkbox" data-rd-pres-alle="1"> Alle versies tonen (ook oudere en ontwerpen)</label><div class="rd-pres" id="rp_lijst">${rdPresStdHtml(pid)}</div>` : `<div class="rd-pres">${l.map(b => `<label class="rd-pk"><input type="checkbox" data-rd-pk="${b.id}" ${RD.pres.volgorde.includes(b.id) ? "checked" : ""}>${rdImg(b)}<span class="rd-nr" data-rd-nr="${b.id}">${RD.pres.volgorde.indexOf(b.id) + 1 || ""}</span><small>${esc(b.ruimte || "")}${b.soort === "ontwerp" ? " · ontwerp" : ""}${b.goedgekeurd_op ? " · ✓" : ""}</small></label>`).join("")}</div>`}</div>
+    ${rdEigenOk() ? `<div class="field span2"><label>Eigen beelden <small class="muted" style="font-weight:400">— renders uit een ander programma, foto's of referenties; aanvinken om ze op te nemen (de nummering loopt door met de renders)</small></label>
+      <div class="rd-pres" id="rp_eigen">${rdPresEigenHtml(pid)}</div>
+      <div class="rd-eg-op"><label class="btn sm">+ Beelden toevoegen<input type="file" accept="image/*" multiple hidden data-rd-pres-eigen="${pid}"></label>${rdEigenRuimteVeld(pid, "rp_er", "")}<small class="muted" id="rp_es">Ze worden meteen aangevinkt en achteraan toegevoegd.</small></div></div>` : ""}
     ${rdSbOk() ? `<div class="field span2"><label class="sw-row"><input type="checkbox" class="sw" name="stalen" value="1" ${vorige && vorige.stalenborden ? "checked" : ""}><span><b>Stalenborden per ruimte opnemen</b><small class="muted" style="display:block">Per ruimte eerst het gekozen stalenbord, dan de gekozen beelden van die ruimte. De cover blijft hetzelfde. Er wordt niets gegenereerd.</small><small id="rp_sb" style="display:block;margin-top:4px">${rdPresStalen(pid)}</small></span></label></div>` : ""}
-    <p class="muted span2" style="font-size:12px;margin:0">Geen betaalde generatie: de verwerkingscomputer zet de gekozen beelden in de BROS-huisstijl (beige papier, logo, cover met drie stroken, klantnaam, ontwerpversie en datum). De pdf komt hier en in de projectmap › Renders/Presentaties.</p></div>`, {
+    <p class="muted span2" style="font-size:12px;margin:0">Geen betaalde generatie: de verwerkingscomputer zet de gekozen beelden (renders en eigen beelden) in de BROS-huisstijl (beige papier, logo, cover met drie stroken, klantnaam, ontwerpversie en datum). De pdf komt hier en in de projectmap › Renders/Presentaties.</p></div>`, {
     saveLabel: "Presentatie maken", wide: true,
     onSave: async (d) => {
       const ids = RD.pres.volgorde.filter(id => S.render_beelden[id]);
@@ -965,6 +972,96 @@ function rdPresStalen(pid) {
   return [...gezien.values()].map(r => { const g = rdSbGekozen(pid, r); return g ? `<span class="pill done">${esc(r)} · v${g.versie || "?"}</span>` : `<span class="pill st-offerte" title="Geen gekozen stalenbord: enkel de renders van deze ruimte">${esc(r)} · geen stalenbord</span>`; }).join(" ");
 }
 function rdPresNummers() { document.querySelectorAll("[data-rd-nr]").forEach(el => { const i = RD.pres.volgorde.indexOf(el.dataset.rdNr); el.textContent = i >= 0 ? String(i + 1) : ""; }); const sbv = $("#rp_sb"); if (sbv && RD.pres) sbv.innerHTML = rdPresStalen(RD.pres.pid); }
+
+/* ---------- 1.68 (script 063): eigen beelden voor de presentatie ---------- */
+const rdEigenOk = () => schemaV() >= 63;
+const rdEigen = (pid) => rdBeelden(pid, "eigen").slice().sort((a, b) => (a.created_at || "").localeCompare(b.created_at || ""));
+const RD_EIGEN_ZIJDE = 6000;   // langste zijde na omzetten (enkel als het bestand omgezet moet worden)
+function rdEigenRuimteVeld(pid, id, waarde) {
+  const r = rdRuimtes(pid).concat(rdStdOk() ? rdRuimteRijen(pid).map(x => x.naam) : []); const uniek = [...new Map(r.map(x => [rdSleutel(x), x])).values()];
+  return `<input id="${id}" class="inline" list="${id}_l" maxlength="120" placeholder="ruimte (optioneel)" value="${esc(waarde || "")}" style="max-width:220px" autocomplete="off"><datalist id="${id}_l">${uniek.map(x => `<option value="${esc(x)}">`).join("")}</datalist>`;
+}
+function rdEigenPaneel(p) {
+  if (!rdEigenOk()) return "";
+  const l = rdEigen(p.id);
+  return `<div class="panel" style="margin-top:16px"><div class="panel-head"><div><h3>Eigen beelden${l.length ? ` <span class="cnt">${l.length}</span>` : ""}</h3><div class="muted" style="font-size:12px;margin-top:2px">Renders uit een ander programma, foto's of referenties — voor de A3-presentatie. Er wordt niets gegenereerd of aangerekend.</div></div>
+      <div class="actions"><button class="btn sm primary" data-rd-act="eigen-nieuw" data-pid="${p.id}">+ Beelden toevoegen</button></div></div>
+    <div class="panel-body">${l.length ? `<div class="rd-eigen">${l.map(b => `<figure class="rd-eg"><button type="button" class="rd-res" data-rd-act="eigen-groot" data-id="${b.id}" title="Volledig scherm">${rdImg(b)}</button>
+        <figcaption><b title="${esc(b.naam || "")}">${esc(b.naam || "beeld")}</b><small class="muted">${esc(b.ruimte || "geen ruimte")}${b.breedte ? ` · ${b.breedte}×${b.hoogte}` : ""}</small></figcaption>
+        <div class="rd-eg-k"><button class="btn ghost sm" data-rd-act="eigen-bewerk" data-id="${b.id}">Naam/ruimte</button><button class="btn ghost sm" data-rd-act="eigen-dl" data-id="${b.id}" aria-label="Downloaden">⤓</button><button class="btn ghost sm danger" data-rd-act="eigen-weg" data-id="${b.id}" aria-label="Verwijderen">✕</button></div></figure>`).join("")}</div>`
+      : `<span class="muted">Nog geen eigen beelden. Voeg ze hier toe, of rechtstreeks in het venster van de A3-presentatie.</span>`}</div></div>`;
+}
+function rdPresEigenHtml(pid) {
+  const l = rdEigen(pid);
+  return l.map(b => `<label class="rd-pk"><input type="checkbox" data-rd-pk="${b.id}" ${RD.pres && RD.pres.volgorde.includes(b.id) ? "checked" : ""}>${rdImg(b)}<span class="rd-nr" data-rd-nr="${b.id}">${RD.pres ? (RD.pres.volgorde.indexOf(b.id) + 1 || "") : ""}</span><small>${esc(b.naam || "beeld")}${b.ruimte ? " · " + esc(b.ruimte) : ""} · eigen</small></label>`).join("") || `<span class="muted">Nog geen eigen beelden.</span>`;
+}
+/* een beeld dat de opslag niet aanvaardt (bv. HEIC van een iPhone, TIFF) of groter is dan 48 MB: in de browser omzetten naar JPEG */
+async function rdEigenBestand(file) {
+  if (RD_TYPES[file.type] && file.size <= RD_MAX) return file;
+  let bm; try { bm = await createImageBitmap(file, { imageOrientation: "from-image" }); } catch (e) { throw new Error("dit bestandstype kan de browser niet lezen — bewaar het als JPEG of PNG"); }
+  const f = Math.min(1, RD_EIGEN_ZIJDE / Math.max(bm.width, bm.height)); const c = document.createElement("canvas"); c.width = Math.max(1, Math.round(bm.width * f)); c.height = Math.max(1, Math.round(bm.height * f));
+  const g = c.getContext("2d"); g.fillStyle = "#fff"; g.fillRect(0, 0, c.width, c.height); g.drawImage(bm, 0, 0, c.width, c.height); if (bm.close) bm.close();
+  const blob = await new Promise(ok => c.toBlob(ok, "image/jpeg", 0.92));
+  if (!blob || blob.size > RD_MAX) throw new Error("te groot, ook na omzetten naar JPEG");
+  return new File([blob], (file.name || "beeld").replace(/\.[a-z0-9]{2,5}$/i, "") + ".jpg", { type: "image/jpeg" });
+}
+/* opladen → registreren; geeft de ids van de gelukte beelden terug (in de volgorde van de gekozen bestanden) */
+async function rdEigenOpladen(pid, files, ruimte, voortgang) {
+  const ids = [];
+  for (let i = 0; i < files.length; i++) {
+    const f0 = files[i]; if (voortgang) voortgang(i, files.length, f0.name);
+    if (!/^image\//.test(f0.type || "") && !/\.(png|jpe?g|webp|heic|heif|tiff?|gif|bmp|avif)$/i.test(f0.name || "")) { toast(`${f0.name}: geen beeld.`, 5000); continue; }
+    try {
+      const file = await rdEigenBestand(f0);
+      const buf = await file.arrayBuffer(); const sha = await vgSha256(buf); const m = await rdMaat(file);
+      const pad = `${pid}/eigen/${rdHex(16)}.${RD_TYPES[file.type]}`; const blob = new Blob([buf], { type: file.type });
+      await rdPoging(async () => { const { error } = await sb.storage.from("renders").upload(pad, blob, { contentType: file.type, upsert: false }); if (error && !/exist|duplicate/i.test(error.message || "")) throw error; });
+      const r = await rdPoging(async () => { const x = await sb.rpc("render_eigen_bewaar", { p_project: pid, p_pad: pad, p_naam: String(f0.name || "beeld").replace(/\.[a-z0-9]{2,5}$/i, "").slice(0, 200), p_mime: file.type, p_grootte: file.size, p_sha256: sha, p_breedte: m ? m.w : null, p_hoogte: m ? m.h : null, p_ruimte: String(ruimte || "").trim() });
+        if (x.error && rdNetFout(x.error)) throw x.error; return x; });
+      if (r.error) { try { await sb.storage.from("renders").remove([pad]); } catch (x) { } throw r.error; }   // niet geregistreerd: het bestand niet laten slingeren
+      S.render_beelden[r.data.id] = r.data; ids.push(r.data.id);
+      try { RD.urls[pad] = { url: URL.createObjectURL(blob), tot: Date.now() + 3000 * 1000 }; } catch (x) { }   // meteen tonen, zonder te wachten op een link
+    } catch (e) { toast(f0.name + ": " + ((e && e.message) || e), 7000); }
+  }
+  if (voortgang) voortgang(files.length, files.length, "");
+  return ids;
+}
+function rdEigenForm(pid) {
+  openModal("Eigen beelden toevoegen — " + projName(S.projecten[pid]), `<div class="form-grid">
+    <div class="field span2"><label for="eg_f">Beelden</label><input id="eg_f" type="file" accept="image/*" multiple required><small class="muted">PNG, JPEG of WebP (tot 48 MB). Andere formaten die je browser kan openen (bv. HEIC van een iPhone) worden omgezet naar JPEG.</small></div>
+    <div class="field span2"><label for="eg_r">Ruimte <small class="muted" style="font-weight:400">— optioneel; in de presentatie komt het beeld dan bij het stalenbord van die ruimte</small></label>${rdEigenRuimteVeld(pid, "eg_r", "")}</div>
+    <p class="muted span2" style="font-size:12px;margin:0">De beelden blijven bij dit project (enkel voor het team zichtbaar) en kunnen in elke A3-presentatie. Er wordt niets gegenereerd.</p></div>`, {
+    saveLabel: "Toevoegen",
+    onSave: async () => {
+      const files = [...(($("#eg_f") || {}).files || [])]; if (!files.length) { toast("Kies minstens één beeld."); return false; }
+      const btn = document.querySelector("#mform button[type=submit]");
+      const ids = await rdEigenOpladen(pid, files, ($("#eg_r") || {}).value, (i, n) => { if (btn) btn.textContent = i < n ? `Opladen ${i + 1}/${n}…` : "Toevoegen"; });
+      if (!ids.length) return false;
+      toast(ids.length === 1 ? "Beeld toegevoegd" : ids.length + " beelden toegevoegd"); render();
+    },
+  });
+}
+function rdEigenBewerk(id) {
+  const b = S.render_beelden[id]; if (!b) return;
+  openModal("Eigen beeld", `<div class="form-grid"><div class="field span2"><div class="rd-bron">${rdImg(b)}</div></div>
+    <div class="field span2"><label for="eb_n">Naam</label><input id="eb_n" name="naam" maxlength="200" value="${esc(b.naam || "")}"></div>
+    <div class="field span2"><label for="eb_r">Ruimte</label>${rdEigenRuimteVeld(b.project_id, "eb_r", b.ruimte || "")}</div></div>`, {
+    saveLabel: "Bewaren",
+    onSave: async () => {
+      const { data, error } = await sb.rpc("render_eigen_bewerk", { p_beeld: id, p_naam: ($("#eb_n") || {}).value || "", p_ruimte: ($("#eb_r") || {}).value || "" });
+      if (error) { toast(error.message, 6000); return false; } S.render_beelden[data.id] = data; render(); toast("Bewaard");
+    },
+  });
+}
+async function rdEigenWeg(id) {
+  const b = S.render_beelden[id]; if (!b) return;
+  const inWacht = Object.values(S.render_presentaties || {}).some(r => (r.status === "wachtrij" || r.status === "bezig") && (r.render_ids || []).includes(id));
+  if (inWacht) { toast("Dit beeld zit in een presentatie die nog gemaakt wordt. Wacht tot ze klaar is."); return; }
+  if (!confirm(`"${b.naam || "beeld"}" verwijderen? Presentaties die al gemaakt zijn, blijven zoals ze zijn.`)) return;
+  try { await dbDelete("render_beelden", id); } catch (e) { return; }
+  try { await sb.storage.from("renders").remove([b.pad]); } catch (e) { }
+  delete S.render_beelden[id]; render();
+}
 
 /* ---------- Instellingen › Renders (beheer) ---------- */
 function vRenderInstellingen() {
@@ -1056,6 +1153,11 @@ document.addEventListener("click", async (e) => {
   if (a === "afspr-nieuw") return rdAfsprForm(el.dataset.pid, el.dataset.r ? { ruimte: el.dataset.r } : null);
   if (a === "afspr-bewerk") { const r = S.render_afspraken[id]; if (r) rdAfsprForm(r.project_id, r); return; }
   if (a === "pres-nieuw") return rdPresForm(el.dataset.pid);
+  if (a === "eigen-nieuw") return rdEigenForm(el.dataset.pid);   // 1.68 (script 063)
+  if (a === "eigen-bewerk") return rdEigenBewerk(id);
+  if (a === "eigen-weg") return rdEigenWeg(id);
+  if (a === "eigen-groot") { const b = S.render_beelden[id]; if (b) rdViewer([{ b, label: "Eigen beeld" }], { titel: b.naam || "" }); return; }
+  if (a === "eigen-dl") { const b = S.render_beelden[id]; const p = b && S.projecten[b.project_id]; if (b) rdDownload(b, `${(p && p.klant) || "project"} - ${b.naam || "beeld"}.${(b.pad.split(".").pop() || "jpg")}`.replace(/[\\/:*?"<>|]+/g, " ")); return; }
   if (a === "pres-dl") { const r = S.render_presentaties[id]; if (r && r.pad) rdDownload({ pad: r.pad }, ((r.drive && r.drive.naam) || `Presentatie ${r.klant} ${r.versie}.pdf`).replace(/[\\/:*?"<>|]+/g, " ")); return; }
   if (a === "pres-opnieuw") { const { data, error } = await sb.rpc("render_presentatie_opnieuw", { p_id: id }); if (error) { toast(error.message, 6000); return; } S.render_presentaties[data.id] = data; render(); return; }
   if (a === "pres-weg") { if (!confirm("Deze presentatie uit de lijst verwijderen? (De pdf op Drive blijft staan.)")) return; const r = S.render_presentaties[id]; try { await dbDelete("render_presentaties", id); } catch (x) { } return; }
@@ -1079,5 +1181,15 @@ document.addEventListener("change", (e) => {
   const el = e.target; if (!el || !el.dataset) return;
   if (el.dataset.rdSfeer) { const files = [...(el.files || [])]; el.value = ""; if (files.length) rdSfeerOpladen(el.dataset.rdSfeer, files); return; }
   if (el.dataset.rdPresAlle && RD.pres) { RD.pres.alle = el.checked; const l = $("#rp_lijst"); if (l) l.innerHTML = rdPresStdHtml(RD.pres.pid); return; }
+  if (el.dataset.rdPresEigen && RD.pres) {   // 1.68: eigen beelden opladen vanuit het presentatievenster — meteen aangevinkt, achteraan
+    const files = [...(el.files || [])]; el.value = ""; if (!files.length) return; const pid = el.dataset.rdPresEigen; const st = $("#rp_es");
+    rdEigenOpladen(pid, files, ($("#rp_er") || {}).value, (i, n) => { if (st) st.textContent = i < n ? `Opladen ${i + 1}/${n}…` : ""; }).then(ids => {
+      if (!RD.pres || RD.pres.pid !== pid) return;
+      ids.forEach(id => { if (!RD.pres.volgorde.includes(id)) RD.pres.volgorde.push(id); });
+      const l = $("#rp_eigen"); if (l) l.innerHTML = rdPresEigenHtml(pid); rdPresNummers();
+      if (st) st.textContent = ids.length ? `${ids.length} toegevoegd en aangevinkt.` : "";
+    });
+    return;
+  }
   if (el.dataset.rdPk && RD.pres) { const id = el.dataset.rdPk; RD.pres.volgorde = RD.pres.volgorde.filter(x => x !== id); if (el.checked) RD.pres.volgorde.push(id); rdPresNummers(); }
 });

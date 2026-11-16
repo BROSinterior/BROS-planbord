@@ -781,6 +781,15 @@
   .rd-sk input, .rd-pk input { position: absolute; top: 6px; left: 6px; z-index: 1; width: 18px; height: 18px; }
   .rd-sk input:checked + .rd-img, .rd-pk input:checked + .rd-img { outline: 3px solid var(--accent); outline-offset: -3px; }
   .rd-pres { display: grid; grid-template-columns: repeat(auto-fill, minmax(130px, 1fr)); gap: 10px; max-height: 360px; overflow: auto; }
+  /* 1.68: eigen beelden (script 063) */
+  .rd-eigen { display: grid; grid-template-columns: repeat(auto-fill, minmax(170px, 1fr)); gap: 12px; }
+  .rd-eg { margin: 0; display: flex; flex-direction: column; gap: 4px; min-width: 0; }
+  .rd-eg .rd-res { padding: 0; border: 0; background: none; cursor: zoom-in; display: block; width: 100%; }
+  .rd-eg .rd-img { border-radius: 8px; }
+  .rd-eg figcaption { display: flex; flex-direction: column; min-width: 0; font-size: 12.5px; }
+  .rd-eg figcaption b { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; font-weight: 600; }
+  .rd-eg-k { display: flex; gap: 4px; flex-wrap: wrap; }
+  .rd-eg-op { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; margin-top: 8px; }
   .rd-pk small { display: block; font-size: 11px; color: var(--muted); margin-top: 2px; }
   .rd-nr { position: absolute; top: 6px; right: 6px; background: var(--accent); color: #fff; border-radius: 999px; min-width: 20px; text-align: center; font-size: 12px; font-weight: 600; }
   .rd-nr:empty { display: none; }
@@ -886,29 +895,29 @@
 <div class="toast" id="toast" role="status"></div>
 <div class="loader" id="loader" aria-live="polite"><div class="logo"><i class="base"></i><i class="fill" id="loaderFill"></i></div><div class="pct" id="loaderPct">0%</div><div class="msg" id="loaderMsg">Even geduld…</div></div>
 <script src="vendor/supabase-2.45.4.js"></script>
-<script src="config.js?v=1.67.0"></script>
+<script src="config.js?v=1.68.0"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
-<script src="postcodes.js?v=1.67.0"></script>
-<script src="meetstaat-export.js?v=1.67.0"></script>
-<script src="meetstaat-import.js?v=1.67.0"></script>
+<script src="postcodes.js?v=1.68.0"></script>
+<script src="meetstaat-export.js?v=1.68.0"></script>
+<script src="meetstaat-import.js?v=1.68.0"></script>
 <!-- tekenmodule: deze drie scripts horen bij het tabblad Plannen — niet verwijderen -->
-<script src="vendor/dxf-parser.js?v=1.67.0"></script>
-<script src="symbolen.js?v=1.67.0"></script>
-<script src="tekenen.js?v=1.67.0"></script>
-<script src="agenda.js?v=1.67.0"></script>
-<script src="afspraken.js?v=1.67.0"></script>
-<script src="kp-beheer.js?v=1.67.0"></script>
-<script src="pv-beheer.js?v=1.67.0"></script>
-<script src="af-beheer.js?v=1.67.0"></script>
-<script src="deb-beheer.js?v=1.67.0"></script>
-<script src="yuki-beheer.js?v=1.67.0"></script>
-<script src="wacht.js?v=1.67.0"></script>
-<script src="fin-planning.js?v=1.67.0"></script>
-<script src="vergaderingen.js?v=1.67.0"></script>
-<script src="plan2cad.js?v=1.67.0"></script>
-<script src="renders.js?v=1.67.0"></script>
-<script src="todo.js?v=1.67.0"></script>
-<script src="ontwerp.js?v=1.67.0"></script>
-<script src="app.js?v=1.67.0"></script>
+<script src="vendor/dxf-parser.js?v=1.68.0"></script>
+<script src="symbolen.js?v=1.68.0"></script>
+<script src="tekenen.js?v=1.68.0"></script>
+<script src="agenda.js?v=1.68.0"></script>
+<script src="afspraken.js?v=1.68.0"></script>
+<script src="kp-beheer.js?v=1.68.0"></script>
+<script src="pv-beheer.js?v=1.68.0"></script>
+<script src="af-beheer.js?v=1.68.0"></script>
+<script src="deb-beheer.js?v=1.68.0"></script>
+<script src="yuki-beheer.js?v=1.68.0"></script>
+<script src="wacht.js?v=1.68.0"></script>
+<script src="fin-planning.js?v=1.68.0"></script>
+<script src="vergaderingen.js?v=1.68.0"></script>
+<script src="plan2cad.js?v=1.68.0"></script>
+<script src="renders.js?v=1.68.0"></script>
+<script src="todo.js?v=1.68.0"></script>
+<script src="ontwerp.js?v=1.68.0"></script>
+<script src="app.js?v=1.68.0"></script>
 </body>
 </html>
