@@ -2751,26 +2751,49 @@ function yukiRapporteer(rapport) {
 
 /** 1.71 — de openbare links weghalen van documenten die met klanten of aannemers gedeeld zijn en die het portaal zelf kan tonen
  *  (pdf, jpg/png, Google-documenten). Eerst openbareLinksProef() (verandert niets, toont de aantallen), dan openbareLinksOpruimen().
- *  Andere bestanden (bv. dwg, Excel) houden hun link: die kan het portaal niet zelf tonen. Per run hooguit 300 bestanden (opnieuw = verder). */
+ *  Andere bestanden (bv. dwg, Excel) houden hun link: die kan het portaal niet zelf tonen.
+ *  1.73.1: 25 bestanden tegelijk (i.p.v. één per één) en het onthoudt waar het was. Is het na 4 minuten niet klaar, dan gaat
+ *  openbareLinksOpruimen() vanzelf verder (elke minuut een nieuwe ronde) tot alles nagekeken is — je hoeft niet te wachten. */
 function openbareLinksProef() { return openbareLinksOpruimen(true); }
 function openbareLinksOpruimen(proef) {
   if (!docPrive()) throw new Error("DOCUMENTEN_PRIVE staat op nee: niets te doen.");
-  const docs = pbAdmin("/rest/v1/documenten?or=(gedeeld.eq.true,gedeeld_aannemers.eq.true)&select=drive_id,naam,mime&limit=2000", "get") || [];
-  const token = ScriptApp.getOAuthToken(); const hdr = { Authorization: "Bearer " + token }; let weg = 0, gelaten = 0, al = 0, fout = 0; const t0 = Date.now();
-  for (const d of docs.slice(0, 300)) {
-    if (Date.now() - t0 > 300000) break;
-    try {
-      const base = "https://www.googleapis.com/drive/v3/files/" + encodeURIComponent(d.drive_id);
-      const meta = JSON.parse(UrlFetchApp.fetch(base + "?supportsAllDrives=true&fields=mimeType,permissions(id,type)", { headers: hdr, muteHttpExceptions: true }).getContentText() || "{}");
-      if (!docPortaalBaar(String(meta.mimeType || ""))) { gelaten++; continue; }
-      if (!(meta.permissions || []).some(x => x.type === "anyone")) { al++; continue; }
-      if (!proef) { const r = UrlFetchApp.fetch(base + "/permissions/anyoneWithLink?supportsAllDrives=true", { method: "delete", headers: hdr, muteHttpExceptions: true }); if (r.getResponseCode() >= 300 && r.getResponseCode() !== 404) { fout++; continue; } }
-      weg++;
-    } catch (e) { fout++; }
+  const props = PropertiesService.getScriptProperties(); const sleutel = proef ? "OPENBARE_LINKS_PROEF" : "OPENBARE_LINKS";
+  const docs = []; for (let o = 0; o < 50000; o += 1000) { const deel = pbAdmin("/rest/v1/documenten?or=(gedeeld.eq.true,gedeeld_aannemers.eq.true)&drive_id=neq.&select=drive_id&order=drive_id&limit=1000&offset=" + o, "get") || []; deel.forEach(d => docs.push(d)); if (deel.length < 1000) break; }
+  let pos = Number(props.getProperty(sleutel + "_POS") || 0); if (!(pos > 0 && pos < docs.length)) pos = 0;
+  let tel = { weg: 0, al: 0, gelaten: 0, fout: 0 }; if (pos) { try { tel = JSON.parse(props.getProperty(sleutel + "_TEL")) || tel; } catch (e) { } }
+  const hdr = { Authorization: "Bearer " + ScriptApp.getOAuthToken() }; const t0 = Date.now(); const STAP = 25;
+  const url = (d) => "https://www.googleapis.com/drive/v3/files/" + encodeURIComponent(d.drive_id);
+  while (pos < docs.length && Date.now() - t0 < 240000) {
+    const deel = docs.slice(pos, pos + STAP);
+    const metas = UrlFetchApp.fetchAll(deel.map(d => ({ url: url(d) + "?supportsAllDrives=true&fields=mimeType,permissions(id,type)", headers: hdr, muteHttpExceptions: true })));
+    const teWeg = [];
+    metas.forEach((r, i) => {
+      try {
+        if (r.getResponseCode() >= 300) { tel.fout++; return; }
+        const meta = JSON.parse(r.getContentText() || "{}");
+        if (!docPortaalBaar(String(meta.mimeType || ""))) tel.gelaten++;
+        else if (!(meta.permissions || []).some(x => x.type === "anyone")) tel.al++;
+        else teWeg.push(deel[i]);
+      } catch (e) { tel.fout++; }
+    });
+    if (proef) tel.weg += teWeg.length;
+    else if (teWeg.length) UrlFetchApp.fetchAll(teWeg.map(d => ({ url: url(d) + "/permissions/anyoneWithLink?supportsAllDrives=true", method: "delete", headers: hdr, muteHttpExceptions: true })))
+      .forEach(r => { const c = r.getResponseCode(); if (c >= 300 && c !== 404) tel.fout++; else tel.weg++; });
+    pos += deel.length;
   }
-  Logger.log((proef ? "PROEF — niets gewijzigd. " : "") + weg + " openbare link(s) " + (proef ? "zouden weggehaald worden" : "weggehaald") + ", " + al + " al privé, " + gelaten + " gelaten (type dat het portaal niet zelf toont)" + (fout ? ", " + fout + " fout(en)" : "") + ". " + docs.length + " gedeelde documenten in totaal" + (docs.length > 300 ? " — voer het opnieuw uit voor de rest." : "."));
-  return { weg, al, gelaten, fout };
+  const klaar = pos >= docs.length;
+  ScriptApp.getProjectTriggers().filter(t => t.getHandlerFunction() === "openbareLinksVerder").forEach(t => ScriptApp.deleteTrigger(t));
+  if (klaar) { props.deleteProperty(sleutel + "_POS"); props.deleteProperty(sleutel + "_TEL"); }
+  else {
+    props.setProperty(sleutel + "_POS", String(pos)); props.setProperty(sleutel + "_TEL", JSON.stringify(tel));
+    if (!proef) ScriptApp.newTrigger("openbareLinksVerder").timeBased().after(60000).create();   // vanzelf verder over een minuut
+  }
+  Logger.log((proef ? "PROEF — niets gewijzigd. " : "") + pos + " van " + docs.length + " gedeelde bestanden nagekeken: " + tel.weg + " openbare link(s) " + (proef ? "zouden weggehaald worden" : "weggehaald") + ", " + tel.al + " al privé, " + tel.gelaten + " gelaten (type dat het portaal niet zelf toont)" + (tel.fout ? ", " + tel.fout + " niet gelukt (bestand weg of geen rechten)" : "") + ". "
+    + (klaar ? "KLAAR." : proef ? "Nog niet alles: voer openbareLinksProef() opnieuw uit om verder te tellen." : "Gaat vanzelf verder over een minuut (je mag dit venster sluiten)."));
+  return Object.assign({ klaar: klaar, nagekeken: pos, totaal: docs.length }, tel);
 }
+/** 1.73.1: vervolgronde van openbareLinksOpruimen (via een tijdtrigger die het script zelf zet en weer opruimt). */
+function openbareLinksVerder() { return openbareLinksOpruimen(false); }
 /** 1.70 — EENMALIG uitvoeren (Uitvoeren ▷) met de laatste ingevulde versie (Code.ingevuld.gs): zet de 5 waarden die vroeger in de code
  *  stonden (mappen, Supabase-adres en -sleutel, bot-gebruiker) in de scripteigenschappen. Daarna plak je bij elke nieuwe versie gewoon
  *  Code.gs uit de repository: niets meer in te vullen. Toont geen geheimen in het logboek. */

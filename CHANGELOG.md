@@ -12,6 +12,7 @@ De nieuwste versie staat bovenaan. (Vanaf 1.48 houdt `version.json` enkel de laa
 - `deploy/versie.sh` zet de versie in één keer overal (APP_VERSION, alle ?v=, version.json).
 - `deploy/online-zetten.sh` voert na jouw akkoord de openstaande databasescripts uit en zet het Drive-script online met clasp (zie deploy/LEESMIJ.md).
 - `verwerker/HERSTARTEN.md` en `verwerker/herstart-controle.sh` regelen dat de Mac mini na een stroomonderbreking vanzelf terug opstart.
+- `openbareLinksOpruimen()` (Drive-script) kijkt 25 bestanden tegelijk na in plaats van één per één, onthoudt waar het was en gaat vanzelf verder (elke minuut een ronde) tot alles nagekeken is. Vroeger begon elke run opnieuw bij de eerste 300 bestanden en raakte het nooit verder.
 
 ## 1.72.0 — 2026-11-16 (script 065)
 
