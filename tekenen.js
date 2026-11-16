@@ -25,7 +25,7 @@ const TK_LAGEN = [
 const TK_PT_MM = 25.4 / 72;                 // 1 pdf-punt in mm
 const TK_BEELD_MAX = 4800;                  // langste zijde van de basisafbeelding (onder de canvaslimiet van iPad/iPhone)
 const TK_SCHALEN = [10, 20, 25, 50, 100, 200, 500];
-const tkOk = () => schemaV() >= 30;
+const tkOk = () => true;
 const tkPlansOf = (pid) => Object.values(S.tekenplannen || {}).filter(x => x.project_id === pid).sort((a, b) => (a.volgorde ?? 0) - (b.volgorde ?? 0) || (a.naam || "").localeCompare(b.naam || ""));
 const tkOnSchaal = (pl) => !!(pl.kalibratie && pl.kalibratie.bron);
 const tkBronTekst = (pl) => {

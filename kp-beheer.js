@@ -10,7 +10,7 @@ const KZ_STATUS = { concept: "Concept (enkel intern)", open: "Wacht op de klant"
 const KZ_PILL = { concept: "st-offerte", open: "vs-open", gekozen: "st-lopend", bevestigd: "done", vervallen: "" };
 const MWA_STATUS = { ingediend: "Nieuw", in_behandeling: "In behandeling", voorstel: "Voorstel klaar", geweigerd: "Niet mogelijk", ingetrokken: "Ingetrokken door de klant" };
 const MWA_PILL = { ingediend: "late", in_behandeling: "vs-open", voorstel: "done", geweigerd: "", ingetrokken: "" };
-const kzReady = () => schemaV() >= 35 && !!S.keuzes;
+const kzReady = () => !!S.keuzes;
 const kzOf = (pid) => Object.values(S.keuzes || {}).filter(k => k.project_id === pid).sort((a, b) => (a.ruimte || "").localeCompare(b.ruimte || "", "nl") || (a.volgorde || 0) - (b.volgorde || 0) || (a.created_at || "").localeCompare(b.created_at || ""));
 const kzOpties = (kid) => Object.values(S.keuze_opties || {}).filter(o => o.keuze_id === kid).sort((a, b) => (a.volgorde || 0) - (b.volgorde || 0) || (a.created_at || "").localeCompare(b.created_at || ""));
 const kzPrijs = (n) => Number(n) ? (Number(n) > 0 ? "+ " : "− ") + eur2(Math.abs(Number(n))) + " excl. btw" : "inbegrepen";
@@ -94,7 +94,7 @@ function kzForm(k, pid) {
       toast(isNew ? "Keuze aangemaakt" : "Keuze bewaard");
     },
     onDelete: isNew ? null : async () => {
-      if (k.meerwerk_post && S.meetstaat_posten[k.meerwerk_post] && !confirm(schemaV() >= 61 ? "Uit deze keuze kwam een meer-/minwerkpost in de meetstaat, goedgekeurd door de klant. Die blijft staan; schrappen kan via minwerk (± op de post). Doorgaan?" : "Uit deze keuze kwam een meer-/minwerkpost in de meetstaat. Die blijft staan — verwijder ze zelf als dat nodig is. Doorgaan?")) throw new Error("geannuleerd");
+      if (k.meerwerk_post && S.meetstaat_posten[k.meerwerk_post] && !confirm("Uit deze keuze kwam een meer-/minwerkpost in de meetstaat, goedgekeurd door de klant. Die blijft staan; schrappen kan via minwerk (± op de post). Doorgaan?")) throw new Error("geannuleerd");
       await dbDelete("keuzes", k.id); toast("Keuze verwijderd");
     },
   });
@@ -134,7 +134,7 @@ async function kzHeropen(id) {
   const post = k.meerwerk_post && S.meetstaat_posten[k.meerwerk_post];
   if (post && Object.values(S.vordering_regels || {}).some(r => r.post_id === post.id)) return toast(`De post ${post.code} uit deze keuze staat al in een vordering. Zet ze zelf op vervallen of maak een minwerk; heropenen kan dan niet automatisch.`, 8000);
   if (!confirm(`De klant opnieuw laten kiezen voor "${k.onderwerp}"?${post ? `\n\nDe ${post.status} post ${post.code} (${eur2(rowSigned(post))}) uit deze keuze wordt uit de meetstaat verwijderd.` : ""}`)) return;
-  if (schemaV() >= 61) {   // 1.65: de keuzepost ligt vast (goedgekeurd door de klant) → keuze en post in één keer via de databank
+  {   // 1.65: de keuzepost ligt vast (goedgekeurd door de klant) → keuze en post in één keer via de databank
     const { data, error } = await sb.rpc("keuze_heropenen", { p_keuze: id });
     if (error) return toast("Niet heropend: " + error.message, 8000);
     if (data) S.keuzes[id] = data; if (post) delete S.meetstaat_posten[post.id];
@@ -181,7 +181,7 @@ function kpBeheerAct(d) {
 /* =====================================================================
    Klantenportaal fase 3 (script 036): voortgang (werffoto's per week) en woningdossier
    ===================================================================== */
-const vgReady = () => schemaV() >= 36 && !!S.werf_fotos;
+const vgReady = () => !!S.werf_fotos;
 const maandagVan = (d) => {   // maandag (lokale datum) van de week van een datum of tijdstip
   const x = !d ? new Date() : /^\d{4}-\d{2}-\d{2}$/.test(d) ? new Date(d + "T12:00:00") : new Date(d); x.setHours(12, 0, 0, 0); x.setDate(x.getDate() - (x.getDay() + 6) % 7);
   return `${x.getFullYear()}-${String(x.getMonth() + 1).padStart(2, "0")}-${String(x.getDate()).padStart(2, "0")}`;
@@ -290,7 +290,7 @@ function kpFase3Act(d, el) {
    Testmodus (script 038): het klanten- of aannemersportaal bekijken zoals een contact het ziet — alleen lezen.
    Enkel voor een beheerder bij wie profiles.testmodus aan staat (in te stellen in de SQL-editor).
    ===================================================================== */
-const tmReady = () => schemaV() >= 38 && isBeheer() && !!(S.me && (S.profiles[S.me.id] || S.me).testmodus);
+const tmReady = () => isBeheer() && !!(S.me && (S.profiles[S.me.id] || S.me).testmodus);
 function tmKnop() { return tmReady() ? `<button class="btn ghost sm" data-act="tm-open" title="Testmodus: een portaal bekijken zoals een klant of aannemer het ziet">🧪 Testmodus</button>` : ""; }
 function tmContacten(pid, rol) {
   const kl = ["bouwheer", "contactpersoon"];
@@ -328,7 +328,7 @@ function tmForm() {
    Iedere gekozen bouwheer keurt zelf goed met naam, vinkje en een code per mail. Na het laatste akkoord maakt het
    Planbord de getekende pdf (overeenkomst + akkoordpagina) en bewaart die in Documenten/Overeenkomsten (gedeeld met de klant).
    ===================================================================== */
-const ovReady = () => schemaV() >= 39 && !!S.goedkeuring_tekenaars;
+const ovReady = () => !!S.goedkeuring_tekenaars;
 const ovOf = (pid) => Object.values(S.goedkeuringen || {}).filter(g => g.project_id === pid && g.soort === "overeenkomst").sort((a, b) => (b.voorgelegd_op || "").localeCompare(a.voorgelegd_op || ""));
 const ovTek = (gid) => Object.values(S.goedkeuring_tekenaars || {}).filter(t => t.goedkeuring_id === gid).sort((a, b) => (S.contacten[a.contact_id]?.naam || "").localeCompare(S.contacten[b.contact_id]?.naam || "", "nl"));
 const ovB64 = (bytes) => { let s = ""; for (let i = 0; i < bytes.length; i += 0x8000) s += String.fromCharCode.apply(null, bytes.subarray(i, i + 0x8000)); return btoa(s); };
@@ -430,6 +430,7 @@ async function ovGetekend(gid, stil) {
     const dl = await sb.storage.from("overeenkomsten").download(g.bestand_path); if (dl.error) throw dl.error;
     const bytes = new Uint8Array(await dl.data.arrayBuffer());
     if (await ovSha(bytes) !== g.bestand_sha256) throw new Error("De bewaarde pdf komt niet overeen met de goedgekeurde versie (vingerafdruk).");
+    if (typeof laadModule === "function") await laadModule("teken");   // 1.72: tekenen.js (met tkLaadPdfLib) wordt pas geladen wanneer nodig
     const PDFLib = typeof tkLaadPdfLib === "function" ? await tkLaadPdfLib() : window.PDFLib; if (!PDFLib) throw new Error("pdf-lib niet geladen");
     const doc = await PDFLib.PDFDocument.load(bytes, { ignoreEncryption: true });
     const font = await doc.embedFont(PDFLib.StandardFonts.Helvetica), vet = await doc.embedFont(PDFLib.StandardFonts.HelveticaBold), mono = await doc.embedFont(PDFLib.StandardFonts.Courier);

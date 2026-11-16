@@ -4,7 +4,7 @@
    en Aannemers (facturen van aannemers, af-beheer.js). Het Drive-script stelt elke werkdag herinneringen voor; ze vertrekken
    pas als je ze hier goedkeurt (tekst aanpasbaar). Geladen vóór app.js; app.js roept vFactuurTab / debTeDoen aan.
    ===================================================================== */
-const debOk = () => schemaV() >= 48 && isBeheer() && !!S.betaalherinneringen;
+const debOk = () => isBeheer() && !!S.betaalherinneringen;
 const debAlle = () => Object.values(S.betaalherinneringen || {});
 const debTeDoen = () => debOk() ? debAlle().filter(h => (h.status === "voorgesteld" || h.status === "mislukt") && (S.vorderingen[h.vordering_id] || {}).status === "verzonden" && (S.vorderingen[h.vordering_id] || {}).herinneren !== false) : [];
 const debDagen = (a, b) => Math.round((new Date(b + "T12:00:00Z") - new Date(a + "T12:00:00Z")) / 86400000);

@@ -22,11 +22,14 @@ function geheim(naam) {
   if (!_geheimen) _geheimen = PropertiesService.getScriptProperties().getProperties();
   return String(_geheimen[naam] || "").trim();
 }
+/** 1.70: een vaste instelling — eerst de scripteigenschap, anders wat (vroeger) in de code ingevuld werd. Zo kan elke nieuwe Code.gs
+ *  ongewijzigd geplakt worden, zodra instellingenBewaren() één keer uitgevoerd is. */
+function instelling(naam, inCode) { const v = geheim(naam); return v || (inCode && inCode !== "VUL-IN" ? inCode : ""); }
 function willekeurig() { return (Utilities.getUuid() + Utilities.getUuid()).replace(/-/g, ""); }   // 64 tekens, cryptografisch willekeurig
 const CONFIG = {
   get SECRET() { return geheim("DRIVE_SECRET"); },   // scripteigenschap, gezet door sleutelsInstellen() (zelfde waarde staat in Planbord → Instellingen → Drive)
-  PROJECTEN_FOLDER_ID: "VUL-IN",    // map BROS/PROJECTEN
-  SJABLOON_FOLDER_ID: "VUL-IN",     // map BROS/PROJECTEN/A SJABLOON
+  get PROJECTEN_FOLDER_ID() { return instelling("PROJECTEN_FOLDER_ID", "VUL-IN"); },   // map BROS/PROJECTEN (scripteigenschap sinds 1.70)
+  get SJABLOON_FOLDER_ID() { return instelling("SJABLOON_FOLDER_ID", "VUL-IN"); },     // map BROS/PROJECTEN/A SJABLOON
 };
 
 function doPost(e) {
@@ -68,6 +71,8 @@ function doPost(e) {
     if (body.action === "werfverslagmail") return json(werfverslagMail(body));
     if (body.action === "afspraak") return json(afspraakSync(body));
     if (body.action === "agendatest") return json(agendaStatus(body));   // Instellingen › Agenda testen (1.47)
+    if (body.action === "agendaweek") return json(agendaWeek(body));
+    if (body.action === "yukifactuur") return json(yukiFactuur(body));   // 1.73: rechtstreeks factureren in Yuki (proefmodus)   // 1.73: afspraken uit de Google Agenda in de weekagenda van Uren
     if (body.action === "herinneringen") { try { caller(body.token, true); } catch (x) { return json({ ok: false, error: "Alleen beheerders kunnen herinneringen versturen." }); } return json(Object.assign({ ok: true }, herinneringenVersturen())); }   // 1.50 (script 048): goedgekeurde betalingsherinneringen nu versturen (enkel beheer)
     if (body.action === "antwoordmail") return json(antwoordMail(body));
     if (body.action === "werfpuntantwoord") return json(werfpuntAntwoord(body));
@@ -290,9 +295,9 @@ function subfolder(root, path) {
    Installatie: YUKI invullen, éénmaal yukiInstall() uitvoeren (maakt de uurlijkse trigger + het label).
    ===================================================================== */
 const YUKI = {
-  PLANBORD_URL: "VUL-IN",          // Supabase Project URL, bv. https://xxxx.supabase.co
-  PLANBORD_KEY: "VUL-IN",          // publishable/anon key (zelfde als in config.js)
-  BOT_EMAIL: "VUL-IN",             // Planbord-gebruiker voor de koppeling (bv. planbord-bot@bros.be)
+  get PLANBORD_URL() { return instelling("PLANBORD_URL", "VUL-IN"); },   // Supabase Project URL (scripteigenschap sinds 1.70)
+  get PLANBORD_KEY() { return instelling("PLANBORD_KEY", "VUL-IN"); },   // publishable/anon key (zelfde als in config.js)
+  get BOT_EMAIL() { return instelling("BOT_EMAIL", "VUL-IN"); },         // Planbord-gebruiker voor de koppeling
   get BOT_PASSWORD() { return geheim("BOT_PASSWORD"); },   // scripteigenschap, gezet door sleutelsInstellen()
   REPORT_TO: "info@bros.be",       // samenvatting na elke run met resultaat
   QUERY: 'subject:"Factuur van BROS" newer_than:60d -label:planbord-verwerkt -label:planbord-te-bekijken',   // Yuki verstuurt "namens" accounting@bros.be via yukiworks.be
@@ -812,6 +817,35 @@ function agendaMachtiging() {
   Logger.log("Agenda in orde: " + cal.getName() + " (" + cal.getId() + "), script draait als " + scriptAccount() + ". Zet nu een nieuwe versie online: Implementeren → Implementaties beheren → potlood → Versie: Nieuwe versie → Implementeren.");
 }
 /* Planbord › Instellingen › Agenda testen */
+/* 1.73: afspraken uit de BROS-agenda die NIET via het Planbord gemaakt zijn, voor de weekagenda van Uren (alleen lezen).
+   Het Planbord toont ze bij wie ze horen: een deelnemer (e-mail), de maker, of de initialen vooraan in de titel ("PB/ …", "PB + NDK/ …").
+   Privé-afspraken komen door als "Bezet", zonder titel of plaats. */
+function agendaWeek(body) {
+  const wie = caller(body.token, false);
+  if (!quotum("agendaweek:" + wie.id, 240, 3600)) return { ok: false, error: "Even geduld: te veel aanvragen." };
+  const d = /^\d{4}-\d{2}-\d{2}$/;
+  if (!d.test(String(body.van || "")) || !d.test(String(body.tot || ""))) return { ok: false, error: "Ongeldige periode." };
+  const van = new Date(body.van + "T00:00:00"), tot = new Date(body.tot + "T23:59:59");
+  if (!(tot > van) || tot - van > 43 * 86400000) return { ok: false, error: "Ongeldige periode." };
+  let cal; try { cal = agendaKalender(); } catch (e) { return { ok: false, error: e.message }; }
+  const tz = Session.getScriptTimeZone() || "Europe/Brussels"; const f = (x, p) => Utilities.formatDate(x, tz, p);
+  const evs = cal.getEvents(van, tot).slice(0, 400);
+  // afspraken die het Planbord zelf in de agenda zette, staan al in de weekagenda (als taak)
+  const ids = evs.map(e => e.getId());
+  const vanPb = {};
+  for (let i = 0; i < ids.length; i += 40) {
+    const deel = ids.slice(i, i + 40).map(x => '"' + String(x).replace(/["\\]/g, "") + '"').join(",");
+    (pbAdmin("/rest/v1/taken?select=agenda_event_id&agenda_event_id=in.(" + encodeURIComponent(deel) + ")", "get") || []).forEach(r => { vanPb[r.agenda_event_id] = 1; });
+  }
+  const uit = evs.filter(e => !vanPb[e.getId()]).map(e => {
+    const prive = String(e.getVisibility && e.getVisibility()) === "PRIVATE"; const hd = e.isAllDayEvent();
+    const s = hd ? e.getAllDayStartDate() : e.getStartTime(), t = hd ? e.getAllDayEndDate() : e.getEndTime();
+    return { id: e.getId(), titel: prive ? "Bezet" : String(e.getTitle() || "").slice(0, 200), plaats: prive ? "" : String(e.getLocation() || "").slice(0, 200),
+      dag: f(s, "yyyy-MM-dd"), van: hd ? null : f(s, "HH:mm"), tot: hd ? null : (f(t, "yyyy-MM-dd") === f(s, "yyyy-MM-dd") ? f(t, "HH:mm") : "23:59"), heledag: hd,
+      gasten: e.getGuestList().map(g => String(g.getEmail() || "").toLowerCase()).slice(0, 30), maker: String((e.getCreators() || [])[0] || "").toLowerCase() };
+  });
+  return { ok: true, items: uit };
+}
 function agendaStatus(body) {
   caller(body.token, false);
   try { const cal = agendaKalender(); return { ok: true, agenda: cal.getName(), id: cal.getId(), account: scriptAccount() }; }
@@ -1762,7 +1796,7 @@ function yukiSoap(methode, params, url) {
   url = url || PropertiesService.getScriptProperties().getProperty("YUKI_API_URL") || DEBITEUREN.YUKI_URLS[0];
   const x = (s) => String(s == null ? "" : s).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
   const body = '<?xml version="1.0" encoding="utf-8"?><soap:Envelope xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xmlns:xsd="http://www.w3.org/2001/XMLSchema" xmlns:soap="http://schemas.xmlsoap.org/soap/envelope/"><soap:Body>'
-    + "<" + methode + ' xmlns="' + DEBITEUREN.YUKI_NS + '">' + params.map(p => "<" + p[0] + ">" + x(p[1]) + "</" + p[0] + ">").join("") + "</" + methode + "></soap:Body></soap:Envelope>";
+    + "<" + methode + ' xmlns="' + DEBITEUREN.YUKI_NS + '">' + params.map(p => "<" + p[0] + ">" + (p[2] ? String(p[1]) : x(p[1])) + "</" + p[0] + ">").join("") + "</" + methode + "></soap:Body></soap:Envelope>";
   const r = UrlFetchApp.fetch(url, { method: "post", contentType: "text/xml; charset=utf-8", payload: body, headers: { SOAPAction: '"' + DEBITEUREN.YUKI_NS + methode + '"' }, muteHttpExceptions: true });
   const t = r.getContentText();
   if (r.getResponseCode() !== 200) { const f = (t.match(/<faultstring>([\s\S]*?)<\/faultstring>/) || [])[1]; throw new Error("Yuki " + methode + ": " + (f || "HTTP " + r.getResponseCode()).slice(0, 300)); }
@@ -1808,6 +1842,76 @@ function yukiApiSessie() {
     admin = keuze[0].id; props.setProperty("YUKI_ADMIN_ID", admin);
   }
   return { sid: sid, admin: admin };
+}
+/* =====================================================================
+   1.73 — Rechtstreeks factureren in Yuki (Sales-webservice, ProcessSalesInvoices). PROEFMODUS.
+   - Zonder scripteigenschap YUKI_FACTUUR_ADMIN_ID gaat er NIETS naar Yuki: het Planbord krijgt terug wat Yuki zou krijgen.
+   - Met YUKI_FACTUUR_ADMIN_ID (vul eerst het id van een PROEFadministratie in): de factuur komt in Yuki bij "Te verzenden"
+     (Process = false, geen mail aan de klant). Jij kijkt ze na en verwerkt ze in Yuki; daarna koppelt het script ze zoals altijd.
+   - Btw-codes van Yuki per tarief: YUKI_BTW_6, YUKI_BTW_21 (en YUKI_BTW_0 / YUKI_BTW_12 indien nodig) — zie in Yuki welke code
+     bij welk percentage hoort. Optioneel: YUKI_OMZET_REKENING (grootboekrekening), YUKI_BETAALTERMIJN (dagen, standaard 15),
+     YUKI_SALES_URL (standaard dezelfde server als YUKI_API_URL, met Sales.asmx).
+   - Enkel beheer, enkel een vordering die "Klaar voor Yuki" staat, en het bedrag moet exact het vastgezette bedrag zijn.
+   ===================================================================== */
+function yukiSalesUrl() {
+  const props = PropertiesService.getScriptProperties();
+  return props.getProperty("YUKI_SALES_URL") || String(props.getProperty("YUKI_API_URL") || DEBITEUREN.YUKI_URLS[0]).replace(/Accounting\.asmx$/i, "Sales.asmx");
+}
+function yukiSalesSessie() {
+  const key = PropertiesService.getScriptProperties().getProperty("YUKI_API_KEY"); if (!key) throw new Error("Yuki: scripteigenschap YUKI_API_KEY ontbreekt.");
+  const cache = CacheService.getScriptCache(); let sid = cache.get("YUKI_SID_SALES");
+  if (!sid) { sid = yukiSoap("Authenticate", [["accessKey", key]], yukiSalesUrl()).trim(); if (!sid) throw new Error("Yuki: aanmelden op de Sales-webservice lukte niet."); cache.put("YUKI_SID_SALES", sid, 1200); }
+  return sid;
+}
+function yukiFactuurXml(o) {
+  const e = (t) => String(t == null ? "" : t).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
+  const el = (n, v) => v == null || v === "" ? "" : "<" + n + ">" + e(v) + "</" + n + ">";
+  return '<SalesInvoices xmlns="urn:xmlns:http://www.theyukicompany.com:salesinvoices" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"><SalesInvoice>'
+    + el("Subject", o.onderwerp) + "<PaymentMethod>ElectronicTransfer</PaymentMethod><Process>false</Process><EmailToCustomer>false</EmailToCustomer>"
+    + el("Date", o.datum) + el("DueDate", o.vervaldag) + "<Currency>EUR</Currency>" + el("Remarks", o.opmerking)
+    + "<Contact>" + el("ContactCode", o.klantcode) + el("FullName", o.klant) + "<CountryCode>BE</CountryCode>" + el("City", o.gemeente) + el("Zipcode", o.postcode)
+    + el("AddressLine_1", o.adres) + el("EmailAddress", o.email) + el("VATNumber", o.btwnr) + "<ContactType>" + (o.bedrijf ? "Company" : "Person") + "</ContactType></Contact>"
+    + "<InvoiceLines>" + o.regels.map(r => "<InvoiceLine>" + el("Description", r.omschrijving) + "<ProductQuantity>1</ProductQuantity><Product>"
+      + el("Description", r.omschrijving.slice(0, 60)) + el("Reference", r.ref.slice(0, 40)) + "<SalesPrice>" + r.excl.toFixed(2) + "</SalesPrice>"
+      + "<VATPercentage>" + r.tarief.toFixed(2) + "</VATPercentage><VATIncluded>false</VATIncluded>" + el("VATType", r.btwcode) + el("GLAccountCode", o.rekening)
+      + "</Product></InvoiceLine>").join("") + "</InvoiceLines></SalesInvoice></SalesInvoices>";
+}
+function yukiFactuur(body) {
+  caller(body.token, true);
+  const vid = uuid(body.id); const props = PropertiesService.getScriptProperties();
+  const v = (pbAdmin("/rest/v1/vorderingen?id=eq." + vid + "&select=*", "get") || [])[0];
+  if (!v) return { ok: false, error: "Vordering niet gevonden." };
+  if (v.status !== "opgemaakt" || !v.vast_op || v.bedrag_excl == null || v.btw_bedrag == null) return { ok: false, error: "Enkel een vordering op \"Op te maken\" die klaar staat voor Yuki (vastgezet) kan naar Yuki." };
+  if (v.yuki_verstuurd_op) return { ok: false, error: "Deze vordering werd al naar Yuki gestuurd (" + brusselsDag(v.yuki_verstuurd_op) + ")." };
+  const p = (pbAdmin("/rest/v1/projecten?id=eq." + v.project_id + "&select=nummer,klant,naam,bedrijf,btw_nummer,adres,postcode,gemeente,email1,factuur_email1", "get") || [])[0] || {};
+  const regels = (Array.isArray(body.regels) ? body.regels : []).slice(0, 6).map(r => ({ tarief: Number(r && r.tarief), excl: Math.round(Number(r && r.excl) * 100) / 100 }));
+  if (!regels.length || regels.some(r => [0, 6, 12, 21].indexOf(r.tarief) < 0 || !isFinite(r.excl))) return { ok: false, error: "Ongeldige factuurregels." };
+  const som = regels.reduce((a, r) => a + r.excl, 0), btw = regels.reduce((a, r) => a + Math.round(r.excl * r.tarief) / 100, 0);
+  if (Math.abs(som - Number(v.bedrag_excl)) > 0.011) return { ok: false, error: "De regels (€ " + som.toFixed(2) + ") komen niet overeen met het vastgezette bedrag (€ " + Number(v.bedrag_excl).toFixed(2) + ") — herlaad het Planbord." };
+  if (Math.abs(btw - Number(v.btw_bedrag)) > 0.05) return { ok: false, error: "De btw (€ " + btw.toFixed(2) + ") komt niet overeen met de vastgezette btw (€ " + Number(v.btw_bedrag).toFixed(2) + ")." };
+  const oms = String(body.omschrijving || "Factuur").replace(/[\r\n]+/g, " ").slice(0, 200);
+  const datum = brusselsDag(); const termijn = Math.max(0, Math.min(90, Number(props.getProperty("YUKI_BETAALTERMIJN") || 15)));
+  const vervaldag = brusselsDag(new Date(new Date(datum + "T12:00:00Z").getTime() + termijn * 86400000));
+  const w = [];
+  const lijnen = regels.map(r => ({ tarief: r.tarief, excl: r.excl, omschrijving: regels.length > 1 ? oms.slice(0, 180) + " — " + r.tarief + " % btw" : oms, ref: "PB-" + (p.nummer || "") + "-" + r.tarief, btwcode: props.getProperty("YUKI_BTW_" + r.tarief) || "" }));
+  lijnen.filter(r => !r.btwcode).forEach(r => w.push("Btw-code voor " + r.tarief + " % ontbreekt: scripteigenschap YUKI_BTW_" + r.tarief + "."));
+  if (!p.adres || !p.postcode || !p.gemeente) w.push("Het project heeft geen volledig adres: Yuki gebruikt dan het adres dat al bij de klant staat (of geen).");
+  w.push("Zonder klantcode zoekt Yuki de klant op naam (\"" + String(p.bedrijf || p.klant || "").trim() + "\"); bestaat die niet exact zo, dan maakt Yuki een nieuwe klant aan. Test dit eerst op een proefadministratie.");
+  const o = { onderwerp: oms, datum, vervaldag, opmerking: p.nummer ? "Project " + p.nummer : "", klantcode: "", klant: String(p.bedrijf || p.klant || "").trim(), bedrijf: !!String(p.bedrijf || "").trim(),
+    adres: p.adres || "", postcode: p.postcode || "", gemeente: p.gemeente || "", email: p.factuur_email1 ? "" : (p.email1 || ""), btwnr: p.btw_nummer || "", regels: lijnen, rekening: props.getProperty("YUKI_OMZET_REKENING") || "" };
+  const xml = yukiFactuurXml(o);
+  const uit = { regels: lijnen, klant: o.klant, klantcode: o.klantcode, datum, vervaldag, waarschuwingen: w, xml };
+  const admin = props.getProperty("YUKI_FACTUUR_ADMIN_ID");
+  if (!admin) return Object.assign({ ok: true, proef: true }, uit);
+  if (lijnen.some(r => !r.btwcode)) return { ok: false, error: w[0] };
+  if (!eenmalig("yukifactuur:" + vid, 600)) return { ok: false, error: "Deze vordering werd net al doorgestuurd — wacht even." };
+  const res = yukiSoap("ProcessSalesInvoices", [["sessionID", yukiSalesSessie()], ["administrationId", admin], ["xmlDoc", xml, true]], yukiSalesUrl());
+  const veld = (n) => ((res.match(new RegExp("<(?:\\w+:)?" + n + "\\b[^>]*>([\\s\\S]*?)</(?:\\w+:)?" + n + ">")) || [])[1] || "").trim();
+  const gelukt = Number(veld("TotalSucceeded") || 0) >= 1 && veld("Succeeded") !== "false";
+  const bericht = (veld("Message") || "").slice(0, 300);
+  if (!gelukt) return { ok: false, error: bericht || "Yuki maakte de factuur niet aan." };
+  pbAdmin("/rest/v1/vorderingen?id=eq." + vid, "patch", { yuki_verstuurd_op: new Date().toISOString(), yuki_bericht: bericht || "aangemaakt bij Te verzenden" });
+  return { ok: true, bericht: bericht };
 }
 /** Openstaand in Yuki voor één factuurnummer. { open: bedrag } of { open: 0 } (niets openstaand) of { onbekend: reden }. Werpt een fout bij een onleesbaar antwoord. */
 function yukiOpen(s, nr) {
@@ -2166,6 +2270,10 @@ function portaalBestand(body) {
   else if ((bytes[0] & 0xff) === 0x89 && (bytes[1] & 0xff) === 0x50) mime = "image/png"; else mime = "image/jpeg";
   return { ok: true, naam: d.naam, mime: mime, b64: Utilities.base64Encode(bytes) };
 }
+/** 1.71: documenten die het portaal zelf kan tonen (pdf, beeld, Google-document) worden NIET meer openbaar gedeeld: het portaal haalt
+ *  ze op via de actie "bestand" (enkel na login). Scripteigenschap DOCUMENTEN_PRIVE = "nee" zet het oude gedrag terug. */
+const docPrive = () => instelling("DOCUMENTEN_PRIVE", "ja") !== "nee";
+const docPortaalBaar = (mt) => mt === "application/pdf" || /^image\/(jpeg|png)$/.test(mt) || /^application\/vnd\.google-apps\.(document|presentation|spreadsheet|drawing)$/.test(mt);
 /** Bestand delen met de klant: "iedereen met de link mag lezen" aan- of uitzetten. */
 function portaalShare(body) {
   caller(body.token, false);
@@ -2175,6 +2283,11 @@ function portaalShare(body) {
   const token = ScriptApp.getOAuthToken(); const base = "https://www.googleapis.com/drive/v3/files/" + id;
   const meta = JSON.parse(UrlFetchApp.fetch(base + "?supportsAllDrives=true&fields=mimeType", { headers: { Authorization: "Bearer " + token }, muteHttpExceptions: true }).getContentText() || "{}");
   if (!meta.mimeType || meta.mimeType === "application/vnd.google-apps.folder") return { ok: false, error: "Een map kan je niet delen, enkel losse bestanden." };
+  if (body.on && docPrive() && docPortaalBaar(meta.mimeType)) {   // 1.71: geen openbare link nodig — het portaal toont het via de actie "bestand"
+    const r = UrlFetchApp.fetch(base + "/permissions/anyoneWithLink?supportsAllDrives=true", { method: "delete", headers: { Authorization: "Bearer " + token }, muteHttpExceptions: true });
+    if (r.getResponseCode() >= 300 && r.getResponseCode() !== 404) throw new Error("Drive: " + r.getContentText().slice(0, 200));
+    return { ok: true, prive: true };
+  }
   if (body.on) {
     const r = UrlFetchApp.fetch(base + "/permissions?supportsAllDrives=true", { method: "post", contentType: "application/json", payload: JSON.stringify({ role: "reader", type: "anyone" }), headers: { Authorization: "Bearer " + token }, muteHttpExceptions: true });
     if (r.getResponseCode() >= 300) throw new Error("Drive: " + r.getContentText().slice(0, 200));
@@ -2315,7 +2428,7 @@ function yukiPdfBewaren(f, p, token) {
   const bestaand = map.getFilesByName(naam); let file = null;
   while (bestaand.hasNext() && !file) { const x = bestaand.next(); if (!x.isTrashed()) file = x; }   // niet uit de prullenbak
   if (!file) file = map.createFile(f.pdfBlob.setName(naam));
-  file.setSharing(DriveApp.Access.ANYONE_WITH_LINK, DriveApp.Permission.VIEW);   // zoals "delen met klant" in Dossier
+  if (!docPrive()) file.setSharing(DriveApp.Access.ANYONE_WITH_LINK, DriveApp.Permission.VIEW);   // 1.71: enkel nog als DOCUMENTEN_PRIVE = "nee" (het portaal toont de pdf via de actie "bestand")
   const nu = new Date().toISOString();
   const rij = { project_id: p.id, drive_id: file.getId(), naam: naam, pad: "Documenten/Facturen", url: file.getUrl(), mime: "application/pdf", grootte: file.getSize(), gewijzigd: nu, gesynct_op: nu, gedeeld: true, gedeeld_op: nu, gemeld_klant: true };
   const r = pbReq("/rest/v1/documenten?on_conflict=project_id,drive_id", "post", rij, token, "resolution=merge-duplicates,return=representation");
@@ -2416,7 +2529,8 @@ function yukiKoppel(facturen) {
   try { rows = pbAll("/rest/v1/meetstaat_posten_v?select=id,project_id,lot,status,hoeveelheid,verkoop_ep,btw", token); }
   catch (e) { rows = pbAll("/rest/v1/meetstaat_posten?select=id,project_id,lot,status,hoeveelheid,eenheidsprijs,marge,btw", token); pbAll("/rest/v1/loten?select=nr,marge", token, "nr").forEach(l => loten[l.nr] = l); }
   // 1.48: enkel berekenen wat nodig is · 1.56.3: een verzonden/betaalde vordering heeft een bevroren bedrag (zoals in het Planbord)
-  const bevroren = (v) => v.status !== "opgemaakt" && v.bedrag_excl != null && v.bedrag_excl !== "" ? { excl: Number(v.bedrag_excl), btw: Number(v.btw_bedrag || 0), incl: Math.round((Number(v.bedrag_excl) + Number(v.btw_bedrag || 0)) * 100) / 100 } : null;
+  const bevroren = (v) => (v.status !== "opgemaakt" || (v.vast_op && v.btw_bedrag != null && v.btw_bedrag !== "")) && v.bedrag_excl != null && v.bedrag_excl !== "" ?   // 1.70: ook "klaar voor Yuki" (script 064)
+    { excl: Number(v.bedrag_excl), btw: Number(v.btw_bedrag || 0), incl: Math.round((Number(v.bedrag_excl) + Number(v.btw_bedrag || 0)) * 100) / 100 } : null;
   const calcMemo = {}; const calcOf = (v) => calcMemo[v.id] || (calcMemo[v.id] = bevroren(v) || yukiCalc(v, rows, regels, loten));
   const bestaand = {}; vorderingen.forEach(v => { if (v.factuurnummer) bestaand[String(v.factuurnummer).trim()] = v; });
   const TOL = YUKI.TOL; const rapport = [];
@@ -2542,7 +2656,7 @@ function factuurPdfPlaatsen(vid, y, file, blob, maakMap) {
   const doel = subfolder(DriveApp.getFolderById(p.drive_folder_id), "Documenten/Facturen");
   const naam = "Factuur " + String(v.factuurnummer || (v.nr === 0 ? "voorschot" : v.nr)).replace(/[\\\/:*?"<>|]/g, "-") + ".pdf";
   if (file) { file.moveTo(doel); file.setName(naam); } else file = doel.createFile(blob.setName(naam));
-  file.setSharing(DriveApp.Access.ANYONE_WITH_LINK, DriveApp.Permission.VIEW);
+  if (!docPrive()) file.setSharing(DriveApp.Access.ANYONE_WITH_LINK, DriveApp.Permission.VIEW);   // 1.71: zie docPrive
   const nu = new Date().toISOString();
   const rij = { project_id: p.id, drive_id: file.getId(), naam: naam, pad: "Documenten/Facturen", url: file.getUrl(), mime: "application/pdf", grootte: file.getSize(), gewijzigd: nu, gesynct_op: nu, gedeeld: true, gedeeld_op: nu, gemeld_klant: true };
   const d = pbAdmin("/rest/v1/documenten?on_conflict=project_id,drive_id", "post", rij, "resolution=merge-duplicates,return=representation");
@@ -2635,6 +2749,38 @@ function yukiRapporteer(rapport) {
   Logger.log(txt);
 }
 
+/** 1.71 — de openbare links weghalen van documenten die met klanten of aannemers gedeeld zijn en die het portaal zelf kan tonen
+ *  (pdf, jpg/png, Google-documenten). Eerst openbareLinksProef() (verandert niets, toont de aantallen), dan openbareLinksOpruimen().
+ *  Andere bestanden (bv. dwg, Excel) houden hun link: die kan het portaal niet zelf tonen. Per run hooguit 300 bestanden (opnieuw = verder). */
+function openbareLinksProef() { return openbareLinksOpruimen(true); }
+function openbareLinksOpruimen(proef) {
+  if (!docPrive()) throw new Error("DOCUMENTEN_PRIVE staat op nee: niets te doen.");
+  const docs = pbAdmin("/rest/v1/documenten?or=(gedeeld.eq.true,gedeeld_aannemers.eq.true)&select=drive_id,naam,mime&limit=2000", "get") || [];
+  const token = ScriptApp.getOAuthToken(); const hdr = { Authorization: "Bearer " + token }; let weg = 0, gelaten = 0, al = 0, fout = 0; const t0 = Date.now();
+  for (const d of docs.slice(0, 300)) {
+    if (Date.now() - t0 > 300000) break;
+    try {
+      const base = "https://www.googleapis.com/drive/v3/files/" + encodeURIComponent(d.drive_id);
+      const meta = JSON.parse(UrlFetchApp.fetch(base + "?supportsAllDrives=true&fields=mimeType,permissions(id,type)", { headers: hdr, muteHttpExceptions: true }).getContentText() || "{}");
+      if (!docPortaalBaar(String(meta.mimeType || ""))) { gelaten++; continue; }
+      if (!(meta.permissions || []).some(x => x.type === "anyone")) { al++; continue; }
+      if (!proef) { const r = UrlFetchApp.fetch(base + "/permissions/anyoneWithLink?supportsAllDrives=true", { method: "delete", headers: hdr, muteHttpExceptions: true }); if (r.getResponseCode() >= 300 && r.getResponseCode() !== 404) { fout++; continue; } }
+      weg++;
+    } catch (e) { fout++; }
+  }
+  Logger.log((proef ? "PROEF — niets gewijzigd. " : "") + weg + " openbare link(s) " + (proef ? "zouden weggehaald worden" : "weggehaald") + ", " + al + " al privé, " + gelaten + " gelaten (type dat het portaal niet zelf toont)" + (fout ? ", " + fout + " fout(en)" : "") + ". " + docs.length + " gedeelde documenten in totaal" + (docs.length > 300 ? " — voer het opnieuw uit voor de rest." : "."));
+  return { weg, al, gelaten, fout };
+}
+/** 1.70 — EENMALIG uitvoeren (Uitvoeren ▷) met de laatste ingevulde versie (Code.ingevuld.gs): zet de 5 waarden die vroeger in de code
+ *  stonden (mappen, Supabase-adres en -sleutel, bot-gebruiker) in de scripteigenschappen. Daarna plak je bij elke nieuwe versie gewoon
+ *  Code.gs uit de repository: niets meer in te vullen. Toont geen geheimen in het logboek. */
+function instellingenBewaren() {
+  const w = { PROJECTEN_FOLDER_ID: CONFIG.PROJECTEN_FOLDER_ID, SJABLOON_FOLDER_ID: CONFIG.SJABLOON_FOLDER_ID, PLANBORD_URL: YUKI.PLANBORD_URL, PLANBORD_KEY: YUKI.PLANBORD_KEY, BOT_EMAIL: YUKI.BOT_EMAIL };
+  const leeg = Object.keys(w).filter(k => !w[k]);
+  if (leeg.length) throw new Error("Niet ingevuld: " + leeg.join(", ") + ". Voer deze functie uit met Code.ingevuld.gs, of zet de scripteigenschappen zelf.");
+  const p = PropertiesService.getScriptProperties(); Object.keys(w).forEach(k => p.setProperty(k, String(w[k]).trim())); _geheimen = null;
+  Logger.log("OK — " + Object.keys(w).length + " instellingen bewaard als scripteigenschap (" + Object.keys(w).join(", ") + "). Vanaf nu kan je Code.gs uit de repository ongewijzigd plakken.");
+}
 /** Eenmalig uitvoeren vanuit de editor (Uitvoeren ▷) om alle rechten te verlenen: Drive én de Drive-API. */
 function autoriseer() {
   DriveApp.getRootFolder().getName();

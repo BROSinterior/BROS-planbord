@@ -11,12 +11,18 @@ Statische webapp (geen build-stap) op een Supabase-database.
 | Bestand | Wat |
 |---|---|
 | `index.html` | de pagina (opmaak) |
-| `app.js` | alle logica |
+| `app.js` | de kern: laden, live houden, schrijven, schermen, formulieren en acties |
+| `meetstaat.js`, `werf.js`, `facturatie.js` | uit app.js gehaald (1.72): meetstaat en prijsvragen · notities, werf, werfverslagen en assistent · goedkeuringen en facturatie |
+| `modules.js` | laadt de tekenmodule (+ Plan2CAD), Renders en de Excel-modules pas wanneer je ze opent (1.72) |
+| `navigatie.js` | hoofdmenu met Meer, gsm-balk, projectgroepen, inklapbare uitleg (1.71) |
+| `mijnwerk.js` | hoofdtabblad Mijn werk (1.73) |
+| `tests/` | de testsuite (databank, Planbord en portalen in een browser, Drive-script): `bash tests/alles.sh` — zie tests/README.md; GitHub draait ze bij elke push |
+| `deploy/` | `versie.sh` (versienummer overal) en `online-zetten.sh` (databasescripts en Drive-script, na jouw akkoord) — zie deploy/LEESMIJ.md |
 | `config.js` | koppeling met de database — **hier de Project URL en anon-sleutel invullen** |
 | `version.json` | versienummer (enkel de laatste versie); de app meldt een nieuwe versie aan wie ze open heeft |
 | `CHANGELOG.md` | versiegeschiedenis (vanaf 1.48 niet meer in version.json) |
 | `vendor/supabase-2.45.4.js` (+ `591.supabase.js`) | de Supabase-bibliotheek, zelf gehost (geen CDN nodig) |
-| `sql/001_init.sql` … `sql/062_*.sql` | databasescripts, in volgorde uit te voeren (`versie_schema` in instellingen bewaakt de volgorde vanaf 022) |
+| `sql/001_init.sql` … `sql/066_*.sql` | databasescripts, in volgorde uit te voeren (`versie_schema` in instellingen bewaakt de volgorde vanaf 022) |
 | `drive/Code.gs` | Google Apps Script dat projectmappen aanmaakt/koppelt op Drive en de meetstaat-export wegschrijft (installatie: zie bovenaan dat bestand) |
 | `drive/YukiArchief.gs` | klein Apps Script voor het account archief@bros.be: leest daar de Yuki-factuurmails en stuurt ze naar het Drive-script (v1.50.1, zie *Yuki-mails uit archief@bros.be*) |
 | `agenda.js` | gedeeld (Planbord en portalen): agendabestand (.ics) en Google Agenda-link voor afspraken (script 041) |
@@ -61,7 +67,9 @@ Statische webapp (geen build-stap) op een Supabase-database.
 - Code en gegevens staan los van elkaar: een nieuwe versie van de app raakt de database niet.
 - Nieuwe versie = bestanden vervangen in deze map → GitHub Desktop → *Commit* → *Push*. Na ± 1 minuut staat ze online.
 - `version.json` krijgt bij elke update een nieuw nummer; wie de app open heeft, ziet "nieuwe versie beschikbaar" en herlaadt wanneer het past.
-- Bij elke update ook het `?v=…` achter de scripts in `index.html` gelijkzetten met het versienummer (Claude doet dit mee bij elke levering); zo laadt geen enkele browser nog een oude app.js uit zijn cache. Ziet iemand toch een oude versie: ⌘⇧R (harde herlaad).
+- Bij elke update ook het `?v=…` achter de scripts in `index.html` gelijkzetten met het versienummer: `bash deploy/versie.sh 1.74.0 "omschrijving"` doet dat in één keer (samen met APP_VERSION en version.json). Ziet iemand toch een oude versie: ⌘⇧R (harde herlaad).
+- Databasescripts en het Drive-script online zetten kan met `bash deploy/online-zetten.sh` op de Mac mini (na eenmalige installatie, zie deploy/LEESMIJ.md).
+- Vóór het pushen: `bash tests/alles.sh` (of laat GitHub het doen bij de push — Actions › tests).
 - Databasewijzigingen komen als genummerde scripts in `sql/` (002 … 015), altijd toevoegingen, nooit verwijderingen. Vóór elk script: Supabase → Database → Backups.
 - Een volgende versie eerst testen: in de map `next/` zetten; die is bereikbaar op `…/BROS-planbord/next/` met dezelfde database.
 
@@ -201,6 +209,17 @@ Veel meetstaten zijn met klantprijzen uit Excel ingelezen: kostprijs = klantprij
 - Alleen beheer ziet of wijzigt dit (tabel `ms_raming`, RLS). Klanten, aannemers en medewerkers zien niets; de pdf/Excel voor de klant blijven ongewijzigd.
 
 Activeren: Supabase → SQL Editor → `sql/052_marges_raming.sql` → Run (na 051; controle `1 | 1 | 52`). Optioneel: nieuw `drive/Code.gs` (neemt `ms_raming` mee in de wekelijkse back-up) als `Code.ingevuld.gs` plakken en een nieuwe versie deployen.
+
+## Mijn werk, Google Agenda in Uren, Naar Yuki (script 066 + drive/Code.gs, v1.73)
+
+- **Mijn werk**: alles op jouw naam uit alle projecten op één lijst, gesorteerd op datum (zie CHANGELOG 1.73).
+- **Google Agenda in Uren**: vraagt het nieuwe Drive-script (actie `agendaweek`); afspraken horen bij wie deelnemer is of wiens initialen vooraan in de titel staan.
+- **Naar Yuki (proefmodus)**: scripteigenschappen van het Drive-script — `YUKI_FACTUUR_ADMIN_ID` (eerst een proefadministratie!), `YUKI_BTW_6`, `YUKI_BTW_21` (btw-codes uit Yuki), optioneel `YUKI_OMZET_REKENING`, `YUKI_BETAALTERMIJN`, `YUKI_SALES_URL`. Zonder `YUKI_FACTUUR_ADMIN_ID` gaat er niets naar Yuki.
+- Activeren: `sql/064`, `065` en `066` in volgorde (controles `2|1|2|64`, `1|…|65`, `2|1|66`), nieuw `drive/Code.gs`, pushen.
+
+## Sneller laden (script 065, v1.72)
+
+Elke wijziging laat een regel na in `pb_wijzigingen` (tabel, sleutel, I/U/D — geen inhoud; 3 dagen bewaard). Het Planbord luistert op één realtime-kanaal en haalt enkel gewijzigde rijen op; na een pauze enkel wat sindsdien veranderde. Zware tabellen laden na het eerste scherm.
 
 ## Uren als weekagenda (uren-week.js, v1.69 — geen databasescript)
 

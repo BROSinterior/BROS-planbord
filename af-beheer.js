@@ -8,7 +8,7 @@
    ===================================================================== */
 const AFB_STATUS = { ontvangen: "Ontvangen", goedgekeurd: "Goedgekeurd", betaald: "Betaald", betwist: "Vraag aan aannemer" };
 const AFB_PILL = { ontvangen: "st-offerte", goedgekeurd: "st-lopend", betaald: "st-afgerond", betwist: "st-verloren" };
-const afbOk = () => schemaV() >= 47 && isBeheer() && !!S.aannemer_facturen;
+const afbOk = () => isBeheer() && !!S.aannemer_facturen;
 const afbAlle = () => Object.values(S.aannemer_facturen || {});
 const afbSort = (a, b) => (b.datum || "").localeCompare(a.datum || "") || (b.created_at || "").localeCompare(a.created_at || "");
 const afbVan = (pid) => afbAlle().filter(f => f.project_id === pid).sort(afbSort);

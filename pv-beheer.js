@@ -4,7 +4,7 @@
    Twee soorten: zonder prijzen (enkel posten, hoeveelheden en eenheden) of met onze prijzen (klantprijs − afslag) als voorstel.
    Geladen vóór app.js; app.js roept vPrijsvragen / pvAct aan via typeof-controles.
    ===================================================================== */
-const pvReady = () => schemaV() >= 37 && !!S.prijsvragen && !!S.prijsvraag_gunningen;
+const pvReady = () => !!S.prijsvragen && !!S.prijsvraag_gunningen;
 const PV_STATUS = { open: "Loopt", gesloten: "Gesloten", gegund: "Afgerond" };
 const PVA_STATUS = { open: "In te vullen", ingediend: "Ingediend", gekozen: "Gegund", afgesloten: "Niet ingediend", niet_weerhouden: "Niet weerhouden" };
 const PVA_PILL = { open: "st-offerte", ingediend: "st-lopend", gekozen: "done", afgesloten: "kl", niet_weerhouden: "kl" };

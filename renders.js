@@ -18,13 +18,13 @@ const RD = { batch: null, urls: {}, laden: {}, filter: "", sfeerKeuze: null };
 const RD_STATUS = { wachtrij: ["In wachtrij", "st-lopend"], bezig: ["Wordt gerenderd", "st-lopend"], klaar: ["Klaar", "st-afgerond"], mislukt: ["Mislukt", "late"], onzeker: ["Controle nodig", "st-on_hold"], geannuleerd: ["Geannuleerd", "st-offerte"] };
 const RD_KWALITEIT = [["low", "Snel (laag)"], ["medium", "Standaard"], ["high", "Hoog"], ["xhigh", "Zeer hoog"], ["max", "Maximaal"]];
 const rd25 = (m) => /^gpt-image-2\.5/.test(m || "");   // 1.62: xhigh en max bestaan enkel bij GPT Image 2.5 (sunburst/flare)
-const rdKwaliteiten = (m) => RD_KWALITEIT.filter(k => (rd25(m) && schemaV() >= 58) || !["xhigh", "max"].includes(k[0]));
-const rdPromptOk = () => schemaV() >= 58;   // prompt optimaliseren (script 058)
+const rdKwaliteiten = (m) => RD_KWALITEIT.filter(k => (rd25(m)) || !["xhigh", "max"].includes(k[0]));
+const rdPromptOk = () => true;   // prompt optimaliseren (script 058)
 const rdKwOpts = (cfg, v) => { const l = rdKwaliteiten(cfg.model); return opts(l, l.some(k => k[0] === v) ? v : cfg.kwaliteit); };   // een vorige kwaliteit die dit model niet kent → de standaard
 const RD_MAX = 48 * 1024 * 1024;   // OpenAI aanvaardt max. 50 MB per beeld
 const RD_TYPES = { "image/png": "png", "image/jpeg": "jpg", "image/webp": "webp" };
-const rdOk = () => schemaV() >= 55 && !!S.render_opdrachten;
-const rdSbOk = () => schemaV() >= 56;   // stalenborden (script 056)
+const rdOk = () => !!S.render_opdrachten;
+const rdSbOk = () => true;   // stalenborden (script 056)
 const MODAL_OPEN = () => { const bg = document.getElementById("modalBg"); return !!(bg && bg.classList.contains("show")); };
 const rdSleutel = (r) => String(r || "").trim().toLowerCase();
 const rdIsRender = (o) => (o.soort || "render") === "render";
@@ -76,7 +76,6 @@ function rdSignaal() {
 
 /* ---------- het tabblad ---------- */
 function vRenders(p) {
-  if (schemaV() < 55) return typeof SCHEMA_HINT === "function" ? SCHEMA_HINT(55) : "Voer eerst sql/055_renders.sql uit.";
   if (rdStdOk()) return vRendersStd(p);   // 1.61: per ruimte en standpunt (script 057)
   const cfg = rdCfg(); const ops = rdOpdrachten(p.id).filter(rdIsRender); const nV = rdVandaag();
   const ruimtes = [...new Set(ops.map(o => o.ruimte))].sort((a, b) => a.localeCompare(b));
@@ -631,7 +630,7 @@ function rdRuimteForm(b) {
    Project → ruimte (vaste id: hernoemen breekt niets) → standpunt (één camerastandpunt met zijn oorspronkelijk ontwerp) →
    versies. Een correctie is een nieuwe versie binnen hetzelfde standpunt (ook vanaf een oudere versie: de vertakking blijft
    bewaard). Hoofdversie, presentatieversie en goedkeuring zijn drie aparte keuzes. Een mislukte aanvraag maakt geen versie. */
-const rdStdOk = () => schemaV() >= 57 && !!S.render_standpunten && !!S.render_ruimtes;
+const rdStdOk = () => !!S.render_standpunten && !!S.render_ruimtes;
 const RD_SOORTEN = [["opening", "Opening (raam/deur)"], ["wand", "Wandvlak"], ["dak", "Dakhelling"], ["kast", "Kast(indeling)"], ["schab", "Schab"], ["meubel", "Meubel"], ["armatuur", "Armatuur"], ["decoratie", "Decoratie"], ["ander", "Ander"]];
 const RD_LICHT = [["helder", "Helder en natuurlijk (standaard)"], ["neutraal", "Neutraal daglicht"], ["gedempt", "Gedempt, maar leesbaar"]];
 const rdRuimteRijen = (pid) => Object.values(S.render_ruimtes || {}).filter(r => r.project_id === pid).sort((a, b) => (a.volgorde || 0) - (b.volgorde || 0) || a.naam.localeCompare(b.naam, "nl", { sensitivity: "base" }));
@@ -974,7 +973,7 @@ function rdPresStalen(pid) {
 function rdPresNummers() { document.querySelectorAll("[data-rd-nr]").forEach(el => { const i = RD.pres.volgorde.indexOf(el.dataset.rdNr); el.textContent = i >= 0 ? String(i + 1) : ""; }); const sbv = $("#rp_sb"); if (sbv && RD.pres) sbv.innerHTML = rdPresStalen(RD.pres.pid); }
 
 /* ---------- 1.68 (script 063): eigen beelden voor de presentatie ---------- */
-const rdEigenOk = () => schemaV() >= 63;
+const rdEigenOk = () => true;
 const rdEigen = (pid) => rdBeelden(pid, "eigen").slice().sort((a, b) => (a.created_at || "").localeCompare(b.created_at || ""));
 const RD_EIGEN_ZIJDE = 6000;   // langste zijde na omzetten (enkel als het bestand omgezet moet worden)
 function rdEigenRuimteVeld(pid, id, waarde) {
@@ -1066,7 +1065,6 @@ async function rdEigenWeg(id) {
 /* ---------- Instellingen › Renders (beheer) ---------- */
 function vRenderInstellingen() {
   if (!isBeheer()) return "";
-  if (schemaV() < 55) return `<div class="panel" style="margin-bottom:16px"><div class="panel-head"><h3>Renders</h3><span class="pill st-offerte">nog niet geactiveerd</span></div><div class="panel-body">${typeof SCHEMA_HINT === "function" ? SCHEMA_HINT(55) : "Voer sql/055_renders.sql uit."}</div></div>`;
   const c = rdCfg(); const w = typeof vgVerwerker === "function" ? vgVerwerker() : { bekend: false }; const i = (w.r && w.r.info) || {};
   const alle = Object.values(S.render_opdrachten || {}); const maand = new Date().toISOString().slice(0, 7);
   const dezeMaand = alle.filter(o => (o.dag || "").startsWith(maand));

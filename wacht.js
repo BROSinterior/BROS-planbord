@@ -15,8 +15,27 @@
 const WJ = { open: {}, undo: null, bezig: false, toonVerborgen: false };
 const wjTeam = () => { if (!isBeheer()) return false; if (WJ.teamSessie != null) return WJ.teamSessie; try { return localStorage.getItem("bros.wj.team") === "1"; } catch (e) { return false; } };
 const wjSleutel = () => "bros.wj.weg." + (S.me ? S.me.id : "");
-function wjWeg() { try { return JSON.parse(localStorage.getItem(wjSleutel()) || "{}") || {}; } catch (e) { return {}; } }
+/* 1.70 (script 064): Gezien/Later in de databank (mijn_markeringen) — hetzelfde op elk toestel; oude markeringen uit deze browser gaan één keer mee */
+const wjDbOk = () => typeof schemaV === "function" && schemaV() >= 64 && !!S.mijn_markeringen && !!S.me;
+function wjLokaal() { try { return JSON.parse(localStorage.getItem(wjSleutel()) || "{}") || {}; } catch (e) { return {}; } }
+function wjMigreer() {
+  if (!wjDbOk()) return; const vlag = "bros.wj.db." + S.me.id; try { if (localStorage.getItem(vlag)) return; localStorage.setItem(vlag, "1"); } catch (e) { return; }
+  const l = wjLokaal(); const rijen = Object.keys(l).filter(k => !(l[k].tot && l[k].tot <= todayIso)).slice(-200).map(k => ({ user_id: S.me.id, soort: "wj", sleutel: String(k).slice(0, 200), stempel: String(l[k].s || ""), tot: l[k].tot || null }));
+  if (rijen.length) sb.from("mijn_markeringen").upsert(rijen).then(({ error }) => { if (error) { try { localStorage.removeItem(vlag); } catch (e) { } } else rijen.forEach(r => S.mijn_markeringen[rowKey("mijn_markeringen", r)] = r); });
+}
+function wjWeg() {
+  if (!wjDbOk()) return wjLokaal();
+  wjMigreer(); const w = wjLokaal();
+  Object.values(S.mijn_markeringen).forEach(m => { if (m.user_id === S.me.id && m.soort === "wj") w[m.sleutel] = { s: m.stempel || "", tot: m.tot || "" }; });
+  return w;
+}
 function wjZetWeg(k, stempel, dagen) {
+  if (wjDbOk()) {
+    const rij = { user_id: S.me.id, soort: "wj", sleutel: String(k).slice(0, 200), stempel: String(stempel || ""), tot: dagen ? addDays(todayIso, dagen) : null, updated_at: new Date().toISOString() };
+    S.mijn_markeringen[rowKey("mijn_markeringen", rij)] = rij;
+    sb.from("mijn_markeringen").upsert(rij).then(({ error }) => { if (error) toast("Niet bewaard: " + error.message, 5000); });
+    return;
+  }
   try {
     const w = wjWeg(); w[k] = { s: String(stempel || ""), tot: dagen ? addDays(todayIso, dagen) : "" };
     const ks = Object.keys(w); if (ks.length > 300) ks.slice(0, ks.length - 300).forEach(x => delete w[x]);
@@ -49,15 +68,15 @@ function wjTaken() {
 }
 function wjExtern() {
   const uit = []; const mag = (r) => r && wjMijnProject(r.project_id);
-  const v16 = schemaV() >= 16, v35 = schemaV() >= 35;
+  const v16 = true, v35 = true;
   if (v16) Object.values(S.vaststellingen || {}).filter(v => mag(v) && v.te_beoordelen && v.status === "open").forEach(v => uit.push({ k: "vs:" + v.id, stempel: v.updated_at || v.created_at, ic: "⚑", toon: "warn", titel: "Werfpunt te beoordelen: " + (v.titel || "zonder titel"), sub: wjProj(v.project_id) + (v.gemeld_door_aannemer ? " · gemeld door " + (wjContact(v.gemeld_door_aannemer) || "aannemer") : " · gemeld door de klant"), wanneer: v.created_at, pid: v.project_id, tab: "werf" }));
   if (v35) Object.values(S.meerwerk_aanvragen || {}).filter(a => mag(a) && a.status === "ingediend").forEach(a => uit.push({ k: "mw:" + a.id, stempel: a.updated_at || a.created_at, ic: "＋", toon: "warn", titel: "Meerwerk aangevraagd: " + (a.titel || "zonder titel"), sub: wjProj(a.project_id) + (a.ruimte ? " · " + a.ruimte : ""), wanneer: a.created_at, pid: a.project_id, tab: "meetstaat" }));
   if (v35) Object.values(S.keuzes || {}).filter(k => mag(k) && (k.status === "gekozen" || (k.status === "open" && k.deadline && k.deadline < todayIso))).forEach(k => uit.push(k.status === "gekozen"
     ? { k: "kz:" + k.id, stempel: k.gekozen_op || k.updated_at, ic: "✓", toon: "accent", titel: "Keuze gemaakt — bevestigen: " + (k.onderwerp || ""), sub: wjProj(k.project_id) + (k.gekozen_naam ? " · door " + k.gekozen_naam : ""), wanneer: k.gekozen_op, pid: k.project_id, tab: "keuzes" }
     : { k: "kzl:" + k.id, stempel: k.deadline, ic: "⏱", toon: "warn", titel: "Klant moet nog kiezen: " + (k.onderwerp || ""), sub: wjProj(k.project_id) + " · deadline " + fmt(k.deadline), wanneer: k.deadline, pid: k.project_id, tab: "keuzes" }));
-  if (schemaV() >= 25) Object.values(S.prijsaanvragen || {}).filter(a => mag(a) && a.status === "ingediend").forEach(a => uit.push({ k: "pa:" + a.id, stempel: a.ingediend_op || a.updated_at, ic: "€", toon: "accent", titel: "Prijs ontvangen van " + (wjContact(a.contact_id) || "aannemer") + (a.titel ? ": " + a.titel : ""), sub: wjProj(a.project_id), wanneer: a.ingediend_op || a.updated_at, pid: a.project_id, tab: "meetstaat" }));
-  if (schemaV() >= 23) voorstellenOpen().filter(v => mag(v) || v.voorgestelde_user === S.me.id).forEach(v => uit.push({ k: "tv:" + v.id, stempel: v.created_at, ic: "?", toon: v.urgentie === "hoog" || v.onderwerp === "klacht" ? "crit" : "accent", titel: (v.onderwerp === "klacht" ? "Klacht: " : "Vraag van de klant: ") + (v.titel || ""), sub: wjProj(v.project_id) + (v.urgentie === "hoog" ? " · dringend" : ""), wanneer: v.created_at, pid: v.project_id, tab: "vragen" }));
-  if (schemaV() >= 13) Object.values(S.goedkeuringen || {}).filter(g => mag(g) && (g.status === "akkoord" || g.status === "geweigerd") && g.beslist_op && wjDagen(g.beslist_op) <= 7).forEach(g => uit.push({ k: "gk:" + g.id, stempel: g.beslist_op, ic: g.status === "akkoord" ? "✓" : "✕", toon: g.status === "akkoord" ? "ok" : "crit", titel: g.soort === "overeenkomst" ? "Overeenkomst " + (g.status === "akkoord" ? "ondertekend" : "geweigerd") + (g.titel ? ": " + g.titel : "") : (g.soort === "meerwerk" ? "Meerwerk " : "Offerte ") + (g.status === "akkoord" ? "goedgekeurd" : "geweigerd") + " door de klant" + (g.titel ? ": " + g.titel : ""), sub: wjProj(g.project_id) + (g.beslist_naam ? " · " + g.beslist_naam : ""), wanneer: g.beslist_op, pid: g.project_id, tab: g.soort === "overeenkomst" ? "dossier" : "meetstaat", info: true }));
+  Object.values(S.prijsaanvragen || {}).filter(a => mag(a) && a.status === "ingediend").forEach(a => uit.push({ k: "pa:" + a.id, stempel: a.ingediend_op || a.updated_at, ic: "€", toon: "accent", titel: "Prijs ontvangen van " + (wjContact(a.contact_id) || "aannemer") + (a.titel ? ": " + a.titel : ""), sub: wjProj(a.project_id), wanneer: a.ingediend_op || a.updated_at, pid: a.project_id, tab: "meetstaat" }));
+  voorstellenOpen().filter(v => mag(v) || v.voorgestelde_user === S.me.id).forEach(v => uit.push({ k: "tv:" + v.id, stempel: v.created_at, ic: "?", toon: v.urgentie === "hoog" || v.onderwerp === "klacht" ? "crit" : "accent", titel: (v.onderwerp === "klacht" ? "Klacht: " : "Vraag van de klant: ") + (v.titel || ""), sub: wjProj(v.project_id) + (v.urgentie === "hoog" ? " · dringend" : ""), wanneer: v.created_at, pid: v.project_id, tab: "vragen" }));
+  Object.values(S.goedkeuringen || {}).filter(g => mag(g) && (g.status === "akkoord" || g.status === "geweigerd") && g.beslist_op && wjDagen(g.beslist_op) <= 7).forEach(g => uit.push({ k: "gk:" + g.id, stempel: g.beslist_op, ic: g.status === "akkoord" ? "✓" : "✕", toon: g.status === "akkoord" ? "ok" : "crit", titel: g.soort === "overeenkomst" ? "Overeenkomst " + (g.status === "akkoord" ? "ondertekend" : "geweigerd") + (g.titel ? ": " + g.titel : "") : (g.soort === "meerwerk" ? "Meerwerk " : "Offerte ") + (g.status === "akkoord" ? "goedgekeurd" : "geweigerd") + " door de klant" + (g.titel ? ": " + g.titel : ""), sub: wjProj(g.project_id) + (g.beslist_naam ? " · " + g.beslist_naam : ""), wanneer: g.beslist_op, pid: g.project_id, tab: g.soort === "overeenkomst" ? "dossier" : "meetstaat", info: true }));
   if (typeof vgWachtItems === "function") vgWachtItems().forEach(it => uit.push(it));   // 1.54: verslagen te controleren, mislukte verwerkingen, verwerkingscomputer offline
   return uit.sort((a, b) => ({ crit: 0, warn: 1, accent: 2, ok: 3 }[a.toon] - { crit: 0, warn: 1, accent: 2, ok: 3 }[b.toon]) || String(a.wanneer || "").localeCompare(String(b.wanneer || "")));
 }
@@ -65,6 +84,8 @@ function wjFacturen() {
   if (!isBeheer()) return [];
   const uit = []; const nK = typeof debTeDoen === "function" ? debTeDoen().length : 0, nA = typeof afbTeDoen === "function" ? afbTeDoen().length : 0;
   if (nK) uit.push({ k: "fk", stempel: nK, ic: "€", toon: "warn", titel: nK === 1 ? "1 betalingsherinnering wacht op je goedkeuring" : nK + " betalingsherinneringen wachten op je goedkeuring", sub: "Facturen › Klanten — er vertrekt niets zonder jouw akkoord", nav: "aankoop", ft: "klanten" });
+  const zm = typeof zonderMap === "function" && typeof driveReady === "function" && driveReady() ? zonderMap().length : 0;   // 1.70
+  if (zm) uit.push({ k: "zm", stempel: zm, ic: "📁", toon: "warn", titel: zm === 1 ? "1 lopend project zonder Drive-map" : zm + " lopende projecten zonder Drive-map", sub: "Instellingen — zonder map geen factuur-pdf voor de klant; één klik per project", nav: "instellingen" });
   if (nA) uit.push({ k: "fa", stempel: nA, ic: "€", toon: "accent", titel: nA === 1 ? "1 aannemersfactuur te behandelen" : nA + " aannemersfacturen te behandelen", sub: "Facturen › Aannemers — goedkeuren, vraag stellen of betaald zetten", nav: "aankoop", ft: "aannemers" });
   const nY = typeof yukiTeDoen === "function" ? yukiTeDoen() : 0;   // 1.67: Yuki-koppeling
   if (nY) uit.push({ k: "fy", stempel: nY, ic: "€", toon: "accent", titel: nY === 1 ? "1 factuur wacht op één klik" : nY + " facturen wachten op één klik", sub: "Facturen › Yuki-koppeling — koppelen of de pdf bij de klant zetten; alles staat klaar", nav: "aankoop", ft: "yuki" });

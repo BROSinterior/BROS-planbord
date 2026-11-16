@@ -14,7 +14,7 @@ const VG_STATUS = { concept: ["Geen opname", "st-offerte"], wachtrij: ["In wacht
 const VG_SECTIE = [["beslissing", "Beslissingen", "Expliciet besloten, voorgesteld of enkel besproken — met de voorwaarden erbij."], ["vraag", "Open vragen", ""], ["actie", "Actiepunten", "Een actiepunt komt pas in de takenlijst als je het bevestigt. Ontbreekt een verantwoordelijke of deadline, dan blijft die leeg (nog te bepalen)."],
   ["meerwerk", "Mogelijk meerwerk", "Enkel ter info: er wordt niets aangepast in de offerte, meetstaat of facturatie."], ["gegeven", "Kritieke gegevens", "Bedragen, maten, hoeveelheden, namen, codes en datums: controleer elk gegeven tegen de opname, ook als er geen waarschuwing staat."]];
 const VG_AARD = { besloten: ["besloten", "st-afgerond"], voorgesteld: ["voorgesteld", "st-lopend"], besproken: ["besproken", "st-offerte"] };
-const vgOk = () => schemaV() >= 51 && !!S.vergaderingen;
+const vgOk = () => !!S.vergaderingen;
 const vgN = (x) => { const n = Number(x); return x !== null && x !== "" && isFinite(n) ? n : ""; };   // getal veilig in een attribuut of tekst
 const vgTijd = (sec) => { if (sec == null || sec === "") return ""; const s = Math.max(0, Math.floor(Number(sec))); return s >= 3600 ? `${Math.floor(s / 3600)}:${String(Math.floor(s / 60) % 60).padStart(2, "0")}:${String(s % 60).padStart(2, "0")}` : `${String(Math.floor(s / 60)).padStart(2, "0")}:${String(s % 60).padStart(2, "0")}`; };
 const vgOf = (pid) => Object.values(S.vergaderingen || {}).filter(v => v.project_id === pid).sort((a, b) => (b.datum || "").localeCompare(a.datum || "") || (b.created_at || "").localeCompare(a.created_at || ""));
@@ -47,7 +47,6 @@ const vgOpenPunten = (pid) => { const ids = new Set(vgOf(pid).filter(v => v.stat
 
 /* ---------- lijst per project + overzicht ---------- */
 function vVergaderingen(p) {
-  if (schemaV() < 51) return SCHEMA_HINT(51);
   if (VG.laatsteProject !== p.id) { VG.laatsteProject = p.id; VG.bewerk = null; VG.toevoegen = null; if (VG.open && S.vergaderingen[VG.open]?.project_id !== p.id) VG.open = null; }
   const open = VG.open && S.vergaderingen[VG.open];
   if (open && open.project_id === p.id) return vVergadering(open);
@@ -81,8 +80,8 @@ function vgOverzicht(p) {
 function vgIntern(p) {
   const taken = tasksOf(p.id).filter(t => t.status !== "done").sort((a, b) => (a.eind || "9999").localeCompare(b.eind || "9999") || (a.titel || "").localeCompare(b.titel || ""));
   return `<div class="notice" style="margin:0 0 16px">Het interne project van BROS: eigen vergaderingen, beslissingen en de interne takenlijst. Zichtbaar voor het hele team, nooit voor klanten.</div>`
-    + (schemaV() >= 51 ? vgOverzicht(p) : SCHEMA_HINT(51))
-    + `<div class="panel"><div class="panel-head"><h3>Interne takenlijst <span class="muted num" style="font-weight:400">${taken.length} open</span></h3><div class="actions">${schemaV() >= 51 ? `<button class="btn sm" data-ptab="vergaderingen">Vergaderingen</button>` : ""}<button class="btn sm" data-ptab="taken">Alle taken</button><button class="btn sm primary" data-act="new-task" data-pid="${p.id}">+ Taak</button></div></div>
+    + (vgOverzicht(p))
+    + `<div class="panel"><div class="panel-head"><h3>Interne takenlijst <span class="muted num" style="font-weight:400">${taken.length} open</span></h3><div class="actions"><button class="btn sm" data-ptab="vergaderingen">Vergaderingen</button><button class="btn sm" data-ptab="taken">Alle taken</button><button class="btn sm primary" data-act="new-task" data-pid="${p.id}">+ Taak</button></div></div>
       ${taken.length ? `<div class="tw"><table class="t"><tbody>${taken.slice(0, 25).map(t => `<tr class="click" data-edit-task="${t.id}"><td><div class="row-title">${esc(t.titel)}${t.vergadering_id && S.vergaderingen?.[t.vergadering_id] ? `<small>uit vergadering “${esc(S.vergaderingen[t.vergadering_id].onderwerp)}”</small>` : ""}</div></td><td>${wieCell(t)}</td><td class="num" style="color:${isLate(t) ? "var(--crit)" : "inherit"}">${t.eind ? fmt(t.eind) : "—"}</td><td>${pill(t)}</td></tr>`).join("")}</tbody></table></div>${taken.length > 25 ? `<div class="panel-body muted" style="font-size:12px">+ ${taken.length - 25} meer in het tabblad Taken.</div>` : ""}` : `<div class="empty"><b>Geen open interne taken</b></div>`}</div>`;
 }
 
@@ -126,7 +125,7 @@ function vVergadering(v) {
       <div class="vg-meta">${vgStatusPill(v)} <span class="muted">Deelnemers:</span> ${deeln} <span class="muted">· Controle door:</span> ${v.controleur ? esc(userById(v.controleur).name) : `<span class="pill late">nog te bepalen</span>`}</div></div>
       <div class="actions">${kanSpelen ? `<button class="btn" data-vg-act="speel" data-id="${v.id}" data-s="0">▶ Opname afspelen</button>` : ""}${v.drive_url ? `<a class="btn" href="${esc(safeUrl(v.drive_url))}" target="_blank" rel="noopener" title="Het origineel in de projectmap (Vergaderingen)">Origineel op Drive ↗</a>` : ""}
         ${!vast ? `<button class="btn" data-vg-act="bewerk-vg" data-id="${v.id}">Bewerken</button>` : ""}${v.opname && (v.status === "controle" || v.status === "mislukt") ? `<button class="btn" data-vg-act="opnieuw" data-id="${v.id}">Opnieuw verwerken…</button>` : ""}
-        ${schemaV() >= 59 ? (Object.values(S.notities || {}).some(n => n.vergadering_id === v.id) ? `<button class="btn" data-vg-act="notitie" data-id="${v.id}" title="Het verslag met de to-do's per verantwoordelijke in Notities">📝 Verslag in Notities</button>` : (!v.opname || vast) ? `<button class="btn" data-vg-act="notitie" data-id="${v.id}" title="Maak van deze vergadering een notitie (verslag) met de to-do's per verantwoordelijke">📝 Verslag maken in Notities</button>` : "") : ""}
+        ${Object.values(S.notities || {}).some(n => n.vergadering_id === v.id) ? `<button class="btn" data-vg-act="notitie" data-id="${v.id}" title="Het verslag met de to-do's per verantwoordelijke in Notities">📝 Verslag in Notities</button>` : (!v.opname || vast) ? `<button class="btn" data-vg-act="notitie" data-id="${v.id}" title="Maak van deze vergadering een notitie (verslag) met de to-do's per verantwoordelijke">📝 Verslag maken in Notities</button>` : ""}
         <button class="btn" data-vg-act="volgende" data-pid="${v.project_id}" data-id="${v.id}" title="Nieuwe vergadering met de open taken en beslissingen als agenda">Volgende vergadering</button>
         ${v.status === "concept" && !v.opname ? `<button class="btn ghost danger" data-vg-act="weg" data-id="${v.id}">Verwijderen</button>` : ""}</div></div>
     ${banner}${agenda}
@@ -688,7 +687,6 @@ function vgTaakLink(t) {
 
 /* ---------- Instellingen › Vergaderingen & opnames (beheer) ---------- */
 function vVergaderInstellingen() {
-  if (schemaV() < 51) return `<div class="panel" style="margin-bottom:16px"><div class="panel-head"><h3>Vergaderingen &amp; opnames</h3><span class="pill st-offerte">nog niet geactiveerd</span></div><div class="panel-body">${SCHEMA_HINT(51)}</div></div>`;
   const w = vgVerwerker(); const i = (w.r && w.r.info) || {};
   const vs = Object.values(S.vergaderingen || {});
   const opslag = vs.reduce((s, v) => s + (Number(v.afspeel_grootte) || 0) + (v.opname && !v.inbox_leeg ? Number(v.opname.grootte) || 0 : 0), 0);

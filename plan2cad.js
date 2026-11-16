@@ -12,7 +12,7 @@ const P2C = { bezig: {}, open: {} };
 const P2C_STATUS = { wachtrij: ["In wachtrij", "st-lopend"], bezig: ["Wordt omgezet", "st-lopend"], klaar: ["Klaar", "st-afgerond"], controle: ["Schaal controleren", "st-on_hold"], mislukt: ["Mislukt", "late"], geannuleerd: ["Gestopt", "st-offerte"] };
 const P2C_KEUZE = { automatisch: "automatisch gevonden", opgegeven: "opgegeven", voorlopig: "voorlopig — beste gok", papiermaat: "nog niet op schaal (papiermaat)", kalibratie: "gekalibreerd met twee punten", voorstel: "gekozen voorstel" };
 const P2C_MAX = 50 * 1024 * 1024;   // max. 50 MB per bestand (opslag 'plan2cad', script 054)
-const p2cOk = () => schemaV() >= 54 && !!S.plan_omzettingen;
+const p2cOk = () => !!S.plan_omzettingen;
 const p2cOf = (pid) => Object.values(S.plan_omzettingen || {}).filter(o => o.project_id === pid).sort((a, b) => (b.created_at || "").localeCompare(a.created_at || ""));
 const p2cNaam = (n) => String(n || "plan").normalize("NFKD").replace(/[̀-ͯ]/g, "").replace(/[^A-Za-z0-9._-]+/g, "_").replace(/^[._]+/, "").slice(-120) || "plan";
 const p2cGetal = (x) => { const n = Number(String(x ?? "").replace(",", ".").replace(/^\s*1\s*[:/]\s*/, "")); return isFinite(n) && n > 0 ? n : null; };
@@ -38,7 +38,6 @@ function p2cUitKalibratie(r) {
 
 /* ---------- het vak in het tabblad Plannen ---------- */
 function p2cSectie(p) {
-  if (schemaV() < 54) return "";
   const lijst = p2cOf(p.id);
   const up = Object.values(P2C.bezig).filter(u => u.pid === p.id);
   return `<div class="panel" style="margin-bottom:16px"><div class="panel-head"><div><h3>Plannen omzetten naar DXF/DWG</h3><div class="muted" style="font-size:12px;margin-top:2px">Plan2CAD op de verwerkingscomputer: pdf (vector of scan) of foto van een plan → DXF en DWG op ware grootte (mm, 1:1), in de projectmap › Plannen/DXF. ${p2cVerwerker()}</div></div></div>

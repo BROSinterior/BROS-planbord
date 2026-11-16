@@ -5,7 +5,7 @@
    ("PB/Klant, onderwerp" + adres) en mailt het de deelnemers een agendabestand. De deelnemers zien de afspraak
    in hun portaal (klant_afspraken / aan_afspraken) en zetten ze daar in hun eigen agenda.
    ===================================================================== */
-const afsReady = () => typeof schemaV === "function" && schemaV() >= 41;
+const afsReady = () => typeof schemaV === "function" && true;
 const AFS_PLAATS = { werf: "Op de werf", kantoor: "Op kantoor BROS", elders: "Ander adres" };
 const AFS_BROS_ADRES = (window.BROS_AGENDA && window.BROS_AGENDA.BROS_ADRES) || "BROS, Kloosterstraat 165, 2000 Antwerpen";
 const afsWerfAdres = (p) => p ? [p.adres, [p.postcode, p.gemeente].filter(Boolean).join(" ")].filter(Boolean).join(", ") : "";

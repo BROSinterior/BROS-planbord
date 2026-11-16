@@ -4,7 +4,7 @@
    nooit prijzen van BROS of van andere aannemers. Schrijven gaat via functies (opgelost melden, prijzen, vragen).
    ===================================================================== */
 if (window.top !== window.self) { try { window.top.location.replace(window.location.href); } catch (e) { document.documentElement.innerHTML = ""; } }   // niet in een vreemd frame (clickjacking)
-const PORTAAL_VERSION = "1.49.0";
+const PORTAAL_VERSION = "1.71.0";
 const todayLocal = () => { const n = new Date(); return `${n.getFullYear()}-${String(n.getMonth() + 1).padStart(2, "0")}-${String(n.getDate()).padStart(2, "0")}`; };
 const safeUrl = (u) => /^https?:\/\//i.test(String(u || "")) ? u : "#";
 const cfg = window.PLANBORD_CONFIG || {};
@@ -258,7 +258,7 @@ function vDocumenten(p) {
   const groups = [...new Set(docs.map(d => d.pad || ""))];
   return `<h1 style="margin-bottom:6px">Documenten en verslagen</h1><p class="muted" style="margin-bottom:16px">Werfverslagen die je ontving en de plannen en documenten die BROS met jou deelt — altijd de laatste versie.</p>
     ${ws.length ? `<div class="panel" style="margin-bottom:16px"><div class="panel-head"><h2>Werfverslagen</h2></div><table class="t"><tbody>${ws.map(w => `<tr><td class="num" style="width:60px">${w.nr}</td><td><b>${esc(w.titel || "Werfverslag " + w.nr)}</b><div class="muted" style="font-size:13px">${fmtLang(w.datum)} · ${w.punten} punt${w.punten === 1 ? "" : "en"}</div></td><td class="r"><a class="btn sm" href="${esc(safeUrl(w.pdf_url))}" target="_blank" rel="noopener">Pdf openen</a></td></tr>`).join("")}</tbody></table></div>` : ""}
-    ${docs.length ? `<div class="stack">${groups.map(g => `<div class="panel"><div class="panel-head"><h3>${esc(g.replace(/\//g, " › ") || "Algemeen")}</h3></div><div class="panel-body" style="padding-top:4px;padding-bottom:4px">${docs.filter(d => (d.pad || "") === g).map(d => `<a class="doc" href="${esc(safeUrl(d.url))}" target="_blank" rel="noopener"><span class="ic">${esc(ext(d.naam))}</span><span><div class="nm">${esc(d.naam)}</div><small>${d.gewijzigd ? fmt(d.gewijzigd) : ""}${d.grootte ? " · " + size(d.grootte) : ""}</small></span></a>`).join("")}</div></div>`).join("")}</div>` : `<div class="panel"><div class="empty"><b>Nog geen documenten gedeeld</b>Zodra BROS plannen of documenten met jou deelt, verschijnen ze hier.</div></div>`}`;
+    ${docs.length ? `<div class="stack">${groups.map(g => `<div class="panel"><div class="panel-head"><h3>${esc(g.replace(/\//g, " › ") || "Algemeen")}</h3></div><div class="panel-body" style="padding-top:4px;padding-bottom:4px">${docs.filter(d => (d.pad || "") === g).map(d => `<a class="doc" href="${esc(safeUrl(d.url))}" target="_blank" rel="noopener" data-doc-open="${esc(d.id)}"><span class="ic">${esc(ext(d.naam))}</span><span><div class="nm">${esc(d.naam)}</div><small>${d.gewijzigd ? fmt(d.gewijzigd) : ""}${d.grootte ? " · " + size(d.grootte) : ""}</small></span></a>`).join("")}</div></div>`).join("")}</div>` : `<div class="panel"><div class="empty"><b>Nog geen documenten gedeeld</b>Zodra BROS plannen of documenten met jou deelt, verschijnen ze hier.</div></div>`}`;
 }
 function vPlanning(p) {
   const fasen = D().fasen; const plan = Object.fromEntries(D().planning.filter(x => x.project_id === p.id).map(x => [x.fase_nr, x])); const nu = p.fase_nr;
@@ -944,3 +944,23 @@ document.addEventListener("visibilitychange", () => { if (document.visibilitySta
 // 1.48: na slaap/terugkeer meteen een geldig (ververst) token, zodat mails naar BROS niet mislukken met een verlopen login
 document.addEventListener("visibilitychange", () => { if (document.visibilityState === "visible" && S.session) sb.auth.getSession().then(r => { if (r && r.data && r.data.session) S.session = r.data.session; }).catch(() => { }); });
 boot();
+
+/* 1.71: documenten openen via het Drive-script (enkel na login) in plaats van via een openbare Drive-link */
+async function docOpenen(id, url) {
+  const w = window.open("", "_blank");
+  if (w) { try { w.document.title = "Document laden…"; w.document.body.innerHTML = '<p style="font:15px system-ui;margin:40px;color:#555">Document laden…</p>'; } catch (e) { } }
+  try {
+    if (!cfg.driveScriptUrl) throw new Error("Documenten openen is nog niet ingesteld bij BROS.");
+    const r = await fetch(cfg.driveScriptUrl, { method: "POST", body: JSON.stringify({ action: "bestand", id, token: S.session?.access_token || "" }), redirect: "follow" });
+    const j = await r.json(); if (!j.ok) { const e = new Error(j.error || "Document niet beschikbaar"); e.overslaan = !!j.overslaan; throw e; }
+    const bin = atob(j.b64); const u8 = new Uint8Array(bin.length); for (let i = 0; i < bin.length; i++) u8[i] = bin.charCodeAt(i);
+    const u = URL.createObjectURL(new Blob([u8], { type: j.mime })); if (w) w.location = u; else location.href = u; setTimeout(() => URL.revokeObjectURL(u), 120000);
+  } catch (e) {
+    if (e.overslaan && url && url !== "#") { if (w) w.location = url; else window.open(url, "_blank", "noopener"); return; }
+    if (w) w.close(); toast("Document niet beschikbaar: " + e.message, 6000);
+  }
+}
+document.addEventListener("click", (e) => {
+  const a = e.target.closest && e.target.closest("a[data-doc-open]"); if (!a || e.metaKey || e.ctrlKey || e.shiftKey || e.button) return;
+  e.preventDefault(); docOpenen(a.dataset.docOpen, a.getAttribute("href"));
+});

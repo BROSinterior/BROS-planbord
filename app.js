@@ -3,7 +3,7 @@
    Statische webapp op Supabase (login, live-synchronisatie, rechten)
    ===================================================================== */
 if (window.top !== window.self) { try { window.top.location.replace(window.location.href); } catch (e) { document.documentElement.innerHTML = ""; } }   // niet in een vreemd frame (clickjacking)
-const APP_VERSION = "1.69.0";
+const APP_VERSION = "1.73.0";
 const PROJ_STATUS = { offerte: "In offerte", lopend: "Lopend", on_hold: "On hold", afgerond: "Afgerond", verloren: "Verloren" };
 const KLANTTYPE = { particulier: "Particulier", zakelijk: "Zakelijk" };
 const KLANTCODE = { particulier: "PAR", zakelijk: "ZAK" };
@@ -87,11 +87,11 @@ const faseShort = (nr) => nr && S.fasen[nr] ? S.fasen[nr].naam : "";
 const fasenList = () => Object.values(S.fasen).filter(f => f.actief !== false).sort((a, b) => a.nr - b.nr);
 // 1.64 (script 060): wat de klant in het portaal ziet — "stap" = plaats in de lijst actieve fasen, net als in het portaal
 const klantStap = (p) => { if (!p) return ""; if (p.status === "afgerond") return "Opgeleverd"; const i = fasenList().findIndex(f => f.nr === p.fase_nr); return i >= 0 ? `stap ${i + 1} · ${fasenList()[i].naam}` : (PROJ_STATUS[p.status] || p.status || "—"); };
-const faseBron = (p) => { if (schemaV() < 60 || !p) return ""; const op = p.fase_sinds ? " · " + fmtLong(lokDag(p.fase_sinds)) : "";
+const faseBron = (p) => { if (!p) return ""; const op = p.fase_sinds ? " · " + fmtLong(lokDag(p.fase_sinds)) : "";
   if (p.fase_vast) return "🔒 vastgezet" + op; if (p.fase_bron === "auto") return "automatisch" + (p.fase_reden ? ": " + p.fase_reden : "") + op; if (p.fase_bron === "manueel") return "zelf gekozen" + op + " · schuift verder mee met het werk"; return "schuift automatisch mee met het werk"; };
 // na het afvinken: is de projectfase mee opgeschoven? → project herladen en kort melden
 async function faseNa(pid, f0) {
-  if (schemaV() < 60 || !pid || !S.projecten[pid]) return;
+  if (!pid || !S.projecten[pid]) return;
   const { data } = await sb.from("projecten").select("*").eq("id", pid).maybeSingle(); if (!data) return;
   S.projecten[pid] = { ...S.projecten[pid], ...data }; renderSoon();
   if (data.fase_nr !== f0 && data.fase_bron === "auto") toast(`${S.projecten[pid].klant || "Project"}: fase → ${faseName(data.fase_nr)} — de klant ziet nu ${klantStap(data)}`, 5000);
@@ -140,9 +140,9 @@ function telFmt(s) {
 let toastT; function toast(msg, ms = 2800) { const t = $("#toast"); t.textContent = msg; t.classList.add("show"); clearTimeout(toastT); toastT = setTimeout(() => t.classList.remove("show"), Math.max(2800, ms)); }
 
 /* ---------- data laden en live houden ---------- */
-const TABLES = { profiles: "profiles", tarieven: "tarieven", fasen: "fasen", standaardtaken: "standaardtaken", projecten: "projecten", taken: "taken", uren: "uren", documenten: "documenten", instellingen: "instellingen", loten: "loten", posten: "posten", meetstaat_posten: "meetstaat_posten", vorderingen: "vorderingen", yuki_facturen: "yuki_facturen", vordering_regels: "vordering_regels", contacten: "contacten", project_contacten: "project_contacten", goedkeuringen: "goedkeuringen", notities: "notities", werfbezoeken: "werfbezoeken", vaststellingen: "vaststellingen", klant_timing: "klant_timing", werfplannen: "werfplannen", werfverslagen: "werfverslagen", taak_voorstellen: "taak_voorstellen", assistent_berichten: "assistent_berichten", prijsaanvragen: "prijsaanvragen", prijsaanvraag_regels: "prijsaanvraag_regels", tekenplannen: "tekenplannen", aannemer_meetstaten: "aannemer_meetstaten", aannemer_meetstaat_posten: "aannemer_meetstaat_posten", keuzes: "keuzes", keuze_opties: "keuze_opties", meerwerk_aanvragen: "meerwerk_aanvragen", werf_fotos: "werf_fotos", werf_updates: "werf_updates", woningdossier: "woningdossier", prijsvragen: "prijsvragen", prijsvraag_gunningen: "prijsvraag_gunningen", goedkeuring_tekenaars: "goedkeuring_tekenaars", aannemer_facturen: "aannemer_facturen", betaalherinneringen: "betaalherinneringen", fin_plan: "fin_plan", fin_vaste_kosten: "fin_vaste_kosten", fin_instellingen: "fin_instellingen", vergaderingen: "vergaderingen", vergadering_punten: "vergadering_punten", verwerkingen: "verwerkingen", verwerker_status: "verwerker_status", ms_raming: "ms_raming", document_aannemers: "document_aannemers", plan_omzettingen: "plan_omzettingen", render_beelden: "render_beelden", render_opdrachten: "render_opdrachten", render_afspraken: "render_afspraken", render_presentaties: "render_presentaties", render_ruimtes: "render_ruimtes", render_standpunten: "render_standpunten", taak_punten: "taak_punten", ontwerp_rondes: "ontwerp_rondes", ontwerp_documenten: "ontwerp_documenten", ontwerp_feedback: "ontwerp_feedback" };   // 1.59: renders (script 055) · 1.63: to-do's en ontwerptraject (script 059)
-const OPTIONAL_TABLES = ["yuki_facturen", "tarieven", "documenten", "instellingen", "loten", "posten", "meetstaat_posten", "vorderingen", "vordering_regels", "contacten", "project_contacten", "goedkeuringen", "notities", "werfbezoeken", "vaststellingen", "klant_timing", "werfplannen", "werfverslagen", "taak_voorstellen", "assistent_berichten", "prijsaanvragen", "prijsaanvraag_regels", "tekenplannen", "aannemer_meetstaten", "aannemer_meetstaat_posten", "keuzes", "keuze_opties", "meerwerk_aanvragen", "werf_fotos", "werf_updates", "woningdossier", "prijsvragen", "prijsvraag_gunningen", "goedkeuring_tekenaars", "aannemer_facturen", "betaalherinneringen", "fin_plan", "fin_vaste_kosten", "fin_instellingen", "vergaderingen", "vergadering_punten", "verwerkingen", "verwerker_status", "ms_raming", "document_aannemers", "plan_omzettingen", "render_beelden", "render_opdrachten", "render_afspraken", "render_presentaties", "render_ruimtes", "render_standpunten", "taak_punten", "ontwerp_rondes", "ontwerp_documenten", "ontwerp_feedback"]; // ontbreken zolang het bijbehorende sql-script niet is uitgevoerd
-const rowKey = (t, r) => t === "fasen" || t === "loten" ? r.nr : t === "klant_timing" ? r.project_id + "|" + r.fase_nr : t === "tarieven" ? r.user_id : t === "instellingen" ? r.key : t === "prijsvraag_gunningen" ? r.prijsvraag_id + "|" + r.post_id : t === "vordering_regels" ? (r.id || r.vordering_id + "|" + r.lot + "|" + (r.post_id || "")) : t === "verwerker_status" ? r.naam : t === "document_aannemers" ? r.document_id + "|" + r.contact_id : r.id;
+const TABLES = { profiles: "profiles", tarieven: "tarieven", fasen: "fasen", standaardtaken: "standaardtaken", projecten: "projecten", taken: "taken", uren: "uren", documenten: "documenten", instellingen: "instellingen", loten: "loten", posten: "posten", meetstaat_posten: "meetstaat_posten", vorderingen: "vorderingen", yuki_facturen: "yuki_facturen", vordering_regels: "vordering_regels", contacten: "contacten", project_contacten: "project_contacten", goedkeuringen: "goedkeuringen", notities: "notities", werfbezoeken: "werfbezoeken", vaststellingen: "vaststellingen", klant_timing: "klant_timing", werfplannen: "werfplannen", werfverslagen: "werfverslagen", taak_voorstellen: "taak_voorstellen", assistent_berichten: "assistent_berichten", prijsaanvragen: "prijsaanvragen", prijsaanvraag_regels: "prijsaanvraag_regels", tekenplannen: "tekenplannen", aannemer_meetstaten: "aannemer_meetstaten", aannemer_meetstaat_posten: "aannemer_meetstaat_posten", keuzes: "keuzes", keuze_opties: "keuze_opties", meerwerk_aanvragen: "meerwerk_aanvragen", werf_fotos: "werf_fotos", werf_updates: "werf_updates", woningdossier: "woningdossier", prijsvragen: "prijsvragen", prijsvraag_gunningen: "prijsvraag_gunningen", goedkeuring_tekenaars: "goedkeuring_tekenaars", aannemer_facturen: "aannemer_facturen", betaalherinneringen: "betaalherinneringen", fin_plan: "fin_plan", fin_vaste_kosten: "fin_vaste_kosten", fin_instellingen: "fin_instellingen", vergaderingen: "vergaderingen", vergadering_punten: "vergadering_punten", verwerkingen: "verwerkingen", verwerker_status: "verwerker_status", ms_raming: "ms_raming", document_aannemers: "document_aannemers", plan_omzettingen: "plan_omzettingen", render_beelden: "render_beelden", render_opdrachten: "render_opdrachten", render_afspraken: "render_afspraken", render_presentaties: "render_presentaties", render_ruimtes: "render_ruimtes", render_standpunten: "render_standpunten", taak_punten: "taak_punten", ontwerp_rondes: "ontwerp_rondes", ontwerp_documenten: "ontwerp_documenten", ontwerp_feedback: "ontwerp_feedback", mijn_markeringen: "mijn_markeringen" };   // 1.59: renders (script 055) · 1.63: to-do's en ontwerptraject (script 059)
+const OPTIONAL_TABLES = ["yuki_facturen", "tarieven", "documenten", "instellingen", "loten", "posten", "meetstaat_posten", "vorderingen", "vordering_regels", "contacten", "project_contacten", "goedkeuringen", "notities", "werfbezoeken", "vaststellingen", "klant_timing", "werfplannen", "werfverslagen", "taak_voorstellen", "assistent_berichten", "prijsaanvragen", "prijsaanvraag_regels", "tekenplannen", "aannemer_meetstaten", "aannemer_meetstaat_posten", "keuzes", "keuze_opties", "meerwerk_aanvragen", "werf_fotos", "werf_updates", "woningdossier", "prijsvragen", "prijsvraag_gunningen", "goedkeuring_tekenaars", "aannemer_facturen", "betaalherinneringen", "fin_plan", "fin_vaste_kosten", "fin_instellingen", "vergaderingen", "vergadering_punten", "verwerkingen", "verwerker_status", "ms_raming", "document_aannemers", "plan_omzettingen", "render_beelden", "render_opdrachten", "render_afspraken", "render_presentaties", "render_ruimtes", "render_standpunten", "taak_punten", "ontwerp_rondes", "ontwerp_documenten", "ontwerp_feedback", "mijn_markeringen"]; // ontbreken zolang het bijbehorende sql-script niet is uitgevoerd
+const rowKey = (t, r) => t === "mijn_markeringen" ? r.user_id + "|" + r.soort + "|" + r.sleutel : t === "fasen" || t === "loten" ? r.nr : t === "klant_timing" ? r.project_id + "|" + r.fase_nr : t === "tarieven" ? r.user_id : t === "instellingen" ? r.key : t === "prijsvraag_gunningen" ? r.prijsvraag_id + "|" + r.post_id : t === "vordering_regels" ? (r.id || r.vordering_id + "|" + r.lot + "|" + (r.post_id || "")) : t === "verwerker_status" ? r.naam : t === "document_aannemers" ? r.document_id + "|" + r.contact_id : r.id;
 function ingest(table, rows) {
   if (table === "standaardtaken") { S.standaardtaken = rows.sort((a, b) => a.fase_nr - b.fase_nr || a.volgorde - b.volgorde); return; }
   const o = {}; rows.forEach(r => o[rowKey(table, r)] = r); S[table] = o; IDX = null;
@@ -154,7 +154,7 @@ const srcOf = (t) => VIEW_OF[t] && S.viewsOk !== false ? VIEW_OF[t] : t;
 // Supabase geeft max. 1000 rijen per aanvraag terug: in pagina's ophalen tot alles binnen is.
 // Altijd sorteren op een unieke kolom: zonder vaste volgorde geeft de database bij elke pagina een andere volgorde terug
 // en vallen er rijen tussen twee pagina's weg (zo misten posten in de meetstaat zodra er > 1000 rijen waren — fix v1.33.1).
-const ORDER_OF = { verwerker_status: ["naam"], fasen: ["nr"], loten: ["nr"], tarieven: ["user_id"], instellingen: ["key"], klant_timing: ["project_id", "fase_nr"], prijsvraag_gunningen: ["prijsvraag_id", "post_id"], document_aannemers: ["document_id", "contact_id"] };
+const ORDER_OF = { verwerker_status: ["naam"], fasen: ["nr"], loten: ["nr"], tarieven: ["user_id"], instellingen: ["key"], klant_timing: ["project_id", "fase_nr"], prijsvraag_gunningen: ["prijsvraag_id", "post_id"], document_aannemers: ["document_id", "contact_id"], mijn_markeringen: ["user_id", "soort", "sleutel"] };
 // 1.48: tabellen gesorteerd op id bladeren met een sleutel (id > laatste) i.p.v. OFFSET — blijft even snel als de tabel groeit
 const pagina = (src, t, from, PAGE, na) => { let q = sb.from(src).select("*"); (ORDER_OF[t] || ["id"]).forEach(c => { q = q.order(c, { ascending: true }); });
   if (!ORDER_OF[t]) { if (na != null) q = q.gt("id", na); return q.limit(PAGE); } return q.range(from, from + PAGE - 1); };
@@ -164,7 +164,7 @@ async function fetchAllRows(t) {
     let { data, error } = await pagina(src, t, from, PAGE, na);
     if (error && src !== t && /does not exist|42P01|schema cache/i.test(error.message || "")) {
       for (let i = 0; i < 2 && error; i++) { await new Promise(res => setTimeout(res, 1500)); ({ data, error } = await pagina(src, t, from, PAGE, na)); }   // vlak na een databasescript: even opnieuw
-      if (error && schemaV() >= 12) return { error, prijsFout: true };   // geen prijzen → niets laden i.p.v. bedragen van € 0
+      if (error) return { error, prijsFout: true };   // geen prijzen → niets laden i.p.v. bedragen van € 0
       if (error) { S.viewsOk = false; src = t; ({ data, error } = await pagina(src, t, from, PAGE, na)); }
     }
     if (error) return { error };
@@ -173,24 +173,83 @@ async function fetchAllRows(t) {
     from += PAGE; na = data[data.length - 1].id;
   }
 }
-async function loadAll() {
-  if (schemaV() >= 12) S.viewsOk = undefined;   // opnieuw proberen via de views
+/* 1.72: zware tabellen (veel rijen, niet nodig voor het eerste scherm) komen bij het opstarten pas ná de eerste weergave binnen.
+   Overzicht, Taken, Planning, Uren en de projectenlijst staan er zo meteen; de andere schermen tonen heel even "Laden…". */
+const ZWAAR = ["documenten", "assistent_berichten", "verwerkingen", "werf_fotos", "werf_updates", "vergadering_punten", "render_beelden", "render_opdrachten", "render_standpunten", "render_presentaties", "render_afspraken", "render_ruimtes", "plan_omzettingen", "ontwerp_feedback", "ontwerp_documenten", "aannemer_meetstaat_posten", "prijsaanvraag_regels", "taak_punten", "document_aannemers", "woningdossier", "tekenplannen"];
+// 1.72: modules die pas geladen worden wanneer nodig (modules.js); zonder modules.js gewoon doorgaan zoals vroeger
+const modOk = (n) => typeof moduleKlaar !== "function" || moduleKlaar(n);
+const modLaad = (n) => typeof laadModule === "function" ? laadModule(n) : Promise.resolve();
+const ZWAAR_VRIJ =["overzicht", "taken", "planning", "uren"];   // deze schermen wachten niet op de zware tabellen
+const zwaarWacht = () => S.zwaarKlaar === false && !(ZWAAR_VRIJ.includes(S.view) || (S.view === "projecten" && !S.project));
+async function laadTabellen(lijst) {
+  const res = await Promise.all(lijst.map(t => fetchAllRows(t)));
+  lijst.forEach((t, i) => { if (res[i].error) { if (res[i].prijsFout) { S.prijsFout = true; return; } if (!OPTIONAL_TABLES.includes(t)) throw res[i].error; } else ingest(t, res[i].data || []); });
+}
+async function loadAll(opts) {
+  S.viewsOk = undefined;   // opnieuw proberen via de views
   S.prijsFout = false;
-  const res = await Promise.all(Object.keys(TABLES).map(t => fetchAllRows(t)));
-  Object.keys(TABLES).forEach((t, i) => { if (res[i].error) { if (res[i].prijsFout) { S.prijsFout = true; return; } if (!OPTIONAL_TABLES.includes(t)) throw res[i].error; } else ingest(t, res[i].data || []); });
+  // 1.72: stand van het wijzigingenlogboek vóór het laden (wat daarna wijzigt, komt via het logboek). Bij de eerste keer is de
+  // schemaversie nog niet gekend (instellingen nog niet geladen) → gewoon proberen; zonder script 065 geeft dat een fout = null.
+  const wz = schemaV() >= 65 || !Object.keys(S.instellingen || {}).length ? await wzStand().catch(() => null) : null;
+  const gefaseerd = !!(opts && opts.gefaseerd);
+  await laadTabellen(Object.keys(TABLES).filter(t => !gefaseerd || !ZWAAR.includes(t)));
   S.me = S.profiles[S.session.user.id] || null;
   // sinds script 012 staan de prijzen enkel in de views: zonder views kloppen de bedragen niet → duidelijk melden
-  S.prijsFout = S.prijsFout || (S.viewsOk === false && schemaV() >= 12);
+  S.prijsFout = S.prijsFout || S.viewsOk === false;
+  if (wz) { S.wzTs = wz; S.wzLokaal = Date.now(); }
+  if (gefaseerd) { S.zwaarKlaar = false; zwaarLaden(); } else S.zwaarKlaar = true;
+}
+async function zwaarLaden() {
+  try { await laadTabellen(Object.keys(TABLES).filter(t => ZWAAR.includes(t))); }
+  catch (e) { console.warn("Niet alle gegevens geladen:", e && e.message); toast("Niet alle gegevens konden geladen worden — herlaad de pagina als iets ontbreekt.", 6000); }
+  S.zwaarKlaar = true; IDX = null; render();
+}
+
+/* ---------- 1.72 (script 065): één realtime-kanaal + bijwerken na een pauze via het wijzigingenlogboek ---------- */
+// pb_wijzigingen bevat per wijziging enkel tabel, sleutel en soort (I/U/D). Het Planbord haalt dan alleen die rijen op.
+const KEYCOL = { loten: "nr", fasen: "nr", tarieven: "user_id", instellingen: "key", verwerker_status: "naam" };
+const WZ_MAX = 3000;          // meer wijzigingen sinds de vorige keer → gewoon alles herladen
+const WZ_NIEUW = {};          // nieuwe aannemersfacturen: melding na het ophalen
+async function wzStand() {
+  const { data, error } = await sb.from("pb_wijzigingen").select("ts").order("id", { ascending: false }).limit(1);
+  if (error) return null;
+  return (data && data[0] && data[0].ts) || "1970-01-01T00:00:00Z";   // leeg logboek: alles wat er (nog) in komt, is nieuw
+}
+function wzVerwerk(rows) {
+  for (const w of rows) {
+    if (!w) continue;
+    if (w.ts && (!S.wzTs || new Date(w.ts) > new Date(S.wzTs))) { S.wzTs = w.ts; S.wzLokaal = Date.now(); }
+    const t = w.tabel; if (!TABLES[t] || !S[t]) continue;
+    if (S.bulk) { (S.bulkGemist = S.bulkGemist || new Set()).add(t); continue; }   // tijdens een bulkactie: achteraf de hele tabel (bulkKlaar)
+    if (t === "standaardtaken" || w.sleutel === "*") { rtQueue(t, "*"); continue; }
+    if (w.op === "D") { if (S[t][w.sleutel] !== undefined) { delete S[t][w.sleutel]; IDX = null; renderSoon(); } if (rtQ[t]) rtQ[t].delete(w.sleutel); continue; }
+    if (t === "aannemer_facturen" && w.op === "I") (WZ_NIEUW[t] = WZ_NIEUW[t] || new Set()).add(w.sleutel);
+    rtQueue(t, w.sleutel);
+  }
+}
+/** na een pauze: enkel wat er sindsdien wijzigde (met 2 min overlap: dubbel ophalen kan geen kwaad). false = toch alles herladen */
+async function wzDelta() {
+  if (schemaV() < 65 || !S.wzTs || !S.zwaarKlaar || Date.now() - (S.wzLokaal || 0) > 2 * 864e5) return false;   // logboek bewaart 3 dagen
+  const van = new Date(new Date(S.wzTs).getTime() - 120000).toISOString();
+  const { data, error } = await sb.from("pb_wijzigingen").select("id,tabel,sleutel,op,ts").gte("ts", van).order("id", { ascending: true }).limit(WZ_MAX);
+  if (error || !data || data.length >= WZ_MAX) return false;
+  S.wzLokaal = Date.now(); wzVerwerk(data);
+  clearTimeout(rtT); await rtFlush(); return true;
 }
 function subscribe() {
+  if (schemaV() >= 65) {   // 1.72: één kanaal voor alles
+    const ch = sb.channel("pb-wijzigingen");
+    ch.on("postgres_changes", { event: "INSERT", schema: "public", table: "pb_wijzigingen" }, (payload) => wzVerwerk([payload.new]));
+    ch.on("system", {}, (msg) => { if (msg && msg.status === "error") console.warn("Realtime niet actief — voer het laatste databasescript uit.", msg.message); });
+    ch.subscribe((status) => { if (status === "CHANNEL_ERROR" || status === "TIMED_OUT" || status === "CLOSED") { S.rtGemist = true; setTimeout(refetchAll, 3000); } });
+  } else
   // Eén kanaal per tabel: als één tabel niet in de realtime-publicatie zit, blijven de andere werken.
-  ["profiles", "tarieven", "fasen", "standaardtaken", "projecten", "taken", "uren", "documenten", "loten", "posten", "meetstaat_posten", "meetstaat_prijzen", "vorderingen", ...(schemaV() >= 62 && isBeheer() ? ["yuki_facturen"] : []), "vordering_regels", "contacten", "project_contacten", "goedkeuringen", "notities", "werfbezoeken", "vaststellingen", "klant_timing", "werfplannen", "werfverslagen", "taak_voorstellen", "assistent_berichten", "prijsaanvragen", "prijsaanvraag_regels", "tekenplannen", "aannemer_meetstaten", "keuzes", "keuze_opties", "meerwerk_aanvragen", "werf_fotos", "werf_updates", "woningdossier", "prijsvragen", "prijsvraag_gunningen", "goedkeuring_tekenaars", "aannemer_facturen", "betaalherinneringen", "fin_plan", "fin_vaste_kosten", "fin_instellingen", "vergaderingen", "vergadering_punten", "verwerkingen", "verwerker_status", "ms_raming", "document_aannemers", "plan_omzettingen", "render_beelden", "render_opdrachten", "render_afspraken", "render_presentaties", "render_ruimtes", "render_standpunten", "taak_punten", "ontwerp_rondes", "ontwerp_documenten", "ontwerp_feedback"].forEach(t => {
+  ["profiles", "tarieven", "fasen", "standaardtaken", "projecten", "taken", "uren", "documenten", "loten", "posten", "meetstaat_posten", "meetstaat_prijzen", "vorderingen", ...(isBeheer() ? ["yuki_facturen"] : []), "vordering_regels", "contacten", "project_contacten", "goedkeuringen", "notities", "werfbezoeken", "vaststellingen", "klant_timing", "werfplannen", "werfverslagen", "taak_voorstellen", "assistent_berichten", "prijsaanvragen", "prijsaanvraag_regels", "tekenplannen", "aannemer_meetstaten", "keuzes", "keuze_opties", "meerwerk_aanvragen", "werf_fotos", "werf_updates", "woningdossier", "prijsvragen", "prijsvraag_gunningen", "goedkeuring_tekenaars", "aannemer_facturen", "betaalherinneringen", "fin_plan", "fin_vaste_kosten", "fin_instellingen", "vergaderingen", "vergadering_punten", "verwerkingen", "verwerker_status", "ms_raming", "document_aannemers", "plan_omzettingen", "render_beelden", "render_opdrachten", "render_afspraken", "render_presentaties", "render_ruimtes", "render_standpunten", "taak_punten", "ontwerp_rondes", "ontwerp_documenten", "ontwerp_feedback", ...(schemaV() >= 64 ? ["mijn_markeringen"] : [])].forEach(t => {
     const ch = sb.channel("pb-" + t);
     ch.on("postgres_changes", { event: "*", schema: "public", table: t }, (payload) => {
       if (S.bulk) { (S.bulkGemist = S.bulkGemist || new Set()).add(t === "meetstaat_prijzen" ? "meetstaat_posten" : t); return; }   // tijdens een bulkactie niet per rij herbouwen; erna worden de gemiste tabellen herladen (bulkKlaar)
       if (t === "standaardtaken") { refetch(t); return; }
       if (t === "meetstaat_prijzen") { const pid = (payload.new || payload.old || {}).post_id; if (pid && S.meetstaat_posten[pid]) rtQueue("meetstaat_posten", pid); return; }
-      if (t === "loten" && schemaV() < 33) rtQueue("meetstaat_posten", "*");   // vóór script 033: lotmarge gewijzigd → alle klantprijzen herladen
       if (VIEW_OF[t] && S.viewsOk !== false) { if (payload.eventType === "DELETE") { delete S[t][rowKey(t, payload.old)]; render(); } else rtQueue(t, rowKey(t, payload.new)); return; }
       if (payload.eventType === "DELETE") { delete S[t][rowKey(t, payload.old)]; }
       else { S[t][rowKey(t, payload.new)] = payload.new; }
@@ -206,7 +265,7 @@ function subscribe() {
   let wegSinds = 0;
   document.addEventListener("visibilitychange", () => {
     if (document.visibilityState === "hidden") { wegSinds = Date.now(); return; }
-    if (S.rtGemist || !wegSinds || Date.now() - wegSinds > 120000) { S.rtGemist = false; refetchAll(); }
+    if (S.rtGemist || !wegSinds || Date.now() - wegSinds > (schemaV() >= 65 ? 30000 : 120000)) { S.rtGemist = false; refetchAll(); }   // 1.72: bijwerken is nu goedkoop (enkel de wijzigingen) → al na 30 s weg
   });
 }
 let renderRaf = 0;
@@ -222,8 +281,12 @@ async function rtFlush() {
   for (const [t, keys] of werk) {
     try {
       if (keys.includes("*") || keys.length > 60) { const { data, error } = await fetchAllRows(t); if (!error) ingest(t, data || []); continue; }
-      const col = t === "loten" ? "nr" : "id"; const { data, error } = await sb.from(srcOf(t)).select("*").in(col, keys);
-      if (!error) (data || []).forEach(r => { S[t][rowKey(t, r)] = r; });
+      const col = KEYCOL[t] || "id"; const { data, error } = await sb.from(srcOf(t)).select("*").in(col, keys);
+      if (error) continue;
+      const terug = new Set(); (data || []).forEach(r => { const k = rowKey(t, r); S[t][k] = r; terug.add(String(k)); });
+      keys.forEach(k => { if (!terug.has(String(k))) delete S[t][k]; });   // 1.72: niet meer terug = verwijderd of niet meer zichtbaar voor jou
+      if (WZ_NIEUW[t]) { (data || []).filter(r => WZ_NIEUW[t].has(String(r.id))).forEach(r => { if (t === "aannemer_facturen" && typeof afbAannemer === "function") toast(`Nieuwe factuur van ${afbAannemer(r)}: ${r.nummer || ""} · ${eur2(r.bedrag_excl)} excl. btw`, 6000); }); delete WZ_NIEUW[t]; }
+      if (t === "profiles") S.me = S.profiles[S.session.user.id] || S.me;
     } catch (e) { }
   }
   IDX = null; render();
@@ -242,7 +305,7 @@ async function msRefetch(ids) {
   }
   render();
 }
-async function refetchAll() { try { await loadAll(); render(); } catch (e) { } }
+async function refetchAll() { try { if (await wzDelta().catch(() => false)) return; await loadAll(); render(); } catch (e) { } }   // 1.72: eerst enkel de wijzigingen
 
 /* ---------- schrijven (optimistisch: eerst lokaal, dan database) ---------- */
 async function dbInsert(table, row) {
@@ -282,6 +345,7 @@ async function dbDelete(table, id) {
 /* ---------- Drive-koppeling (Google Apps Script als brosburo@gmail.com) ---------- */
 const driveCfg = () => (S.instellingen.drive && S.instellingen.drive.value) || {};
 const schemaV = () => Number(S.instellingen.app?.value?.versie_schema) || 0;   // welk databasescript is al uitgevoerd
+const SCHEMA_MIN = 63;   // 1.73: code voor oudere databanken is opgeruimd — het Planbord vraagt minstens script 063
 const SCHEMA_HINT = (n) => `<div class="empty" style="padding:10px 12px;margin-bottom:12px"><b>Databasescript ${String(n).padStart(3, "0")} nog niet uitgevoerd</b>Voer <code>sql/${String(n).padStart(3, "0")}_*.sql</code> uit in Supabase om deze functie te activeren.</div>`;
 const driveReady = () => !!(driveCfg().url && driveCfg().secret);
 /* na uitloggen niets van de vorige gebruiker laten rondslingeren (gedeelde computer) */
@@ -566,7 +630,7 @@ async function docShare(id, on, wie = "klant") {
 }
 const docsOf = (pid) => Object.values(S.documenten).filter(d => d.project_id === pid).sort((a, b) => (a.pad || "").localeCompare(b.pad || "") || a.naam.localeCompare(b.naam));
 /* 1.56 (script 053): een document deel je bewust met gekozen aannemers — een aannemer ziet enkel wat met hém gedeeld is */
-const docPerAannemer = () => schemaV() >= 53 && !!S.document_aannemers;
+const docPerAannemer = () => !!S.document_aannemers;
 const docAannOf = (did) => Object.values(S.document_aannemers || {}).filter(x => x.document_id === did).map(x => x.contact_id);
 const projAannemers = (pid) => contactsOf(pid).filter(x => x.rol !== "bouwheer" && x.rol !== "contactpersoon").filter((x, i, a) => a.findIndex(y => y.c.id === x.c.id) === i);
 function docAannForm(id) {
@@ -631,7 +695,7 @@ function contactForm(c = {}, after) {
   const isNew = !c.id; const ps = isNew ? [] : projectsOfContact(c.id);
   openModal(isNew ? "Nieuw contact" : "Contact bewerken", `<div class="form-grid">
     <div class="field"><label for="c_soort">Soort</label><select id="c_soort" name="soort">${opts(Object.entries(CONTACT_SOORT), c.soort || "klant")}</select></div>
-    ${schemaV() >= 36 ? `<div class="field"><label for="c_taal">Taal portaal en mails</label><select id="c_taal" name="taal">${opts([["nl", "Nederlands"], ["en", "English"]], c.taal || "nl")}</select></div>` : ""}
+    <div class="field"><label for="c_taal">Taal portaal en mails</label><select id="c_taal" name="taal">${opts([["nl", "Nederlands"], ["en", "English"]], c.taal || "nl")}</select></div>
     <div class="field klant"><label>Type klant</label><div class="seg"><label><input type="radio" name="klanttype" value="particulier" ${(c.klanttype || "particulier") === "particulier" ? "checked" : ""}> Particulier</label><label><input type="radio" name="klanttype" value="zakelijk" ${c.klanttype === "zakelijk" ? "checked" : ""}> Zakelijk</label></div></div>
     <div class="field"><label for="c_naam">Naam <span class="muted" style="font-weight:400">(persoon of bedrijf, zoals in de projectmap)</span></label><input id="c_naam" name="naam" required value="${esc(c.naam || "")}"></div>
     <div class="field"><label for="c_bedrijf">Bedrijfsnaam</label><input id="c_bedrijf" name="bedrijf" value="${esc(c.bedrijf || "")}"></div>
@@ -677,7 +741,7 @@ function linkContactForm(pid, rol) {
     <div class="field span2"><label for="lc_c">Contact</label><select id="lc_c" name="contact_id" size="8" style="height:auto">${cs.map(c => `<option value="${c.id}" data-soort="${c.soort}">${esc(contactLabel(c))} — ${CONTACT_SOORT[c.soort]}${c.vakgebied ? " · " + esc(c.vakgebied) : ""}${c.gemeente ? " · " + esc(c.gemeente) : ""}</option>`).join("")}</select><span class="muted" style="font-size:12px">Staat de partij er nog niet bij? <button type="button" class="btn ghost sm" data-act="contact-new-inline">+ Nieuw contact</button></span></div>
     <div class="field span2 lot"><label>Loten van dit project voor deze partij</label><div class="fase-list">${lotenList().map(l => `<label class="chk"><input type="checkbox" name="lot" value="${l.nr}"> <span>${esc(lotName(l.nr))}</span></label>`).join("")}</div></div>
     <div class="field span2"><label for="lc_not">Notitie</label><input id="lc_not" name="notitie" placeholder="bv. offerte gevraagd op 12/09"></div>
-    ${schemaV() >= 28 && driveReady() ? `<div class="field span2 lc-mail"><label class="chk"><input type="checkbox" name="mail" checked> <span>Verwittigen per mail — <span class="muted">de partij krijgt een mail dat ze aan dit project gekoppeld is (met de loten en de notitie); zonder portaallogin zit de uitnodiging voor het aannemersportaal erbij</span></span></label></div>` : ""}
+    ${driveReady() ? `<div class="field span2 lc-mail"><label class="chk"><input type="checkbox" name="mail" checked> <span>Verwittigen per mail — <span class="muted">de partij krijgt een mail dat ze aan dit project gekoppeld is (met de loten en de notitie); zonder portaallogin zit de uitnodiging voor het aannemersportaal erbij</span></span></label></div>` : ""}
   </div>`, {
     saveLabel: "Koppelen", wide: true,
     onSave: async (d) => {
@@ -707,7 +771,7 @@ function linkContactForm(pid, rol) {
 const KLANT_ROLLEN = ["bouwheer", "contactpersoon"];
 function portaalCel(x) {
   const c = x.c; const klantRol = KLANT_ROLLEN.includes(x.rol); const rol = klantRol ? "klant" : "aannemer";
-  if (!klantRol && (schemaV() < 25 || c.soort === "klant")) return `<span class="muted">—</span>`;
+  if (!klantRol && c.soort === "klant") return `<span class="muted">—</span>`;
   const lbl = klantRol ? "" : `<small class="muted" style="display:block">aannemersportaal</small>`;
   const verw = x.verwittigd_op ? `<small class="muted" style="display:block">verwittigd ${fmtLong(lokDag(x.verwittigd_op))}</small>` : "";
   if (c.user_id) return `<span class="pill st-afgerond">actief</span>${lbl}<small class="muted" style="display:block">${c.portaal_login ? "laatst " + fmtLong(lokDag(c.portaal_login)) : "nog niet ingelogd"}</small>${verw}${isBeheer() && driveReady() ? `<button class="btn ghost sm" data-act="portaal-invite" data-cid="${c.id}" data-pid="${x.project_id}" data-rol="${rol}" title="Nieuwe link om (opnieuw) een wachtwoord te kiezen">Link opnieuw sturen</button>` : ""}`;
@@ -736,7 +800,7 @@ function portaalInviteForm(cid, pid, rol = "klant") {
   });
 }
 function vProjectContacten(p) {
-  const rows = contactsOf(p.id); const beheer = isBeheer(); const v11 = schemaV() >= 11;
+  const rows = contactsOf(p.id); const beheer = isBeheer(); const v11 = true;
   return `<div class="panel" style="margin-bottom:16px"><div class="panel-head"><div><h3>Contacten bij dit project</h3><div class="muted" style="font-size:12px;margin-top:2px">Bouwheer en contactpersonen zijn zichtbaar voor de klant in het portaal; aannemers, leveranciers en studiebureaus zijn intern en zien in het aannemersportaal enkel hun eigen projecten en loten.</div></div>
       <div class="actions"><button class="btn sm" data-act="contact-link" data-pid="${p.id}" data-rol="aannemer">+ Aannemer</button><button class="btn sm" data-act="contact-link" data-pid="${p.id}" data-rol="leverancier">+ Leverancier</button><button class="btn sm" data-act="contact-link" data-pid="${p.id}" data-rol="contactpersoon">+ Contact</button></div></div>
     ${rows.length ? `<div class="tw"><table class="t"><thead><tr><th>Rol</th><th>Contact</th><th>E-mail · GSM</th><th>Loten</th><th>Zichtbaar</th>${v11 ? `<th>Portaal</th>` : ""}<th></th></tr></thead><tbody>
@@ -746,1946 +810,9 @@ function vProjectContacten(p) {
         <td class="r"><button class="btn ghost sm danger" data-act="contact-unlink" data-id="${x.id}" aria-label="Ontkoppelen">✕</button></td></tr>`).join("")}</tbody></table></div>` : `<div class="empty"><b>Nog geen contacten gekoppeld</b>Koppel de bouwheer, aannemers en leveranciers van dit project.</div>`}</div>`;
 }
 
-/* ---------- Meetstaat: loten, postenbibliotheek en meetstaatregels per project ---------- */
-const MS_STATUS = { offerte: "Offerte", akkoord: "Akkoord", meerwerk: "Meerwerk", minwerk: "Minwerk", vervallen: "Vervallen" };
-// 1.65 (script 061): een post die de klant in het portaal goedkeurde, ligt vast; na een goedgekeurde offerte is de meetstaat 'vast'
-// (nieuwe posten = meerwerk/minwerk, wijzigen via ± op de post). Posten die met de hand op Akkoord staan, blijven vrij.
-const msVast = (r) => !!r && !!r.akkoord_op && schemaV() >= 61;
-const msVastAkkoord = (pid) => schemaV() < 61 ? null : Object.values(S.goedkeuringen || {}).filter(g => g.project_id === pid && g.status === "akkoord" && (g.soort === "offerte" || g.soort === "overeenkomst") && (g.posten || []).length > 0).sort((a, b) => (a.beslist_op || "").localeCompare(b.beslist_op || ""))[0] || null;
-const msProjVast = (pid) => !!msVastAkkoord(pid);
-const MS_VAST_F = ["omschrijving", "locatie", "hoeveelheid", "eenheid", "btw", "status", "marge", "code", "lot", "prijstype"];
-const msKinderen = (r) => Object.values(S.meetstaat_posten).filter(x => x.herkomst_post_id === r.id && x.status !== "vervallen" && x.herkomst_soort !== "nieuw");   // (een vervangende post telt niet mee)
-const msHuidig = (r) => (Number(r.hoeveelheid) || 0) + msKinderen(r).reduce((s, x) => s + (x.status === "meerwerk" ? Number(x.hoeveelheid) || 0 : x.status === "minwerk" ? -Math.abs(Number(x.hoeveelheid) || 0) : 0), 0);
-const EENHEDEN = ["m2", "lm", "m3", "stk", "sog", "uur", "dag", "week", "rol", "zak", "%", "PM"];
-const msReady = () => Object.keys(S.loten).length > 0;
-const lotenList = () => Object.values(S.loten).filter(l => l.actief !== false).sort((a, b) => a.nr - b.nr);
-const lotName = (nr) => S.loten[nr] ? `${nr}. ${S.loten[nr].naam}` : String(nr);
-const postenOf = (lot) => Object.values(S.posten).filter(x => x.lot === lot && x.actief !== false).sort((a, b) => a.volgorde - b.volgorde);
-const msRows = (pid) => Object.values(S.meetstaat_posten).filter(r => r.project_id === pid).sort((a, b) => a.lot - b.lot || (a.volgorde ?? 0) - (b.volgorde ?? 0) || (a.code || "").localeCompare(b.code || ""));
-const msMarge = (r) => r.marge != null && r.marge !== "" ? Number(r.marge) : Number(S.loten[r.lot]?.marge) || 0;
-/* Eén rekenregel overal (Planbord, pdf, Excel, vorderingen én klantenportaal — zie sql/033):
-   klant-EP = kost × (1 + marge) afgerond op de cent · totaal = hoeveelheid × klant-EP afgerond op de cent */
-const msKost = (r) => r2((Number(r.hoeveelheid) || 0) * (Number(r.eenheidsprijs) || 0));
-const msVerkoopEP = (r) => r2(r.verkoop_ep != null ? Number(r.verkoop_ep) : (Number(r.eenheidsprijs) || 0) * (1 + msMarge(r)));
-const msVerkoop = (r) => r2((Number(r.hoeveelheid) || 0) * msVerkoopEP(r));
-/* bedrag met teken: minwerk is altijd een vermindering, ook als de hoeveelheid al negatief ingevuld is (nooit min × min = plus) */
-const rowSigned = (r) => r.status === "minwerk" ? -Math.abs(msVerkoop(r)) : msVerkoop(r);
-const kostSigned = (r) => r.status === "minwerk" ? -Math.abs(msKost(r)) : msKost(r);
-const msTelt = (r) => r.status !== "vervallen";
-const eur2 = (n) => Number(n || 0).toLocaleString("nl-BE", { style: "currency", currency: "EUR", minimumFractionDigits: 2, maximumFractionDigits: 2 });
-function msTotals(pid, raVooraf) {
-  const rows = msRows(pid).filter(msTelt); const ra = raVooraf !== undefined ? raVooraf : msRaming(pid);
-  const t = { kost: 0, verkoop: 0, btw: 0, meerwerk: 0, n: rows.length, kostRaming: 0, verkoopRaming: 0, nRaming: 0 };
-  rows.forEach(r => { const v = rowSigned(r); const x = ra && ra.rij[r.id]; if (x && x.bron === "raming") { t.kost += x.kost; t.kostRaming += x.kost; t.verkoopRaming += v; t.nRaming++; } else t.kost += kostSigned(r); if (isMw(r)) t.meerwerk += v; else t.verkoop += v; t.btw += v * (Number(r.btw) || 0); });
-  t.kost = r2(t.kost); t.kostRaming = r2(t.kostRaming); t.verkoopRaming = r2(t.verkoopRaming);
-  t.marge = t.verkoop + t.meerwerk - t.kost; t.margeRaming = r2(t.verkoopRaming - t.kostRaming); t.incl = t.verkoop + t.meerwerk + t.btw; return t;
-}
-/* ---------- 1.55 (script 052): geraamde marge voor posten zonder offerte van een aannemer ----------
-   De klantprijs blijft altijd zoals hij is; de marge bepaalt enkel de geraamde kostprijs (voor de marge in de meetstaat
-   en de financiële planning): kost = klantprijs / (1 + marge %) of klantprijs − marge in €.
-   Welke marge: post › lot (% of € verdeeld over de geraamde posten van het lot) › standaard van het project (Financiële
-   planning) › algemene standaard. Bron 'auto': gegund via een prijsvraag of met een eigen kostprijs/marge (≠ 0 %) = offerte
-   aannemer, al de rest (kostprijs = klantprijs, zoals na een import uit Excel) = raming. Enkel voor beheer. */
-const msRamingKlaar = () => schemaV() >= 52 && isBeheer() && !!S.ms_raming;
-const msrPost = (id) => Object.values(S.ms_raming || {}).find(x => x.post_id === id) || null;
-const msrLot = (pid, lot) => Object.values(S.ms_raming || {}).find(x => x.project_id === pid && x.post_id == null && Number(x.lot) === Number(lot)) || null;
-function msRamingStd(pid) {
-  const f = typeof finPlanVan === "function" ? finPlanVan(pid) : null;
-  if (f && f.marge_pct != null && f.marge_pct !== "") return { pct: Number(f.marge_pct), bron: "project" };
-  const I = typeof finInst === "function" ? finInst() : { marge: 0.25 };
-  return { pct: Number.isFinite(Number(I.marge)) ? Number(I.marge) : 0.25, bron: "standaard" };
-}
-function msRaming(pid) {
-  if (!msRamingKlaar()) return null;
-  const rows = msRows(pid).filter(msTelt); const std = msRamingStd(pid);
-  const gegund = new Set(Object.values(S.prijsvraag_gunningen || {}).map(g => g.post_id));
-  const eigen = Object.values(S.ms_raming || {}).filter(x => x.project_id === pid); const pMap = {}, lMap = {};
-  eigen.forEach(x => { if (x.post_id) pMap[x.post_id] = x; else lMap[Number(x.lot)] = x; });
-  const rij = {}; const perLot = {}; const viaLotBedrag = {};
-  const zet = (r, o) => { rij[r.id] = o; const L = perLot[r.lot] = perLot[r.lot] || { verkoop: 0, kost: 0, n: 0, nAannemer: 0, verkoopA: 0, kostA: 0 }; if (o.bron === "raming") { L.verkoop += o.v; L.kost += o.kost; L.n++; } else { L.nAannemer++; L.verkoopA += o.v; L.kostA += o.kost; } };
-  rows.forEach(r => {
-    const v = rowSigned(r); const pr = pMap[r.id] || null; const lr = lMap[Number(r.lot)] || null;
-    const autoA = gegund.has(r.id) || Math.abs(msMarge(r)) > 1e-9 || Number(r.lot) === 21;   // lot 21 = extra budget bouwheer: doorgerekend, geen marge verzinnen
-    const keuze = pr && pr.bron !== "auto" ? pr.bron : lr && lr.bron !== "auto" ? lr.bron : null;
-    const bron = keuze || (autoA ? "aannemer" : "raming");
-    const basis = { v, bron, auto: !keuze, autoBron: autoA ? "aannemer" : "raming" };
-    if (bron === "aannemer") return zet(r, { ...basis, kost: kostSigned(r), via: "kostprijs" });
-    const s = v < 0 ? -1 : 1;
-    if (Math.abs(v) < 0.005) return zet(r, { ...basis, kost: 0, via: "nul", pct: std.pct });   // klantprijs 0 (bv. PM-post): geen marge
-    if (pr && pr.bedrag != null) return zet(r, { ...basis, kost: msrKap(v, r2(v - s * Number(pr.bedrag))), via: "post€", bedrag: Number(pr.bedrag) });
-    if (pr && pr.marge != null) return zet(r, { ...basis, kost: r2(v / (1 + Number(pr.marge))), via: "post%", pct: Number(pr.marge) });
-    if (lr && lr.bedrag != null) { (viaLotBedrag[r.lot] = viaLotBedrag[r.lot] || []).push([r, basis]); return; }
-    if (lr && lr.marge != null) return zet(r, { ...basis, kost: r2(v / (1 + Number(lr.marge))), via: "lot%", pct: Number(lr.marge) });
-    zet(r, { ...basis, kost: r2(v / (1 + std.pct)), via: std.bron, pct: std.pct });
-  });
-  // marge in € op lotniveau: evenredig met de klantprijs verdeeld over de geraamde posten van dat lot (centen kloppen op het totaal)
-  Object.entries(viaLotBedrag).forEach(([lot, l]) => {
-    // verdeeld naar het gewicht |klantprijs|; minwerk krijgt zijn deel met het teken van de post (zoals een bedrag per post)
-    const bedrag = Number(lMap[Number(lot)].bedrag); const tot = l.reduce((s, [, b]) => s + Math.abs(b.v), 0);
-    if (tot < 0.005) { l.forEach(([r, b]) => zet(r, { ...b, kost: 0, via: "lot€", bedrag: 0 })); return; }
-    let rest = r2(bedrag);
-    l.forEach(([r, b], i) => { const deel = i === l.length - 1 ? rest : r2(bedrag * Math.abs(b.v) / tot); rest = r2(rest - deel); const s = b.v < 0 ? -1 : 1; zet(r, { ...b, kost: msrKap(b.v, r2(b.v - s * deel)), via: "lot€", bedrag: deel }); });
-  });
-  Object.values(perLot).forEach(L => { L.verkoop = r2(L.verkoop); L.kost = r2(L.kost); L.marge = r2(L.verkoop - L.kost); L.verkoopA = r2(L.verkoopA); L.kostA = r2(L.kostA); });
-  return { rij, perLot, std, pMap, lMap };
-}
-/* een marge groter dan de klantprijs zou een negatieve kostprijs geven: de kost wordt dan 0 (marge = de hele klantprijs) */
-const msrKap = (v, kost) => (v >= 0 ? kost < 0 : kost > 0) ? 0 : kost;
-/* invoer "25", "25 %" = marge op de kostprijs · "€ 500", "500 €", "500 eur" = marge in euro · leeg = overerven */
-function msrLees(raw) {
-  const t = String(raw ?? "").trim(); if (!t) return { marge: null, bedrag: null };
-  const euro = /€|eur/i.test(t); const n = leesGetal(t.replace(/eur(o)?/i, ""));
-  if (n == null || Number.isNaN(n)) return { fout: `"${t}" is geen geldig getal — bv. 25 (= 25 %) of € 1.500` };
-  if (euro) { if (Math.abs(n) >= 1e8) return { fout: "Dat bedrag is te groot." }; return { marge: null, bedrag: r2(n) }; }
-  if (n < -99 || n > 1000) return { fout: `Een marge van ${nl(n, 2)} % kan niet — geef een % tussen -99 en 1000 (of een bedrag met €)` };
-  return { marge: Math.round(n * 1e4) / 1e6, bedrag: null };
-}
-const msrToon = (x) => !x ? "" : x.bedrag != null ? "€ " + nl(x.bedrag, 2) : x.marge != null ? pctVeld(x.marge) + " %" : "";
-async function msrBewaar(pid, waar, patch) {
-  // waar = { post: id } of { lot: nr }; patch = { bron } en/of { marge, bedrag }
-  if (!msRamingKlaar()) return;
-  const oud = waar.post ? msrPost(waar.post) : msrLot(pid, waar.lot);
-  const nieuw = { bron: (oud && oud.bron) || "auto", marge: oud && oud.marge != null ? Number(oud.marge) : null, bedrag: oud && oud.bedrag != null ? Number(oud.bedrag) : null, ...patch };
-  const leeg = nieuw.bron === "auto" && nieuw.marge == null && nieuw.bedrag == null;
-  try {
-    if (oud && leeg) { await dbDelete("ms_raming", oud.id); return; }
-    if (oud) { await dbUpdate("ms_raming", oud.id, { bron: nieuw.bron, marge: nieuw.marge, bedrag: nieuw.bedrag }); return; }
-    if (leeg) return;
-    // enkel de gewijzigde kolommen: bestaat de rij intussen al (andere beheerder), dan blijft de rest staan
-    const rij = { project_id: pid, ...patch, ...(waar.post ? { post_id: waar.post } : { lot: Number(waar.lot) }) };
-    const { data, error } = await sb.from("ms_raming").upsert(rij, { onConflict: waar.post ? "post_id" : "project_id,lot" }).select().single();
-    if (error) { toast("Marge niet bewaard: " + error.message, 6000); render(); return; }
-    S.ms_raming[data.id] = data; render();
-  } catch (e) { }
-}
-/* weergave Marges in de meetstaat: per lot en per post de bron en de marge (% of €) */
-const MSR_BRON = [["auto", "Automatisch"], ["aannemer", "Offerte aannemer"], ["raming", "Geen offerte (raming)"]];
-const msrViaTekst = (x) => !x ? "" : x.bron === "aannemer" ? "kostprijs van de aannemer" : ({ "post€": "bedrag van deze post", "post%": "% van deze post", "lot€": "deel van het bedrag van het lot", "lot%": "% van het lot", project: "standaard van dit project", standaard: "algemene standaard" })[x.via] || "";
-function msrInfo(p, t, ra) {
-  const f = finPlanVan(p.id); const I = typeof finInst === "function" ? finInst() : { marge: 0.25 };
-  return `<div class="msr-info"><div><b>Marges zonder offerte van een aannemer</b> — de klantprijs blijft altijd zoals hij is; de marge die je hier aanduidt bepaalt enkel de geraamde kostprijs (voor de marge hierboven en de financiële planning). Typ een % (bv. <i>25</i>) of een bedrag (bv. <i>€ 1.500</i>); leeg = overerven (post › lot › project › algemeen).</div>
-    <div class="msr-tot"><label>Standaardmarge van dit project <input class="inline num" data-msr-std="${p.id}" type="text" inputmode="decimal" autocomplete="off" value="${f && f.marge_pct != null ? pctVeld(f.marge_pct) : ""}" placeholder="${pctVeld(I.marge)}" aria-label="Standaardmarge van dit project in %" style="width:64px"> %</label>
-    <span class="muted">${t.nRaming ? `${t.nRaming} geraamde post${t.nRaming === 1 ? "" : "en"}: klantprijs ${eur(t.verkoopRaming)} · marge <b>${eur(t.margeRaming)}</b>${t.kostRaming ? " (" + nl(t.margeRaming / t.kostRaming * 100, 1) + " % op de kost)" : ""}` : "Geen geraamde posten: overal zit een offerte van een aannemer achter."}</span></div></div>`;
-}
-function msrLotCtl(pid, nr, ra) {
-  const lr = msrLot(pid, nr); const L = ra.perLot[nr] || { n: 0, nAannemer: 0, marge: 0 };
-  return `<span class="msr-lot" title="Marge voor de posten van dit lot zonder offerte van een aannemer (de klantprijs verandert niet)"><select class="inline" data-msr-lot="${nr}" data-pid="${pid}" data-msrf="bron" aria-label="Bron lot ${nr}">${opts(MSR_BRON.map(([v, l]) => [v, v === "auto" ? "Automatisch per post" : l]), lr ? lr.bron : "auto")}</select>
-    <input class="inline num" data-msr-lot="${nr}" data-pid="${pid}" data-msrf="marge" type="text" autocomplete="off" value="${esc(msrToon(lr))}" placeholder="${pctVeld(ra.std.pct)} %" aria-label="Marge lot ${nr} (% of €)" style="width:84px" ${lr && lr.bron === "aannemer" ? "disabled" : ""}>
-    <span class="muted num">${L.n ? `${L.n} geraamd · marge ${eur(L.marge)}` : "geen geraamde posten"}${L.nAannemer ? ` · ${L.nAannemer} met offerte` : ""}</span></span>`;
-}
-function msrPostCellen(r, ra) {
-  const x = ra.rij[r.id]; const pr = ra.pMap[r.id] || null;
-  if (!x) return `<td class="muted" style="width:124px">vervallen</td><td style="width:64px"></td>`;
-  const autoTekst = x.autoBron === "aannemer" ? "Auto: offerte" : "Auto: raming";
-  const marge = x.bron === "aannemer" ? `<span class="num" title="Echte marge op de kostprijs van de aannemer">${eur2(r2(x.v - x.kost))}</span>` : `<input class="inline num" data-msr-post="${r.id}" data-pid="${r.project_id}" data-msrf="marge" type="text" autocomplete="off" value="${esc(msrToon(pr))}" placeholder="${x.via === "post€" || x.via === "lot€" ? "€ " + nl(x.bedrag, 0) : pctVeld(x.pct) + " %"}" title="Marge van deze post (% of €) — nu: ${esc(msrViaTekst(x))}. Leeg = overerven." aria-label="Marge ${esc(r.code)}"><small class="muted num" style="display:block">${eur2(r2(x.v - x.kost))}</small>`;
-  return `<td style="width:124px"><select class="inline msr-bron ${x.bron}" data-msr-post="${r.id}" data-pid="${r.project_id}" data-msrf="bron" title="${x.auto ? (x.autoBron === "aannemer" ? "Automatisch: gegund via een prijsvraag of met een eigen kostprijs/marge" : "Automatisch: kostprijs = klantprijs (bv. geïmporteerd uit Excel)") : "Zelf gekozen"}" aria-label="Bron ${esc(r.code)}">${opts([["auto", autoTekst], ["aannemer", "Offerte"], ["raming", "Raming"]], pr ? pr.bron : "auto")}</select></td><td style="width:64px">${marge}</td>`;
-}
-async function msrVeld(el) {
-  const d = el.dataset; const pid = d.pid; const waar = d.msrPost ? { post: d.msrPost } : { lot: Number(d.msrLot) };
-  if (d.msrf === "bron") return msrBewaar(pid, waar, { bron: el.value });
-  const oud = waar.post ? msrPost(waar.post) : msrLot(pid, waar.lot); const v = msrLees(el.value);
-  if (v.fout) { toast(v.fout, 6000); render(); return; }
-  if ((oud && oud.marge != null ? Number(oud.marge) : null) === v.marge && (oud && oud.bedrag != null ? Number(oud.bedrag) : null) === v.bedrag) return;
-  return msrBewaar(pid, waar, { marge: v.marge, bedrag: v.bedrag });
-}
-async function msrProjectStd(pid, raw) {
-  const t = String(raw ?? "").trim(); const n = t ? leesGetal(t) : null;
-  if (/€|eur/i.test(t) || Number.isNaN(n) || (n != null && (n < -99 || n >= 1000))) { toast(`"${t}" kan niet als standaardmarge — geef een % op de kostprijs (bv. 25); een bedrag kan per lot of per post`, 6000); render(); return; }
-  const m = n == null ? null : Math.round(n * 100) / 1e4; const f = finPlanVan(pid);
-  try { if (f) { if ((f.marge_pct == null ? null : Number(f.marge_pct)) !== m) await dbUpdate("fin_plan", f.id, { marge_pct: m }); } else if (m != null) await dbInsert("fin_plan", { project_id: pid, marge_pct: m }); } catch (e) { }
-}
-function vMeetstaat(p) {
-  if (!msReady()) return `<div class="panel"><div class="empty"><b>Meetstaat nog niet beschikbaar</b>Voer eerst databasescript <code>sql/007_meetstaat.sql</code> uit in Supabase (SQL Editor). Daarna verschijnen hier de loten en de postenbibliotheek.</div></div>`;
-  // klantweergave: kostprijs, marge en btw-kolom verbergen (bv. tijdens een bespreking met de klant) — onthouden per browser
-  if (S.prijsFout) return `<div class="panel"><div class="empty"><b>Prijzen niet correct geladen</b>De prijzen van de meetstaat konden niet opgehaald worden (de databank was even niet bereikbaar of er liep net een databasescript). Herlaad de pagina (⌘⌥R) — tot dan worden er geen bedragen getoond om fouten te vermijden.</div></div>`;
-  const rows = msRows(p.id); const beheer = isBeheer() && !S.msKlant; const projVast = msProjVast(p.id); const vastG = projVast ? msVastAkkoord(p.id) : null;
-  const ra = msRaming(p.id); const t = msTotals(p.id, ra); const marges = !!(ra && beheer && S.msMarges);   // 1.55: geraamde marges (script 052)
-  const byLot = {}; rows.forEach(r => (byLot[r.lot] = byLot[r.lot] || []).push(r));
-  const lots = Object.keys(byLot).map(Number).sort((a, b) => a - b);
-  const kpi = `<div class="rend">
-    ${beheer ? `<div class="panel"><div class="k">Kostprijs excl. btw</div><div class="v">${eur(t.kost)}${t.nRaming ? `<small class="muted" style="font-size:12px;font-weight:400;display:block">waarvan geraamd ${eur(t.kostRaming)}</small>` : ""}</div></div>` : ""}
-    <div class="panel"><div class="k">Offerte excl. btw</div><div class="v">${eur(t.verkoop)}</div></div>
-    <div class="panel"><div class="k">Meer-/minwerk excl. btw</div><div class="v ${t.meerwerk < 0 ? "neg" : ""}">${t.meerwerk ? eur(t.meerwerk) : "—"}</div></div>
-    ${beheer ? `<div class="panel"><div class="k">Marge${t.nRaming ? ` <span class="muted" title="Deels geraamd: ${t.nRaming} post${t.nRaming === 1 ? "" : "en"} zonder offerte van een aannemer (zie Marges)">≈</span>` : ""}</div><div class="v ${t.marge >= 0 ? "pos" : "neg"}">${eur(t.marge)}<small class="muted" style="font-size:12px;font-weight:400"> · ${t.kost ? nl(t.marge / t.kost * 100, 1) : "0"} %</small></div></div>` : ""}
-    <div class="panel"><div class="k">Btw</div><div class="v">${eur(t.btw)}</div></div>
-    <div class="panel"><div class="k">Totaal incl. btw</div><div class="v">${eur(t.incl)}</div></div></div>`;
-  const inp = (r, f, cls = "", attrs = "") => `<input class="inline ${cls}" data-ms="${r.id}" data-f="${f}" value="${esc(r[f] ?? "")}" ${attrs}>`;
-  const num = (r, f, cls = "") => `<input class="inline num ${cls}" data-ms="${r.id}" data-f="${f}" type="text" inputmode="decimal" autocomplete="off" value="${getalVeld(r[f])}">`;
-  const sel = (r, f, options) => `<select class="inline" data-ms="${r.id}" data-f="${f}">${options}</select>`;
-  const cols = 9 + (beheer ? 3 : 0);
-  const perRuimte = !!S.msRuimte; const ruimteKey = (r) => (r.locatie || "").trim().toLowerCase();
-  if (perRuimte) lots.forEach(nr => byLot[nr].sort((a, b) => (ruimteKey(a) === "" ? 1 : 0) - (ruimteKey(b) === "" ? 1 : 0) || ruimteKey(a).localeCompare(ruimteKey(b), "nl") || (a.volgorde ?? 0) - (b.volgorde ?? 0) || (a.code || "").localeCompare(b.code || "")));
-  const body = lots.map(nr => { const g = byLot[nr]; const sub = g.filter(msTelt).reduce((s, r) => s + rowSigned(r), 0); const subk = g.filter(msTelt).reduce((s, r) => s + (ra && beheer && ra.rij[r.id] ? ra.rij[r.id].kost : kostSigned(r)), 0); let lastGroep = null;
-    return `<tr class="ms-lot"><td colspan="${cols}"><div style="display:flex;justify-content:space-between;align-items:center;gap:8px;flex-wrap:wrap"><span>${esc(lotName(nr))} <span class="muted num" style="font-weight:400">${g.length} posten${beheer ? ` · kost ${eur(subk)}` : ""} · <b>${eur(sub)}</b> excl. btw</span></span>${marges ? msrLotCtl(p.id, nr, ra) : ""}<span class="actions"><button class="btn ghost sm" data-act="ms-add-post" data-pid="${p.id}" data-lot="${nr}">+ Post</button><button class="btn ghost sm danger" data-act="ms-del-lot" data-pid="${p.id}" data-lot="${nr}" title="Alle posten van dit lot verwijderen">✕</button></span></div></td></tr>` +
-      g.map((r, i) => { const kop = perRuimte ? ((r.locatie || "").trim() || "Zonder ruimte") : r.groep; const gh = kop && kop !== lastGroep ? `<tr class="ms-groep"><td></td><td colspan="${cols - 1}">${esc(kop)}${perRuimte ? ` <span class="muted" style="font-weight:400;text-transform:none;letter-spacing:0">· ${g.filter(x => (perRuimte ? ((x.locatie || "").trim() || "Zonder ruimte") : x.groep) === kop).length} posten · ${eur(g.filter(x => msTelt(x) && ((x.locatie || "").trim() || "Zonder ruimte") === kop).reduce((s, x) => s + rowSigned(x), 0))}</span>` : ""}</td></tr>` : ""; lastGroep = kop || lastGroep; const dead = r.status === "vervallen";
-        const vast = msVast(r); const ouder = r.herkomst_post_id ? S.meetstaat_posten[r.herkomst_post_id] : null; const kids = vast ? msKinderen(r) : [];
-        const tekst = (v, cls = "") => `<span class="ms-vast-t ${cls}" title="Goedgekeurd door de klant — ligt vast">${v}</span>`;
-        return gh + `<tr class="${dead ? "ms-dead" : ""}${vast ? " ms-vast" : ""}" data-msrow="${r.id}" data-lot="${nr}"><td class="drag" style="width:26px">${perRuimte ? `<span class="muted" title="Volgorde wijzigen kan in de gewone weergave (Per ruimte uit)">·</span>` : `<span class="grip" draggable="true" data-drag="${r.id}" title="Sleep om de volgorde te wijzigen">⋮⋮</span>`}<span class="updown">${perRuimte ? "" : `<button class="btn ghost sm" data-act="ms-move" data-id="${r.id}" data-dir="-1" ${i === 0 ? "disabled" : ""} aria-label="Omhoog">▲</button>`}${perRuimte ? "" : `<button class="btn ghost sm" data-act="ms-move" data-id="${r.id}" data-dir="1" ${i === g.length - 1 ? "disabled" : ""} aria-label="Omlaag">▼</button>`}</span></td><td class="num muted" style="width:52px;white-space:nowrap">${esc(r.code)}</td>
-        <td style="min-width:260px">${vast ? tekst(esc(r.omschrijving)) : inp(r, "omschrijving", "wide")}${ouder ? `<small class="muted ms-herkomst">↳ ${r.herkomst_soort === "nieuw" ? "vervangt" : esc(MS_STATUS[r.status] || r.status).toLowerCase() + " op"} post ${esc(ouder.code)}</small>` : ""}</td>
-        <td style="width:110px">${vast ? tekst(esc(r.locatie || "")) : inp(r, "locatie", "", 'placeholder="locatie"')}</td>
-        <td style="width:84px">${vast ? tekst(nl(r.hoeveelheid, 2), "num") + (kids.length ? `<small class="muted ms-herkomst" title="Na de meer- en minwerken op deze post">nu ${nl(msHuidig(r), 2)}</small>` : "") : num(r, "hoeveelheid")}</td>
-        <td style="width:82px">${vast ? tekst(esc(r.eenheid)) : sel(r, "eenheid", opts(EENHEDEN.map(e => [e, e]), r.eenheid))}</td>
-        ${marges ? msrPostCellen(r, ra) : beheer ? `<td style="width:96px">${num(r, "eenheidsprijs")}</td><td style="width:64px">${vast ? tekst(pctVeld(r.marge != null && r.marge !== "" ? r.marge : Number(S.loten[r.lot]?.marge) || 0), "num") : `<input class="inline num" data-ms="${r.id}" data-f="marge" type="text" inputmode="decimal" autocomplete="off" placeholder="${pctVeld(Number(S.loten[r.lot]?.marge) || 0)}" value="${pctVeld(r.marge)}" title="Marge % (leeg = marge van het lot)">`}</td>` : ""}
-        <td class="r num" style="width:96px" title="Eenheidsprijs voor de klant">${eur2(msVerkoopEP(r))}</td>
-        <td class="r num" style="width:104px"><b>${eur2(rowSigned(r))}</b></td>
-        ${beheer ? `<td style="width:76px">${vast ? tekst(Math.round(Number(r.btw) * 100) + " %") : sel(r, "btw", opts([[0.06, "6 %"], [0.21, "21 %"], [0, "0 %"]], Number(r.btw)))}</td>` : ""}
-        <td style="width:104px">${vast ? `<span class="pill ms-slot" title="Goedgekeurd door de klant — ligt vast">🔒 ${esc(MS_STATUS[r.status] || r.status)}</span>` : sel(r, "status", opts(Object.entries(MS_STATUS).filter(([k]) => !projVast || !["offerte", "akkoord"].includes(k) || k === r.status), r.status))}${r.akkoord_op ? `<small class="muted" style="display:block;color:var(--ok)" title="Goedgekeurd door de klant in het portaal">✓ klant ${fmt(lokDag(r.akkoord_op))}</small>` : ""}</td>
-        <td class="r" style="width:36px">${vast ? (["akkoord", "meerwerk"].includes(r.status) ? `<button class="btn ghost sm" data-act="ms-wijzig" data-id="${r.id}" title="Wijzigen via meer- of minwerk (hoeveelheid, schrappen of vervangen)" aria-label="Wijzigen via meer- of minwerk">±</button>` : "") : `<button class="btn ghost sm danger" data-act="ms-del" data-id="${r.id}" aria-label="Verwijderen">✕</button>`}</td></tr>`; }).join(""); }).join("");
-  return kpi + (typeof vMeerwerkAanvragen === "function" ? vMeerwerkAanvragen(p) : "") + vGoedkeuringen(p) + (typeof vPrijsvragen === "function" ? vPrijsvragen(p) : vPrijsaanvragen(p)) + vAanMeetstaten(p) + `<div class="panel"><div class="panel-head"><div><h3>Meetstaat</h3><div class="muted" style="font-size:12px;margin-top:2px">${rows.length ? `${rows.length} posten in ${lots.length} loten` : "Nog leeg"} · klik in een veld om het te wijzigen, bewaard bij verlaten van het veld</div>${projVast ? `<div class="ms-vast-banner">🔒 <b>Goedgekeurd door de klant${vastG && vastG.beslist_op ? " op " + fmtLong(lokDag(vastG.beslist_op)) : ""}.</b> De goedgekeurde posten liggen vast: een wijziging gaat via meer- of minwerk (knop ± op de post), nieuwe posten worden meerwerk.</div>` : ""}</div>
-      <div class="actions">${isBeheer() && rows.length ? `<select class="btn sm" data-act="ms-btw-alles" data-pid="${p.id}" title="Het btw-tarief van alle posten van dit project in één keer zetten"><option value="">Btw alles…</option><option value="0.06">alles op 6 %</option><option value="0.21">alles op 21 %</option><option value="0">alles op 0 %</option></select><select class="btn sm" data-act="ms-marge-alles" data-pid="${p.id}" title="De marge van alle posten van dit project in één keer zetten (goedgekeurde posten houden hun klantprijs, tenzij je kiest om ze mee te nemen)"><option value="">Marge alles…</option><option value="10">alles op 10 %</option><option value="15">alles op 15 %</option><option value="20">alles op 20 %</option><option value="ander">ander %…</option><option value="lot">lotmarge (eigen marge leegmaken)</option></select>` : ""}<button class="btn sm ${S.msRuimte ? "primary" : ""}" data-act="ms-ruimte" title="Posten per lot groeperen per ruimte (alfabetisch), enkel in deze weergave — de nummering en de export veranderen niet">${S.msRuimte ? "Per ruimte ✓" : "Per ruimte"}</button>${msRamingKlaar() && rows.length && !S.msKlant ? `<button class="btn sm ${S.msMarges ? "primary" : ""}" data-act="ms-marges" title="Per lot en per post aanduiden of er een offerte van een aannemer achter zit, en hoeveel marge BROS heeft op de rest (de klantprijs verandert niet)">${S.msMarges ? "Marges ✓" : "Marges"}</button>` : ""}${isBeheer() ? `<button class="btn sm ${S.msKlant ? "primary" : ""}" data-act="ms-klant" title="Kostprijs, marge en btw-kolom verbergen, bv. als je de meetstaat met de klant overloopt (sneltoets: K)">${S.msKlant ? "👁 Klantweergave aan" : "Klantweergave"}</button>` : ""}${schemaV() >= 13 && rows.some(r => gkKandidaat(r)) ? `<button class="btn sm" data-act="gk-new" data-pid="${p.id}" title="Offerte of meerwerk bevroren ter goedkeuring in het klantenportaal zetten">Ter goedkeuring voorleggen</button>` : ""}${isBeheer() ? `<button class="btn sm" data-act="ms-import" data-pid="${p.id}" title="Een bestaande meetstaat (Excel, elk BROS-sjabloon) inlezen als posten">Importeren uit Excel</button>` : ""}${rows.length ? `<button class="btn sm" data-act="ms-export" data-pid="${p.id}" title="Excel in het BROS-sjabloon aanmaken in Documenten/Meetstaat van de projectmap">Exporteren naar Drive (Excel)</button><button class="btn sm" data-act="ms-pdf" data-pid="${p.id}" title="Meetstaat als pdf: klantversie of interne versie, per lot of per ruimte">Pdf</button>` : ""}<button class="btn sm" data-act="ms-add-post" data-pid="${p.id}">+ Post</button><button class="btn sm primary" data-act="ms-add-lot" data-pid="${p.id}">+ Lot toevoegen</button></div></div>
-    ${marges && rows.length ? msrInfo(p, t, ra) : ""}${rows.length ? `<div class="tw"><table class="t ms${marges ? " ms-marges" : ""}"><thead><tr><th></th><th>Nr</th><th>Omschrijving</th><th>Locatie</th><th>Hoev.</th><th>Eenh.</th>${marges ? `<th title="Zit er een offerte van een aannemer achter deze post?">Bron</th><th title="Marge zonder aannemersofferte: % op de kostprijs of een bedrag in €">Marge</th>` : beheer ? `<th title="Kostprijs / aannemersprijs excl. btw">Kost EP</th><th>Marge</th>` : ""}<th class="r">Klant EP</th><th class="r">Totaal excl.</th>${beheer ? `<th>Btw</th>` : ""}<th>Status</th><th></th></tr></thead><tbody>${body}</tbody></table></div>` : `<div class="empty"><b>Nog geen posten</b>Voeg een lot toe (met de standaardposten) of kies losse posten uit de bibliotheek.</div>`}</div>`;
-}
-/* ---------- Meetstaat als pdf (jsPDF): klantversie (verkoopprijzen) of interne versie (kost, marge, verkoop) ---------- */
-async function msBuildPdf(p, o) {
-  const jsPDF = await loadJsPdf(); const doc = new jsPDF({ unit: "mm", format: "a4", compress: true });
-  const W = 210, H = 297, M = 14, CW = W - 2 * M; let y = M; const logo = await logoData();
-  const ink = [29, 29, 31], muted = [134, 134, 139], line = [220, 220, 224], soft = [240, 240, 242];
-  const clean = (t) => String(t || "").replace(/→/g, "->").replace(/[“”]/g, '"').replace(/[‘’]/g, "'").replace(/•/g, "-").replace(/ /g, " ");
-  const geld = (n) => clean(eur2(n)); const q = (r) => Number(r.hoeveelheid) ? nl(r.hoeveelheid, 2) + " " + (r.eenheid || "") : "";
-  const intern = o.versie === "intern";
-  const rows = msRows(p.id).filter(r => o.filter === "akkoord" ? ["akkoord", "meerwerk", "minwerk"].includes(r.status) : o.filter === "actief" ? r.status !== "vervallen" : true);
-  const rk = (r) => (r.locatie || "").trim();
-  // kolommen: [label, breedte, uitlijning, waarde]
-  const cols = intern
-    ? [["Nr", 12, "l", r => r.code], ["Omschrijving", 66, "l", r => r.omschrijving], ["Hoev.", 20, "r", q], ["Kost EP", 20, "r", r => Number(r.eenheidsprijs) ? geld(r.eenheidsprijs) : ""], ["Marge", 13, "r", r => Number(r.hoeveelheid) ? nl(msMarge(r) * 100, 1) + " %" : ""], ["Klant EP", 20, "r", r => Number(msVerkoopEP(r)) ? geld(msVerkoopEP(r)) : ""], ["Totaal", 22, "r", r => Number(r.hoeveelheid) ? geld(rowSigned(r)) : ""], ["Status", 9, "l", r => ({ offerte: "OFF", akkoord: "OK", meerwerk: "MW", minwerk: "MIN", vervallen: "X" })[r.status] || ""]]
-    : [["Nr", 13, "l", r => r.code], ["Omschrijving", 84, "l", r => r.omschrijving], ["Hoev.", 22, "r", q], ["Eenheidsprijs", 24, "r", r => Number(msVerkoopEP(r)) ? geld(msVerkoopEP(r)) : ""], ["Totaal", 24, "r", r => Number(r.hoeveelheid) ? geld(rowSigned(r)) : ""], ["Status", 15, "l", r => ({ offerte: "Offerte", akkoord: "Akkoord", meerwerk: "Meerwerk", minwerk: "Minwerk", vervallen: "Vervallen" })[r.status] || ""]];
-  const xs = []; let x = M; cols.forEach(c => { xs.push(x); x += c[1]; });
-  const header = () => { if (logo) doc.addImage(logo, "PNG", M, 10, 26, 7.8); doc.setFont("helvetica", "normal"); doc.setFontSize(8); doc.setTextColor(...muted); doc.text(`${clean(projName(p))} · Meetstaat${intern ? " (intern)" : ""} · ${fmtLong(o.datum)}`, W - M, 15, { align: "right" }); doc.setDrawColor(...line); doc.line(M, 20, W - M, 20); y = 26; };
-  const footer = () => { const n = doc.getNumberOfPages(); for (let i = 1; i <= n; i++) { doc.setPage(i); doc.setFontSize(8); doc.setTextColor(...muted); doc.text(intern ? "BROS · intern document, niet voor de klant" : "BROS · prijzen excl. btw, tenzij anders vermeld", M, H - 8); doc.text(`${i} / ${n}`, W - M, H - 8, { align: "right" }); } };
-  const need = (h) => { if (y + h > H - 16) { doc.addPage(); header(); colHead(); } };
-  const colHead = () => { doc.setFont("helvetica", "bold"); doc.setFontSize(7.5); doc.setTextColor(...muted); cols.forEach((c, i) => doc.text(c[0].toUpperCase(), c[2] === "r" ? xs[i] + c[1] - 1 : xs[i] + 1, y + 3, { align: c[2] === "r" ? "right" : "left" })); doc.setDrawColor(...line); doc.line(M, y + 4.5, W - M, y + 4.5); y += 6.5; };
-  header();
-  doc.setFont("helvetica", "bold"); doc.setFontSize(20); doc.setTextColor(...ink); doc.text(clean(o.titel || "Meetstaat"), M, y + 5); y += 9;
-  doc.setFont("helvetica", "normal"); doc.setFontSize(10); doc.setTextColor(...muted); doc.text(clean(`${projName(p)}${p.adres ? " · " + p.adres + (p.gemeente ? ", " + [p.postcode, p.gemeente].filter(Boolean).join(" ") : "") : ""}${p.nummer ? " · " + p.nummer : ""}`), M, y + 4); y += 7;
-  if (o.inleiding) { doc.setFontSize(9.5); doc.setTextColor(...ink); const ls = doc.splitTextToSize(clean(o.inleiding), CW); doc.text(ls, M, y + 4); y += ls.length * 4.6 + 3; }
-  y += 2;
-  const lots = [...new Set(rows.map(r => r.lot))].sort((a, b) => a - b); let totVerkoop = 0, totKost = 0, totMw = 0, totBtw = 0;
-  lots.forEach(lot => {
-    let lr = rows.filter(r => r.lot === lot);
-    if (o.perRuimte) lr = lr.slice().sort((a, b) => (rk(a) === "" ? 1 : 0) - (rk(b) === "" ? 1 : 0) || rk(a).localeCompare(rk(b), "nl", { sensitivity: "base" }) || (a.volgorde ?? 0) - (b.volgorde ?? 0));
-    const sub = lr.filter(msTelt).reduce((s, r) => s + rowSigned(r), 0);
-    need(22); y += 3; doc.setFillColor(...soft); doc.roundedRect(M, y, CW, 8, 2, 2, "F"); doc.setFont("helvetica", "bold"); doc.setFontSize(10); doc.setTextColor(...ink); doc.text(clean(lotName(lot)), M + 3, y + 5.5); doc.text(geld(sub), W - M - 3, y + 5.5, { align: "right" }); y += 10; colHead();
-    let kop = null;
-    lr.forEach(r => {
-      const k = o.perRuimte ? (rk(r) || "Zonder ruimte") : (r.groep || "");
-      if (k && k !== kop) { kop = k; need(8); doc.setFont("helvetica", "bold"); doc.setFontSize(8); doc.setTextColor(...muted); doc.text(clean(k).toUpperCase(), M + 1, y + 3.2); if (o.perRuimte) { const sk = lr.filter(x => msTelt(x) && (rk(x) || "Zonder ruimte") === k).reduce((s, x) => s + rowSigned(x), 0); doc.text(geld(sk), W - M - 1, y + 3.2, { align: "right" }); } y += 5.5; }
-      const oms = doc.splitTextToSize(clean(r.omschrijving) + (r.locatie && !o.perRuimte ? "  (" + clean(r.locatie) + ")" : ""), cols[1][1] - 2); const h = Math.max(1, oms.length) * 3.9 + 2.2;
-      need(h); doc.setFont("helvetica", "normal"); doc.setFontSize(8.5); doc.setTextColor(...(r.status === "vervallen" ? muted : ink));
-      cols.forEach((c, i) => { if (i === 1) doc.text(oms, xs[i] + 1, y + 3.2); else doc.text(clean(c[3](r)), c[2] === "r" ? xs[i] + c[1] - 1 : xs[i] + 1, y + 3.2, { align: c[2] === "r" ? "right" : "left" }); });
-      doc.setDrawColor(...line); doc.line(M, y + h, W - M, y + h); y += h;
-      if (msTelt(r)) { const v = rowSigned(r); if (r.status === "meerwerk" || r.status === "minwerk") totMw += v; else totVerkoop += v; totBtw += v * (Number(r.btw) || 0); totKost += kostSigned(r); }
-    });
-  });
-  // totalen
-  need(40); y += 6; const tot = [["Contract excl. btw", totVerkoop], ["Meer-/minwerk excl. btw", totMw], ["Totaal excl. btw", totVerkoop + totMw], [`Btw${p.btw_tarief ? " (" + p.btw_tarief + " %)" : ""}`, totBtw], ["Totaal incl. btw", totVerkoop + totMw + totBtw]];
-  if (intern) tot.splice(3, 0, ["Kostprijs excl. btw", totKost], ["Marge", totVerkoop + totMw - totKost]);
-  tot.forEach(([k, v], i) => { const bold = /^Totaal/.test(k) || k === "Marge"; doc.setFont("helvetica", bold ? "bold" : "normal"); doc.setFontSize(bold ? 10.5 : 9.5); doc.setTextColor(...ink); doc.text(clean(k), W - M - 70, y + 4, { align: "left" }); doc.text(geld(v), W - M - 1, y + 4, { align: "right" }); if (k === "Totaal excl. btw" || k === "Marge") { doc.setDrawColor(...line); doc.line(W - M - 70, y + 6, W - M, y + 6); } y += 6.5; });
-  if (o.slot) { y += 4; need(20); doc.setFont("helvetica", "normal"); doc.setFontSize(9); doc.setTextColor(...muted); const ls = doc.splitTextToSize(clean(o.slot), CW); doc.text(ls, M, y + 4); y += ls.length * 4.4; }
-  footer();
-  return doc.output("blob");
-}
-function msPdfForm(pid) {
-  const p = S.projecten[pid]; if (!p) return; const beheer = isBeheer();
-  const rows = msRows(pid); if (!rows.length) { toast("De meetstaat is nog leeg."); return; }
-  const inst = (S.instellingen.portaal && S.instellingen.portaal.value) || {};
-  openModal("Meetstaat als pdf", `<div class="form-grid">
-    <div class="field"><label for="mp_versie">Versie</label><select id="mp_versie" name="versie">${opts([["klant", "Voor de klant — verkoopprijzen, zonder kostprijs en marge"]].concat(beheer ? [["intern", "Intern — kostprijs, marge en verkoopprijs"]] : []), "klant")}</select></div>
-    <div class="field"><label for="mp_filter">Welke posten</label><select id="mp_filter" name="filter">${opts([["actief", "Alle posten behalve vervallen"], ["akkoord", "Enkel goedgekeurd (akkoord, meer-/minwerk)"], ["alle", "Alles, ook vervallen"]], "actief")}</select></div>
-    <div class="field span2"><label for="mp_titel">Titel</label><input id="mp_titel" name="titel" value="Meetstaat ${esc(p.klant)}"></div>
-    <div class="field"><label for="mp_datum">Datum</label><input id="mp_datum" name="datum" type="date" value="${todayIso}"></div>
-    <div class="field"><label class="sw-row" style="margin-top:22px"><input type="checkbox" class="sw" name="perRuimte" ${S.msRuimte ? "checked" : ""}><span><b>Per ruimte groeperen</b><small class="muted" style="display:block">Binnen elk lot alfabetisch per ruimte, met subtotaal.</small></span></label></div>
-    <div class="field span2"><label for="mp_inl">Inleiding (optioneel, bovenaan)</label><textarea id="mp_inl" name="inleiding" rows="2" placeholder="bv. Meetstaat bij de offerte van ${esc(fmtLong(todayIso))}. Prijzen excl. btw, geldig 30 dagen."></textarea></div>
-    <div class="field span2"><label for="mp_slot">Slottekst (optioneel, onder de totalen)</label><textarea id="mp_slot" name="slot" rows="2">${esc(inst.meetstaat_slot || "Hoeveelheden zijn vermoedelijk; de afrekening gebeurt op basis van de werkelijk uitgevoerde hoeveelheden volgens de vorderingsstaat.")}</textarea></div>
-    ${p.drive_folder_id && driveReady() ? `<div class="field span2"><label class="chk" style="font-size:13px"><input type="checkbox" name="drive" checked> Ook bewaren in de Drive-map (Documenten/Meetstaat)</label></div>` : ""}
-  </div>`, {
-    wide: true, saveLabel: "Pdf maken", onSave: async (d) => {
-      const btn = $("#mform").querySelector("button[type=submit]"); btn.textContent = "Pdf maken…";
-      const o = { versie: d.versie === "intern" && beheer ? "intern" : "klant", filter: d.filter, titel: d.titel.trim(), datum: d.datum || todayIso, perRuimte: d.perRuimte === "on", inleiding: (d.inleiding || "").trim(), slot: (d.slot || "").trim() };
-      try {
-        const blob = await msBuildPdf(p, o);
-        const naam = `${o.datum.split("-").reverse().join("")} MEETSTAAT ${p.klant.toUpperCase()}${o.versie === "intern" ? " INTERN" : ""}.pdf`;
-        const url = URL.createObjectURL(blob); const a = document.createElement("a"); a.href = url; a.download = naam; document.body.appendChild(a); a.click(); a.remove(); setTimeout(() => URL.revokeObjectURL(url), 30000);
-        if (d.drive === "on") { btn.textContent = "Bewaren in Drive…"; const b64 = await new Promise(r => { const fr = new FileReader(); fr.onload = () => r(String(fr.result).split(",")[1]); fr.readAsDataURL(blob); }); try { const j = await driveCall("put", { folderId: p.drive_folder_id, subpath: "Documenten/Meetstaat", name: naam, base64: b64, mime: "application/pdf" }); if (j.file) { const row = { project_id: pid, drive_id: j.file.id, naam: j.file.name, pad: j.file.path || "Documenten/Meetstaat", url: j.file.url, mime: "application/pdf", grootte: j.file.size || blob.size, gewijzigd: j.file.updated || new Date().toISOString(), gesynct_op: new Date().toISOString() }; const { data } = await sb.from("documenten").upsert(row, { onConflict: "project_id,drive_id" }).select().maybeSingle(); if (data) S.documenten[data.id] = data; } toast("Pdf gedownload en bewaard in Documenten/Meetstaat", 5000); } catch (e) { toast("Pdf gedownload, maar niet in Drive bewaard: " + e.message, 7000); } }
-        else toast("Pdf gedownload");
-      } catch (e) { toast("Pdf mislukt: " + e.message, 7000); btn.textContent = "Pdf maken"; return false; }
-    },
-  });
-}
-/* btw van alle posten van een project in één keer (beheer): ook het btw-tarief op de projectfiche volgt mee */
-async function msBtwAlles(pid, btw) {
-  const nVast = msRows(pid).filter(r => Number(r.btw) !== btw && msVast(r)).length;   // 1.65: goedgekeurde posten liggen vast
-  const rows = msRows(pid).filter(r => Number(r.btw) !== btw && !msVast(r)); const p = S.projecten[pid];
-  if (!rows.length) { toast(nVast ? `De overige ${nVast} posten zijn goedgekeurd door de klant en liggen vast (btw inbegrepen).` : "Alle posten staan al op " + Math.round(btw * 100) + " %", 6000); return; }
-  if (!confirm(`Btw van alle ${msRows(pid).length} posten van ${p.klant} op ${Math.round(btw * 100)} % zetten? (${rows.length} posten veranderen; verzonden facturen blijven bevroren.)${nVast ? `\n\n${nVast} post${nVast === 1 ? "" : "en"} die de klant goedkeurde, blijven zoals ze zijn.` : ""}`)) return;
-  S.bulk = true;
-  try {
-    for (let i = 0; i < rows.length; i += 100) { const ids = rows.slice(i, i + 100).map(r => r.id); const { error } = await sb.from("meetstaat_posten").update({ btw, updated_at: new Date().toISOString() }).in("id", ids); if (error) throw error; ids.forEach(id => { if (S.meetstaat_posten[id]) S.meetstaat_posten[id].btw = btw; }); }
-    const tarief = btw === 0.06 ? 6 : btw === 0.21 ? 21 : 0; if (p && p.btw_tarief !== tarief) await dbUpdate("projecten", pid, { btw_tarief: tarief }).catch(() => { });
-    toast(`Btw op ${Math.round(btw * 100)} % gezet voor ${rows.length} posten`);
-  } catch (e) { toast("Btw niet aangepast: " + e.message, 6000); }
-  finally { bulkKlaar(); await msRefetch(rows.map(r => r.id)); }
-}
-/* 1.48.1: marge van alle posten van een project in één keer (bv. na een import uit Excel, waar elke post 0 % kreeg) */
-async function msMargeAlles(pid, keuze) {
-  const p = S.projecten[pid]; let pct = null;
-  if (keuze === "ander") { const t = prompt("Marge voor alle posten van " + p.klant + " (in %):", "10"); if (t == null) return; pct = leesGetal(t); if (pct == null || Number.isNaN(pct) || pct <= -100 || pct > 1000) { toast("Geef een geldig % (bv. 10)."); return; } }
-  else if (keuze !== "lot") pct = Number(keuze);
-  const marge = pct == null ? null : Math.round(pct * MARGE_DEC / 100) / MARGE_DEC;
-  const alle = msRows(pid).filter(r => r.status !== "vervallen" && !msVast(r));   // 1.65: door de klant goedgekeurde posten liggen vast (klantprijs blijft)
-  const goed = alle.filter(r => ["akkoord", "meerwerk", "minwerk"].includes(r.status));
-  const label = pct == null ? "de lotmarge" : nl(pct, 2) + " %";
-  const open = alle.length - goed.length;
-  if (open && !confirm(`Marge van ${open} post${open === 1 ? "" : "en"} van ${p.klant} op ${label} zetten?${goed.length ? `\n\n${goed.length} goedgekeurde post${goed.length === 1 ? "" : "en"} (akkoord, meer- of minwerk) blijven op hun klantprijs.` : ""}`)) return;
-  let rows = alle.filter(r => !goed.includes(r));
-  if (goed.length && confirm(`Ook de ${goed.length} goedgekeurde post${goed.length === 1 ? "" : "en"} op ${label} zetten?\n\nLet op: hun klantprijs verandert dan, terwijl de klant een andere prijs goedkeurde.\n\nOK = ook die · Annuleren = enkel de andere posten`)) rows = alle;
-  rows = rows.filter(r => !((r.marge == null || r.marge === "") && marge == null) && !(r.marge != null && r.marge !== "" && marge != null && Math.abs(Number(r.marge) - marge) < 1e-9));
-  if (!rows.length) { toast("Alle posten staan al op " + label); return; }
-  S.bulk = true;
-  try {
-    for (let i = 0; i < rows.length; i += 100) {
-      const chunk = rows.slice(i, i + 100).map(r => ({ post_id: r.id, marge }));
-      const { error } = await sb.from("meetstaat_prijzen").upsert(chunk, { onConflict: "post_id" }); if (error) throw error;
-    }
-    toast(`Marge op ${label} gezet voor ${rows.length} posten — klantprijzen herrekend`, 5000);
-  } catch (e) { toast("Marge niet aangepast: " + e.message, 6000); }
-  finally { bulkKlaar(); await msRefetch(rows.map(r => r.id)); }
-}
-/* ---------- Meetstaat: posten verslepen binnen een lot; nummers (lot.n) en volgorde volgen automatisch ---------- */
-async function msReorder(pid, lot, movedId, targetId, before) {
-  const rows = msRows(pid).filter(r => r.lot === lot); const from = rows.findIndex(r => r.id === movedId); if (from < 0) return;
-  const [moved] = rows.splice(from, 1);
-  let to = targetId ? rows.findIndex(r => r.id === targetId) : (before ? 0 : rows.length); if (to < 0) to = rows.length; if (!before && targetId) to += 1;
-  rows.splice(to, 0, moved);
-  // groep van de nieuwe buur overnemen, zodat de post niet als losse groepskop verschijnt
-  const buur = rows[to - 1] || rows[to + 1]; const groep = buur ? (buur.groep || "") : (moved.groep || "");
-  const patches = [];
-  const codesVast = rows.some(msVast);   // 1.65: de klant keurde posten met hun nummer goed → nummers blijven, enkel de volgorde schuift
-  rows.forEach((r, i) => { const code = codesVast ? r.code : `${lot}.${i + 1}`; const volg = (i + 1) * 10; const g = r.id === moved.id ? groep : (r.groep || "");
-    if (r.code !== code || (r.volgorde ?? 0) !== volg || (r.groep || "") !== g) patches.push({ id: r.id, code, volgorde: volg, groep: g }); });
-  if (!patches.length) return;
-  S.bulk = true;
-  patches.forEach(x => Object.assign(S.meetstaat_posten[x.id], x)); render();
-  try { await Promise.all(patches.map(x => sb.from("meetstaat_posten").update({ ...(codesVast ? {} : { code: x.code }), volgorde: x.volgorde, groep: x.groep, updated_at: new Date().toISOString() }).eq("id", x.id).then(r => { if (r.error) throw r.error; }))); toast(codesVast ? "Volgorde aangepast (de nummers blijven: dit lot bevat goedgekeurde posten)" : "Volgorde en nummers aangepast"); }
-  catch (e) { toast("Volgorde niet bewaard: " + e.message, 6000); }
-  finally { bulkKlaar(); await msRefetch(rows.map(r => r.id)); }
-}
-let msDrag = null;
-document.addEventListener("dragstart", (e) => { const h = e.target.closest && e.target.closest("[data-drag]"); if (!h) return; const tr = h.closest("tr"); msDrag = { id: h.dataset.drag, lot: Number(tr.dataset.lot), pid: S.project }; tr.classList.add("dragging"); e.dataTransfer.effectAllowed = "move"; try { e.dataTransfer.setData("text/plain", h.dataset.drag); } catch (x) { } });
-document.addEventListener("dragover", (e) => { if (!msDrag) return; const tr = e.target.closest && e.target.closest("tr[data-msrow]"); document.querySelectorAll("tr.drop-before, tr.drop-after").forEach(x => x.classList.remove("drop-before", "drop-after")); if (!tr || Number(tr.dataset.lot) !== msDrag.lot || tr.dataset.msrow === msDrag.id) return; e.preventDefault(); e.dataTransfer.dropEffect = "move"; const r = tr.getBoundingClientRect(); tr.classList.add(e.clientY < r.top + r.height / 2 ? "drop-before" : "drop-after"); });
-document.addEventListener("drop", (e) => { if (!msDrag) return; const tr = e.target.closest && e.target.closest("tr[data-msrow]"); const d = msDrag; msDrag = null; document.querySelectorAll("tr.dragging, tr.drop-before, tr.drop-after").forEach(x => x.classList.remove("dragging", "drop-before", "drop-after")); if (!tr || Number(tr.dataset.lot) !== d.lot || tr.dataset.msrow === d.id) return; e.preventDefault(); const r = tr.getBoundingClientRect(); msReorder(d.pid, d.lot, d.id, tr.dataset.msrow, e.clientY < r.top + r.height / 2); });
-document.addEventListener("dragend", () => { msDrag = null; document.querySelectorAll("tr.dragging, tr.drop-before, tr.drop-after").forEach(x => x.classList.remove("dragging", "drop-before", "drop-after")); });
-/* ---------- Prijsaanvragen (script 025): eenheidsprijzen opvragen bij aannemers via het aannemersportaal, vergelijken en overnemen als kostprijs ---------- */
-const PA_STATUS = { open: "In te vullen", ingediend: "Ingediend", gekozen: "Gekozen", afgesloten: "Afgesloten" };
-const paOf = (pid) => Object.values(S.prijsaanvragen || {}).filter(a => a.project_id === pid).sort((a, b) => (b.created_at || "").localeCompare(a.created_at || ""));
-const paRegels = (aid) => Object.values(S.prijsaanvraag_regels || {}).filter(r => r.aanvraag_id === aid);
-const paPosten = (a) => msRows(a.project_id).filter(r => (a.loten || []).includes(r.lot) && r.status !== "vervallen");
-function vPrijsaanvragen(p) {
-  if (schemaV() < 25 || !isBeheer() || S.msKlant) return "";
-  const as = paOf(p.id); const aannemers = contactsOf(p.id).filter(x => !KLANT_ROLLEN.includes(x.rol) && x.c.soort !== "klant");
-  return `<div class="panel" style="margin-bottom:16px"><div class="panel-head"><div><h3>Prijsaanvragen bij aannemers</h3><div class="muted" style="font-size:12px;margin-top:2px">De aannemer krijgt een mail (met uitnodiging voor het portaal als hij nog geen login heeft) en vult per post een eenheidsprijs in via zijn portaal (hij ziet enkel hoeveelheden, nooit jullie prijzen); daarna vergelijk je en neem je de gekozen prijzen over als kostprijs.${schemaV() >= 28 ? " Zolang een aanvraag open staat, stuurt het Drive-script elke week automatisch een herinnering (op werkdagen; na 4 herinneringen krijg jij een seintje). Indienen of afsluiten stopt dat." : ""}</div></div>
-      <div class="actions">${as.some(a => a.status !== "afgesloten") ? `<button class="btn sm" data-act="pa-cmp" data-pid="${p.id}">Vergelijken</button>` : ""}<button class="btn sm primary" data-act="pa-new" data-pid="${p.id}" ${aannemers.length ? "" : `title="Koppel eerst een aannemer aan dit project (Dossier › Contacten)"`}>+ Prijsaanvraag</button></div></div>
-    ${as.length ? `<div class="tw"><table class="t"><thead><tr><th>Aanvraag</th><th>Aannemer</th><th>Loten</th><th class="r">Ingevuld</th><th class="r">Totaal</th><th>Reageren vóór</th><th>Status</th><th></th></tr></thead><tbody>
-      ${as.map(a => { const c = S.contacten[a.contact_id]; const ps = paPosten(a); const rs = paRegels(a.id).filter(r => r.eenheidsprijs != null); const byPost = Object.fromEntries(rs.map(r => [r.post_id, r])); const tot = ps.reduce((s, r) => s + (byPost[r.id] ? Number(byPost[r.id].eenheidsprijs) * Number(r.hoeveelheid || 0) : 0), 0);
-        return `<tr class="${a.status === "afgesloten" ? "ms-dead" : ""}"><td><div class="row-title">${esc(a.titel || "Prijsaanvraag")}<small>${fmtLong(lokDag(a.created_at))}${a.ingediend_op ? " · ingediend " + fmtLong(lokDag(a.ingediend_op)) : ""}${a.herinneringen ? ` · ${Math.min(a.herinneringen, 4)}× herinnerd${a.herinnerd_op ? ", laatst " + fmtLong(lokDag(a.herinnerd_op)) : ""}${a.herinneringen > 4 ? " — gestopt" : ""}` : ""}${a.opmerking ? ` · “${esc(a.opmerking)}”` : ""}</small></div></td><td>${c ? `<a href="#" data-contact="${c.id}">${esc(c.naam)}</a>${c.user_id ? "" : ` <span class="pill st-offerte" title="Nog geen login voor het aannemersportaal; de uitnodiging zit in de mail">geen login</span>`}` : "—"}</td><td class="muted" style="font-size:12px">${(a.loten || []).map(l => esc(lotName(l))).join("<br>")}</td><td class="r num">${ps.filter(r => byPost[r.id]).length} / ${ps.length}</td><td class="r num">${rs.length ? eur(tot) : "—"}</td><td class="num ${a.status === "open" && a.deadline && a.deadline < todayIso ? "late" : ""}">${a.deadline ? fmtLong(a.deadline) : "—"}</td><td><span class="pill ${a.status === "gekozen" ? "done" : a.status === "ingediend" ? "st-lopend" : a.status === "open" ? "st-offerte" : "kl"}">${PA_STATUS[a.status]}</span></td>
-          <td class="r" style="white-space:nowrap">${a.status !== "afgesloten" && rs.length ? `<button class="btn ghost sm" data-act="pa-take" data-id="${a.id}" title="De ingevulde prijzen van deze aannemer overnemen als kostprijs in de meetstaat">Overnemen</button>` : ""}${a.status === "open" && driveReady() ? `<button class="btn ghost sm" data-act="pa-remind" data-id="${a.id}" title="Herinnering mailen">Herinneren</button>` : ""}${a.status !== "afgesloten" ? `<button class="btn ghost sm" data-act="pa-close" data-id="${a.id}" title="Afsluiten (de aannemer kan niets meer invullen)">Afsluiten</button>` : ""}<button class="btn ghost sm danger" data-act="pa-del" data-id="${a.id}" aria-label="Verwijderen">✕</button></td></tr>`; }).join("")}
-    </tbody></table></div>` : `<div class="empty"><b>Nog geen prijsaanvragen</b>Stuur een aannemer de posten van zijn lot(en); hij vult de prijzen in via het aannemersportaal.</div>`}</div>`;
-}
-function paForm(pid) {
-  const p = S.projecten[pid]; if (!p) return;
-  const aannemers = contactsOf(pid).filter(x => !KLANT_ROLLEN.includes(x.rol) && x.c.soort !== "klant");
-  if (!aannemers.length) { toast("Koppel eerst een aannemer aan dit project (Dossier › Contacten)."); return; }
-  const lots = [...new Set(msRows(pid).filter(r => r.status !== "vervallen").map(r => r.lot))].sort((a, b) => a - b);
-  if (!lots.length) { toast("De meetstaat is nog leeg."); return; }
-  const dl = addDays(todayIso, 14);
-  openModal("Prijsaanvraag versturen", `<div class="form-grid">
-    <div class="field"><label for="pa_c">Aannemer</label><select id="pa_c" name="contact_id">${aannemers.map(x => `<option value="${x.c.id}" data-loten="${(x.loten || []).length ? x.loten.join(",") : (x.c.loten || []).join(",")}">${esc(x.c.naam)}${x.c.vakgebied ? " · " + esc(x.c.vakgebied) : ""}${x.c.email ? "" : " (geen e-mail!)"}${x.c.user_id ? "" : " · nog geen portaallogin"}</option>`).join("")}</select><small class="muted">Zonder login krijgt hij in dezelfde mail een uitnodiging voor het aannemersportaal.</small></div>
-    <div class="field"><label for="pa_dl">Reageren vóór</label><input id="pa_dl" name="deadline" type="date" value="${dl}"><small class="muted">Staat in de mail en in zijn portaal${schemaV() >= 28 ? "; na een week zonder indiening volgt automatisch elke week een herinnering" : ""}. Leeg = geen datum.</small></div>
-    <div class="field span2"><label for="pa_t">Titel</label><input id="pa_t" name="titel" value="Prijsaanvraag ${esc(p.klant)}"></div>
-    <div class="field span2"><label>Loten <span class="muted" style="font-weight:400">— de aannemer ziet de posten van deze loten met hoeveelheden en eenheden</span></label><div class="fase-list">${lots.map(l => `<label class="chk"><input type="checkbox" name="lot" value="${l}"> <span>${esc(lotName(l))} <small class="muted">${msRows(pid).filter(r => r.lot === l && r.status !== "vervallen").length} posten</small></span></label>`).join("")}</div></div>
-    <div class="field span2"><label for="pa_b">Bericht aan de aannemer</label><textarea id="pa_b" name="bericht" rows="3">Beste, graag je eenheidsprijzen (excl. btw, inclusief levering en plaatsing) voor onderstaande posten. Opmerkingen of alternatieven kan je per post toevoegen.</textarea></div>
-  </div>`, {
-    wide: true, saveLabel: "Versturen", onSave: async (d) => {
-      const loten = [...$("#mform").querySelectorAll('input[name="lot"]:checked')].map(i => Number(i.value)); if (!loten.length) { toast("Kies minstens één lot."); return false; }
-      const c = S.contacten[d.contact_id]; if (!c || !c.email) { toast("Dit contact heeft geen e-mailadres."); return false; }
-      const row = await dbInsert("prijsaanvragen", { project_id: pid, contact_id: d.contact_id, loten, titel: d.titel.trim(), bericht: (d.bericht || "").trim(), deadline: d.deadline || null, created_by: S.me.id });
-      if (driveReady()) { try { const j = await driveCall("prijsaanvraagmail", { id: row.id, soort: "nieuw", token: S.session?.access_token || "" }); toast(`Prijsaanvraag gemaild naar ${j.naar || c.email}${j.uitgenodigd ? " (met uitnodiging voor het portaal)" : ""}`, 6000); } catch (e) { toast("Aanvraag bewaard, maar mailen mislukte: " + e.message, 8000); } }
-      else toast("Prijsaanvraag bewaard (niet gemaild: Drive-script niet ingesteld)");
-    },
-  });
-  const sel = $("#pa_c"); const syncLots = () => { const ls = (sel.selectedOptions[0]?.dataset.loten || "").split(",").filter(Boolean).map(Number); $("#mform").querySelectorAll('input[name="lot"]').forEach(i => i.checked = ls.includes(Number(i.value))); }; sel.addEventListener("change", syncLots); syncLots();
-}
-function paVergelijk(pid) {
-  const as = paOf(pid).filter(a => a.status !== "afgesloten"); if (!as.length) return;
-  const lots = [...new Set(as.flatMap(a => a.loten || []))].sort((a, b) => a - b);
-  const prijs = (a, postId) => { const r = paRegels(a.id).find(x => x.post_id === postId); return r && r.eenheidsprijs != null ? Number(r.eenheidsprijs) : null; };
-  const opm = (a, postId) => { const r = paRegels(a.id).find(x => x.post_id === postId); return r ? r.opmerking : ""; };
-  const naam = (a) => S.contacten[a.contact_id]?.naam || "?";
-  let html = `<div class="tw"><table class="t ms"><thead><tr><th>Nr</th><th>Omschrijving</th><th class="r">Hoev.</th><th class="r" title="Huidige kostprijs in de meetstaat">Kost nu</th>${as.map(a => `<th class="r">${esc(naam(a))}<small class="muted" style="display:block;font-weight:400">${PA_STATUS[a.status]}</small></th>`).join("")}</tr></thead><tbody>`;
-  const tot = { nu: 0 }; as.forEach(a => tot[a.id] = 0);
-  lots.forEach(lot => {
-    const rows = msRows(pid).filter(r => r.lot === lot && r.status !== "vervallen"); const sub = { nu: 0 }; as.forEach(a => sub[a.id] = 0);
-    html += `<tr class="ms-lot"><td colspan="${4 + as.length}">${esc(lotName(lot))}</td></tr>`;
-    rows.forEach(r => { const h = Number(r.hoeveelheid || 0); const nu = Number(r.eenheidsprijs) || 0; sub.nu += nu * h; const ps = as.map(a => prijs(a, r.id)); const min = Math.min(...ps.filter(x => x != null));
-      html += `<tr><td class="num muted">${esc(r.code)}</td><td>${esc(r.omschrijving)}${r.locatie ? `<small class="muted" style="display:block">${esc(r.locatie)}</small>` : ""}</td><td class="r num" style="white-space:nowrap">${h ? nl(h, 2) + " " + esc(r.eenheid) : ""}</td><td class="r num muted">${nu ? eur2(nu) : "—"}</td>${as.map((a, i) => { const x = ps[i]; if (x != null) sub[a.id] += x * h; const o = opm(a, r.id); return `<td class="r num" style="${x != null && x === min && ps.filter(y => y != null).length > 1 ? "color:var(--ok);font-weight:600" : ""}" title="${esc(o)}">${x == null ? "—" : eur2(x)}${o ? ` <span title="${esc(o)}">💬</span>` : ""}</td>`; }).join("")}</tr>`; });
-    html += `<tr class="ms-groep"><td></td><td>Subtotaal ${esc(lotName(lot))}</td><td></td><td class="r num">${eur(sub.nu)}</td>${as.map(a => `<td class="r num"><b>${eur(sub[a.id])}</b></td>`).join("")}</tr>`;
-    tot.nu += sub.nu; as.forEach(a => tot[a.id] += sub[a.id]);
-  });
-  html += `<tr class="ms-lot"><td></td><td>Totaal (posten met prijs)</td><td></td><td class="r num">${eur(tot.nu)}</td>${as.map(a => `<td class="r num">${eur(tot[a.id])}</td>`).join("")}</tr></tbody></table></div>
-    <div class="actions" style="margin-top:12px;flex-wrap:wrap">${as.map(a => `<button type="button" class="btn sm" data-act="pa-take" data-id="${a.id}" data-fromcmp="1">Prijzen van ${esc(naam(a))} overnemen</button>`).join("")}</div><p class="muted" style="font-size:12px;margin:8px 0 0">Overnemen zet de ingevulde eenheidsprijzen als kostprijs in de meetstaat (enkel de posten waarvoor die aannemer een prijs gaf); de klantprijs volgt via de marge. Groen = laagste prijs.</p>`;
-  openModal("Prijzen vergelijken", html, { wide: true, saveLabel: "Sluiten", onSave: async () => { } });
-  $("#mform").querySelector(".mf button.btn:not(.primary)")?.remove();
-}
-async function paOvernemen(id) {
-  const a = S.prijsaanvragen[id]; if (!a) return; const n = paRegels(id).filter(r => r.eenheidsprijs != null).length;
-  if (!n) { toast("Deze aannemer heeft nog geen prijzen ingevuld."); return; }
-  if (!confirm(`${n} prijzen van ${S.contacten[a.contact_id]?.naam || "deze aannemer"} overnemen als kostprijs in de meetstaat? Bestaande kostprijzen van die posten worden overschreven.`)) return;
-  const { data, error } = await sb.rpc("prijsaanvraag_overnemen", { p_id: id });
-  if (error) { toast("Overnemen mislukt: " + error.message, 6000); return; }
-  await msRefetch(paPosten(a).map(r => r.id)); await refetch("prijsaanvragen"); toast(`${data} kostprijzen overgenomen`);
-  if (driveReady()) driveCall("prijsaanvraagmail", { id, soort: "gekozen", token: S.session?.access_token || "" }).catch(() => { });
-}
-/* ---------- Meetstaat voor aannemers: met prijzen, ter goedkeuring (script 032, alleen beheer) ----------
-   Per aannemer: zijn loten (zonder binnenschrijnwerk, tenzij aangevinkt), aannemersprijs = klantprijs × (1 − marge),
-   standaardmarge 10 %, per post aan te passen of een vaste prijs. Delen = een vaste momentopname in zijn portaal;
-   bij akkoord worden zijn prijzen de kostprijs (klantprijs blijft gelijk, de marge wordt herrekend). */
-const AM_STATUS = { concept: "Concept", gedeeld: "Gedeeld — wacht op akkoord", akkoord: "Akkoord", tegenvoorstel: "Tegenvoorstel", ingetrokken: "Niet meer gedeeld" };
-const AM_PILL = { concept: "st-offerte", gedeeld: "vs-open", akkoord: "done", tegenvoorstel: "late", ingetrokken: "" };
-const amReady = () => schemaV() >= 32 && isBeheer();
-const amOf = (pid) => Object.values(S.aannemer_meetstaten || {}).filter(a => a.project_id === pid);
-const amPostRows = (amId) => Object.values(S.aannemer_meetstaat_posten || {}).filter(r => r.am_id === amId);
-const amBinnen = (lot) => /binnenschrijnwerk/i.test(S.loten[lot]?.naam || "");
-const amAannemers = (pid) => contactsOf(pid).filter(x => !KLANT_ROLLEN.includes(x.rol) && x.c.soort !== "klant");
-const amLoten = (x) => ((x.loten || []).length ? x.loten : (x.c.loten || [])).map(Number);
-const amRond = (n) => Math.round((Number(n) || 0) * 100) / 100;
-const amTxt = (n) => amRond(n).toFixed(2).replace(".", ",");
-function amRegel(r, marge, ov, loten) {   // berekende regel voor één meetstaatpost
-  const std = loten.includes(r.lot) && !amBinnen(r.lot) && r.status !== "vervallen";
-  const tonen = r.status === "vervallen" ? false : (ov && ov.tonen != null ? !!ov.tonen : std);
-  const m = ov && ov.marge != null && ov.marge !== "" ? Number(ov.marge) : Number(marge);
-  const klant = msVerkoopEP(r); const vast = ov && ov.prijs != null && ov.prijs !== "";
-  const prijs = vast ? amRond(ov.prijs) : amRond(klant * (1 - m));
-  return { r, std, tonen, marge: m, eigenMarge: !!(ov && ov.marge != null && ov.marge !== ""), klant, prijs, vast };
-}
-function amBereken(pid, a, ovs, loten) {   // alle regels + momentopname + totalen
-  const regels = msRows(pid).map(r => amRegel(r, a.marge ?? 0.1, ovs[r.id], loten));
-  const zicht = regels.filter(x => x.tonen);
-  const snap = zicht.map(x => ({ post_id: x.r.id, lot: x.r.lot, code: x.r.code || "", groep: x.r.groep || "", omschrijving: x.r.omschrijving || "", locatie: x.r.locatie || "", eenheid: x.r.eenheid || "", prijstype: x.r.prijstype || "EP", hoeveelheid: Number(x.r.hoeveelheid) || 0, status: x.r.status, prijs: x.prijs }));
-  const tot = zicht.reduce((s, x) => { const h = Number(x.r.hoeveelheid) || 0; const t = (v) => x.r.status === "minwerk" ? -Math.abs(r2(v * h)) : r2(v * h); s.klant += t(x.klant); s.aan += t(x.prijs); return s; }, { klant: 0, aan: 0 });
-  return { regels, snap, tot };
-}
-const amSnapKey = (snap) => JSON.stringify((snap || []).map(x => [x.post_id, Number(x.hoeveelheid) || 0, amRond(x.prijs), x.omschrijving, x.eenheid]).sort((a, b) => a[0].localeCompare(b[0])));
-function amOvsVan(a) { const o = {}; if (a && a.id) amPostRows(a.id).forEach(r => o[r.post_id] = { id: r.id, tonen: r.tonen, marge: r.marge, prijs: r.prijs }); return o; }
-function vAanMeetstaten(p) {
-  if (!amReady() || S.msKlant || !msRows(p.id).length) return "";
-  const lijst = amAannemers(p.id);
-  const rij = (x) => {
-    const a = amOf(p.id).find(m => m.contact_id === x.c.id); const loten = amLoten(x);
-    const { snap, tot } = amBereken(p.id, a || { marge: 0.1 }, amOvsVan(a), loten);
-    const gewijzigd = a && a.gedeeld && ["gedeeld", "akkoord", "tegenvoorstel"].includes(a.status) && amSnapKey(snap) !== amSnapKey(a.regels);
-    const st = a ? a.status : "";
-    return `<tr><td><a href="#" data-contact="${x.c.id}">${esc(x.c.naam)}</a>${x.c.user_id ? "" : ` <span class="pill st-offerte" title="Nog geen login voor het aannemersportaal; bij delen krijgt hij een uitnodiging">geen login</span>`}<small class="muted" style="display:block">${esc(CONTACT_ROL[x.rol] || x.rol || "")}</small></td>
-      <td>${loten.length ? loten.map(l => esc(lotName(l))).join(", ") : `<span class="muted">geen loten gekoppeld</span>`}</td>
-      <td class="r num">${snap.length}</td><td class="r num">${eur(tot.aan)}</td><td class="r num">${tot.klant ? nl((1 - tot.aan / tot.klant) * 100, 1) + " %" : "—"}</td>
-      <td>${st ? `<span class="pill ${AM_PILL[st] || ""}">${esc(AM_STATUS[st] || st)}${a.versie ? " · v" + a.versie : ""}</span>` : `<span class="muted">—</span>`}${a && a.beslist_op && ["akkoord", "tegenvoorstel"].includes(st) ? `<small class="muted" style="display:block">${esc(a.beslist_naam || "")} · ${fmtLong(lokDag(a.beslist_op))}</small>` : ""}${gewijzigd ? `<small style="display:block;color:var(--crit)">gewijzigd sinds delen</small>` : ""}</td>
-      <td class="r"><button class="btn sm ${st === "tegenvoorstel" || gewijzigd ? "primary" : ""}" data-act="am-open" data-pid="${p.id}" data-cid="${x.c.id}">${a ? "Openen" : "Prijzen opmaken"}</button></td></tr>`;
-  };
-  return `<div class="panel" style="margin-bottom:16px"><div class="panel-head"><div><h3>Meetstaat voor aannemers</h3><div class="muted" style="font-size:12px;margin-top:2px">Per aannemer zijn posten met zijn prijs: klantprijs min marge (standaard 10 %, per post aan te passen of een vaste prijs). Binnenschrijnwerk staat er niet in, tenzij je het aanvinkt. Na delen keurt hij goed in zijn portaal; bij akkoord worden zijn prijzen de kostprijs en blijft de klantprijs gelijk.</div></div></div>
-    ${lijst.length ? `<div class="tw"><table class="t"><thead><tr><th>Aannemer</th><th>Loten</th><th class="r">Posten</th><th class="r">Totaal aannemer</th><th class="r">Marge</th><th>Status</th><th></th></tr></thead><tbody>${lijst.map(rij).join("")}</tbody></table></div>`
-      : `<div class="empty"><b>Nog geen aannemers gekoppeld</b>Koppel een aannemer met zijn loten in Dossier › Contacten.</div>`}</div>`;
-}
-let AM = null;
-function amOpen(pid, cid) {
-  const p = S.projecten[pid]; const x = amAannemers(pid).find(y => y.c.id === cid); if (!p || !x) return;
-  const a = amOf(pid).find(m => m.contact_id === cid) || null;
-  AM = { pid, cid, x, a, marge: a ? Number(a.marge) : 0.1, bericht: a ? a.bericht || "" : "", ovs: amOvsVan(a), loten: amLoten(x), open: {} };
-  const reactie = a && ["gedeeld", "tegenvoorstel", "akkoord"].includes(a.status) ? a : null;
-  openModal(`Meetstaat met prijzen — ${x.c.naam}`, `
-    <div class="form-grid">
-      <div class="field"><label for="am_marge">Marge BROS (% van de klantprijs)</label><input id="am_marge" type="text" inputmode="decimal" autocomplete="off" value="${nl(AM.marge * 100, 2)}"><small class="muted">Aannemersprijs = klantprijs × (1 − marge). Per post kan je een eigen marge of een vaste prijs zetten.</small></div>
-      <div class="field"><label>Status</label><div style="padding-top:6px" id="am_status"></div></div>
-      <div class="field span2"><label for="am_bericht">Bericht aan de aannemer (bovenaan in zijn portaal en in de mail)</label><textarea id="am_bericht" rows="2" placeholder="bv. Prijzen excl. btw, inclusief levering en plaatsing. Graag je akkoord tegen vrijdag.">${esc(AM.bericht)}</textarea></div>
-      ${reactie && reactie.opmerking ? `<div class="field span2"><div class="notice" style="margin:0"><div><b>Opmerking van ${esc(reactie.beslist_naam || x.c.naam)}:</b> ${esc(reactie.opmerking)}</div></div></div>` : ""}
-      ${a && a.status === "akkoord" && Array.isArray(a.niet_toegepast) && a.niet_toegepast.length ? `<div class="field span2"><div class="notice" style="margin:0;border-color:var(--warn)"><div><b>${a.niet_toegepast.length} post${a.niet_toegepast.length > 1 ? "en" : ""} niet automatisch overgenomen als kostprijs</b> — de prijs of marge werd na het delen nog gewijzigd, of er was geen klantprijs. Controleer en vul de kostprijs zelf in de meetstaat in:<ul style="margin:6px 0 0 18px">${a.niet_toegepast.map(id => { const g = (a.regels || []).find(q => q.post_id === id) || {}; const r = S.meetstaat_posten[id]; return `<li>${esc(g.code || r?.code || "")} ${esc(g.omschrijving || r?.omschrijving || "(verwijderde post)")} — aannemersprijs ${eur2(g.prijs)}${r ? ` · nu kost ${eur2(r.eenheidsprijs)}, klant ${eur2(msVerkoopEP(r))}` : ""}</li>`; }).join("")}</ul></div></div></div>` : ""}
-    </div>
-    <div id="am_tabel"></div>
-    <div class="actions" style="margin-top:12px;justify-content:space-between;flex-wrap:wrap;gap:8px"><span class="muted" style="font-size:12px" id="am_tot"></span>
-      <span style="display:flex;gap:8px;flex-wrap:wrap">${a && a.gedeeld ? `<button type="button" class="btn sm ghost danger" data-am="intrekken">Niet meer delen</button>` : ""}<button type="button" class="btn sm" data-am="delen">${a && a.gedeeld ? "Bewaren en opnieuw delen" : "Bewaren en delen met aannemer"}</button></span></div>`,
-    { wide: true, saveLabel: "Bewaren", onSave: async () => { try { await amBewaar(false); toast("Bewaard"); } catch (e) { if (!e.__toasted) toast("Bewaren mislukt: " + (e.message || e), 6000); return false; } } });
-  $("#modal").style.width = "min(1180px, 100%)";
-  amTekenTabel();
-  const m = $("#mform");   // het formulier wordt bij elke modal opnieuw gemaakt: geen dubbele luisteraars
-  m.addEventListener("change", (e) => {
-    const t = e.target;
-    if (t.id === "am_marge") { const v = leesGetal(t.value); if (v == null || Number.isNaN(v) || v < 0 || v >= 100) { toast("Geef een marge tussen 0 en 100 %."); t.value = nl(AM.marge * 100, 2); return; } AM.marge = v / 100; return setTimeout(() => amTekenTabel(), 0); }
-    if (t.id === "am_bericht") { AM.bericht = t.value; return; }
-    const post = t.dataset.amPost; if (!post) { if (t.dataset.amLot) { const lot = Number(t.dataset.amLot); msRows(pid).filter(r => r.lot === lot && r.status !== "vervallen").forEach(r => { const o = AM.ovs[r.id] = AM.ovs[r.id] || {}; const std = AM.loten.includes(r.lot) && !amBinnen(r.lot); o.tonen = t.checked === std ? null : t.checked; }); amTekenTabel(); } return; }
-    const o = AM.ovs[post] = AM.ovs[post] || {}; const r = S.meetstaat_posten[post];
-    if (t.dataset.f === "tonen") { const std = AM.loten.includes(r.lot) && !amBinnen(r.lot); o.tonen = t.checked === std ? null : t.checked; }
-    else if (t.dataset.f === "marge") { const v = t.value.trim() === "" ? null : leesGetal(t.value); if (v != null && (Number.isNaN(v) || v < -100 || v >= 100)) { toast(Number.isNaN(v) ? `"${t.value}" is geen geldig getal.` : "Geef een marge tussen −100 en 100 %."); } else o.marge = v == null ? null : v / 100; }
-    else if (t.dataset.f === "prijs") { const v = t.value.trim() === "" ? null : leesGetal(t.value); if (v != null && (Number.isNaN(v) || v < 0)) toast(Number.isNaN(v) ? `"${t.value}" is geen geldig getal — niet bewaard.` : "Geef een positieve prijs."); else o.prijs = v == null ? null : amRond(v); }
-    setTimeout(() => amTekenTabel(), 0);   // na het verplaatsen van de focus (Tab), zodat die bewaard blijft
-  });
-  m.addEventListener("click", async (e) => {
-    const b = e.target.closest("[data-am],[data-am-neem],[data-am-open]"); if (!b) return;
-    if (b.dataset.amOpen) { AM.open[b.dataset.amOpen] = !AM.open[b.dataset.amOpen]; return amTekenTabel(); }
-    if (b.dataset.amNeem) { const post = b.dataset.amNeem; const tp = AM.a?.reactie?.[post]?.tegenprijs; if (tp == null) return; const o = AM.ovs[post] = AM.ovs[post] || {}; o.prijs = amRond(tp); return amTekenTabel(); }
-    const act = b.dataset.am; b.disabled = true;
-    try {
-      if (act === "delen") {
-        const { snap } = amBereken(pid, { marge: AM.marge }, AM.ovs, AM.loten); if (!snap.length) { toast("Er staat geen enkele post aangevinkt."); return; }
-        if (!x.c.email) { toast("Deze aannemer heeft geen e-mailadres (Dossier › Contacten)."); }
-        if (!confirm(`${snap.length} posten delen met ${x.c.naam}${AM.a && AM.a.gedeeld ? ` als versie ${(AM.a.versie || 0) + 1} (zijn vorige akkoord of reactie vervalt)` : ""}? Hij ziet enkel zijn eigen prijzen, nooit de klantprijs of jullie marge.`)) return;
-        await amBewaar(true); MODAL.dirty = false; closeModal();
-      } else if (act === "intrekken") {
-        if (!confirm(`De meetstaat niet meer delen met ${x.c.naam}? Hij ziet ze dan niet meer in zijn portaal.`)) return;
-        await dbUpdate("aannemer_meetstaten", AM.a.id, { gedeeld: false, status: "ingetrokken" }); MODAL.dirty = false; closeModal(); toast("Niet meer gedeeld");
-      }
-    } catch (er) { if (!er.__toasted) toast("Mislukt: " + (er.message || er), 6000); } finally { b.disabled = false; }
-  });
-}
-function amTekenTabel(focusEl) {
-  if (!AM) return; const box = $("#am_tabel"); if (!box) return; const pid = AM.pid; const a = AM.a;
-  const act = document.activeElement; const ak = act && act.dataset && act.dataset.amPost ? [act.dataset.amPost, act.dataset.f] : null;
-  const { regels, snap, tot } = amBereken(pid, { marge: AM.marge }, AM.ovs, AM.loten);
-  const reactie = a && ["gedeeld", "tegenvoorstel", "akkoord"].includes(a.status) ? (a.reactie || {}) : {};
-  const gedeeldPrijs = Object.fromEntries((a && a.gedeeld ? a.regels || [] : []).map(x => [x.post_id, x.prijs]));
-  const lots = [...new Set(regels.map(x => x.r.lot))].sort((p, q) => (AM.loten.includes(q) - AM.loten.includes(p)) || p - q);
-  const body = lots.map(lot => {
-    const rs = regels.filter(x => x.r.lot === lot); const zijn = AM.loten.includes(lot); const binnen = amBinnen(lot); const aan = rs.filter(x => x.tonen).length;
-    const open = AM.open[lot] ?? ((zijn && !binnen) || aan > 0); const levend = rs.filter(x => x.r.status !== "vervallen");
-    const kop = `<tr class="ms-lot"><td style="width:30px"><input type="checkbox" data-am-lot="${lot}" ${levend.length && levend.every(x => x.tonen) ? "checked" : ""} title="Alle posten van dit lot tonen of verbergen"></td><td colspan="8"><div style="display:flex;justify-content:space-between;gap:8px;flex-wrap:wrap;align-items:center"><span>${esc(lotName(lot))} ${zijn ? `<span class="pill done" style="font-weight:500">zijn lot</span>` : `<span class="pill" style="font-weight:500">ander lot</span>`}${binnen ? ` <span class="pill st-offerte" style="font-weight:500">binnenschrijnwerk — standaard niet</span>` : ""} <span class="muted num" style="font-weight:400">${aan} / ${rs.length} getoond</span></span><button type="button" class="btn ghost sm" data-am-open="${lot}">${open ? "Verbergen ▴" : "Posten tonen ▾"}</button></div></td></tr>`;
-    if (!open) return kop;
-    let groep = null;
-    return kop + rs.map(x => {
-      const r = x.r; const ov = AM.ovs[r.id] || {}; const h = Number(r.hoeveelheid) || 0; const re = reactie[r.id]; const dood = r.status === "vervallen";
-      const gh = r.groep && r.groep !== groep ? ((groep = r.groep), `<tr class="ms-groep"><td></td><td colspan="8">${esc(r.groep)}</td></tr>`) : "";
-      const veranderd = a && a.gedeeld && x.tonen && gedeeldPrijs[r.id] != null && amRond(gedeeldPrijs[r.id]) !== x.prijs;
-      return gh + `<tr class="${x.tonen ? "" : "ms-dead"}"><td><input type="checkbox" data-am-post="${r.id}" data-f="tonen" ${x.tonen ? "checked" : ""} ${dood ? "disabled" : ""} title="${x.std ? "Standaard getoond" : "Standaard niet getoond"}"></td>
-        <td class="num muted" style="width:48px">${esc(r.code || "")}</td><td style="min-width:200px">${esc(r.omschrijving || "")}${r.locatie ? `<small class="muted" style="display:block">${esc(r.locatie)}</small>` : ""}${dood ? ` <span class="pill">vervallen</span>` : ""}</td>
-        <td class="r num" style="white-space:nowrap">${h ? nl(h, 2) + " " + esc(r.eenheid || "") : esc(r.prijstype && r.prijstype !== "EP" ? r.prijstype : r.eenheid || "")}</td>
-        <td class="r num muted" title="Klantprijs per eenheid">${eur2(x.klant)}</td>
-        <td style="width:70px"><input class="inline num" data-am-post="${r.id}" data-f="marge" type="text" inputmode="decimal" autocomplete="off" placeholder="${nl(AM.marge * 100, 2)}" value="${x.eigenMarge ? nl(x.marge * 100, 2) : ""}" ${x.vast ? `disabled title="Vaste prijs ingevuld"` : `title="Marge % voor deze post (leeg = ${nl(AM.marge * 100, 2)} %)"`}></td>
-        <td style="width:100px"><input class="inline num" data-am-post="${r.id}" data-f="prijs" type="text" inputmode="decimal" autocomplete="off" placeholder="${amTxt(x.klant * (1 - x.marge))}" value="${x.vast ? amTxt(x.prijs) : ""}" title="Vaste aannemersprijs per eenheid (leeg = klantprijs − marge)"></td>
-        <td class="r num" style="white-space:nowrap"><b>${x.tonen && h ? eur2(r.status === "minwerk" ? -Math.abs(r2(x.prijs * h)) : r2(x.prijs * h)) : ""}</b>${veranderd ? `<small style="display:block;color:var(--crit)" title="Gedeeld: ${eur2(gedeeldPrijs[r.id])}">was ${eur2(gedeeldPrijs[r.id])}</small>` : ""}</td>
-        <td style="min-width:120px;font-size:12px">${re ? `${re.opmerking ? `<span title="${esc(re.opmerking)}">💬 ${esc(re.opmerking.length > 60 ? re.opmerking.slice(0, 58) + "…" : re.opmerking)}</span>` : ""}${re.tegenprijs != null ? `<div style="white-space:nowrap">tegenprijs <b>${eur2(re.tegenprijs)}</b> <button type="button" class="btn ghost sm" data-am-neem="${r.id}" title="Deze prijs overnemen als vaste prijs">Overnemen</button></div>` : ""}` : ""}</td></tr>`;
-    }).join("");
-  }).join("");
-  box.innerHTML = `<div class="tw" style="max-height:58vh;overflow:auto;margin-top:10px"><table class="t ms"><thead><tr><th></th><th>Nr</th><th>Omschrijving</th><th class="r">Hoev.</th><th class="r">Klant EP</th><th>Marge %</th><th>Aannemer EP</th><th class="r">Totaal</th><th>Reactie aannemer</th></tr></thead><tbody>${body}</tbody></table></div>`;
-  const st = $("#am_status"); if (st) { const gew = a && a.gedeeld && ["gedeeld", "akkoord", "tegenvoorstel"].includes(a.status) && amSnapKey(snap) !== amSnapKey(a.regels); st.innerHTML = a ? `<span class="pill ${AM_PILL[a.status] || ""}">${esc(AM_STATUS[a.status] || a.status)}${a.versie ? " · versie " + a.versie : ""}</span>${a.gedeeld_op ? ` <small class="muted">gedeeld ${fmtLong(lokDag(a.gedeeld_op))}</small>` : ""}${a.beslist_op ? ` <small class="muted">· ${a.status === "akkoord" ? "akkoord" : "gereageerd"} door ${esc(a.beslist_naam || "")} op ${fmtLong(lokDag(a.beslist_op))}</small>` : ""}${gew ? `<div style="color:var(--crit);font-size:12px;margin-top:4px">Gewijzigd sinds delen — deel opnieuw om zijn akkoord te vragen.</div>` : ""}` : `<span class="muted">Nog niet gedeeld</span>`; }
-  const nul = snap.filter(x => !(Number(x.prijs) > 0) && Number(x.hoeveelheid)).length;
-  const tt = $("#am_tot"); if (tt) tt.innerHTML = `${nul ? `<span style="color:var(--crit)">${nul} post${nul === 1 ? "" : "en"} zonder prijs</span> · ` : ""}<b>${snap.length}</b> posten · klant ${eur(tot.klant)} · aannemer <b>${eur(tot.aan)}</b> · marge BROS <b>${eur(tot.klant - tot.aan)}</b>${tot.klant ? ` (${nl((1 - tot.aan / tot.klant) * 100, 1)} %)` : ""} — excl. btw`;
-  const terug = (k) => k && box.querySelector(`[data-am-post="${k[0]}"][data-f="${k[1]}"]`);
-  const el = terug(ak); if (el) el.focus();
-}
-async function amBewaar(delen) {
-  const pid = AM.pid, cid = AM.cid; let a = AM.a && S.aannemer_meetstaten[AM.a.id] ? S.aannemer_meetstaten[AM.a.id] : AM.a;
-  const bericht = ($("#am_bericht")?.value ?? AM.bericht).trim();
-  const basis = { marge: Math.round(AM.marge * 10000) / 10000, bericht };
-  if (!a) a = await dbInsert("aannemer_meetstaten", { project_id: pid, contact_id: cid, ...basis, created_by: S.me.id });
-  else await dbUpdate("aannemer_meetstaten", a.id, basis);
-  // afwijkingen per post: enkel bewaren wat afwijkt van de standaard
-  const bestaand = amPostRows(a.id); const upsert = [], weg = [];
-  msRows(pid).forEach(r => { const o = AM.ovs[r.id]; const leeg = !o || (o.tonen == null && (o.marge == null || o.marge === "") && (o.prijs == null || o.prijs === "")); const ex = bestaand.find(b => b.post_id === r.id);
-    if (leeg) { if (ex) weg.push(ex.id); return; }
-    upsert.push({ am_id: a.id, post_id: r.id, tonen: o.tonen == null ? null : !!o.tonen, marge: o.marge == null || o.marge === "" ? null : Math.round(Number(o.marge) * 10000) / 10000, prijs: o.prijs == null || o.prijs === "" ? null : amRond(o.prijs) }); });
-  if (upsert.length) { const { error } = await sb.from("aannemer_meetstaat_posten").upsert(upsert, { onConflict: "am_id,post_id" }); if (error) { toast("Bewaren mislukt: " + error.message, 6000); error.__toasted = true; throw error; } }
-  if (weg.length) { const { error } = await sb.from("aannemer_meetstaat_posten").delete().in("id", weg); if (error) { toast("Bewaren mislukt: " + error.message, 6000); error.__toasted = true; throw error; } }
-  await refetch("aannemer_meetstaat_posten");
-  if (delen) {
-    const { snap } = amBereken(pid, { marge: AM.marge }, AM.ovs, AM.loten);
-    const cur = S.aannemer_meetstaten[a.id] || a;
-    a = await dbUpdate("aannemer_meetstaten", a.id, { gedeeld: true, versie: (Number(cur.versie) || 0) + 1, status: "gedeeld", regels: snap, gedeeld_op: new Date().toISOString(), gedeeld_door: S.me.id, reactie: {}, opmerking: "", beslist_op: null, beslist_naam: "", beslist_door: null });
-    const c = S.contacten[cid];
-    if (driveReady() && c && c.email) { try { const j = await driveCall("aanprijsmail", { id: a.id, soort: "gedeeld", token: S.session?.access_token || "" }); toast(`Gedeeld en gemaild naar ${j.naar || c.email}${j.uitgenodigd ? " (met uitnodiging voor het portaal)" : ""}`, 6000); } catch (e) { toast("Gedeeld, maar mailen mislukte: " + e.message + " — de aannemer ziet het wel in zijn portaal.", 8000); } }
-    else toast(`Gedeeld met ${c ? c.naam : "de aannemer"} — zichtbaar in zijn portaal${c && !c.email ? " (geen e-mailadres, dus geen mail)" : ""}`, 6000);
-  }
-  AM.a = S.aannemer_meetstaten[a.id] || a; return AM.a;
-}
-/* ---------- Notities / verslagen per project: vergaderingen, werfverslagen, feedback — met verantwoordelijken en actiepunten (taken) ---------- */
-const NOTE_SOORT = { vergadering: "Vergadering", werfverslag: "Werfverslag", bespreking: "Bespreking", feedback: "Feedback klant", notitie: "Notitie" };
-const NOTE_SJABLOON = {
-  vergadering: "AANWEZIG\n- \n\nBESPROKEN\n1. \n2. \n\nBESLISSINGEN\n- \n\nVOLGENDE STAPPEN\n- \n\nVOLGENDE VERGADERING\n",
-  werfverslag: "AANWEZIG OP DE WERF\n- \n\nSTAND VAN DE WERKEN\n- \n\nVASTSTELLINGEN / OPMERKINGEN\n- \n\nAFSPRAKEN\n- \n\nPLANNING VOLGENDE WEEK\n- \n\nVOLGEND WERFBEZOEK\n",
-  bespreking: "ONDERWERP\n\n\nBESPROKEN\n- \n\nAFSPRAKEN\n- \n",
-  feedback: "FEEDBACK VAN DE KLANT\n- \n\nWAT WE ERMEE DOEN\n- \n",
-  notitie: "",
-};
-const notesOf = (pid) => Object.values(S.notities).filter(n => n.project_id === pid).sort((a, b) => (b.datum || "").localeCompare(a.datum || "") || (b.created_at || "").localeCompare(a.created_at || ""));
-const noteTasks = (nid) => Object.values(S.taken).filter(t => t.notitie_id === nid).sort((a, b) => (a.eind || "9").localeCompare(b.eind || "9"));
-const noteWie = (n) => [...(n.verantwoordelijken || []).map(id => S.profiles[id]?.name).filter(Boolean), ...(n.contact_ids || []).map(id => S.contacten[id]?.naam).filter(Boolean)];
-const noteExcerpt = (t, n = 160) => { const s = String(t || "").replace(/\s+/g, " ").trim(); return s.length > n ? s.slice(0, n) + "…" : s; };
-function noteCard(n, withProject) {
-  const ts = noteTasks(n.id); const tl = typeof tdNoteTel === "function" ? tdNoteTel(n.id) : { tot: ts.length, open: ts.filter(t => t.status !== "done").length }; const open = tl.open; const wie = noteWie(n);
-  return `<div class="note" data-act="note-open" data-id="${n.id}">
-    <div class="note-head"><span class="pill phase">${NOTE_SOORT[n.soort] || esc(n.soort)}</span><span class="num muted">${fmtLong(n.datum)}</span>${n.klant_zichtbaar ? `<span class="pill st-afgerond" title="Zichtbaar voor de klant in het portaal">klant</span>` : ""}${withProject && S.projecten[n.project_id] ? `<span class="muted">· ${esc(projName(S.projecten[n.project_id]))}</span>` : ""}</div>
-    <div class="note-title">${esc(n.titel || NOTE_SOORT[n.soort])}</div>
-    <div class="note-body muted">${esc(noteExcerpt(n.inhoud))}</div>
-    <div class="note-foot"><span class="who-cell">${n.auteur ? avatar(n.auteur) : ""}<span class="muted" style="font-size:12px">${esc(userById(n.auteur).name)}</span></span>${wie.length ? `<span class="muted" style="font-size:12px">→ ${wie.map(esc).join(", ")}</span>` : ""}${tl.tot ? `<span class="pill ${open ? "busy" : "done"}" style="font-size:11px">${open ? `${open} open` : "alles klaar"} · ${tl.tot} actiepunt${tl.tot === 1 ? "" : "en"}</span>` : ""}${n.vergadering_id ? `<span class="pill kl" title="Gemaakt uit een vergadering (opname en controle in het tabblad Vergaderingen)">🎙 vergadering</span>` : ""}</div></div>`;
-}
-function vNotities(p) {
-  if (schemaV() < 14) return SCHEMA_HINT(14);
-  const ns = notesOf(p.id); const q = (S.noteQ || "").toLowerCase();
-  const list = ns.filter(n => !q || [n.titel, n.inhoud, n.deelnemers, NOTE_SOORT[n.soort]].some(v => (v || "").toLowerCase().includes(q)));
-  const openPunten = Object.values(S.taken).filter(t => t.project_id === p.id && t.notitie_id && t.status !== "done").sort((a, b) => (a.eind || "9").localeCompare(b.eind || "9"));
-  return `<div class="panel" style="margin-bottom:16px"><div class="panel-head"><div><h3>Notities en verslagen</h3><div class="muted" style="font-size:12px;margin-top:2px">Vergaderingen, werfverslagen, besprekingen en feedback van dit project. Actiepunten worden taken; een verslag kan je delen met de klant.</div></div>
-      <div class="actions"><input class="inline" data-noteq placeholder="Zoeken…" value="${esc(S.noteQ || "")}" style="width:160px"><button class="btn sm primary" data-act="note-new" data-pid="${p.id}">+ Notitie</button></div></div>
-    ${list.length ? `<div class="notes">${list.map(n => noteCard(n)).join("")}</div>` : `<div class="empty"><b>${q ? "Niets gevonden" : "Nog geen notities"}</b>${q ? "" : "Maak een verslag van een vergadering of werfbezoek; de actiepunten komen automatisch als taken op dit project."}</div>`}</div>
-    ${openPunten.length ? `<div class="panel"><div class="panel-head"><h3>Open actiepunten uit verslagen</h3><span class="muted" style="font-size:12px">${openPunten.length}</span></div><div class="tw"><table class="t"><tbody>${openPunten.map(t => `<tr class="click" data-edit-task="${t.id}"><td style="width:28px"><input type="checkbox" class="task-check" data-toggle="${t.id}" aria-label="Klaar"></td><td>${esc(t.titel)}${typeof tdTag === "function" ? tdTag(t) : ""}<small class="muted" style="display:block">📝 ${esc(S.notities[t.notitie_id]?.titel || "")} · ${fmtLong(S.notities[t.notitie_id]?.datum)}</small></td><td>${wieCell(t)}</td><td class="num" style="color:${isLate(t) ? "var(--crit)" : "inherit"}">${fmt(t.eind)}</td><td>${pill(t)}</td></tr>`).join("")}</tbody></table></div></div>` : ""}`;
-}
-function vNotitiesAlle() {
-  if (schemaV() < 14) return `<div class="page-head"><div><h1>Notities</h1></div></div>` + SCHEMA_HINT(14);
-  const q = (S.noteQ || "").toLowerCase(); const ns = Object.values(S.notities).sort((a, b) => (b.datum || "").localeCompare(a.datum || "") || (b.created_at || "").localeCompare(a.created_at || ""));
-  const list = ns.filter(n => !q || [n.titel, n.inhoud, n.deelnemers, NOTE_SOORT[n.soort], S.projecten[n.project_id]?.klant].some(v => (v || "").toLowerCase().includes(q))).slice(0, 60);
-  const mine = Object.values(S.taken).filter(t => t.notitie_id && t.status !== "done" && t.assignee === S.me.id).sort((a, b) => (a.eind || "9").localeCompare(b.eind || "9"));
-  return `<div class="page-head"><div><div class="eyebrow">${ns.length} notities</div><h1>Notities</h1><div class="sub">Alle verslagen over alle projecten. Nieuwe notities maak je op de projectfiche (tabblad Notities).</div></div><div class="actions"><input class="inline" data-noteq placeholder="Zoeken in titel, inhoud, project…" value="${esc(S.noteQ || "")}" style="width:260px"></div></div>
-    ${mine.length ? `<div class="panel" style="margin-bottom:16px"><div class="panel-head"><h3>Mijn open actiepunten</h3><span class="muted" style="font-size:12px">${mine.length}</span></div><div class="tw"><table class="t"><tbody>${mine.map(t => `<tr class="click" data-edit-task="${t.id}"><td style="width:28px"><input type="checkbox" class="task-check" data-toggle="${t.id}" aria-label="Klaar"></td><td>${esc(t.titel)}${typeof tdTag === "function" ? tdTag(t) : ""}<small class="muted" style="display:block">${esc(projName(S.projecten[t.project_id] || {}))} · 📝 ${esc(S.notities[t.notitie_id]?.titel || "")}</small></td><td class="num" style="color:${isLate(t) ? "var(--crit)" : "inherit"}">${fmt(t.eind)}</td><td>${pill(t)}</td></tr>`).join("")}</tbody></table></div></div>` : ""}
-    ${list.length ? `<div class="notes">${list.map(n => noteCard(n, true)).join("")}</div>` : `<div class="panel"><div class="empty"><b>${q ? "Niets gevonden" : "Nog geen notities"}</b></div></div>`}`;
-}
-function noteForm(n = {}, pid) {
-  const isNew = !n.id; const projectId = n.project_id || pid; const p = S.projecten[projectId]; if (!p) return;
-  const soort = n.soort || "vergadering"; const alleTs = isNew ? [] : noteTasks(n.id); const td = typeof tdOk === "function" && tdOk(); const ts = alleTs.filter(t => !(td && t.bundel));
-  const vorige = isNew ? Object.values(S.taken).filter(t => t.project_id === projectId && t.notitie_id && t.status !== "done") : [];
-  const team = users(); const pcs = contactsOf(projectId);
-  const vr = new Set(n.verantwoordelijken || []), cr = new Set(n.contact_ids || []);
-  const taakRij = (i) => `<div class="ap-row"><input name="ap_titel_${i}" placeholder="Actiepunt / taak" style="flex:2"><select name="ap_wie_${i}">${schemaV() >= 15 ? wieOpts(projectId, { assignee: S.me.id }) : userOpts(S.me.id, true)}</select><input name="ap_eind_${i}" type="date" title="Deadline"></div>`;
-  openModal(isNew ? "Nieuwe notitie — " + p.klant : (n.titel || NOTE_SOORT[n.soort]), `<div class="form-grid">
-    <div class="field"><label for="n_soort">Soort</label><select id="n_soort" name="soort">${opts(Object.entries(NOTE_SOORT), soort)}</select></div>
-    <div class="field"><label for="n_datum">Datum</label><input id="n_datum" name="datum" type="date" value="${esc(n.datum || todayIso)}"></div>
-    <div class="field span2"><label for="n_titel">Titel</label><input id="n_titel" name="titel" required value="${esc(n.titel || "")}" placeholder="bv. Werfvergadering 3 · keuken en badkamer"></div>
-    <div class="field span2"><label for="n_deel">Aanwezig / betrokken (vrije tekst)</label><input id="n_deel" name="deelnemers" value="${esc(n.deelnemers || "")}" placeholder="bv. Phil, Noa, Jo Appelmans, schrijnwerker Peeters"></div>
-    <div class="field span2"><label for="n_inhoud">Verslag ${isNew ? `<button type="button" class="btn ghost sm" data-note-sjabloon>Sjabloon invullen</button>` : ""}</label><textarea id="n_inhoud" name="inhoud" rows="14" style="font-family:var(--font-body);line-height:1.5">${esc(n.inhoud || "")}</textarea></div>
-    <div class="field"><label>Verantwoordelijken — team</label><div class="fase-list">${team.map(u => `<label class="chk"><input type="checkbox" name="vr" value="${u.id}" ${vr.has(u.id) ? "checked" : ""}> <span>${esc(u.name)}</span></label>`).join("")}</div></div>
-    <div class="field"><label>Verantwoordelijken — klant, aannemers en andere contacten</label>${pcs.length ? `<div class="fase-list">${pcs.map(x => `<label class="chk"><input type="checkbox" name="cr" value="${x.c.id}" ${cr.has(x.c.id) ? "checked" : ""}> <span>${esc(x.c.naam)}<small class="muted" style="display:block">${CONTACT_ROL[x.rol] || x.rol}${x.c.vakgebied ? " · " + esc(x.c.vakgebied) : ""}</small></span></label>`).join("")}</div>` : `<div class="muted" style="font-size:12px;padding:6px 0">Koppel de klant en aannemers aan dit project via Dossier › Contacten; dan kan je ze hier aanduiden.</div>`}</div>
-    ${n.vergadering_id && S.vergaderingen && S.vergaderingen[n.vergadering_id] ? `<div class="field span2"><div class="muted" style="font-size:13px">🎙 Gemaakt uit de vergadering <button type="button" class="wj-t" data-vg-goto="${n.vergadering_id}">${esc(S.vergaderingen[n.vergadering_id].onderwerp)}</button> — opname, transcript en controle staan daar.</div></div>` : ""}
-    <div class="field span2"><label>${td ? `To do's — één taak per verantwoordelijke, met de punten als checklist <span class="muted" style="font-weight:400">— ook voor de klant of een aannemer (die vinkt af in het portaal)</span>` : `Actiepunten → taken op dit project <span class="muted" style="font-weight:400">— ook toe te wijzen aan de klant of een aannemer; die ziet ze in het portaal</span>`}</label>
-      ${td ? tdBlokken(alleTs) : ""}
-      ${ts.length ? `<div class="tw" style="margin-bottom:8px"><table class="t"><tbody>${ts.map(t => `<tr><td style="width:28px"><input type="checkbox" name="ap_done_${t.id}" ${t.status === "done" ? "checked" : ""} title="Klaar"></td><td>${esc(t.titel)}</td><td>${wieCell(t)}</td><td class="num">${fmt(t.eind)}</td><td class="r"><button type="button" class="btn ghost sm" data-act="edit-task-from-note" data-tid="${t.id}">Bewerken</button></td></tr>`).join("")}</tbody></table></div>` : ""}
-      <div id="ap_rows">${taakRij(0)}${taakRij(1)}${taakRij(2)}</div><button type="button" class="btn ghost sm" data-ap-more>+ Nog een actiepunt</button>
-      ${vorige.length ? `<details style="margin-top:10px"><summary class="muted" style="cursor:pointer;font-size:12px">Nog ${vorige.length} open actiepunt${vorige.length === 1 ? "" : "en"} uit vorige verslagen</summary><ul style="margin:6px 0 0;padding-left:18px;font-size:13px">${vorige.map(t => `<li>${esc(t.titel)} <span class="muted">· ${esc(wieNaam(t))}${t.eind ? " · " + fmt(t.eind) : ""} · 📝 ${esc(S.notities[t.notitie_id]?.titel || "")}</span></li>`).join("")}</ul></details>` : ""}</div>
-    <div class="field span2"><label class="sw-row"><input type="checkbox" class="sw" name="klant_zichtbaar" ${n.klant_zichtbaar ? "checked" : ""}><span><b>Delen met de klant</b> — het verslag en zijn actiepunten verschijnen in het klantenportaal onder "Verslagen"${isNew || !n.klant_zichtbaar ? "; de klant krijgt een mail" : ""}. Interne opmerkingen horen dan niet in dit verslag.</span></label></div>
-  </div>`, {
-    wide: true, saveLabel: isNew ? "Bewaren" : "Bewaren",
-    onSave: async (d) => {
-      const f = $("#mform"); const vrs = [...f.querySelectorAll('input[name="vr"]:checked')].map(i => i.value), crs = [...f.querySelectorAll('input[name="cr"]:checked')].map(i => i.value);
-      const wasShared = !!n.klant_zichtbaar; const shared = d.klant_zichtbaar === "on";
-      const row = { project_id: projectId, soort: d.soort, titel: d.titel.trim(), datum: d.datum || todayIso, deelnemers: (d.deelnemers || "").trim(), inhoud: d.inhoud || "", verantwoordelijken: vrs, contact_ids: crs, klant_zichtbaar: shared };
-      if (shared && !wasShared) row.gedeeld_op = new Date().toISOString();
-      let saved;
-      if (isNew) { row.auteur = S.me.id; saved = await dbInsert("notities", row); } else { saved = await dbUpdate("notities", n.id, row); }
-      // bestaande actiepunten: klaar-vinkjes
-      for (const t of ts) { const done = f.querySelector(`input[name="ap_done_${t.id}"]`)?.checked; if (done !== (t.status === "done")) await dbUpdate("taken", t.id, { status: done ? "done" : "todo" }).catch(() => { }); }
-      // nieuwe actiepunten → taken
-      const nieuw = []; f.querySelectorAll("#ap_rows .ap-row").forEach((r, i) => { const titel = r.querySelector(`[name^="ap_titel_"]`).value.trim(); if (!titel) return; nieuw.push({ project_id: projectId, titel, ...(schemaV() >= 15 ? wieSplit(r.querySelector(`[name^="ap_wie_"]`).value) : { assignee: r.querySelector(`[name^="ap_wie_"]`).value || null }), eind: r.querySelector(`[name^="ap_eind_"]`).value || null, start: r.querySelector(`[name^="ap_eind_"]`).value ? null : null, fase_nr: p.fase_nr || null, status: "todo", uren_gepland: 0, volgorde: 9000 + i, notitie_id: saved.id }); });
-      let nTaken = nieuw.length;
-      if (nieuw.length && td) {   // 1.63 (script 059): één to-dotaak per verantwoordelijke, de punten als checklist
-        const r = await tdToevoegen(projectId, saved.id, null, nieuw.map(x => ({ tekst: x.titel, assignee: x.assignee || null, contact_id: x.contact_id || null, deadline: x.eind })));
-        nTaken = r ? (r.taken || []).length : 0;
-      } else if (nieuw.length) { const { data, error } = await sb.from("taken").insert(nieuw).select(); if (error) toast("Actiepunten niet aangemaakt: " + error.message); else (data || []).forEach(t => S.taken[t.id] = t); }
-      render(); toast(isNew || nieuw.length ? `Notitie bewaard${nieuw.length ? td ? ` · ${nieuw.length} punt${nieuw.length === 1 ? "" : "en"} in ${nTaken} to-dotaak${nTaken === 1 ? "" : "en"}` : ` · ${nieuw.length} actiepunt${nieuw.length === 1 ? "" : "en"} als taak` : ""}` : "Notitie bewaard");
-      if (shared && !wasShared && driveReady()) driveCall("notitiemail", { id: saved.id, token: S.session?.access_token || "" }).then(j => { if ((j.naar || []).length) toast("Verslag gemaild naar " + j.naar.join(", ")); }).catch(e => toast("Mail niet verstuurd: " + e.message, 6000));
-    },
-    onDelete: isNew ? null : async () => { await dbDelete("notities", n.id); toast("Notitie verwijderd"); },
-  });
-  const f = $("#mform"); let apN = 3;
-  f.querySelector("[data-ap-more]").onclick = () => { $("#ap_rows").insertAdjacentHTML("beforeend", taakRij(apN++)); };
-  const sj = f.querySelector("[data-note-sjabloon]"); if (sj) sj.onclick = () => { const ta = $("#n_inhoud"); if (ta.value.trim() && !confirm("De huidige tekst vervangen door het sjabloon?")) return; ta.value = NOTE_SJABLOON[$("#n_soort").value] || ""; ta.focus(); };
-  $("#n_soort").addEventListener("change", () => { if (isNew && !$("#n_inhoud").value.trim()) $("#n_inhoud").value = NOTE_SJABLOON[$("#n_soort").value] || ""; });
-  if (isNew && !$("#n_inhoud").value) $("#n_inhoud").value = NOTE_SJABLOON[soort] || "";
-  f.querySelectorAll("[data-act=edit-task-from-note]").forEach(b => b.onclick = (e) => { e.preventDefault(); const t = S.taken[b.dataset.tid]; closeModal(); if (t) taskForm(t); });
-}
-/* ---------- Werfopvolging (stap 1): werfbezoeken en vaststellingen met foto's, aannemer, deadline en status ---------- */
-const VS_STATUS = { open: "Open", opgelost: "Opgelost", gecontroleerd: "Gecontroleerd", vervallen: "Vervallen" };
-const VS_PRIO = { laag: "Laag", normaal: "Normaal", hoog: "Hoog" };
-const WEER = ["", "Zonnig", "Bewolkt", "Regen", "Wind", "Vriezend", "Sneeuw"];
-const vsNr = (v) => "V-" + String(v.nr || 0).padStart(3, "0");
-const vsOf = (pid) => Object.values(S.vaststellingen).filter(v => v.project_id === pid).sort((a, b) => (b.nr || 0) - (a.nr || 0));
-const wbOf = (pid) => Object.values(S.werfbezoeken).filter(b => b.project_id === pid).sort((a, b) => (b.datum || "").localeCompare(a.datum || "") || (b.nr || 0) - (a.nr || 0));
-const vsLate = (v) => v.status === "open" && v.deadline && v.deadline < todayIso;
-const vsActief = (v) => v.status === "open" || v.status === "opgelost";
-const vsWie = (v) => v.contact_id && S.contacten[v.contact_id] ? S.contacten[v.contact_id].naam : v.assignee ? userById(v.assignee).name : "";
-const vsWieCell = (v) => v.contact_id || v.assignee ? wieCell(v) : `<span class="muted">niet toegewezen</span>`;
-const vsPill = (v) => vsLate(v) ? `<span class="pill late">Te laat</span>` : `<span class="pill vs-${v.status}">${VS_STATUS[v.status] || esc(v.status)}</span>`;
-const vsThumb = (f, cls = "") => `<img class="vs-thumb ${cls}" src="${esc(safeSrc(f.url))}" alt="" loading="lazy" data-foto="${esc(safeUrl(f.url))}">`;
-const werfUrl = (pid) => new URL("werf/" + (pid ? "?p=" + pid : ""), location.href).href;
-/* keuzelijst "verantwoordelijke": aannemers en andere contacten van het project, daarna het team */
-const vsWieOpts = (pid, v) => { const cur = v.contact_id ? "c:" + v.contact_id : (v.assignee || ""); const pcs = contactsOf(pid); return `<option value="">— nog niet toegewezen —</option>${pcs.length ? `<optgroup label="Klant, aannemers en contacten van dit project">${opts(pcs.map(x => ["c:" + x.c.id, x.c.naam + (x.c.vakgebied ? " · " + x.c.vakgebied : "") + " · " + (CONTACT_ROL[x.rol] || x.rol)]), cur)}</optgroup>` : ""}<optgroup label="Team">${opts(users().map(u => [u.id, u.name]), cur)}</optgroup>`; };
-/* foto's: verkleinen in de browser (max. 1600 px, jpeg) en uploaden naar de bucket 'werf' */
-async function fotoVerklein(file, max = 1600, q = 0.82) {
-  let img = null;
-  if (window.createImageBitmap) img = await createImageBitmap(file, { imageOrientation: "from-image" }).catch(() => null);
-  if (!img) img = await new Promise((res, rej) => { const i = new Image(); i.onload = () => res(i); i.onerror = () => rej(new Error("Foto niet leesbaar")); i.src = URL.createObjectURL(file); });
-  const w = img.width, h = img.height, s = Math.min(1, max / Math.max(w, h));
-  const c = document.createElement("canvas"); c.width = Math.max(1, Math.round(w * s)); c.height = Math.max(1, Math.round(h * s));
-  c.getContext("2d").drawImage(img, 0, 0, c.width, c.height);
-  const blob = await new Promise(r => c.toBlob(r, "image/jpeg", q));
-  return { blob, w: c.width, h: c.height };
-}
-async function fotoUpload(pid, vid, file) {
-  const { blob, w, h } = await fotoVerklein(file);
-  const path = `${pid}/${vid}/${Date.now()}-${Math.random().toString(36).slice(2, 7)}.jpg`;
-  const { error } = await sb.storage.from("werf").upload(path, blob, { contentType: "image/jpeg", upsert: false });
-  if (error) throw error;
-  return { path, url: sb.storage.from("werf").getPublicUrl(path).data.publicUrl, w, h, op: new Date().toISOString() };
-}
-function fotoLightbox(url) {
-  let lb = $("#lightbox"); if (!lb) { lb = document.createElement("div"); lb.id = "lightbox"; lb.className = "lightbox"; lb.onclick = () => lb.classList.remove("show"); document.body.appendChild(lb); }
-  lb.innerHTML = `<img src="${esc(safeSrc(url))}" alt=""><a class="btn sm" href="${esc(safeUrl(url))}" target="_blank" rel="noopener" onclick="event.stopPropagation()">Origineel openen</a>`; lb.classList.add("show");
-}
-function vsCard(v, withProject) {
-  const fotos = v.fotos || []; const wie = vsWie(v);
-  return `<div class="vs ${vsActief(v) ? "" : "vs-dim"}" data-act="vs-open" data-id="${v.id}">
-    ${fotos.length ? `<div class="vs-fotos"><img class="vs-thumb main" src="${esc((v.gemeld_door_klant || v.gemeld_door_aannemer) && typeof werfFotoUrl === "function" ? werfFotoUrl(fotos[0].url) : safeSrc(fotos[0].url))}" alt="" loading="lazy">${fotos.length > 1 ? `<span class="vs-more">+${fotos.length - 1}</span>` : ""}</div>` : `<div class="vs-fotos vs-nofoto"><span>geen foto</span></div>`}
-    <div class="vs-body">
-      <div class="vs-head"><b class="num">${vsNr(v)}</b>${v.prioriteit === "hoog" ? `<span class="pill late" title="Hoge prioriteit">!</span>` : v.prioriteit === "laag" ? `<span class="pill kl">laag</span>` : ""}${v.te_beoordelen && v.status === "open" ? `<span class="pill late" title="Gemeld in het portaal of de werfmodus — de verantwoordelijke ziet het pas na goedkeuring">te beoordelen</span>` : vsPill(v)}${v.gemeld_door_aannemer ? `<span class="pill st-on_hold" title="Gemeld door ${esc(S.contacten[v.gemeld_door_aannemer]?.naam || "een aannemer")} in de werfmodus">van aannemer</span>` : ""}${v.bros_antwoord ? `<span class="pill kl" title="${esc("Antwoord: " + v.bros_antwoord.slice(0, 200))}">beantwoord</span>` : ""}${(() => { const l = String(v.opmerking || "").split("\n").filter(Boolean).pop() || ""; return /^\d\d\/\d\d \d\d:\d\d · /.test(l) && !/^\d\d\/\d\d \d\d:\d\d · BROS \(/.test(l) && vsActief(v) ? `<span class="pill late" title="${esc(l.slice(0, 240))}">💬 reactie</span>` : ""; })()}${v.gemeld_door_klant ? `<span class="pill kl" title="Gemeld door de klant">van klant</span>` : v.klant_zichtbaar ? `<span class="pill st-afgerond" title="Zichtbaar voor de klant">klant</span>` : ""}${withProject && S.projecten[v.project_id] ? `<span class="muted">· ${esc(projName(S.projecten[v.project_id]))}</span>` : ""}</div>
-      ${v.titel ? `<div class="vs-title">${esc(v.titel)}</div>` : ""}<div class="vs-text ${v.titel ? "muted" : ""}">${esc(v.omschrijving || (v.titel ? "" : "—"))}</div>
-      <div class="vs-meta muted">${[v.ruimte, v.lot ? lotName(v.lot) : ""].filter(Boolean).map(esc).join(" · ")}${v.plan_id && S.werfplannen[v.plan_id] ? ` <span class="pill kl" title="Aangeduid op ${esc(S.werfplannen[v.plan_id].naam)}">📍 ${esc(S.werfplannen[v.plan_id].naam)}</span>` : ""}</div>
-      <div class="vs-foot"><span>${vsWieCell(v)}</span><span class="num ${vsLate(v) ? "late-txt" : "muted"}">${v.deadline ? "tegen " + fmt(v.deadline) : ""}</span></div>
-    </div></div>`;
-}
-function vWerf(p) {
-  if (schemaV() < 16) return SCHEMA_HINT(16);
-  const all = vsOf(p.id); const f = S.werfF = S.werfF || { status: "actief", wie: "", q: "", groep: false };
-  const q = (f.q || "").toLowerCase();
-  const list = all.filter(v => (f.status === "actief" ? vsActief(v) : f.status === "alle" ? true : v.status === f.status) && (!f.wie || (f.wie.startsWith("c:") ? v.contact_id === f.wie.slice(2) : v.assignee === f.wie)) && (!q || [v.titel, v.omschrijving, v.ruimte, vsNr(v), vsWie(v), v.lot ? lotName(v.lot) : ""].some(x => (x || "").toLowerCase().includes(q))))
-    .sort((a, b) => (a.status === "open" ? 0 : 1) - (b.status === "open" ? 0 : 1) || (b.nr || 0) - (a.nr || 0));
-  const teBeoordelen = all.filter(v => v.te_beoordelen && v.status === "open");
-  const n = { open: all.filter(v => v.status === "open").length, laat: all.filter(vsLate).length, opgelost: all.filter(v => v.status === "opgelost").length, klaar: all.filter(v => v.status === "gecontroleerd").length };
-  const wieKeys = [...new Set(all.map(v => v.contact_id ? "c:" + v.contact_id : v.assignee || ""))].filter(Boolean);
-  const wieLabel = (k) => k.startsWith("c:") ? (S.contacten[k.slice(2)]?.naam || "?") : userById(k).name;
-  const bezoeken = wbOf(p.id);
-  const kpi = `<div class="rend">
-    <div class="panel"><div class="k">Open</div><div class="v">${n.open}</div></div>
-    <div class="panel"><div class="k">Te laat</div><div class="v ${n.laat ? "neg" : ""}">${n.laat}</div></div>
-    <div class="panel"><div class="k">Opgelost · te controleren</div><div class="v">${n.opgelost}</div></div>
-    <div class="panel"><div class="k">Gecontroleerd</div><div class="v pos">${n.klaar}</div></div></div>`;
-  let cards;
-  const groep = f.groep === true ? "wie" : f.groep;
-  if (groep === "wie") {
-    const groups = {}; list.forEach(v => { const k = v.contact_id ? "c:" + v.contact_id : v.assignee || ""; (groups[k] = groups[k] || []).push(v); });
-    cards = Object.keys(groups).sort((a, b) => (a ? 0 : 1) - (b ? 0 : 1) || wieLabel(a).localeCompare(wieLabel(b))).map(k => `<div class="vs-group"><h4>${k ? esc(wieLabel(k)) : "Nog niet toegewezen"} <span class="muted num" style="font-weight:400">${groups[k].filter(v => v.status === "open").length} open · ${groups[k].length}</span>${k.startsWith("c:") && S.contacten[k.slice(2)]?.email ? ` <a class="muted" href="mailto:${esc(S.contacten[k.slice(2)].email)}" target="_blank" rel="noopener" style="font-weight:400;font-size:12px">${esc(S.contacten[k.slice(2)].email)}</a>` : ""}</h4><div class="vs-grid">${groups[k].map(v => vsCard(v)).join("")}</div></div>`).join("");
-  } else if (groep === "lot" || groep === "ruimte") {
-    const key = (v) => groep === "lot" ? (v.lot ? String(v.lot) : "") : (v.ruimte || "").trim();
-    const label = (k) => !k ? (groep === "lot" ? "Zonder lot" : "Zonder ruimte") : groep === "lot" ? lotName(Number(k)) : k;
-    const groups = {}; list.forEach(v => { const k = key(v); (groups[k] = groups[k] || []).push(v); });
-    cards = Object.keys(groups).sort((a, b) => (a ? 0 : 1) - (b ? 0 : 1) || (groep === "lot" ? Number(a) - Number(b) : a.localeCompare(b))).map(k => `<div class="vs-group"><h4>${esc(label(k))} <span class="muted num" style="font-weight:400">${groups[k].filter(v => v.status === "open").length} open · ${groups[k].length}</span></h4><div class="vs-grid">${groups[k].map(v => vsCard(v)).join("")}</div></div>`).join("");
-  } else cards = `<div class="vs-grid">${list.map(v => vsCard(v)).join("")}</div>`;
-  return kpi + (teBeoordelen.length ? `<div class="banner show" style="border:1px solid var(--warn);border-radius:8px;margin-bottom:16px">${teBeoordelen.length === 1 ? "Er is een werfpunt" : teBeoordelen.length + " werfpunten zijn"} gemeld door ${teBeoordelen.every(v => v.gemeld_door_aannemer) ? "een aannemer" : teBeoordelen.some(v => v.gemeld_door_aannemer) ? "de klant of een aannemer" : "de klant"} en ${teBeoordelen.length === 1 ? "wacht" : "wachten"} op jullie beoordeling (goedkeuren, antwoorden of niet weerhouden): ${teBeoordelen.slice(0, 4).map(v => `<a href="#" data-act="vs-open" data-id="${v.id}">${vsNr(v)} ${esc(v.titel || "")}</a>`).join(", ")}${teBeoordelen.length > 4 ? ", …" : ""}</div>` : "") + (typeof vVoortgang === "function" ? vVoortgang(p) : "") + vPlannen(p) + `<div class="panel" style="margin-bottom:16px"><div class="panel-head"><div><h3>Vaststellingen</h3><div class="muted" style="font-size:12px;margin-top:2px">Punten van de werf met foto's, verantwoordelijke aannemer en deadline · ${all.length} in totaal</div></div>
-      <div class="actions"><a class="btn sm" href="${esc(werfUrl(p.id))}" target="_blank" rel="noopener" title="Werfmodus voor op de smartphone: foto's nemen, ook zonder bereik">📱 Werfmodus</a><button class="btn sm" data-act="wb-new" data-pid="${p.id}">+ Werfbezoek</button><button class="btn sm primary" data-act="vs-new" data-pid="${p.id}">+ Vaststelling</button></div></div>
-    <div class="filters" style="padding:10px 16px;border-bottom:1px solid var(--line)"><select data-werff="status">${opts([["actief", "Open en opgelost"], ["open", "Alleen open"], ["opgelost", "Opgelost · te controleren"], ["gecontroleerd", "Gecontroleerd"], ["vervallen", "Vervallen"], ["alle", "Alles"]], f.status)}</select><select data-werff="wie"><option value="">Alle verantwoordelijken</option>${opts(wieKeys.map(k => [k, wieLabel(k)]), f.wie)}</select><input data-werff="q" placeholder="Zoeken: omschrijving, ruimte, nummer…" value="${esc(f.q || "")}" style="min-width:220px"><select data-werff="groep">${opts([["", "Niet groeperen"], ["wie", "Per verantwoordelijke"], ["lot", "Per lot"], ["ruimte", "Per ruimte"]], f.groep === true ? "wie" : (f.groep || ""))}</select></div>
-    ${list.length ? cards : `<div class="empty"><b>${all.length ? "Niets gevonden met deze filter" : "Nog geen vaststellingen"}</b>${all.length ? "" : "Maak een vaststelling met foto's, of open de werfmodus op je smartphone tijdens het werfbezoek."}</div>`}</div>
-    <div class="panel"><div class="panel-head"><div><h3>Werfbezoeken</h3><div class="muted" style="font-size:12px;margin-top:2px">Datum, aanwezigen en algemene opmerkingen; vaststellingen hangen aan een bezoek</div></div><div class="actions"><button class="btn sm" data-act="wb-new" data-pid="${p.id}">+ Werfbezoek</button></div></div>
-      ${bezoeken.length ? `<div class="tw"><table class="t"><thead><tr><th>Nr</th><th>Datum</th><th>Aanwezig</th><th>Weer</th><th>Opmerkingen</th><th class="r">Vaststellingen</th></tr></thead><tbody>${bezoeken.map(b => { const vs = all.filter(v => v.bezoek_id === b.id); return `<tr class="click" data-act="wb-open" data-id="${b.id}"><td class="num muted">${b.nr}</td><td class="num">${fmtLong(b.datum)}</td><td>${esc(b.aanwezigen || "—")}</td><td>${esc(b.weer || "—")}</td><td class="muted">${esc(noteExcerpt(b.notities, 90) || "—")}</td><td class="r num">${vs.length}${vs.filter(v => v.status === "open").length ? ` <span class="pill busy">${vs.filter(v => v.status === "open").length} open</span>` : ""}</td></tr>`; }).join("")}</tbody></table></div>` : `<div class="empty">Nog geen werfbezoeken geregistreerd.</div>`}</div>` + vWerfverslagen(p);
-}
-function vsForm(v = {}, pid, bezoekId) {
-  const isNew = !v.id; const projectId = v.project_id || pid; const p = S.projecten[projectId]; if (!p) return;
-  const fotos = [...(v.fotos || [])]; let nieuw = []; let pin = v.plan_id && v.plan_x != null ? { x: Number(v.plan_x), y: Number(v.plan_y) } : null;   // nieuw: File-objecten die bij bewaren geüpload worden
-  const ruimtes = [...new Set(vsOf(projectId).map(x => x.ruimte).filter(Boolean))].sort();
-  const lots = [...new Set(msRows(projectId).map(r => r.lot))].sort((a, b) => a - b);
-  // 1.57.1: ook loten die (nog) niet in de meetstaat van het project staan — anders was de keuzelijst leeg bij een project zonder meetstaat in het Planbord
-  const andereLots = [...new Set(Object.keys(S.loten || {}).map(Number).concat(v.lot != null ? [Number(v.lot)] : []))].filter(n => isFinite(n) && !lots.includes(n)).sort((a, b) => a - b);
-  const bezoeken = wbOf(projectId);
-  openModal(isNew ? "Nieuwe vaststelling — " + p.klant : `${vsNr(v)} — ${p.klant}`, `<div class="form-grid">
-    <div class="field span2"><label>Foto's</label><div class="vs-foto-edit" id="vs_fotos"></div>
-      <div class="actions" style="margin-top:8px"><label class="btn sm">📷 Foto's toevoegen<input type="file" accept="image/*" multiple hidden id="vs_file"></label><span class="muted" style="font-size:12px;align-self:center">Worden verkleind tot 1600 px vóór het uploaden.</span></div></div>
-    ${schemaV() >= 20 ? `<div class="field span2"><label for="vs_plan">Locatie op plan</label>${plansOf(projectId).length ? `<select id="vs_plan" name="plan_id" style="max-width:360px"><option value="">— geen plan —</option>${opts(plansOf(projectId).map(x => [x.id, x.naam]), v.plan_id || "")}</select><div id="vs_planbox" style="margin-top:8px"></div>` : `<div class="muted" style="font-size:12px">Nog geen plannen voor dit project — voeg er een toe in het paneel Plannen op het tabblad Werf.</div>`}</div>` : ""}
-    ${schemaV() >= 19 ? `<div class="field span2"><label for="vs_titel">Titel <span class="muted" style="font-weight:400">— kort, voor het overzicht</span></label><input id="vs_titel" name="titel" value="${esc(v.titel || "")}" placeholder="bv. Scharnier kastdeur keuken"></div>` : ""}
-    <div class="field span2"><label for="vs_oms">Omschrijving</label><textarea id="vs_oms" name="omschrijving" rows="3" ${schemaV() >= 19 ? "" : "required"} placeholder="Wat is er vastgesteld en wat moet er gebeuren?">${esc(v.omschrijving || "")}</textarea></div>
-    <div class="field"><label for="vs_ruimte">Ruimte / locatie</label><input id="vs_ruimte" name="ruimte" list="vs_ruimtes" value="${esc(v.ruimte || "")}" placeholder="bv. Keuken, badkamer 1e verd."><datalist id="vs_ruimtes">${ruimtes.map(r => `<option value="${esc(r)}">`).join("")}</datalist></div>
-    <div class="field"><label for="vs_lot">Lot</label><select id="vs_lot" name="lot"><option value="">—</option>${lots.length ? `<optgroup label="In de meetstaat van dit project">${opts(lots.map(l => [l, lotName(l)]), v.lot ?? "")}</optgroup>` : ""}${andereLots.length ? `<optgroup label="${lots.length ? "Andere loten" : "Alle loten (nog niets in de meetstaat)"}">${opts(andereLots.map(l => [l, lotName(l)]), v.lot ?? "")}</optgroup>` : ""}</select></div>
-    <div class="field"><label for="vs_wie">Verantwoordelijke</label><select id="vs_wie" name="wie">${vsWieOpts(projectId, v.te_beoordelen && !v.contact_id && !v.assignee && v.gemeld_door_aannemer ? { ...v, contact_id: v.gemeld_door_aannemer } : v)}</select>${schemaV() >= 18 ? `<small class="muted">Wordt automatisch een taak in de takenlijst van die persoon (klant: in het portaal).</small>` : ""}</div>
-    <div class="field"><label for="vs_deadline">Op te lossen tegen</label><input id="vs_deadline" name="deadline" type="date" value="${esc(v.deadline || "")}"></div>
-    <div class="field"><label for="vs_prio">Prioriteit</label><select id="vs_prio" name="prioriteit">${opts(Object.entries(VS_PRIO), v.prioriteit || "normaal")}</select></div>
-    <div class="field"><label for="vs_status">Status</label><select id="vs_status" name="status">${opts(Object.entries(VS_STATUS), v.status || "open")}</select>${v.opgelost_op ? `<small class="muted">Opgelost op ${fmtLong(lokDag(v.opgelost_op))}${v.opgelost_door ? " door " + esc(userById(v.opgelost_door).name) : ""}</small>` : ""}</div>
-    <div class="field"><label for="vs_bezoek">Werfbezoek</label><select id="vs_bezoek" name="bezoek_id"><option value="">—</option>${opts(bezoeken.map(b => [b.id, `Bezoek ${b.nr} · ${fmtLong(b.datum)}`]), v.bezoek_id || bezoekId || "")}</select></div>
-    ${schemaV() >= 44 && !isNew ? `<div class="field span2"><label>Opmerkingen (gesprek met de aannemer)</label>${v.opmerking ? `<div class="vs-gesprek" style="white-space:pre-wrap;font-size:13px;padding:8px 10px;border:1px solid var(--line);border-radius:8px;background:var(--surface-2);max-height:180px;overflow:auto">${esc(v.opmerking)}</div>` : `<div class="muted" style="font-size:12px">Nog geen opmerkingen.</div>`}
-      <textarea id="vs_reactie" name="reactie" rows="2" style="margin-top:6px" placeholder="${v.contact_id && S.contacten[v.contact_id] ? "Reactie aan " + esc(S.contacten[v.contact_id].naam) + " — komt in zijn werfmodus en portaal, en per mail" : "Opmerking toevoegen aan het gesprek"}"></textarea></div>`
-      : `<div class="field"><label for="vs_opm">Opmerking / reactie</label><input id="vs_opm" name="opmerking" value="${esc(v.opmerking || "")}" placeholder="bv. antwoord van de aannemer"></div>`}
-    ${(v.opgelost_fotos || []).length ? `<div class="field span2"><label>Bewijsfoto's bij de oplossing</label><div class="vs-foto-edit">${v.opgelost_fotos.map(f => vsThumb(f)).join("")}</div></div>` : ""}
-    <div class="field span2"><label class="sw-row"><input type="checkbox" class="sw" name="klant_zichtbaar" ${v.klant_zichtbaar ? "checked" : ""}><span><b>Zichtbaar voor de klant</b> — deze vaststelling verschijnt (later) in het werfverslag voor de klant in het portaal.</span></label></div>
-    ${v.te_beoordelen ? `<div class="field span2"><div class="notice" style="margin:0;border-color:var(--warn)"><label class="sw-row" style="margin:0"><input type="checkbox" class="sw" name="goedkeuren" checked><span><b>Punt van ${v.gemeld_door_aannemer ? "de aannemer" : "de klant"} goedkeuren</b> — gemeld ${v.gemeld_door_aannemer ? "in de werfmodus" : "in het portaal"}${v.gemeld_door_klant && S.contacten[v.gemeld_door_klant] ? " door " + esc(S.contacten[v.gemeld_door_klant].naam) : v.gemeld_door_aannemer && S.contacten[v.gemeld_door_aannemer] ? " door " + esc(S.contacten[v.gemeld_door_aannemer].naam) : ""}. Na goedkeuring ziet de verantwoordelijke het (aannemer: in zijn portaal, met een taak). Niet terecht? Zet de status op Vervallen en schrijf je reden hieronder als antwoord.</span></label></div></div>` : ""}
-    ${schemaV() >= 43 && (v.gemeld_door_aannemer || v.gemeld_door_klant) ? `<div class="field span2"><label for="vs_antw">Antwoord aan ${v.gemeld_door_aannemer ? "de aannemer" : "de klant"} die het meldde</label><textarea id="vs_antw" name="bros_antwoord" rows="3" placeholder="bv. Goed gezien — pas het aan volgens plan T03; graag een foto als het klaar is.">${esc(v.bros_antwoord || "")}</textarea><small class="muted">Staat bij het punt in ${v.gemeld_door_aannemer ? "zijn werfmodus en aannemersportaal" : "het klantenportaal"} en gaat per mail${v.beantwoord_op ? ` · vorig antwoord ${fmtLong(lokDag(v.beantwoord_op))}${v.beantwoord_door ? " door " + esc(userById(v.beantwoord_door).name) : ""}` : ""}.</small></div>` : ""}
-  </div>`, {
-    wide: true,
-    onSave: async (d) => {
-      const f = $("#mform"); const btn = f.querySelector("button[type=submit]");
-      if (!(d.titel || "").trim() && !(d.omschrijving || "").trim()) { toast("Geef een titel of omschrijving"); return false; }
-      const row = { project_id: projectId, ...(schemaV() >= 19 ? { titel: (d.titel || "").trim() } : {}), ...(schemaV() >= 20 && $("#vs_plan") ? { plan_id: d.plan_id || null, plan_x: d.plan_id && pin ? pin.x : null, plan_y: d.plan_id && pin ? pin.y : null } : {}), omschrijving: (d.omschrijving || "").trim(), ruimte: (d.ruimte || "").trim(), lot: d.lot ? Number(d.lot) : null, ...wieSplit(d.wie), deadline: d.deadline || null, prioriteit: d.prioriteit, status: d.status, bezoek_id: d.bezoek_id || null, opmerking: (d.opmerking || "").trim(), klant_zichtbaar: d.klant_zichtbaar === "on" };
-      if (row.status === "opgelost" && v.status !== "opgelost" && v.status !== "gecontroleerd") { row.opgelost_op = new Date().toISOString(); row.opgelost_door = S.me.id; }
-      if (row.status === "open") { row.opgelost_op = null; row.opgelost_door = null; }
-      if (schemaV() >= 44 && !isNew) delete row.opmerking;   // het gesprek niet overschrijven (de aannemer kan intussen gereageerd hebben); reacties via werfpunt_reactie
-      if (v.te_beoordelen && row.status === "vervallen" && !v.contact_id && v.gemeld_door_aannemer && row.contact_id === v.gemeld_door_aannemer) row.contact_id = null;   // niet weerhouden: niet aan de melder toewijzen (script 043)
-      if (v.te_beoordelen && (d.goedkeuren === "on" || row.status !== "open")) row.te_beoordelen = false;   // goedgekeurd of afgehandeld
-      let saved;
-      if (isNew) { row.created_by = S.me.id; row.fotos = fotos; saved = await dbInsert("vaststellingen", row); }
-      else { saved = v; }
-      const geupload = [];
-      for (let i = 0; i < nieuw.length; i++) {
-        btn.textContent = `Foto ${i + 1}/${nieuw.length} uploaden…`;
-        try { geupload.push(await fotoUpload(projectId, saved.id, nieuw[i])); } catch (e) { toast("Foto niet geüpload: " + e.message); }
-      }
-      const alle = [...fotos, ...geupload];
-      if (isNew) { if (geupload.length) await dbUpdate("vaststellingen", saved.id, { fotos: alle }); }
-      else {   // 1.48: enkel bewaren wat je in dit formulier wijzigde — intussen gemelde oplossingen/foto's van de aannemer (werfmodus/portaal) blijven staan
-        const { data: vers } = await sb.from("vaststellingen").select("*").eq("id", v.id).maybeSingle();
-        const patch = Object.fromEntries(Object.entries(row).filter(([k, x]) => JSON.stringify(x ?? null) !== JSON.stringify(v[k] ?? null)));
-        const weg = (v.fotos || []).filter(g => !fotos.some(h => h.path === g.path)).map(g => g.path);
-        if (geupload.length || weg.length) patch.fotos = [...((vers && vers.fotos) || v.fotos || []).filter(g => !weg.includes(g.path)), ...geupload];
-        if (Object.keys(patch).length) await dbUpdate("vaststellingen", v.id, patch);
-        else if (vers) { S.vaststellingen[v.id] = vers; render(); }
-      }
-      if (!isNew && schemaV() >= 44 && (d.reactie || "").trim()) {   // reactie in het gesprek met de aannemer (script 044)
-        const { data: nv, error: re } = await sb.rpc("werfpunt_reactie", { p_id: v.id, p_tekst: d.reactie.trim() });
-        if (re) toast("Reactie niet bewaard: " + re.message, 7000);
-        else { S.vaststellingen[v.id] = { ...S.vaststellingen[v.id], ...nv }; render();
-          if (driveReady()) driveCall("werfpuntreactie", { id: v.id }).then(j => toast(j && j.naar ? "Reactie gemaild naar " + j.naar : j && j.waarschuwing ? "Reactie bewaard · " + j.waarschuwing : "Reactie bewaard", 6000)).catch(e => toast("Reactie bewaard, maar niet gemaild: " + (e.message || e), 7000)); }
-      }
-      if (!isNew && "bros_antwoord" in d && (d.bros_antwoord || "").trim() !== (v.bros_antwoord || "").trim()) {   // antwoord aan de melder (script 043)
-        await dbUpdate("vaststellingen", v.id, { bros_antwoord: (d.bros_antwoord || "").trim() });
-        if ((d.bros_antwoord || "").trim() && driveReady()) driveCall("werfpuntantwoord", { id: v.id }).then(j => toast(j && j.naar ? "Antwoord gemaild naar " + j.naar : j && j.waarschuwing ? "Antwoord bewaard · " + j.waarschuwing : "Antwoord bewaard", 6000)).catch(e => toast("Antwoord bewaard, maar niet gemaild: " + (e.message || e), 7000));
-      }
-      toast(isNew ? `${vsNr(S.vaststellingen[saved.id] || saved)} bewaard${geupload.length ? ` · ${geupload.length} foto${geupload.length === 1 ? "" : "'s"}` : ""}` : "Vaststelling bewaard");
-    },
-    onDelete: isNew ? null : async () => { const paths = [...(v.fotos || []), ...(v.opgelost_fotos || [])].map(f => f.path).filter(x => x && x.startsWith(`${v.project_id}/${v.id}/`) && !x.includes("..")); await dbDelete("vaststellingen", v.id); if (paths.length) sb.storage.from("werf").remove(paths).catch(() => { }); toast("Vaststelling verwijderd"); },
-  });
-  const box = $("#vs_fotos");
-  const draw = () => { box.innerHTML = fotos.map((f, i) => `<span class="vs-foto-item">${vsThumb(f)}<button type="button" class="vs-foto-x" data-rm="${i}" title="Verwijderen">✕</button></span>`).join("") + nieuw.map((f, i) => `<span class="vs-foto-item"><img class="vs-thumb" src="${URL.createObjectURL(f)}" alt=""><button type="button" class="vs-foto-x" data-rmn="${i}" title="Verwijderen">✕</button><span class="vs-new">nieuw</span></span>`).join("") || `<span class="muted" style="font-size:12px">Nog geen foto's.</span>`;
-    box.querySelectorAll("[data-rm]").forEach(b => b.onclick = () => { fotos.splice(Number(b.dataset.rm), 1); draw(); }); box.querySelectorAll("[data-rmn]").forEach(b => b.onclick = () => { nieuw.splice(Number(b.dataset.rmn), 1); draw(); }); };
-  draw();
-  $("#vs_file").addEventListener("change", (e) => { nieuw = nieuw.concat([...e.target.files]); e.target.value = ""; draw(); });
-  const planSel = $("#vs_plan");
-  if (planSel) {
-    const box = $("#vs_planbox");
-    const drawPlan = () => { const pl = S.werfplannen[planSel.value]; if (!pl) { box.innerHTML = ""; return; }
-      const others = vsOf(projectId).filter(x => x.plan_id === pl.id && x.id !== v.id && x.plan_x != null && vsActief(x));
-      box.innerHTML = `<div class="muted" style="font-size:12px;margin-bottom:6px">Klik op het plan om de locatie aan te duiden${pin ? ` · <button type="button" class="btn ghost sm" data-pin-clear>Pin wissen</button>` : ""}</div><div class="plan-wrap" data-pinnable><img src="${esc(safeSrc(pl.url))}" alt="">${others.map(x => planPin(x, true).replace(' data-act="vs-open"', "")).join("")}${pin ? `<span class="pin mine" style="left:${pin.x * 100}%;top:${pin.y * 100}%">${v.nr || "●"}</span>` : ""}</div>`;
-      box.querySelector("[data-pinnable]").onclick = (e) => { if (e.target.closest(".pin") && !e.target.classList.contains("mine")) return; const img = box.querySelector("img"); const r = img.getBoundingClientRect(); pin = { x: Math.min(1, Math.max(0, (e.clientX - r.left) / r.width)), y: Math.min(1, Math.max(0, (e.clientY - r.top) / r.height)) }; drawPlan(); };
-      const cl = box.querySelector("[data-pin-clear]"); if (cl) cl.onclick = () => { pin = null; drawPlan(); }; };
-    planSel.addEventListener("change", () => { pin = null; drawPlan(); }); drawPlan();
-  }
-}
-/* ---------- Werfplannen (stap 2): plannen per project, pin per vaststelling ---------- */
-const plansOf = (pid) => Object.values(S.werfplannen).filter(x => x.project_id === pid).sort((a, b) => (a.volgorde ?? 0) - (b.volgorde ?? 0) || (a.naam || "").localeCompare(b.naam || ""));
-const planPin = (v, dim) => `<span class="pin vs-${v.status} ${dim ? "dim" : ""}" style="left:${Number(v.plan_x) * 100}%;top:${Number(v.plan_y) * 100}%" data-act="vs-open" data-id="${v.id}" title="${esc(vsNr(v) + " · " + (v.titel || v.omschrijving || ""))}">${v.nr || "•"}</span>`;
-async function loadPdfJs() {
-  if (window.pdfjsLib) return window.pdfjsLib;
-  await new Promise((res, rej) => { const el = document.createElement("script"); el.src = "https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"; el.onload = res; el.onerror = () => rej(new Error("pdf.js kon niet geladen worden")); document.head.appendChild(el); });
-  window.pdfjsLib.GlobalWorkerOptions.workerSrc = "https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js";
-  return window.pdfjsLib;
-}
-/* pdf → één jpeg per pagina (max. 10 pagina's, langste zijde 2600 px); afbeelding → verkleind */
-async function planToImages(file, max = 2600) {
-  if (/pdf$/i.test(file.type) || /\.pdf$/i.test(file.name)) {
-    const pdfjs = await loadPdfJs(); const doc = await pdfjs.getDocument({ data: await file.arrayBuffer(), isEvalSupported: false }).promise; const out = [];
-    for (let i = 1; i <= Math.min(doc.numPages, 10); i++) {
-      const page = await doc.getPage(i); const v1 = page.getViewport({ scale: 1 }); const scale = max / Math.max(v1.width, v1.height); const vp = page.getViewport({ scale });
-      const c = document.createElement("canvas"); c.width = Math.round(vp.width); c.height = Math.round(vp.height); const ctx = c.getContext("2d"); ctx.fillStyle = "#fff"; ctx.fillRect(0, 0, c.width, c.height);
-      await page.render({ canvasContext: ctx, viewport: vp }).promise;
-      out.push({ blob: await new Promise(r => c.toBlob(r, "image/jpeg", 0.86)), w: c.width, h: c.height, page: i, pages: doc.numPages });
-    }
-    return out;
-  }
-  const r = await fotoVerklein(file, max, 0.86); return [{ ...r, page: 1, pages: 1 }];
-}
-function planForm(pid) {
-  const p = S.projecten[pid]; if (!p) return;
-  openModal("Plan toevoegen — " + p.klant, `<div class="form-grid">
-    <div class="field span2"><label for="pl_file">Bestand (pdf of afbeelding)</label><input id="pl_file" name="file" type="file" accept="application/pdf,image/*" required><small class="muted">Van een pdf worden de pagina's (max. 10) elk als plan opgeslagen. Tip: één plan per verdieping.</small></div>
-    <div class="field span2"><label for="pl_naam">Naam</label><input id="pl_naam" name="naam" placeholder="bv. Gelijkvloers, 1e verdieping"></div>
-  </div>`, {
-    saveLabel: "Toevoegen",
-    onSave: async (d) => {
-      const f = $("#pl_file").files[0]; if (!f) { toast("Kies een bestand"); return false; }
-      const btn = $("#mform button[type=submit]"); btn.textContent = "Plan omzetten…";
-      let pages; try { pages = await planToImages(f); } catch (e) { toast("Plan niet leesbaar: " + e.message, 6000); return false; }
-      const base = (d.naam || "").trim() || f.name.replace(/\.[^.]+$/, ""); const n0 = plansOf(pid).length; const rows = [];
-      for (let i = 0; i < pages.length; i++) {
-        btn.textContent = `Pagina ${i + 1}/${pages.length} uploaden…`;
-        const path = `${pid}/plannen/${Date.now()}-${i + 1}.jpg`;
-        const { error } = await sb.storage.from("werf").upload(path, pages[i].blob, { contentType: "image/jpeg" });
-        if (error) { toast("Upload mislukt: " + error.message, 6000); return false; }
-        rows.push({ project_id: pid, naam: pages.length > 1 ? `${base} · p${pages[i].page}` : base, path, url: sb.storage.from("werf").getPublicUrl(path).data.publicUrl, w: pages[i].w, h: pages[i].h, volgorde: n0 + i + 1, created_by: S.me.id });
-      }
-      const { data, error } = await sb.from("werfplannen").insert(rows).select(); if (error) { toast("Bewaren mislukt: " + error.message, 6000); return false; }
-      (data || []).forEach(r => S.werfplannen[r.id] = r); render(); toast(`${rows.length} plan${rows.length === 1 ? "" : "nen"} toegevoegd`);
-    },
-  });
-}
-function vPlannen(p) {
-  if (schemaV() < 20) return "";
-  const pls = plansOf(p.id); const all = vsOf(p.id);
-  return `<div class="panel" style="margin-bottom:16px"><div class="panel-head"><div><h3>Plannen</h3><div class="muted" style="font-size:12px;margin-top:2px">Duid per vaststelling de locatie aan op een plan; klik op een plan voor het overzicht van de punten.</div></div><div class="actions"><button class="btn sm" data-act="plan-new" data-pid="${p.id}">+ Plan</button></div></div>
-    ${pls.length ? `<div class="plan-grid">${pls.map(pl => { const n = all.filter(v => v.plan_id === pl.id && v.plan_x != null && v.status === "open").length; return `<div class="plan-card" data-act="plan-view" data-id="${pl.id}"><img src="${esc(safeSrc(pl.url))}" alt="" loading="lazy"><div class="plan-name"><span>${esc(pl.naam)}</span>${n ? `<span class="pill vs-open">${n} open</span>` : ""}</div></div>`; }).join("")}</div>` : `<div class="empty" style="padding:16px">Nog geen plannen. Voeg een pdf (grondplan per verdieping) of afbeelding toe.</div>`}</div>`;
-}
-function planView(id) {
-  const pl = S.werfplannen[id]; if (!pl) return; const p = S.projecten[pl.project_id];
-  const f = S.werfF || { status: "actief" };
-  const pts = vsOf(pl.project_id).filter(v => v.plan_id === id && v.plan_x != null).filter(v => f.status === "actief" ? vsActief(v) : f.status === "alle" ? true : v.status === f.status);
-  openModal(`${pl.naam} — ${p ? p.klant : ""}`, `<div class="muted" style="font-size:12px;margin-bottom:8px">${pts.length} punt${pts.length === 1 ? "" : "en"} op dit plan (filter van het tabblad Werf) · klik op een pin om de vaststelling te openen</div>
-    <div class="plan-wrap big"><img src="${esc(safeSrc(pl.url))}" alt="">${pts.map(v => planPin(v)).join("")}</div>
-    ${pts.length ? `<div class="tw" style="margin-top:10px"><table class="t"><tbody>${pts.sort((a, b) => (a.nr || 0) - (b.nr || 0)).map(v => `<tr class="click" data-act="vs-open" data-id="${v.id}"><td class="num" style="width:60px">${vsNr(v)}</td><td>${esc(v.titel || noteExcerpt(v.omschrijving, 80))}<small class="muted" style="display:block">${esc(v.ruimte || "")}</small></td><td>${esc(vsWie(v) || "—")}</td><td>${vsPill(v)}</td></tr>`).join("")}</tbody></table></div>` : ""}
-    <div style="margin-top:12px;display:flex;gap:8px;align-items:center"><input class="inline" data-plan-naam value="${esc(pl.naam)}" style="max-width:260px" title="Naam van het plan"><a class="btn sm" href="${esc(safeUrl(pl.url))}" target="_blank" rel="noopener">Origineel openen</a></div>`, {
-    wide: true, saveLabel: "Sluiten",
-    onSave: async () => { const naam = $("[data-plan-naam]").value.trim(); if (naam && naam !== pl.naam) await dbUpdate("werfplannen", id, { naam }); },
-    onDelete: async () => { const n = vsOf(pl.project_id).filter(v => v.plan_id === id).length; if (n && !confirm(`${n} vaststelling${n === 1 ? " verwijst" : "en verwijzen"} naar dit plan; die pins gaan verloren. Toch verwijderen?`)) throw new Error("geannuleerd"); await dbDelete("werfplannen", id); if (pl.path) sb.storage.from("werf").remove([pl.path]).catch(() => { }); Object.values(S.vaststellingen).forEach(v => { if (v.plan_id === id) { v.plan_id = null; } }); toast("Plan verwijderd"); },
-  });
-  $("#mform").querySelectorAll("[data-act=vs-open]").forEach(el => el.onclick = (e) => { e.preventDefault(); e.stopPropagation(); if (!closeModal()) return; vsForm(S.vaststellingen[el.dataset.id]); });
-}
-function wbForm(b = {}, pid) {
-  const isNew = !b.id; const projectId = b.project_id || pid; const p = S.projecten[projectId]; if (!p) return;
-  const vs = isNew ? [] : vsOf(projectId).filter(v => v.bezoek_id === b.id).sort((a, c) => (a.lot || 999) - (c.lot || 999) || (a.nr || 0) - (c.nr || 0));
-  openModal(isNew ? "Werfbezoek — " + p.klant : `Werfbezoek ${b.nr} — ${p.klant}`, `<div class="form-grid">
-    <div class="field"><label for="wb_datum">Datum</label><input id="wb_datum" name="datum" type="date" value="${esc(b.datum || todayIso)}" required></div>
-    <div class="field"><label for="wb_weer">Weer</label><select id="wb_weer" name="weer">${opts(WEER.map(w => [w, w || "—"]), b.weer || "")}</select></div>
-    <div class="field span2"><label for="wb_aanw">Aanwezig</label><input id="wb_aanw" name="aanwezigen" value="${esc(b.aanwezigen || "")}" placeholder="bv. Phil, Jo Appelmans, schrijnwerker Peeters"></div>
-    <div class="field span2"><label for="wb_not">Algemene opmerkingen / stand van de werken</label><textarea id="wb_not" name="notities" rows="6">${esc(b.notities || "")}</textarea></div>
-    ${isNew || schemaV() < 21 ? "" : `<div class="field span2"><button type="button" class="btn sm primary" data-wb-verslag>Werfverslag maken van dit bezoek</button></div>`}
-    ${isNew ? "" : `<div class="field span2"><label>Vaststellingen bij dit bezoek <span class="muted" style="font-weight:400">${vs.length}</span> <button type="button" class="btn ghost sm" data-wb-vs>+ Vaststelling</button></label>${vs.length ? (() => { const byLot = {}; vs.forEach(v => (byLot[v.lot || 0] = byLot[v.lot || 0] || []).push(v)); const lots = Object.keys(byLot).map(Number).sort((a, c) => (a ? 0 : 1) - (c ? 0 : 1) || a - c);
-        return `<div class="tw"><table class="t"><tbody>${lots.map(nr => `<tr><td colspan="4" style="background:var(--surface-2);font-weight:600;font-size:12px">${nr ? esc(lotName(nr)) : "Zonder lot"} <span class="muted num" style="font-weight:400">${byLot[nr].filter(v => v.status === "open").length} open · ${byLot[nr].length}</span></td></tr>` + byLot[nr].map(v => `<tr class="click" data-wb-open="${v.id}"><td class="num" style="width:60px">${vsNr(v)}</td><td>${v.titel ? `<b>${esc(v.titel)}</b><small class="muted" style="display:block">${esc(noteExcerpt(v.omschrijving, 80))}${v.ruimte ? " · " + esc(v.ruimte) : ""}</small>` : `${esc(noteExcerpt(v.omschrijving, 80))}<small class="muted" style="display:block">${esc(v.ruimte || "")}</small>`}</td><td>${esc(vsWie(v) || "—")}</td><td>${vsPill(v)}</td></tr>`).join("")).join("")}</tbody></table></div>`; })() : `<div class="muted" style="font-size:12px">Nog geen vaststellingen aan dit bezoek gekoppeld.</div>`}</div>`}
-  </div>`, {
-    wide: true,
-    onSave: async (d) => {
-      const row = { project_id: projectId, datum: d.datum || todayIso, weer: d.weer || "", aanwezigen: (d.aanwezigen || "").trim(), notities: d.notities || "" };
-      if (isNew) { row.auteur = S.me.id; const saved = await dbInsert("werfbezoeken", row); toast(`Werfbezoek ${saved.nr} bewaard`); }
-      else { await dbUpdate("werfbezoeken", b.id, row); toast("Werfbezoek bewaard"); }
-    },
-    onDelete: isNew ? null : async () => { await dbDelete("werfbezoeken", b.id); toast("Werfbezoek verwijderd"); },
-  });
-  const f = $("#mform");
-  const add = f.querySelector("[data-wb-vs]"); if (add) add.onclick = () => { if (!closeModal()) return; vsForm({}, projectId, b.id); };
-  const wv = f.querySelector("[data-wb-verslag]"); if (wv) wv.onclick = () => { if (!closeModal()) return; wvForm(projectId, b.id); };
-  f.querySelectorAll("[data-wb-open]").forEach(r => r.onclick = () => { if (!closeModal()) return; vsForm(S.vaststellingen[r.dataset.wbOpen]); });
-}
-/* ---------- Werfverslagen (stap 2b): pdf in de browser (jsPDF), bewaard in de bucket 'werf', gemaild via het Drive-script ---------- */
-const wvOf = (pid) => Object.values(S.werfverslagen).filter(w => w.project_id === pid).sort((a, b) => (b.nr || 0) - (a.nr || 0));
-async function loadJsPdf() {
-  if (window.jspdf && window.jspdf.jsPDF) return window.jspdf.jsPDF;
-  await new Promise((res, rej) => { const el = document.createElement("script"); el.src = "https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"; el.onload = res; el.onerror = () => rej(new Error("jsPDF kon niet geladen worden")); document.head.appendChild(el); });
-  return window.jspdf.jsPDF;
-}
-/* afbeelding van een url → jpeg-dataURL (verkleind), via canvas; mislukt → null */
-async function imgData(url, max = 900, q = 0.8) {
-  try {
-    const img = await new Promise((res, rej) => { const i = new Image(); i.crossOrigin = "anonymous"; i.onload = () => res(i); i.onerror = () => rej(new Error("img")); i.src = url; });
-    const s = Math.min(1, max / Math.max(img.width, img.height)); const c = document.createElement("canvas"); c.width = Math.max(1, Math.round(img.width * s)); c.height = Math.max(1, Math.round(img.height * s));
-    const ctx = c.getContext("2d"); ctx.fillStyle = "#fff"; ctx.fillRect(0, 0, c.width, c.height); ctx.drawImage(img, 0, 0, c.width, c.height);
-    return { data: c.toDataURL("image/jpeg", q), w: c.width, h: c.height, canvas: c };
-  } catch (e) { return null; }
-}
-/* plan met pins getekend → jpeg-dataURL */
-async function planData(pl, pts) {
-  const r = await imgData(pl.url, 1800, 0.85); if (!r) return null;
-  const ctx = r.canvas.getContext("2d"); const R = Math.max(12, Math.round(r.w / 70));
-  const kleur = { open: "#B93A34", opgelost: "#B8720F", gecontroleerd: "#2E7D4F", vervallen: "#86868B" };
-  pts.forEach(v => { const x = Number(v.plan_x) * r.w, y = Number(v.plan_y) * r.h; ctx.beginPath(); ctx.arc(x, y, R, 0, Math.PI * 2); ctx.fillStyle = kleur[v.status] || "#B93A34"; ctx.fill(); ctx.lineWidth = Math.max(2, R / 6); ctx.strokeStyle = "#fff"; ctx.stroke(); ctx.fillStyle = "#fff"; ctx.font = `bold ${Math.round(R * 1.1)}px Helvetica, Arial, sans-serif`; ctx.textAlign = "center"; ctx.textBaseline = "middle"; ctx.fillText(String(v.nr || "•"), x, y + R * 0.05); });
-  return { data: r.canvas.toDataURL("image/jpeg", 0.85), w: r.w, h: r.h };
-}
-async function logoData() {
-  try { const img = await new Promise((res, rej) => { const i = new Image(); i.onload = () => res(i); i.onerror = rej; i.src = "logo-mark.svg"; }); const c = document.createElement("canvas"); c.width = 600; c.height = 181; c.getContext("2d").drawImage(img, 0, 0, 600, 181); return c.toDataURL("image/png"); } catch (e) { return null; }
-}
-/* Het pdf-document. opts: { punten, groep: "lot"|"wie", bezoek, bericht } */
-async function wvBuildPdf(p, opts, progress = () => { }) {
-  const jsPDF = await loadJsPdf(); const doc = new jsPDF({ unit: "mm", format: "a4", compress: true });
-  const W = 210, H = 297, M = 15, CW = W - 2 * M; let y = M; const logo = await logoData();
-  const ink = [29, 29, 31], muted = [134, 134, 139], line = [220, 220, 224];
-  const kleur = { open: [185, 58, 52], opgelost: [184, 114, 15], gecontroleerd: [46, 125, 79], vervallen: [134, 134, 139] };
-  const clean = (s) => String(s || "").replace(/→/g, "->").replace(/[“”]/g, '"').replace(/[‘’]/g, "'").replace(/•/g, "-");
-  const header = () => { if (logo) doc.addImage(logo, "PNG", M, 10, 26, 7.8); doc.setFontSize(8); doc.setTextColor(...muted); doc.text(`${clean(projName(p))} · Werfverslag ${opts.nr}`, W - M, 15, { align: "right" }); doc.setDrawColor(...line); doc.line(M, 20, W - M, 20); y = 26; };
-  const footer = () => { const n = doc.getNumberOfPages(); for (let i = 1; i <= n; i++) { doc.setPage(i); doc.setFontSize(8); doc.setTextColor(...muted); doc.text(`BROS · ${fmtLong(opts.datum)}`, M, H - 8); doc.text(`${i} / ${n}`, W - M, H - 8, { align: "right" }); } };
-  const need = (h) => { if (y + h > H - 16) { doc.addPage(); header(); } };
-  const text = (s, size, style = "normal", color = ink, width = CW, x = M, lh = 1.35) => { doc.setFont("helvetica", style); doc.setFontSize(size); doc.setTextColor(...color); const lines = doc.splitTextToSize(clean(s), width); const h = lines.length * size * 0.3528 * lh; need(h); doc.text(lines, x, y + size * 0.3528 * 0.85); y += h; return h; };
-  header();
-  // titel
-  doc.setFont("helvetica", "bold"); doc.setFontSize(22); doc.setTextColor(...ink); doc.text(`Werfverslag ${opts.nr}`, M, y + 6); y += 10;
-  text(`${projName(p)}${p.adres ? " · " + p.adres + (p.gemeente ? ", " + [p.postcode, p.gemeente].filter(Boolean).join(" ") : "") : ""}`, 11, "normal", muted); y += 2;
-  const b = opts.bezoek; const meta = [["Datum", fmtLong(opts.datum)], b && b.aanwezigen ? ["Aanwezig", b.aanwezigen] : null, b && b.weer ? ["Weer", b.weer] : null, ["Opgemaakt door", userById(S.me.id).name]].filter(Boolean);
-  meta.forEach(([k, v]) => { doc.setFont("helvetica", "bold"); doc.setFontSize(9); doc.setTextColor(...muted); doc.text(k.toUpperCase(), M, y + 3); doc.setFont("helvetica", "normal"); doc.setTextColor(...ink); doc.setFontSize(10); const lines = doc.splitTextToSize(clean(v), CW - 38); doc.text(lines, M + 38, y + 3); y += Math.max(5, lines.length * 4.2); });
-  y += 2;
-  if (opts.bericht) { y += 2; text(opts.bericht, 10.5, "normal", ink); y += 2; }
-  if (b && b.notities) { y += 3; text("Stand van de werken", 12, "bold"); y += 1; text(b.notities, 10, "normal", ink); y += 2; }
-  // samenvatting
-  const pts = opts.punten; const nOpen = pts.filter(v => v.status === "open").length, nOpg = pts.filter(v => v.status === "opgelost").length, nGec = pts.filter(v => v.status === "gecontroleerd").length;
-  y += 4; text("Vaststellingen", 14, "bold"); text(`${pts.length} punten in dit verslag · ${nOpen} open · ${nOpg} opgelost (te controleren) · ${nGec} gecontroleerd`, 9.5, "normal", muted); y += 3;
-  // groepen
-  const groups = {}; const gkey = (v) => opts.groep === "wie" ? (v.contact_id ? "c:" + v.contact_id : v.assignee || "") : String(v.lot || 0);
-  const glabel = (k) => opts.groep === "wie" ? (!k ? "Nog niet toegewezen" : k.startsWith("c:") ? (S.contacten[k.slice(2)]?.naam || "?") : userById(k).name) : (k === "0" ? "Zonder lot" : lotName(Number(k)));
-  pts.forEach(v => (groups[gkey(v)] = groups[gkey(v)] || []).push(v));
-  const keys = Object.keys(groups).sort((a, c) => opts.groep === "wie" ? ((a ? 0 : 1) - (c ? 0 : 1) || glabel(a).localeCompare(glabel(c))) : ((a === "0" ? 1 : 0) - (c === "0" ? 1 : 0) || Number(a) - Number(c)));
-  let done = 0;
-  for (const k of keys) {
-    need(14); y += 3; doc.setFillColor(240, 240, 242); doc.roundedRect(M, y, CW, 8, 2, 2, "F"); doc.setFont("helvetica", "bold"); doc.setFontSize(10.5); doc.setTextColor(...ink); doc.text(clean(glabel(k)), M + 3, y + 5.5); doc.setFont("helvetica", "normal"); doc.setFontSize(9); doc.setTextColor(...muted); doc.text(`${groups[k].filter(v => v.status === "open").length} open · ${groups[k].length}`, W - M - 3, y + 5.5, { align: "right" }); y += 11;
-    for (const v of groups[k].sort((a, c) => (a.nr || 0) - (c.nr || 0))) {
-      progress(`Punt ${++done}/${pts.length}…`);
-      const fotos = (v.fotos || []).slice(0, 3); const imgs = []; for (const f of fotos) { const d = await imgData(f.url, 700, 0.78); if (d) imgs.push(d); }
-      const ph = imgs.length ? 42 : 0; const pw = imgs.length ? Math.min(56, (CW - (imgs.length - 1) * 3) / imgs.length) : 0;
-      need(16 + ph);
-      // kop: nummer + titel + status
-      const y0 = y; doc.setFillColor(...(kleur[v.status] || kleur.open)); doc.roundedRect(M, y + 0.5, 13, 6, 3, 3, "F"); doc.setFont("helvetica", "bold"); doc.setFontSize(8.5); doc.setTextColor(255, 255, 255); doc.text(vsNr(v), M + 6.5, y + 4.6, { align: "center" });
-      doc.setFont("helvetica", "bold"); doc.setFontSize(11); doc.setTextColor(...ink); const titel = clean(v.titel || noteExcerpt(v.omschrijving, 90) || "(zonder titel)"); doc.text(doc.splitTextToSize(titel, CW - 50)[0], M + 16, y + 4.8);
-      const st = (vsLate(v) ? "TE LAAT" : VS_STATUS[v.status].toUpperCase()) + (v.prioriteit === "hoog" ? " · PRIORITEIT" : ""); doc.setFontSize(8); doc.setTextColor(...(kleur[v.status] || kleur.open)); doc.text(st, W - M, y + 4.6, { align: "right" }); y += 8;
-      const meta2 = [vsWie(v) ? "Verantwoordelijke: " + vsWie(v) : "Nog niet toegewezen", v.ruimte ? "Ruimte: " + v.ruimte : "", v.deadline ? "Tegen: " + fmtLong(v.deadline) : "", v.plan_id && S.werfplannen[v.plan_id] ? "Plan: " + S.werfplannen[v.plan_id].naam : "", v.opgelost_op ? "Opgelost op " + fmtLong(lokDag(v.opgelost_op)) : ""].filter(Boolean).join("   ·   ");
-      text(meta2, 8.5, "normal", muted);
-      if (v.omschrijving && v.titel) text(v.omschrijving, 9.5, "normal", ink);
-      if (v.opmerking) text("Opmerking: " + (String(v.opmerking).split("\n").filter(Boolean).pop() || ""), 9, "italic", muted);   // enkel de laatste regel (het gesprek met de aannemer blijft intern, script 044)
-      if (imgs.length) { y += 1.5; need(ph + 2); imgs.forEach((im, i) => { const r = im.w / im.h; let w = pw, h = ph; if (w / h > r) w = h * r; else h = w / r; doc.addImage(im.data, "JPEG", M + i * (pw + 3), y, w, h); }); y += ph + 1.5; }
-      y += 2; doc.setDrawColor(...line); doc.line(M, y, W - M, y); y += 3;
-      if (y0 > y) { /* nooit */ }
-    }
-  }
-  // plannen
-  const plannen = plansOf(p.id).filter(pl => pts.some(v => v.plan_id === pl.id && v.plan_x != null));
-  for (const pl of plannen) {
-    progress(`Plan ${pl.naam}…`); const d = await planData(pl, pts.filter(v => v.plan_id === pl.id && v.plan_x != null)); if (!d) continue;
-    doc.addPage(); header(); text("Plan · " + pl.naam, 14, "bold"); text("Nummers = vaststellingen · rood open, oranje opgelost, groen gecontroleerd", 9, "normal", muted); y += 3;
-    const r = d.w / d.h; let w = CW, h = CW / r; const maxH = H - y - 14; if (h > maxH) { h = maxH; w = h * r; }
-    doc.addImage(d.data, "JPEG", M + (CW - w) / 2, y, w, h);
-  }
-  footer();
-  return doc.output("blob");
-}
-function wvForm(pid, bezoekId) {
-  const p = S.projecten[pid]; if (!p) return; if (schemaV() < 21) { toast("Voer eerst databasescript 021 uit."); return; }
-  const bez = wbOf(pid); const all = vsOf(pid);
-  const pcs = contactsOf(pid).filter(x => x.c.email); const nr = (wvOf(pid)[0]?.nr || 0) + 1;
-  const puntenVoor = (sel, bid, klant) => all.filter(v => !(v.te_beoordelen && v.status === "open")).filter(v => sel === "bezoek" ? v.bezoek_id === bid : sel === "open" ? v.status === "open" : vsActief(v)).filter(v => !klant || v.klant_zichtbaar);   // punten van de klant pas na goedkeuring
-  const betrokken = (pts) => new Set(pts.map(v => v.contact_id).filter(Boolean));
-  openModal(`Werfverslag ${nr} — ${p.klant}`, `<div class="form-grid">
-    <div class="field"><label for="wv_bezoek">Werfbezoek</label><select id="wv_bezoek" name="bezoek_id"><option value="">— geen (los verslag) —</option>${opts(bez.map(x => [x.id, `Bezoek ${x.nr} · ${fmtLong(x.datum)}${x.aanwezigen ? " · " + x.aanwezigen : ""}`]), bezoekId || bez[0]?.id || "")}</select></div>
-    <div class="field"><label for="wv_datum">Datum verslag</label><input id="wv_datum" name="datum" type="date" value="${todayIso}"></div>
-    <div class="field"><label for="wv_sel">Welke punten</label><select id="wv_sel" name="sel">${opts([["actief", "Alle open en opgeloste punten van het project"], ["open", "Alleen open punten"], ["bezoek", "Alleen de punten van dit werfbezoek"]], "actief")}</select></div>
-    <div class="field"><label for="wv_groep">Groeperen</label><select id="wv_groep" name="groep">${opts([["lot", "Per lot"], ["wie", "Per verantwoordelijke"]], "lot")}</select></div>
-    <div class="field span2"><label for="wv_bericht">Bericht bovenaan het verslag en in de mail</label><textarea id="wv_bericht" name="bericht" rows="3" placeholder="bv. Beste, hierbij de vaststellingen van het werfbezoek van vandaag. Graag de open punten tegen de vermelde datum in orde brengen."></textarea></div>
-    <div class="field span2"><label>Versturen naar</label>${pcs.length ? `<div class="fase-list" id="wv_aan">${pcs.map(x => `<label class="chk"><input type="checkbox" name="aan" value="${esc(x.c.email)}" data-cid="${x.c.id}" data-rol="${esc(x.rol)}"> <span>${esc(x.c.naam)}<small class="muted" style="display:block">${CONTACT_ROL[x.rol] || x.rol} · ${esc(x.c.email)}</small></span></label>`).join("")}</div>` : `<div class="muted" style="font-size:12px">Geen contacten met e-mailadres gekoppeld aan dit project (Dossier › Contacten).</div>`}<input name="extra" placeholder="Extra e-mailadressen, gescheiden door komma's" style="margin-top:8px"></div>
-    <div class="field span2"><label class="sw-row"><input type="checkbox" class="sw" name="klant_zichtbaar"><span><b>Delen met de klant in het portaal</b> — het verslag (pdf) verschijnt onder Verslagen. Tip: kies dan "Alleen punten zichtbaar voor de klant" hieronder als er interne punten in zitten.</span></label></div>
-    <div class="field span2"><label class="chk" style="font-size:13px"><input type="checkbox" name="alleen_klant"> Alleen punten met "zichtbaar voor de klant" opnemen</label></div>
-    ${p.drive_folder_id && driveReady() ? `<div class="field span2"><label class="chk" style="font-size:13px"><input type="checkbox" name="drive" checked> Ook bewaren in de Drive-map (Werfcontrole)</label></div>` : ""}
-    <div class="field span2"><div class="muted" id="wv_info" style="font-size:12px"></div></div>
-  </div>`, {
-    wide: true, saveLabel: "Verslag maken en versturen",
-    onSave: async (d) => {
-      const f = $("#mform"); const btn = f.querySelector("button[type=submit]");
-      const bid = d.bezoek_id || null; const pts = puntenVoor(d.sel, bid, d.alleen_klant === "on");
-      if (!pts.length) { toast("Geen punten voor dit verslag"); return false; }
-      const aan = [...new Set([...f.querySelectorAll('input[name="aan"]:checked')].map(i => i.value).concat((d.extra || "").split(/[,;\s]+/).filter(e => /^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(e))))];
-      const b = bid ? S.werfbezoeken[bid] : null; const datum = d.datum || todayIso;
-      try {
-        const blob = await wvBuildPdf(p, { nr, datum, bezoek: b, bericht: (d.bericht || "").trim(), punten: pts, groep: d.groep }, (m) => { btn.textContent = m; });
-        btn.textContent = "Pdf bewaren…";
-        const path = `${pid}/verslagen/werfverslag-${String(nr).padStart(2, "0")}-${datum}-${(crypto.randomUUID ? crypto.randomUUID() : Math.random().toString(36).slice(2)).replace(/-/g, "").slice(0, 16)}.pdf`;
-        const { error } = await sb.storage.from("werf").upload(path, blob, { contentType: "application/pdf", upsert: true }); if (error) throw error;
-        const url = sb.storage.from("werf").getPublicUrl(path).data.publicUrl;
-        const titel = `Werfverslag ${nr} · ${fmtLong(datum)}`;
-        const row = await dbInsert("werfverslagen", { project_id: pid, bezoek_id: bid, nr, datum, titel, pdf_path: path, pdf_url: url, punten: pts.length, aan, bericht: (d.bericht || "").trim(), klant_zichtbaar: d.klant_zichtbaar === "on", created_by: S.me.id });
-        window.open(url, "_blank", "noopener");
-        if (aan.length || d.drive === "on") {
-          if (!driveReady()) toast("Pdf gemaakt; niet gemaild (Drive-script niet ingesteld).", 6000);
-          else { btn.textContent = "Versturen…"; try { const j = await driveCall("werfverslagmail", { id: row.id, aan, drive: d.drive === "on", folderId: p.drive_folder_id || "", token: S.session?.access_token || "" }); toast(`Werfverslag ${nr} gemaakt${(j.naar || []).length ? " en gemaild naar " + j.naar.join(", ") : ""}${j.drive_url ? " · in Drive" : ""}`, 7000); } catch (e) { toast("Pdf gemaakt, maar mailen mislukte: " + e.message, 8000); } }
-        } else toast(`Werfverslag ${nr} gemaakt`);
-      } catch (e) { toast("Verslag mislukt: " + e.message, 8000); btn.textContent = "Verslag maken en versturen"; return false; }
-    },
-  });
-  const f = $("#mform");
-  const sync = () => { const bid = f.querySelector("#wv_bezoek").value; const sel = f.querySelector("#wv_sel").value; const ak = f.querySelector('[name="alleen_klant"]').checked; const pts = puntenVoor(sel, bid, ak); const bt = betrokken(pts);
-    f.querySelectorAll('input[name="aan"]').forEach(i => { i.parentElement.querySelector("small").textContent = i.parentElement.querySelector("small").textContent.replace(/ · \d+ punt(en)?$/, "") + (bt.has(i.dataset.cid) ? ` · ${pts.filter(v => v.contact_id === i.dataset.cid).length} punt${pts.filter(v => v.contact_id === i.dataset.cid).length === 1 ? "" : "en"}` : ""); });
-    $("#wv_info").textContent = `${pts.length} punt${pts.length === 1 ? "" : "en"} in dit verslag · ${pts.filter(v => v.status === "open").length} open · plannen met pins: ${plansOf(pid).filter(pl => pts.some(v => v.plan_id === pl.id && v.plan_x != null)).length}`; };
-  ["#wv_bezoek", "#wv_sel", '[name="alleen_klant"]'].forEach(q => f.querySelector(q).addEventListener("change", sync)); sync();
-  // aannemers met punten standaard aanvinken
-  const bt = betrokken(puntenVoor("actief", null, false)); f.querySelectorAll('input[name="aan"]').forEach(i => { if (bt.has(i.dataset.cid)) i.checked = true; });
-  f.querySelector('[name="klant_zichtbaar"]').addEventListener("change", (e) => { f.querySelectorAll('input[name="aan"]').forEach(i => { if (i.dataset.rol === "bouwheer" || i.dataset.rol === "contactpersoon") i.checked = e.target.checked; }); });
-}
-function vWerfverslagen(p) {
-  if (schemaV() < 21) return "";
-  const ws = wvOf(p.id);
-  return `<div class="panel" style="margin-bottom:16px"><div class="panel-head"><div><h3>Werfverslagen</h3><div class="muted" style="font-size:12px;margin-top:2px">Pdf met de vaststellingen (foto's, verantwoordelijke, deadline) en de plannen met pins; gemaild naar aannemers en klant.</div></div><div class="actions"><button class="btn sm primary" data-act="wv-new" data-pid="${p.id}">Werfverslag maken</button></div></div>
-    ${ws.length ? `<div class="tw"><table class="t"><thead><tr><th>Nr</th><th>Datum</th><th>Bezoek</th><th class="r">Punten</th><th>Verstuurd naar</th><th></th></tr></thead><tbody>${ws.map(w => `<tr><td class="num">${w.nr}</td><td class="num">${fmtLong(w.datum)}</td><td>${w.bezoek_id && S.werfbezoeken[w.bezoek_id] ? `Bezoek ${S.werfbezoeken[w.bezoek_id].nr}` : "—"}</td><td class="r num">${w.punten}</td><td>${(w.aan || []).length ? esc((w.aan || []).join(", ")) : `<span class="muted">niet gemaild</span>`}${w.klant_zichtbaar ? ` <span class="pill st-afgerond">klant</span>` : ""}${w.aannemer_zichtbaar ? ` <span class="pill st-afgerond">aannemers</span>` : ""}${w.drive_url ? ` <a class="muted" href="${esc(safeUrl(w.drive_url))}" target="_blank" rel="noopener">Drive</a>` : ""}</td><td class="r" style="white-space:nowrap"><a class="btn ghost sm" href="${esc(safeUrl(w.pdf_url))}" target="_blank" rel="noopener">Pdf</a><button class="btn ghost sm" data-act="wv-share" data-id="${w.id}" title="${w.klant_zichtbaar ? "Niet meer tonen in het klantenportaal" : "Tonen in het klantenportaal"}">${w.klant_zichtbaar ? "Klant ✓" : "Klant"}</button>${schemaV() >= 25 ? `<button class="btn ghost sm" data-act="wv-share-a" data-id="${w.id}" title="${w.aannemer_zichtbaar ? "Niet meer tonen aan alle aannemers van dit project (wie het per mail kreeg, ziet het wel)" : "Tonen aan alle aannemers van dit project in hun portaal (wie het per mail kreeg, ziet het sowieso)"}">${w.aannemer_zichtbaar ? "Aannemers ✓" : "Aannemers"}</button>` : ""}<button class="btn ghost sm danger" data-act="wv-del" data-id="${w.id}">✕</button></td></tr>`).join("")}</tbody></table></div>` : `<div class="empty" style="padding:16px">Nog geen werfverslagen.</div>`}</div>`;
-}
-/* ---------- AI-assistent (script 023): gesprekken uit het klantenportaal en taakvoorstellen die BROS beoordeelt ---------- */
-const ONDERWERP = { planning: "Planning", facturatie: "Facturatie", ontwerp: "Ontwerp", documenten: "Documenten", klacht: "Klacht", overig: "Overig" };
-const AI_MODELLEN = [["gpt-4o-mini", "OpenAI gpt-4o-mini (goedkoop, aanbevolen)"], ["gpt-4.1-mini", "OpenAI gpt-4.1-mini"], ["gpt-4.1-nano", "OpenAI gpt-4.1-nano (goedkoopst)"], ["claude-haiku-4-5", "Anthropic Claude Haiku 4.5"], ["claude-3-5-haiku-latest", "Anthropic Claude 3.5 Haiku"]];
-const aiCfg = () => (S.instellingen.assistent && S.instellingen.assistent.value) || {};
-const voorstellenOpen = () => schemaV() >= 23 ? Object.values(S.taak_voorstellen).filter(v => v.status === "open") : [];
-const vsMijn = () => voorstellenOpen().filter(v => v.voorgestelde_user === S.me.id);
-const berichtenOf = (pid) => Object.values(S.assistent_berichten).filter(b => b.project_id === pid).sort((a, b) => (a.created_at || "").localeCompare(b.created_at || ""));
-const maandStart = () => { const d = new Date(); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-01`; };
-const VT_STATUS = { open: "Open", bevestigd: "Bevestigd", geweigerd: "Geweigerd", beantwoord: "Beantwoord" };
-function voorstelCard(v, withProject) {
-  const p = S.projecten[v.project_id]; const wie = v.voorgestelde_user ? userById(v.voorgestelde_user).name : "—";
-  const vtAntw = schemaV() >= 42 && (v.bron === "aannemer" || !!v.bericht_id);   // antwoorden (script 042): aannemer, of klant met een gesprek
-  return `<div class="panel voorstel ${v.urgentie === "hoog" ? "urgent" : ""}" style="margin-bottom:12px">
-    <div class="panel-head"><div><div class="eyebrow">${v.urgentie === "hoog" ? `<span class="pill late">Dringend</span> ` : ""}${v.bron === "aannemer" ? `<span class="pill st-on_hold">Aannemer${v.contact_id && S.contacten[v.contact_id] ? " · " + esc(S.contacten[v.contact_id].naam) : ""}</span> ` : ""}${ONDERWERP[v.onderwerp] || esc(v.onderwerp)} · ${fmtLong(lokDag(v.created_at))}${withProject && p ? ` · <a href="#" data-open="${p.id}">${esc(projName(p))}</a>` : ""}</div><h3 style="margin-top:4px">${esc(v.titel)}</h3>${v.omschrijving ? `<div class="muted" style="font-size:13px;margin-top:4px">${esc(v.omschrijving)}</div>` : ""}</div>
-      <div class="actions" style="align-self:flex-start">${v.status === "open" ? `${vtAntw ? `<button class="btn sm primary" data-act="vt-antw" data-id="${v.id}">Beantwoorden…</button>` : ""}<button class="btn sm ${vtAntw ? "" : "primary"}" data-act="vt-ok" data-id="${v.id}">Bevestigen</button><button class="btn sm" data-act="vt-edit" data-id="${v.id}">Aanpassen…</button><button class="btn sm ghost danger" data-act="vt-nee" data-id="${v.id}">Weigeren</button>` : `<span class="pill ${v.status === "bevestigd" ? "done" : v.status === "beantwoord" ? "st-afgerond" : "kl"}">${VT_STATUS[v.status] || esc(v.status)}${v.beoordeeld_door ? " · " + esc(userById(v.beoordeeld_door).name) : ""}</span>${vtAntw ? `<button class="btn sm ghost" data-act="vt-antw" data-id="${v.id}" style="margin-left:6px">${v.bros_antwoord ? "Opnieuw antwoorden…" : "Antwoorden…"}</button>` : ""}`}</div></div>
-    <div class="panel-body" style="display:grid;grid-template-columns:1fr 1fr;gap:12px;font-size:13px">
-      ${v.bron === "aannemer" ? `<div style="grid-column:1/-1"><div class="eyebrow">Vraag of melding van de aannemer</div><div style="white-space:pre-wrap;margin-top:4px">${esc(v.vraag) || "<span class='muted'>(geen toelichting)</span>"}</div><div class="muted" style="font-size:12px;margin-top:6px">${vtAntw ? "Beantwoorden: je antwoord komt in zijn portaal en per mail (met of zonder taak). Bevestigen maakt er enkel een taak van." : "Bevestigen maakt er een taak van; weigeren met een reden = je antwoord aan de aannemer (hij leest het in zijn portaal)."}</div></div>` : `<div><div class="eyebrow">Vraag van de klant</div><div style="white-space:pre-wrap;margin-top:4px">${esc(v.vraag)}</div></div>
-      <div><div class="eyebrow">Antwoord van de assistent</div><div style="white-space:pre-wrap;margin-top:4px;color:var(--ink-2)">${esc(v.antwoord)}</div></div>`}
-      ${v.bros_antwoord ? `<div style="grid-column:1/-1;border-left:3px solid var(--accent);padding:6px 10px;background:var(--accent-soft);border-radius:6px"><div class="eyebrow">Antwoord van BROS${v.beantwoord_door ? " · " + esc(userById(v.beantwoord_door).name) : ""}${v.beantwoord_op ? " · " + fmtLong(lokDag(v.beantwoord_op)) : ""}</div><div style="white-space:pre-wrap;margin-top:4px">${esc(v.bros_antwoord)}</div></div>` : ""}
-      <div class="muted" style="grid-column:1/-1">Voorgesteld: <b>${esc(wie)}</b>${v.eind ? ` · tegen ${fmtLong(v.eind)}` : ""}${v.taak_id && S.taken[v.taak_id] ? ` · <a href="#" data-edit-task="${v.taak_id}">taak openen</a>` : ""}${v.reden ? ` · reden: ${esc(v.reden)}` : ""}</div>
-    </div></div>`;
-}
-function vVoorstellen() {
-  if (schemaV() < 23) return `<div class="page-head"><div><h1>Voorstellen</h1></div></div>` + SCHEMA_HINT(23);
-  const open = voorstellenOpen().sort((a, b) => (a.urgentie === "hoog" ? 0 : 1) - (b.urgentie === "hoog" ? 0 : 1) || (a.created_at || "").localeCompare(b.created_at || ""));
-  const rest = Object.values(S.taak_voorstellen).filter(v => v.status !== "open").sort((a, b) => (b.beoordeeld_op || "").localeCompare(a.beoordeeld_op || "")).slice(0, 30);
-  return `<div class="page-head"><div><div class="eyebrow">${open.length} open</div><h1>Voorstellen</h1><div class="sub">Vragen van klanten aan de assistent en vragen of meldingen van aannemers uit hun portaal, waar BROS iets voor moet doen. ${schemaV() >= 42 ? "Beantwoorden stuurt je antwoord naar de aannemer of klant (in het portaal én per mail), met of zonder taak; bevestigen maakt er een taak van; aanpassen laat je titel, wie en datum kiezen; weigeren sluit het af." : "Bevestigen maakt er een taak van; aanpassen laat je titel, wie en datum kiezen; weigeren sluit het af (bij een aannemer is je reden meteen het antwoord dat hij te zien krijgt)."}</div></div></div>
-    ${open.length ? open.map(v => voorstelCard(v, true)).join("") : `<div class="panel"><div class="empty"><b>Geen open voorstellen</b>Alles is beoordeeld.</div></div>`}
-    ${rest.length ? `<details style="margin-top:16px"><summary class="muted" style="cursor:pointer">Beoordeeld (${rest.length})</summary><div style="margin-top:10px">${rest.map(v => voorstelCard(v, true)).join("")}</div></details>` : ""}`;
-}
-function vVragenProject(p) {
-  if (schemaV() < 23) return SCHEMA_HINT(23);
-  const msgs = berichtenOf(p.id); const vs = Object.values(S.taak_voorstellen).filter(v => v.project_id === p.id).sort((a, b) => (b.created_at || "").localeCompare(a.created_at || ""));
-  const cfg = aiCfg(); const nMaand = msgs.filter(m => m.rol === "klant" && (m.created_at || "") >= maandStart()).length; const kost = msgs.reduce((s, m) => s + (Number(m.kost) || 0), 0);
-  return `<div class="panel" style="margin-bottom:16px"><div class="panel-head"><div><h3>Vragen van de klant aan de assistent</h3><div class="muted" style="font-size:12px;margin-top:2px">${msgs.length ? `${msgs.filter(m => m.rol === "klant").length} vragen · ${nMaand} deze maand${cfg.plafond_project ? ` van ${cfg.plafond_project}` : ""} · ca. € ${kost.toFixed(2)} modelkost` : "Nog geen vragen gesteld"}${p.assistent === false ? ` · <span class="pill late">assistent uit voor dit project</span>` : ""}</div></div></div>
-    ${msgs.length ? `<div class="chat">${msgs.map(m => `<div class="msg ${m.rol}"><div class="bubble">${esc(m.tekst)}</div><div class="when">${m.rol === "assistent" ? "Assistent · " : m.rol === "bros" ? "BROS" + (m.afzender ? " (" + esc(m.afzender) + ")" : "") + " · " : "Klant · "}${fmtLong(lokDag(m.created_at))} ${lokUur(m.created_at)}</div></div>`).join("")}</div>` : `<div class="empty">De klant heeft nog niets gevraagd in het portaal.</div>`}</div>
-    ${vs.length ? `<h3 style="margin:0 0 10px">Taakvoorstellen (${vs.filter(v => v.status === "open").length} open)</h3>` + vs.map(v => voorstelCard(v)).join("") : ""}`;
-}
-async function voorstelBevestig(id, extra = {}) {
-  const { data, error } = await sb.rpc("voorstel_bevestig", { p_id: id, p_titel: extra.titel || null, p_assignee: extra.assignee || null, p_eind: extra.eind || null, p_fase: extra.fase || null });
-  if (error) { toast("Bevestigen mislukt: " + error.message, 5000); throw error; }
-  if (data) S.taak_voorstellen[data.id] = data; if (data && data.taak_id) rowRefetch("taken", data.taak_id).catch(() => refetch("taken")); render(); toast("Bevestigd — de taak staat op het project");
-}
-function voorstelForm(v) {
-  const p = S.projecten[v.project_id];
-  openModal("Voorstel aanpassen en bevestigen", `<div class="form-grid">
-    <div class="field span2"><label for="vt_titel">Taak</label><input id="vt_titel" name="titel" value="${esc(v.titel)}" required></div>
-    <div class="field"><label for="vt_wie">Wie</label><select id="vt_wie" name="assignee">${userOpts(v.voorgestelde_user || S.me.id)}</select></div>
-    <div class="field"><label for="vt_eind">Tegen</label><input id="vt_eind" name="eind" type="date" value="${esc(v.eind || "")}"></div>
-    <div class="field"><label for="vt_fase">Fase</label><select id="vt_fase" name="fase"><option value="">— huidige fase van het project —</option>${opts(fasenList().map(f => [f.nr, f.nr + " · " + f.naam]), p?.fase_nr || "")}</select></div>
-    <div class="field span2"><div class="muted" style="font-size:13px"><b>Vraag:</b> ${esc(v.vraag)}<br><b>Antwoord:</b> ${esc(v.antwoord)}</div></div>
-  </div>`, { saveLabel: "Bevestigen", onSave: async (d) => { await voorstelBevestig(v.id, { titel: d.titel.trim(), assignee: d.assignee || null, eind: d.eind || null, fase: d.fase ? Number(d.fase) : null }); } });
-}
-/* antwoorden (script 042): het antwoord gaat naar het portaal (aannemer: onder zijn vraag; klant: in zijn gesprek) en per mail */
-function voorstelAntwoordForm(v) {
-  const p = S.projecten[v.project_id]; const open = v.status === "open"; const wie = v.bron === "aannemer" ? (S.contacten[v.contact_id]?.naam || "de aannemer") : "de klant";
-  openModal((v.bros_antwoord ? "Opnieuw antwoorden" : "Beantwoorden") + " — " + v.titel, `<div class="form-grid">
-    <div class="field span2"><div class="muted" style="font-size:13px;white-space:pre-wrap"><b>Vraag van ${esc(wie)}:</b> ${esc(v.vraag || v.titel)}</div>${v.bros_antwoord ? `<div class="muted" style="font-size:13px;margin-top:6px;white-space:pre-wrap"><b>Vorig antwoord:</b> ${esc(v.bros_antwoord)}</div>` : ""}</div>
-    <div class="field span2"><label for="va_tekst">Je antwoord aan ${esc(wie)}</label><textarea id="va_tekst" name="antwoord" rows="6" required placeholder="bv. De BA-verzekering staat in de aannemingsmodaliteiten (Documenten). Orde en netheid: dagelijks opruimen, container voorzien door BROS."></textarea>
-      <small class="muted">${v.bron === "aannemer" ? "Hij leest het onder zijn vraag in het aannemersportaal en krijgt een mail." : "Het komt als bericht van BROS in zijn gesprek in het klantenportaal, en hij krijgt een mail."}</small></div>
-    ${open ? `<div class="field span2"><label class="sw-row"><input type="checkbox" class="sw" name="taak" value="1"><span><b>Maak er ook een taak van</b><small class="muted" style="display:block">Zonder vinkje is de vraag met dit antwoord afgehandeld.</small></span></label></div>
-    <div class="field span2 va-taak" hidden><div class="form-grid">
-      <div class="field span2"><label for="va_titel">Taak</label><input id="va_titel" name="titel" value="${esc(v.titel)}"></div>
-      <div class="field"><label for="va_wie">Wie</label><select id="va_wie" name="assignee">${userOpts(v.voorgestelde_user || S.me.id)}</select></div>
-      <div class="field"><label for="va_eind">Tegen</label><input id="va_eind" name="eind" type="date" value="${esc(v.eind || "")}"></div>
-      <div class="field"><label for="va_fase">Fase</label><select id="va_fase" name="fase"><option value="">— huidige fase van het project —</option>${opts(fasenList().map(f => [f.nr, f.nr + " · " + f.naam]), p?.fase_nr || "")}</select></div></div></div>` : ""}
-  </div>`, { wide: true, saveLabel: "Antwoord versturen", onSave: async (d) => {
-    const tekst = (d.antwoord || "").trim(); if (tekst.length < 2) { toast("Schrijf een antwoord."); return false; }
-    const taak = open && !!d.taak;
-    const { data, error } = await sb.rpc("voorstel_beantwoord", { p_id: v.id, p_antwoord: tekst, p_taak: taak, p_titel: taak ? (d.titel || "").trim() || null : null, p_assignee: taak ? d.assignee || null : null, p_eind: taak ? d.eind || null : null, p_fase: taak && d.fase ? Number(d.fase) : null });
-    if (error) { toast("Antwoorden mislukt: " + error.message, 6000); return false; }
-    if (data) S.taak_voorstellen[data.id] = data; if (data && data.taak_id) rowRefetch("taken", data.taak_id).catch(() => refetch("taken"));
-    if (v.bron !== "aannemer") refetch("assistent_berichten").catch(() => { });
-    render();
-    let mail = "";
-    if (driveReady()) { try { const j = await driveCall("antwoordmail", { id: v.id }); mail = j && j.naar ? " · gemaild naar " + j.naar : j && j.waarschuwing ? " · " + j.waarschuwing : ""; } catch (e) { mail = " · mail niet verstuurd: " + (e.message || e); } }
-    else mail = " · niet gemaild (Drive-script niet ingesteld)";
-    toast((taak ? "Beantwoord en taak gemaakt" : "Beantwoord") + mail, 7000);
-  } });
-  const f = $("#mform"); const cb = f.querySelector('[name="taak"]'); if (cb) cb.addEventListener("change", () => { f.querySelector(".va-taak").hidden = !cb.checked; });
-}
-async function voorstelWeiger(id) {
-  const v = S.taak_voorstellen[id]; const reden = prompt(v && v.bron === "aannemer" ? "Antwoord aan de aannemer (hij leest dit in zijn portaal):" : "Reden (optioneel, komt in het logboek):", ""); if (reden === null) return;
-  const { data, error } = await sb.rpc("voorstel_weiger", { p_id: id, p_reden: reden || "" });
-  if (error) { toast("Weigeren mislukt: " + error.message, 5000); return; }
-  if (data) S.taak_voorstellen[data.id] = data; render(); toast("Voorstel geweigerd");
-}
-function vAssistentBeheer() {
-  if (schemaV() < 23) return `<div class="panel" style="margin-bottom:16px"><div class="panel-head"><h3>AI-assistent (klantenportaal)</h3><span class="pill st-offerte">nog niet geactiveerd</span></div><div class="panel-body">${SCHEMA_HINT(23)}</div></div>`;
-  const c = aiCfg(); const r = c.routering || {}; const ms = maandStart();
-  const maand = Object.values(S.assistent_berichten).filter(m => (m.created_at || "") >= ms); const vragen = maand.filter(m => m.rol === "klant").length; const kost = maand.reduce((s, m) => s + (Number(m.kost) || 0), 0);
-  const perProj = {}; maand.filter(m => m.rol === "klant").forEach(m => perProj[m.project_id] = (perProj[m.project_id] || 0) + 1);
-  const pct = c.plafond_globaal ? Math.round(vragen / c.plafond_globaal * 100) : 0;
-  const sel = (k) => `<select data-ai-route="${k}">${userOpts(r[k] || "", true)}</select>`;
-  return `<div class="panel" style="margin-bottom:16px"><div class="panel-head"><div><h3>AI-assistent (klantenportaal)</h3><div class="muted" style="font-size:12px;margin-top:2px">Klanten stellen vragen over hun dossier; de assistent antwoordt uit de klant-views en maakt taakvoorstellen die jullie beoordelen.</div></div><span class="pill ${c.actief !== false ? "st-afgerond" : "st-offerte"}">${c.actief !== false ? "aan" : "uit"}</span></div>
-    <div class="panel-body"><div class="form-grid">
-      <div class="field"><label class="sw-row"><input type="checkbox" class="sw" id="ai_actief" ${c.actief !== false ? "checked" : ""}><span><b>Assistent aan</b><small class="muted" style="display:block">Per project uit te zetten in het projectformulier.</small></span></label></div>
-      <div class="field"><label for="ai_model">Model</label><select id="ai_model">${opts(AI_MODELLEN, c.model || "gpt-4o-mini")}</select></div>
-      <div class="field"><label for="ai_functie">Naam (slug) van de Edge Function in Supabase</label><input id="ai_functie" value="${esc(c.functie || "assistent")}" placeholder="assistent"><small class="muted">Het deel na <code>/functions/v1/</code> in het adres van de functie, bv. <code>dynamic-handler</code>.</small></div>
-      <div class="field"><label for="ai_pp">Plafond per project per maand (vragen)</label><input id="ai_pp" type="number" min="0" value="${Number(c.plafond_project) || 0}"><small class="muted">0 = geen plafond. Erboven geeft de assistent de vraag door zonder modeloproep.</small></div>
-      <div class="field"><label for="ai_pg">Globaal plafond per maand (vragen)</label><input id="ai_pg" type="number" min="0" value="${Number(c.plafond_globaal) || 0}"><small class="muted">Harde stop voor alle projecten samen.</small></div>
-      <div class="field span2"><label class="sw-row"><input type="checkbox" class="sw" id="ai_datums" ${c.datums !== false ? "checked" : ""}><span><b>Data uit de planning noemen</b><small class="muted" style="display:block">Aan: de assistent noemt de data uit de klantplanning, met de nuance dat ze kunnen schuiven. Uit: enkel de fase.</small></span></label></div>
-      ${schemaV() >= 47 ? `<div class="field"><label class="sw-row"><input type="checkbox" class="sw" id="ai_hulp" ${c.aannemer_hulp !== false ? "checked" : ""}><span><b>Hulp-assistent in het aannemersportaal</b><small class="muted" style="display:block">Beantwoordt enkel vragen over het gebruik van het portaal (uit aannemer/handleiding.json), zonder dossiergegevens. Staat los van de klantassistent.</small></span></label></div>
-      <div class="field"><label for="ai_ph">Plafond hulp-assistent per maand (vragen, alle aannemers samen)</label><input id="ai_ph" type="number" min="0" value="${Number(c.plafond_hulp) || 1500}"><small class="muted">Daarnaast max. 5 vragen per minuut en 40 per dag per login.</small></div>` : ""}
-      <div class="field span2"><label for="ai_begroeting">Zin bovenaan het tabblad Vragen</label><input id="ai_begroeting" value="${esc(c.begroeting || "")}"></div>
-      <div class="field span2"><label>Routering van taakvoorstellen</label><div class="tw"><table class="t"><tbody>${Object.entries(ONDERWERP).map(([k, l]) => `<tr><td style="width:160px">${l}${k === "klacht" ? ' <span class="muted">(altijd dringend)</span>' : ""}</td><td>${sel(k)}</td></tr>`).join("")}</tbody></table></div><small class="muted">Leeg = naar de beheerder.</small></div>
-      <div class="field span2"><div class="actions"><button class="btn primary" data-act="ai-save">Bewaren</button><span class="muted" style="font-size:12px">De API-sleutel staat niet hier maar als secret bij de Edge Function in Supabase (zie README).</span></div></div>
-    </div>
-    <div class="rend" style="margin-top:14px"><div class="panel"><div class="k">Vragen deze maand</div><div class="v ${pct >= 80 ? "neg" : ""}">${vragen}${c.plafond_globaal ? ` <small class="muted" style="font-size:12px;font-weight:400">/ ${c.plafond_globaal}${pct >= 80 ? " · " + pct + " %" : ""}</small>` : ""}</div></div><div class="panel"><div class="k">Geschatte modelkost</div><div class="v">€ ${kost.toFixed(2)}</div></div><div class="panel"><div class="k">Open voorstellen</div><div class="v">${voorstellenOpen().length}</div></div><div class="panel"><div class="k">Projecten met vragen</div><div class="v">${Object.keys(perProj).length}</div></div></div>
-    ${Object.keys(perProj).length ? `<div class="tw" style="margin-top:10px"><table class="t"><tbody>${Object.entries(perProj).sort((a, b) => b[1] - a[1]).map(([pid, n]) => `<tr><td>${esc(projName(S.projecten[pid]))}</td><td class="r num">${n}${c.plafond_project ? ` / ${c.plafond_project}` : ""}${c.plafond_project && n >= c.plafond_project * 0.8 ? ` <span class="pill late">bijna vol</span>` : ""}</td></tr>`).join("")}</tbody></table></div>` : ""}</div></div>`;
-}
-async function aiSaveSettings() {
-  const r = {}; document.querySelectorAll("[data-ai-route]").forEach(s => r[s.dataset.aiRoute] = s.value || null);
-  const value = { ...aiCfg(), actief: $("#ai_actief").checked, model: $("#ai_model").value, functie: ($("#ai_functie").value.trim().replace(/^.*\/functions\/v1\//, "").replace(/\/.*$/, "") || "assistent"), plafond_project: Number($("#ai_pp").value) || 0, plafond_globaal: Number($("#ai_pg").value) || 0, datums: $("#ai_datums").checked, begroeting: $("#ai_begroeting").value.trim(), routering: r };
-  if ($("#ai_hulp")) { value.aannemer_hulp = $("#ai_hulp").checked; value.plafond_hulp = Number($("#ai_ph").value) || 1500; }   // 1.49 (script 047)
-  const { data, error } = await sb.from("instellingen").upsert({ key: "assistent", value, updated_at: new Date().toISOString() }).select().single();
-  if (error) { toast("Bewaren mislukt: " + error.message, 5000); return; } S.instellingen.assistent = data; render(); toast("Assistent-instellingen bewaard");
-}
-/* ---------- Goedkeuringen: BROS legt de offerte of een meerwerkvoorstel voor, de klant beslist in het portaal ---------- */
-const GK_STATUS = { open: "Wacht op klant", akkoord: "Goedgekeurd", geweigerd: "Niet akkoord", ingetrokken: "Ingetrokken", geannuleerd: "Geannuleerd" };
-const gkOf = (pid) => Object.values(S.goedkeuringen).filter(g => g.project_id === pid).sort((a, b) => (b.voorgelegd_op || "").localeCompare(a.voorgelegd_op || ""));
-const gkOpenIds = (pid) => new Set(gkOf(pid).filter(g => g.status === "open" && !(g.geldig_tot && g.geldig_tot < todayIso)).flatMap(g => (g.posten || []).map(x => x.id)));
-/* post die nog voorgelegd kan worden: offerte zonder akkoord, of meer-/minwerk zonder akkoord, en niet in een open voorstel */
-const gkKandidaat = (r) => msTelt(r) && !r.akkoord_op && (r.status === "offerte" || isMw(r)) && !gkOpenIds(r.project_id).has(r.id);
-const gkSnapshot = (r) => ({ id: r.id, lot: r.lot, code: r.code, omschrijving: r.omschrijving, locatie: r.locatie || "", hoeveelheid: Number(r.hoeveelheid) || 0, eenheid: r.eenheid, prijs: Math.round(msVerkoopEP(r) * 100) / 100, totaal: Math.round(rowSigned(r) * 100) / 100, btw: Number(r.btw) || 0, status: r.status });
-function vGoedkeuringen(p) {
-  if (schemaV() < 13) return "";
-  const gs = gkOf(p.id).filter(g => g.soort !== "overeenkomst"); if (!gs.length) return "";   // overeenkomsten staan bij Dossier
-  const klanten = contactsOf(p.id).filter(x => ["bouwheer", "contactpersoon"].includes(x.rol) && x.c.user_id);
-  return `<div class="panel" style="margin-bottom:16px"><div class="panel-head"><div><h3>Goedkeuringen door de klant</h3><div class="muted" style="font-size:12px;margin-top:2px">${klanten.length ? `Zichtbaar in het portaal voor ${klanten.map(x => esc(x.c.naam)).join(", ")}.` : `<span style="color:var(--warn)">Nog niemand van dit project heeft portaal-toegang (Dossier › Contacten).</span>`}</div></div></div>
-    <div class="tw"><table class="t"><thead><tr><th>Voorstel</th><th>Voorgelegd</th><th>Reageren vóór</th><th class="r">Excl. btw</th><th class="r">Incl. btw</th><th>Status</th><th>Beslist</th><th></th></tr></thead><tbody>
-    ${gs.map(g => { const verlopen = g.status === "open" && g.geldig_tot && g.geldig_tot < todayIso; return `<tr><td><b>${esc(g.titel || (g.soort === "meerwerk" ? "Meerwerk" : "Offerte"))}</b><small class="muted" style="display:block">${(g.posten || []).length} posten${g.toelichting ? " · " + esc(g.toelichting.slice(0, 80)) : ""}</small></td><td class="num">${fmtLong((g.voorgelegd_op || "").slice(0, 10))}<small class="muted" style="display:block">${esc(userById(g.voorgelegd_door).name)}</small></td><td class="num" style="${verlopen ? "color:var(--crit)" : ""}">${g.geldig_tot ? fmtLong(g.geldig_tot) : "—"}</td><td class="r num">${eur(g.totaal_excl)}</td><td class="r num">${eur(g.totaal_incl)}</td><td><span class="pill ${g.status === "akkoord" ? "st-afgerond" : verlopen ? "late" : g.status === "open" ? "st-lopend" : g.status === "geweigerd" ? "late" : "st-on_hold"}">${verlopen ? "Termijn verstreken" : GK_STATUS[g.status] || g.status}</span></td><td style="font-size:12px">${g.beslist_op ? `${fmtLong(lokDag(g.beslist_op))} · ${esc(g.beslist_naam)}${g.opmerking ? `<div style="color:var(--crit)">“${esc(g.opmerking)}”</div>` : ""}` : "—"}${g.status === "geannuleerd" ? `<div class="muted" title="${esc(g.annuleer_reden || "")}">geannuleerd ${g.geannuleerd_op ? fmtLong(lokDag(g.geannuleerd_op)) : ""}${g.geannuleerd_door ? " door " + esc(userById(g.geannuleerd_door).name) : ""}${g.annuleer_reden ? ` · “${esc(g.annuleer_reden.slice(0, 120))}”` : ""}</div>` : ""}</td>
-      <td class="r" style="white-space:nowrap"><button class="btn ghost sm" data-act="gk-view" data-id="${g.id}">Bekijken</button>${g.status === "open" ? `<button class="btn ghost sm danger" data-act="gk-withdraw" data-id="${g.id}">Intrekken</button>` : ""}${g.status === "akkoord" && gkKanAnnuleren(g) ? `<button class="btn ghost sm danger" data-act="gk-annuleer" data-id="${g.id}" title="Het akkoord van de klant ongedaan maken: de posten gaan terug naar Offerte en kunnen opnieuw voorgelegd worden">Annuleren</button>` : ""}${g.status === "geweigerd" || g.status === "ingetrokken" || g.status === "geannuleerd" || verlopen ? `<button class="btn ghost sm" data-act="gk-new" data-pid="${p.id}" data-soort="${g.soort}">Opnieuw voorleggen</button>` : ""}</td></tr>`; }).join("")}</tbody></table></div></div>`;
-}
-function gkForm(pid, soortVoorkeur) {
-  const p = S.projecten[pid]; const rows = msRows(pid).filter(gkKandidaat);
-  const vastM = msProjVast(pid);   // 1.65: na een goedgekeurde offerte enkel nog meerwerkvoorstellen
-  const off = vastM ? [] : rows.filter(r => r.status === "offerte"), mw = rows.filter(isMw);
-  if (vastM && !mw.length) { toast("De meetstaat is goedgekeurd door de klant: er zijn geen meer- of minwerkposten om voor te leggen. Gebruik ± op een post of voeg een post toe (die wordt meerwerk).", 8000); return; }
-  const soort = soortVoorkeur && (soortVoorkeur === "meerwerk" ? mw.length : off.length) ? soortVoorkeur : (off.length ? "offerte" : "meerwerk");
-  const klanten = contactsOf(pid).filter(x => ["bouwheer", "contactpersoon"].includes(x.rol) && x.c.user_id);
-  const lijst = (rs) => rs.map(r => `<label class="chk"><input type="checkbox" name="post" value="${r.id}" checked> <span>${esc(r.code)} ${esc(r.omschrijving)}${r.locatie ? ` <small class="muted">· ${esc(r.locatie)}</small>` : ""}<small class="muted" style="display:block">${nl(r.hoeveelheid, 2)} ${esc(r.eenheid)} × ${eur2(msVerkoopEP(r))} = <b>${eur2(rowSigned(r))}</b>${isMw(r) ? ` · ${MS_STATUS[r.status]}` : ""}</small></span></label>`).join("");
-  openModal("Ter goedkeuring voorleggen — " + p.klant, `<div class="form-grid">
-    <div class="field"><label for="gk_soort">Wat leg je voor?</label><select id="gk_soort" name="soort">${off.length ? `<option value="offerte" ${soort === "offerte" ? "selected" : ""}>Offerte (${off.length} posten in status Offerte)</option>` : ""}${mw.length ? `<option value="meerwerk" ${soort === "meerwerk" ? "selected" : ""}>Meerwerkvoorstel (${mw.length} meer-/minwerkposten)</option>` : ""}</select></div>
-    <div class="field"><label for="gk_titel">Titel (ziet de klant)</label><input id="gk_titel" name="titel" value="${esc(soort === "meerwerk" ? "Meerwerk " + fmtLong(todayIso) : "Offerte " + (p.naam && p.naam !== p.klant ? p.naam : p.klant))}"></div>
-    <div class="field"><label for="gk_tot">Reageren vóór</label><input id="gk_tot" name="geldig_tot" type="date" value="${addDays(todayIso, 14)}"><small class="muted">Na deze datum kan de klant niet meer goedkeuren; leeg = geen deadline.</small></div>
-    <div class="field span2"><label for="gk_toel">Toelichting voor de klant (optioneel)</label><textarea id="gk_toel" name="toelichting" rows="2" placeholder="bv. Zoals besproken op de werf van 12/09: extra stopcontacten in de keuken."></textarea></div>
-    <div class="field span2"><label>Posten in dit voorstel</label><div class="fase-list" id="gk_list" style="max-height:320px;overflow:auto">${lijst(soort === "meerwerk" ? mw : off)}</div></div>
-    <div class="field span2"><p class="muted" style="font-size:12px;margin:0">Het Planbord bewaart een bevroren kopie van deze posten met hoeveelheden en klantprijzen; latere wijzigingen in de meetstaat veranderen het voorstel niet. ${klanten.length ? `De klant (${klanten.map(x => esc(x.c.naam)).join(", ")}) krijgt een mail en ziet het voorstel in het portaal.` : `<span style="color:var(--warn)">Let op: niemand van dit project heeft nog portaal-toegang — geef die eerst via Dossier › Contacten, anders kan de klant niet reageren.</span>`}</p></div>
-  </div>`, {
-    saveLabel: "Voorleggen", wide: true,
-    onSave: async (d) => {
-      const ids = [...$("#mform").querySelectorAll('input[name="post"]:checked')].map(i => i.value); if (!ids.length) { toast("Vink minstens één post aan."); return false; }
-      const sel = ids.map(id => S.meetstaat_posten[id]).filter(Boolean); const posten = sel.map(gkSnapshot);
-      const excl = posten.reduce((s, x) => s + x.totaal, 0), btw = sel.reduce((s, r) => s + rowSigned(r) * (Number(r.btw) || 0), 0);
-      const row = { project_id: pid, soort: d.soort, titel: d.titel.trim(), toelichting: (d.toelichting || "").trim(), status: "open", geldig_tot: d.geldig_tot || null, posten, totaal_excl: Math.round(excl * 100) / 100, btw: Math.round(btw * 100) / 100, totaal_incl: Math.round((excl + btw) * 100) / 100, voorgelegd_door: S.me.id };
-      const g = await dbInsert("goedkeuringen", row);
-      toast("Voorstel staat klaar in het portaal");
-      if (driveReady() && klanten.length) driveCall("gkmail", { id: g.id, soort: "voorgelegd", token: S.session?.access_token || "" }).then(j => toast(`Mail gestuurd naar ${(j.naar || []).join(", ") || "de klant"}`)).catch(e => toast("Mail niet verstuurd: " + e.message, 6000));
-    },
-  });
-  $("#gk_soort").addEventListener("change", () => { const srt = $("#gk_soort").value; $("#gk_list").innerHTML = lijst(srt === "meerwerk" ? mw : off); $("#gk_titel").value = srt === "meerwerk" ? "Meerwerk " + fmtLong(todayIso) : "Offerte " + (p.naam && p.naam !== p.klant ? p.naam : p.klant); });
-}
-function gkView(id) {
-  const g = S.goedkeuringen[id]; if (!g) return; const ps = g.posten || [];
-  openModal(`${g.titel || GK_STATUS[g.status]} — ${GK_STATUS[g.status]}`, `<div class="form-grid"><div class="field span2">
-    <p style="margin:0 0 8px">${g.toelichting ? esc(g.toelichting) + "<br>" : ""}<span class="muted" style="font-size:12px">Voorgelegd ${fmtLong((g.voorgelegd_op || "").slice(0, 10))} door ${esc(userById(g.voorgelegd_door).name)}${g.geldig_tot ? ` · reageren vóór ${fmtLong(g.geldig_tot)}` : ""}${g.beslist_op ? ` · ${g.status === "geannuleerd" ? "Goedgekeurd" : GK_STATUS[g.status]} op ${fmtLong(lokDag(g.beslist_op))} door ${esc(g.beslist_naam)} (${esc(g.beslist_email)})` : ""}</span>${g.status === "geannuleerd" ? `<p style="margin:8px 0 0;color:var(--crit)">Geannuleerd${g.geannuleerd_op ? " op " + fmtLong(lokDag(g.geannuleerd_op)) : ""}${g.geannuleerd_door ? " door " + esc(userById(g.geannuleerd_door).name) : ""}${g.annuleer_reden ? `: “${esc(g.annuleer_reden)}”` : ""}</p>` : ""}${g.opmerking ? `<p style="margin:8px 0 0;color:var(--crit)">Opmerking van de klant: “${esc(g.opmerking)}”</p>` : ""}</p>
-    <div class="tw"><table class="t"><thead><tr><th>Nr</th><th>Omschrijving</th><th class="r">Hoev.</th><th class="r">Prijs</th><th class="r">Totaal</th></tr></thead><tbody>${ps.map(x => `<tr><td class="num muted">${esc(x.code)}</td><td>${esc(x.omschrijving)}${x.locatie ? ` <small class="muted">· ${esc(x.locatie)}</small>` : ""}</td><td class="r num">${nl(x.hoeveelheid, 2)} ${esc(x.eenheid)}</td><td class="r num">${eur2(x.prijs)}</td><td class="r num">${eur2(x.totaal)}</td></tr>`).join("")}
-    <tr class="tot"><td colspan="4"><b>Totaal excl. btw</b></td><td class="r num"><b>${eur2(g.totaal_excl)}</b></td></tr><tr><td colspan="4">Btw</td><td class="r num">${eur2(g.btw)}</td></tr><tr><td colspan="4"><b>Totaal incl. btw</b></td><td class="r num"><b>${eur2(g.totaal_incl)}</b></td></tr></tbody></table></div></div></div>`, { saveLabel: "Sluiten", wide: true, onSave: async () => { } });
-}
-/* 1.53 (script 050): een goedgekeurde offerte of goedgekeurd meerwerk annuleren — enkel beheer, via de databankfunctie
-   (die zet het voorstel op geannuleerd én haalt het akkoord van de posten: Akkoord → Offerte, meer-/minwerk houdt zijn status) */
-const gkKanAnnuleren = (g) => !!g && g.status === "akkoord" && g.soort !== "overeenkomst" && isBeheer() && schemaV() >= 50;
-function gkAnnuleerForm(id) {
-  const g = S.goedkeuringen[id]; if (!gkKanAnnuleren(g)) return;
-  const posten = Object.values(S.meetstaat_posten).filter(r => r.akkoord_goedkeuring === g.id && r.project_id === g.project_id);
-  const naarOfferte = posten.filter(r => r.status === "akkoord").length, mw = posten.filter(isMw).length;
-  const facturen = Object.values(S.vorderingen || {}).filter(v => v.project_id === g.project_id && (v.status === "verzonden" || v.status === "betaald"));
-  const klanten = contactsOf(g.project_id).filter(x => ["bouwheer", "contactpersoon"].includes(x.rol) && x.c.user_id && x.c.email);
-  const kanMailen = driveReady() && klanten.length;
-  openModal("Goedgekeurd voorstel annuleren — " + (g.titel || GK_STATUS[g.status]), `<div class="form-grid">
-    <div class="field span2"><p style="margin:0">Goedgekeurd op ${fmtLong(lokDag(g.beslist_op))} door ${esc(g.beslist_naam || "de klant")} · ${eur(g.totaal_incl)} incl. btw.</p>
-      <ul style="margin:8px 0 0;padding-left:18px;font-size:13px">
-        <li>Het voorstel krijgt de status <b>Geannuleerd</b>; het akkoord van de klant blijft zichtbaar als historiek.</li>
-        <li>${posten.length ? `${posten.length} ${posten.length === 1 ? "post verliest" : "posten verliezen"} het akkoord${naarOfferte ? ` — ${naarOfferte} ${naarOfferte === 1 ? "gaat" : "gaan"} terug naar <b>Offerte</b>` : ""}${mw ? `${naarOfferte ? ";" : " —"} ${mw} meer-/minwerk${mw === 1 ? "post houdt zijn" : "posten houden hun"} status` : ""}. Daarna kan je ze opnieuw voorleggen.` : "Geen posten meer gekoppeld aan dit akkoord."}</li>
-        <li>De klant ziet in het portaal dat het voorstel geannuleerd werd, met je reden.</li>
-      </ul>
-      ${facturen.length ? `<div class="notice" style="margin:10px 0 0;border-color:var(--warn)"><b>Let op:</b> voor dit project ${facturen.length === 1 ? "is al 1 factuur" : "zijn al " + facturen.length + " facturen"} verstuurd of betaald. Die blijven ongewijzigd — maak zo nodig een creditnota in Yuki.</div>` : ""}</div>
-    <div class="field span2"><label for="gka_reden">Reden (ziet de klant)</label><textarea id="gka_reden" name="reden" rows="3" required minlength="3" placeholder="bv. Zoals telefonisch besproken: de keuken wordt opnieuw uitgewerkt; je krijgt een nieuw voorstel."></textarea></div>
-    ${kanMailen ? `<div class="field span2"><label class="sw-row"><input type="checkbox" class="sw" name="mail" checked><span><b>De klant verwittigen per mail</b><small class="muted" style="display:block">naar ${klanten.map(x => esc(x.c.naam)).join(", ")}</small></span></label></div>` : `<div class="field span2"><p class="muted" style="font-size:12px;margin:0">Er gaat geen mail naar de klant (${driveReady() ? "niemand van dit project heeft portaal-toegang" : "Drive-script niet ingesteld"}); laat het hem zelf weten.</p></div>`}
-  </div>`, {
-    saveLabel: "Voorstel annuleren", wide: true,
-    onSave: async (d) => {
-      const reden = String(d.reden || "").trim(); if (reden.length < 3) { toast("Schrijf kort waarom je het voorstel annuleert."); return false; }
-      const { data, error } = await sb.rpc("goedkeuring_annuleer", { p_id: g.id, p_reden: reden });
-      if (error) { toast("Annuleren mislukt: " + error.message, 7000); return false; }
-      if (data && data.id) S.goedkeuringen[data.id] = data;
-      await msRefetch(posten.map(r => r.id));
-      render(); toast("Voorstel geannuleerd — de posten kunnen opnieuw voorgelegd worden", 5000);
-      if (kanMailen && d.mail) driveCall("gkmail", { id: g.id, soort: "geannuleerd", token: S.session?.access_token || "" }).then(j => toast(`Mail gestuurd naar ${(j.naar || []).join(", ") || "de klant"}`)).catch(e => toast("Geannuleerd, maar de mail is niet verstuurd: " + e.message, 7000));
-    },
-  });
-  const terug = $("#mform [data-close]"); if (terug) terug.textContent = "Terug";   // niet verwarren met "Voorstel annuleren"
-}
-async function gkWithdraw(id) {
-  const g = S.goedkeuringen[id]; if (!g || g.status !== "open" || !confirm("Dit voorstel intrekken? De klant ziet het dan niet meer in het portaal.")) return;
-  await dbUpdate("goedkeuringen", id, { status: "ingetrokken" }).catch(() => { });
-}
-const msMaxNr = (pid, lot) => Math.max(0, ...msRows(pid).filter(r => r.lot === lot).map(r => { const m = String(r.code || "").match(/\.(\d+)$/); return m ? Number(m[1]) : 0; }));
-function msNextCode(pid, lot) { return `${lot}.${msMaxNr(pid, lot) + 1}`; }
-function msRowFromPost(pid, x, lot, i) {
-  const sog = x.prijstype !== "EP";
-  return { project_id: pid, post_id: x.id || null, lot, code: `${lot}.${i}`, groep: x.groep || "", omschrijving: x.omschrijving, eenheid: x.eenheid || (sog ? "sog" : "stk"), prijstype: x.prijstype || "EP", hoeveelheid: sog ? 1 : 0, eenheidsprijs: Number(x.richtprijs) || 0, marge: null, btw: x.btw ?? 0.06, status: "offerte", volgorde: x.volgorde ?? 0, created_by: S.me?.id || null };
-}
-async function msInsert(rows, strikt) {
-  if (!rows.length) return [];
-  const naarMw = rows.filter(r => ["offerte", "akkoord"].includes(r.status) && msProjVast(r.project_id)).length;   // 1.65: goedgekeurde meetstaat → nieuwe posten zijn meerwerk
-  if (naarMw) { rows = rows.map(r => ["offerte", "akkoord"].includes(r.status) && msProjVast(r.project_id) ? { ...r, status: "meerwerk" } : r); setTimeout(() => toast(`De meetstaat is goedgekeurd door de klant: ${naarMw === 1 ? "de nieuwe post staat" : `de ${naarMw} nieuwe posten staan`} op Meerwerk.`, 6000), 400); }
-  const v12 = schemaV() >= 12;
-  const clean = v12 ? rows.map(({ eenheidsprijs, marge, ...r }) => r) : rows;
-  const { data, error } = await sb.from("meetstaat_posten").insert(clean).select();
-  if (error) { toast("Mislukt: " + error.message); throw error; }
-  (data || []).forEach(r => S.meetstaat_posten[r.id] = r);
-  if (v12 && data) {
-    // vrije posten en geïmporteerde regels: prijs expliciet bewaren (bibliotheekposten krijgen hun richtprijs via de trigger)
-    const prijzen = !isBeheer() ? [] : data.map((r, i) => ({ post_id: r.id, eenheidsprijs: Number(rows[i].eenheidsprijs) || 0, marge: rows[i].marge == null || rows[i].marge === "" ? null : Number(rows[i].marge) })).filter((p, i) => !rows[i].post_id || Number(rows[i].eenheidsprijs) > 0 && isBeheer());
-    for (let i = 0; i < prijzen.length; i += 200) { const chunk = prijzen.slice(i, i + 200); const { error: e2 } = await (isBeheer() ? sb.from("meetstaat_prijzen").upsert(chunk) : sb.from("meetstaat_prijzen").insert(chunk)); if (e2) { toast("Prijzen niet bewaard: " + e2.message); if (strikt) { e2.ids = data.map(r => r.id); throw e2; } } }
-    await msRefetch(data.map(r => r.id));
-  }
-  render(); return data || [];
-}
-function msAddLotForm(pid) {
-  const p = S.projecten[pid]; const present = new Set(msRows(pid).map(r => r.lot));
-  openModal("Lot toevoegen aan " + p.klant, `<div class="fase-list">${lotenList().map(l => { const all = postenOf(l.nr), std = all.filter(x => x.standaard_aan); return `<label class="chk"><input type="checkbox" name="lot" value="${l.nr}" ${present.has(l.nr) ? "disabled" : (l.standaard_aan && !present.size ? "checked" : "")}> <span>${esc(lotName(l.nr))}<small class="muted" style="display:block">${present.has(l.nr) ? "al aanwezig" : `${std.length} standaardposten · ${all.length} in bibliotheek`}</small></span></label>`; }).join("")}</div>
-    <div class="field" style="margin-top:12px"><label for="al_mode">Welke posten</label><select id="al_mode" name="mode"><option value="std">Alleen de standaardposten (aanbevolen)</option><option value="all">Alle posten van het lot</option><option value="none">Geen posten — alleen het lot klaarzetten</option></select></div>
-    <p class="muted" style="font-size:13px;margin:10px 0 0">Richtprijzen uit de bibliotheek worden als kostprijs ingevuld; hoeveelheden staan op 0 (forfaits op 1). Alles is daarna in de tabel aan te passen.</p>`, {
-    saveLabel: "Toevoegen", wide: true,
-    onSave: async (d) => {
-      const lots = [...$("#mform").querySelectorAll('input[name="lot"]:checked')].map(i => Number(i.value)); if (!lots.length) { toast("Kies minstens één lot."); return false; }
-      const rows = [];
-      lots.forEach(lot => { const src = d.mode === "none" ? [] : postenOf(lot).filter(x => d.mode === "all" || x.standaard_aan); src.forEach((x, i) => rows.push(msRowFromPost(pid, x, lot, i + 1))); if (!src.length) rows.push({ ...msRowFromPost(pid, { omschrijving: S.loten[lot].naam, eenheid: "sog", prijstype: "SOG", richtprijs: 0, btw: 0.06 }, lot, 1), groep: "" }); });
-      await msInsert(rows); toast(`${rows.length} posten toegevoegd`);
-    },
-  });
-}
-function msAddPostForm(pid, lot) {
-  const p = S.projecten[pid]; let curLot = lot || lotenList()[0]?.nr;
-  const listHtml = (lotNr, q) => { const qq = (q || "").toLowerCase(); const src = qq ? Object.values(S.posten).filter(x => x.actief !== false && (x.omschrijving.toLowerCase().includes(qq) || (x.groep || "").toLowerCase().includes(qq))).sort((a, b) => a.lot - b.lot || a.volgorde - b.volgorde).slice(0, 80) : postenOf(lotNr);
-    return src.map(x => `<label class="chk"><input type="checkbox" name="post" value="${x.id}"> <span>${esc(x.omschrijving)}<small class="muted" style="display:block">${qq ? esc(lotName(x.lot)) + " · " : ""}${esc(x.groep || "")}${x.groep ? " · " : ""}${esc(x.eenheid)}${x.richtprijs ? " · " + eur2(x.richtprijs) : ""}</small></span></label>`).join("") || `<div class="muted" style="padding:8px">Geen posten gevonden.</div>`; };
-  openModal("Post toevoegen aan " + p.klant, `<div class="form-grid">
-      <div class="field"><label for="ap_lot">Lot</label><select id="ap_lot" name="lot">${opts(lotenList().map(l => [l.nr, lotName(l.nr)]), curLot)}</select></div>
-      <div class="field"><label for="ap_q">Zoeken in de bibliotheek</label><input id="ap_q" placeholder="bv. plint, spot, chape…" autocomplete="off"></div>
-      <div class="field span2"><div id="ap_list" class="fase-list" style="max-height:300px;overflow:auto">${listHtml(curLot)}</div></div>
-      <div class="field span2"><label for="ap_vrij">Of een vrije post (omschrijving)</label><input id="ap_vrij" name="vrij" placeholder="eigen omschrijving — komt in het gekozen lot"></div>
-      <div class="field"><label for="ap_een">Eenheid vrije post</label><select id="ap_een" name="eenheid">${opts(EENHEDEN.map(e => [e, e]), "stk")}</select></div>
-      ${isBeheer() ? `<div class="field"><label for="ap_prijs">Kostprijs vrije post (excl. btw)</label><input id="ap_prijs" name="prijs" type="number" step="any" placeholder="0"></div>` : `<div class="field"><label>Prijs</label><div class="muted" style="font-size:13px;padding:8px 0">Prijzen vult beheer in.</div></div>`}
-    </div>`, {
-    saveLabel: "Toevoegen", wide: true,
-    onSave: async (d) => {
-      const lotNr = Number(d.lot); const ids = [...$("#mform").querySelectorAll('input[name="post"]:checked')].map(i => i.value);
-      const rows = []; const cnt = {}; const next = (l) => { cnt[l] = (cnt[l] ?? msMaxNr(pid, l)) + 1; return cnt[l]; };   // 1.48: na het hoogste bestaande nummer (geen dubbele code na een verwijderde post)
-      const zoekend = !!$("#ap_q").value.trim();
-      ids.forEach(id => { const x = S.posten[id]; const l = zoekend ? x.lot : lotNr; rows.push(msRowFromPost(pid, x, l, next(l))); });
-      if (d.vrij && d.vrij.trim()) { const n = next(lotNr); const row = msRowFromPost(pid, { omschrijving: d.vrij.trim(), eenheid: d.eenheid, prijstype: d.eenheid === "sog" ? "SOG" : "EP", richtprijs: Number(d.prijs) || 0, btw: 0.06, volgorde: 9000 + n }, lotNr, n); row.hoeveelheid = 1; rows.push(row); }
-      if (!rows.length) { toast("Vink een post aan of typ een vrije post."); return false; }
-      await msInsert(rows); toast(`${rows.length} post${rows.length > 1 ? "en" : ""} toegevoegd`);
-    },
-  });
-  const sync = () => { $("#ap_list").innerHTML = listHtml(Number($("#ap_lot").value), $("#ap_q").value.trim()); };
-  $("#ap_lot").addEventListener("change", sync); $("#ap_q").addEventListener("input", sync);
-}
-/* 1.65 (script 061): een goedgekeurde post wijzigen via meer- of minwerk — de databank maakt de post(en) voor het verschil,
-   met dezelfde klantprijs en een verwijzing naar de originele post; de klant keurt ze daarna goed in een meerwerkvoorstel */
-function msWijzigForm(id) {
-  const r = S.meetstaat_posten[id]; if (!r || !msVast(r)) return;
-  if (!["akkoord", "meerwerk"].includes(r.status)) return toast("Enkel een goedgekeurde offerte- of meerwerkpost kan je zo wijzigen.");
-  const nu = msHuidig(r), ep = msVerkoopEP(r), kids = msKinderen(r), eh = esc(r.eenheid);
-  openModal(`Post ${r.code} wijzigen via meer- of minwerk`, `<div class="form-grid">
-    <div class="field span2"><div class="ms-vast-banner" style="margin:0">🔒 <b>${esc(r.omschrijving)}</b>${r.locatie ? ` · ${esc(r.locatie)}` : ""}<br>Goedgekeurd door de klant op ${fmtLong(lokDag(r.akkoord_op))}: ${nl(r.hoeveelheid, 2)} ${eh} × ${eur2(ep)}${kids.length ? ` · na ${kids.length} wijziging${kids.length === 1 ? "" : "en"} nu <b>${nl(nu, 2)} ${eh}</b>` : ""}.</div></div>
-    <div class="field span2"><label>Wat verandert er?</label>
-      <label class="chk"><input type="radio" name="soort" value="hoeveelheid" checked> Andere hoeveelheid</label>
-      <label class="chk"><input type="radio" name="soort" value="schrappen" ${nu <= 0 ? "disabled" : ""}> Schrappen (alles als minwerk)</label>
-      <label class="chk"><input type="radio" name="soort" value="vervangen"> Vervangen door iets anders (minwerk + een nieuwe meerwerkpost)</label></div>
-    <div class="field" data-w="hoeveelheid"><label for="mw_h">Nieuwe hoeveelheid (${eh})</label><input id="mw_h" name="hoeveelheid" type="text" inputmode="decimal" autocomplete="off" value="${getalVeld(nu)}"></div>
-    <div class="field span2" data-w="vervangen" style="display:none"><label for="mw_o">Omschrijving van de nieuwe post</label><input id="mw_o" name="omschrijving" value="${esc(r.omschrijving)}"></div>
-    <div class="field" data-w="vervangen" style="display:none"><label for="mw_vh">Hoeveelheid van de nieuwe post (${eh})</label><input id="mw_vh" name="vhoeveelheid" type="text" inputmode="decimal" autocomplete="off" value="${getalVeld(nu > 0 ? nu : r.hoeveelheid)}"></div>
-    <div class="field span2"><div id="mw_res" class="mw-res"></div>
-      <p class="muted" style="font-size:12px;margin:6px 0 0">De nieuwe posten krijgen de goedgekeurde klantprijs en een verwijzing naar post ${esc(r.code)}. Ze zijn nog niet goedgekeurd: leg ze voor via <b>Ter goedkeuring voorleggen › Meerwerkvoorstel</b>.</p></div>
-  </div>`, {
-    saveLabel: "Meer-/minwerk aanmaken",
-    onSave: async (d) => {
-      const soort = d.soort || "hoeveelheid"; const args = { p_post: id, p_soort: soort, p_hoeveelheid: null, p_omschrijving: null };
-      if (soort === "hoeveelheid") { const h = leesGetal(d.hoeveelheid); if (h == null || Number.isNaN(h) || h < 0) { toast("Geef de nieuwe hoeveelheid (0 of meer), bv. 12,5"); return false; } if (Math.abs(h - nu) < 1e-9) { toast("Dat is de huidige hoeveelheid."); return false; } args.p_hoeveelheid = h; }
-      if (soort === "vervangen") { const h = leesGetal(d.vhoeveelheid); if (h == null || Number.isNaN(h) || h <= 0) { toast("Geef de hoeveelheid van de nieuwe post."); return false; } args.p_hoeveelheid = h; args.p_omschrijving = (d.omschrijving || "").trim() || r.omschrijving; }
-      const { data, error } = await sb.rpc("meetstaat_wijziging", args);
-      if (error) { toast("Niet gelukt: " + error.message, 7000); return false; }
-      const ids = (data && data.ids) || []; await msRefetch(ids);
-      const nieuw = ids.map(x => S.meetstaat_posten[x]).filter(Boolean);
-      toast(nieuw.map(x => `${MS_STATUS[x.status]} ${x.code}: ${eur2(rowSigned(x))}`).join(" · ") + (soort === "vervangen" ? " — kijk de prijs van de nieuwe post na" : ""), 7000);
-    },
-  });
-  const f = $("#mform"); const res = $("#mw_res");
-  const toon = () => {
-    const soort = f.querySelector('input[name="soort"]:checked')?.value || "hoeveelheid";
-    f.querySelectorAll("[data-w]").forEach(el => { el.style.display = el.dataset.w === soort ? "" : "none"; });
-    const regel = (st, h, oms) => `<div><span class="pill ${st === "minwerk" ? "late" : "st-offerte"}">${MS_STATUS[st]}</span> ${nl(h, 2)} ${eh} × ${eur2(ep)} = <b>${eur2((st === "minwerk" ? -1 : 1) * r2(h * ep))}</b>${oms ? ` <span class="muted">· ${esc(oms)}</span>` : ""}</div>`;
-    let html = "";
-    if (soort === "hoeveelheid") { const h = leesGetal($("#mw_h").value); if (h == null || Number.isNaN(h) || h < 0) html = `<span class="muted">Geef een hoeveelheid.</span>`; else { const dlt = Math.round((h - nu) * 1000) / 1000; html = !dlt ? `<span class="muted">Geen verschil met nu (${nl(nu, 2)} ${eh}).</span>` : regel(dlt > 0 ? "meerwerk" : "minwerk", Math.abs(dlt)); } }
-    else if (soort === "schrappen") html = regel("minwerk", nu);
-    else { const h = leesGetal($("#mw_vh").value); html = (nu > 0 ? regel("minwerk", nu) : "") + (h == null || Number.isNaN(h) || h <= 0 ? `<span class="muted">Geef de hoeveelheid van de nieuwe post.</span>` : regel("meerwerk", h, ($("#mw_o").value || "").trim() || r.omschrijving).replace("</div>", ` <span class="muted">(voorlopig dezelfde prijs)</span></div>`)); }
-    res.innerHTML = html;
-  };
-  f.addEventListener("input", toon); f.addEventListener("change", toon); toon();
-}
-let MARGE_DEC = 1e4;   // decimalen van de marge per post: 8 sinds script 033 (gezet bij elke bewerking)
-async function msEdit(id, f, raw) {
-  MARGE_DEC = schemaV() >= 33 ? 1e8 : 1e4;
-  const r = S.meetstaat_posten[id]; if (!r) return;
-  const terug = (msg) => { toast(msg, 6000); renderPending = false; document.activeElement?.blur?.(); render(); };
-  if (msVast(r) && MS_VAST_F.includes(f)) return terug(`Post ${r.code} is goedgekeurd door de klant en ligt vast. Een wijziging gaat via meer- of minwerk: knop ± op de post.`);
-  if (f === "status" && !msVast(r) && ["offerte", "akkoord"].includes(raw) && msProjVast(r.project_id)) return terug("De meetstaat is goedgekeurd door de klant: deze post kan enkel meerwerk, minwerk of vervallen zijn.");
-  let v = raw;
-  if (["hoeveelheid", "eenheidsprijs", "btw", "marge"].includes(f)) {
-    const n = leesGetal(raw);
-    if (Number.isNaN(n)) return terug(`"${raw}" is geen geldig getal — gebruik bv. 2,5 of 1.250,75`);
-    if (f === "marge" && n != null && (n <= -100 || n > 1000)) return terug(`Een marge van ${nl(n, 2)} % kan niet — geef een % tussen -99 en 1000`);
-    if (f === "eenheidsprijs" && n != null && n < 0) return terug("Een negatieve kostprijs kan niet — zet de post op minwerk of gebruik een negatieve hoeveelheid");
-    const m = f === "hoeveelheid" || f === "eenheidsprijs" ? duizendKeuze(raw, n) : n;
-    v = f === "marge" ? (m == null ? null : Math.round(m * MARGE_DEC / 100) / MARGE_DEC) : f === "eenheidsprijs" ? r2(m ?? 0) : (m == null ? 0 : m);
-  }
-  const zelfde = typeof v === "number" ? r[f] != null && r[f] !== "" && Math.abs(Number(r[f]) - v) < 1e-10 : String(r[f] ?? "") === String(v ?? "");
-  if (zelfde) return;
-  // door de klant goedgekeurde posten: de klantprijs mag niet ongemerkt veranderen
-  const goed = ["akkoord", "meerwerk", "minwerk"].includes(r.status); const ep = msVerkoopEP(r); let extra = null;
-  if (goed && f === "eenheidsprijs" && schemaV() >= 12) {
-    // nieuwe kostprijs (bv. een andere aannemer): klantprijs behouden door de marge te herrekenen
-    if (v > 0 && ep > 0) { const m = Math.round((ep / v - 1) * MARGE_DEC) / MARGE_DEC; if (m >= -1 && m <= 10 && r2(v * (1 + m)) === ep) extra = { marge: m }; }
-    if (!extra && msVast(r)) return terug(`Post ${r.code} is goedgekeurd aan ${eur2(ep)} per ${r.eenheid}: die klantprijs ligt vast en kan met deze kostprijs niet behouden blijven. Een andere klantprijs gaat via meer- of minwerk (±).`);
-    if (!extra && !confirm(`${r.code} ${r.omschrijving}\n\nDeze post is goedgekeurd aan ${eur2(ep)} per ${r.eenheid}. Met deze kostprijs kan die klantprijs niet behouden blijven — de klantprijs verandert. Doorgaan?`)) { render(); return; }
-  }
-  if (goed && f === "marge" && !confirm(`${r.code} ${r.omschrijving}\n\nDeze post is goedgekeurd aan ${eur2(ep)} per ${r.eenheid}. Een andere marge verandert die klantprijs. Doorgaan?`)) { render(); return; }
-  if (goed && r.akkoord_op && f === "hoeveelheid" && !confirm(`${r.code} ${r.omschrijving}\n\nDe klant keurde deze post goed met ${nl(r.hoeveelheid, 2)} ${r.eenheid}. De hoeveelheid wijzigen verandert het goedgekeurde bedrag (een wijziging na akkoord hoort meestal als meer- of minwerk). Toch wijzigen naar ${nl(v, 2)}?`)) { render(); return; }
-  const active = document.activeElement; const keep = active && active.dataset ? { ms: active.dataset.ms, f: active.dataset.f, sel: active.selectionStart } : null;
-  try {
-    if (schemaV() >= 12 && (f === "eenheidsprijs" || f === "marge")) {
-      // enkel de gewijzigde kolom bijwerken: wie tegelijk de andere kolom wijzigt, verliest zijn wijziging niet
-      const patch = { [f]: v, ...(extra || {}) };
-      let { data, error } = await sb.from("meetstaat_prijzen").update({ ...patch, updated_at: new Date().toISOString() }).eq("post_id", id).select("post_id");
-      if (!error && !(data || []).length) {   // nog geen prijsrij voor deze post
-        ({ error } = await sb.from("meetstaat_prijzen").insert({ post_id: id, eenheidsprijs: 0, marge: null, ...patch }));
-        if (error && /duplicate|23505/i.test((error.code || "") + " " + (error.message || ""))) ({ error } = await sb.from("meetstaat_prijzen").update(patch).eq("post_id", id));
-      }
-      if (error) { toast("Bewaren mislukt: " + error.message, 6000); render(); return; }
-      S.meetstaat_posten[id] = { ...r, ...patch }; await msRefetch([id]);
-      if (extra) toast(`Klantprijs blijft ${eur2(ep)} (goedgekeurd) — marge herrekend naar ${nl(extra.marge * 100, 2)} %`, 5000);
-    } else await dbUpdate("meetstaat_posten", id, { [f]: v, updated_at: new Date().toISOString() });
-  } catch (e) { return; }
-  if (keep && keep.ms) { const el = document.querySelector(`[data-ms="${keep.ms}"][data-f="${keep.f}"]`); if (el) { el.focus(); try { if (keep.sel != null) el.setSelectionRange(keep.sel, keep.sel); } catch (e) { } } }
-}
-/* 1.48: posten die al in een vordering staan (vordering_regels.post_id cascade) */
-const msGefactureerd = (ids) => { const set = new Set(Object.values(S.vordering_regels || {}).map(r => r.post_id).filter(Boolean)); return ids.filter(id => set.has(id)).length; };
-async function msDelLot(pid, lot) {
-  const ids = msRows(pid).filter(r => r.lot === lot).map(r => r.id);
-  const nVast = msRows(pid).filter(r => r.lot === lot && msVast(r)).length;
-  if (nVast) { toast(`${lotName(lot)} bevat ${nVast} post${nVast === 1 ? "" : "en"} die de klant goedkeurde — die liggen vast. Schrappen gaat via minwerk (± op de post).`, 8000); return; }
-  const gf = msGefactureerd(ids); if (gf) { toast(`${gf} post${gf === 1 ? "" : "en"} van dit lot sta${gf === 1 ? "at" : "an"} al in een vordering — verwijderen zou die facturen wijzigen. Zet ze op Vervallen.`, 9000); return; }
-  if (!confirm(`${lotName(lot)}: alle ${ids.length} posten verwijderen uit deze meetstaat?`)) return;
-  const { error } = await sb.from("meetstaat_posten").delete().in("id", ids);
-  if (error) return toast("Mislukt: " + error.message);
-  ids.forEach(id => delete S.meetstaat_posten[id]); render(); toast("Lot verwijderd");
-  const lr = msRamingKlaar() ? msrLot(pid, lot) : null; if (lr) dbDelete("ms_raming", lr.id).catch(() => { });   // 1.55: geen oude lotmarge laten staan
-}
-/* ---------- Facturatie: vorderingsstaat per project (percentages per lot én per post) ---------- */
-const VORD_SOORT = { voorschot: "Voorschot", vordering: "Vordering", slotfactuur: "Slotfactuur", meerwerk: "Meerwerk" };
-const VORD_STATUS = { opgemaakt: "Op te maken", verzonden: "Verzonden", betaald: "Betaald" };
-const vordOf = (pid) => Object.values(S.vorderingen).filter(v => v.project_id === pid).sort((a, b) => a.nr - b.nr || (a.created_at || "").localeCompare(b.created_at || ""));
-const vordLocked = (v) => v.status !== "opgemaakt";
-const isMw = (r) => r.status === "meerwerk" || r.status === "minwerk";
-/* regels van een vordering: lot-niveau (post_id leeg) en post-niveau */
-function vordRegels(vid) { const lot = {}, post = {}; Object.values(S.vordering_regels).filter(r => r.vordering_id === vid).forEach(r => { if (r.post_id) post[r.post_id] = r; else lot[r.lot] = r; }); return { lot, post }; }
-const vordPct = (rg, r) => rg.post[r.id] ? Number(rg.post[r.id].pct) : rg.lot[r.lot] ? Number(rg.lot[r.lot].pct) : null;
-/* rijen van de meetstaat die bij een soort vordering horen (contract vs. meerwerk) */
-const vordRows = (pid, soort) => msRows(pid).filter(msTelt).filter(r => isMw(r) === (soort === "meerwerk"));
-/* basis per lot: contract (offerte+akkoord) en meerwerk (meerwerk − minwerk) */
-function lotBasis(pid) {
-  const b = {}; msRows(pid).filter(msTelt).forEach(r => { const x = b[r.lot] = b[r.lot] || { offerte: 0, meerwerk: 0 }; if (isMw(r)) x.meerwerk += rowSigned(r); else x.offerte += msVerkoop(r); }); return b;
-}
-const vordBase = (basis, lot, soort) => soort === "meerwerk" ? (basis[lot]?.meerwerk || 0) : (basis[lot]?.offerte || 0);
-/* berekening van één vordering: per post en per lot */
-function vordCalc(v) {
-  const rg = vordRegels(v.id); const perLot = {}, perPost = {}; let excl = 0, btw = 0;
-  vordRows(v.project_id, v.soort).forEach(r => { const pct = vordPct(rg, r); if (pct == null) return; const a = pct * rowSigned(r); perPost[r.id] = { pct, excl: a }; const L = perLot[r.lot] = perLot[r.lot] || { excl: 0 }; L.excl += a; excl += a; btw += a * (Number(r.btw) || 0); });
-  const calcExcl = excl, calcBtw = btw;
-  // Verzonden of betaald: de factuur is wat telt. Wijzigt de meetstaat nadien, dan worden de bedragen per lot en per post
-  // herschaald naar het factuurbedrag — zo rekenen cumul, rest en slotfactuur met wat echt gefactureerd is (zoals het klantenportaal).
-  const vast = vordLocked(v) && v.bedrag_excl != null && v.bedrag_excl !== "";
-  if (vast) {
-    const B = Number(v.bedrag_excl);
-    if (Math.abs(calcExcl) > 0.005) { const f = B / calcExcl; if (Math.abs(f - 1) > 1e-12) { Object.values(perPost).forEach(P => { P.excl *= f; P.pct *= f; }); Object.values(perLot).forEach(L => { L.excl *= f; }); } btw = calcBtw * f; }
-    excl = B;
-    if (v.btw_bedrag != null && v.btw_bedrag !== "") btw = Number(v.btw_bedrag);
-  }
-  return { excl, btw, incl: excl + btw, calcExcl, calcBtw, vast, perLot, perPost, rg };
-}
-const vordBedrag = (v, c) => c.excl;   /* verzonden/betaald = bevroren factuurbedrag (zie vordCalc) */
-/* cumulatief per post over alle vorderingen van dezelfde soort */
-function cumPost(pid, calcs, r) { return vordOf(pid).filter(v => (v.soort === "meerwerk") === isMw(r)).reduce((s, v) => s + (calcs[v.id]?.perPost[r.id]?.pct || 0), 0); }
-/* bedrag → %: de regels van een vordering herschalen zodat de berekende som precies op een bedrag (excl. btw) uitkomt.
-   Elke regel wordt begrensd op wat er voor die post(en) nog openstaat; lukt het niet volledig, dan geeft `tekort` het verschil. */
-const regelsExcl = (rows, regels) => { const lot = {}, post = {}; regels.forEach(g => { if (g.post_id) post[g.post_id] = g; else lot[g.lot] = g; }); return rows.reduce((s, r) => { const g = post[r.id] || lot[r.lot]; return s + (g ? Number(g.pct) * rowSigned(r) : 0); }, 0); };
-function fitRegels(pid, soort, regels, bedrag, calcs) {
-  const rows = vordRows(pid, soort); const restOf = (r) => Math.max(0, 1 - cumPost(pid, calcs, r));
-  let r1 = fitKern(pid, rows, regels, bedrag, restOf); if (!(r1.tekort > 0.005)) return { ...r1, weg: [] };
-  // 1.48.4: een lot-% is begrensd door de post met het minst open; staan de posten van dat lot ongelijk, dan per post verdelen (alleen als het nodig is)
-  const post = {}; regels.forEach(g => { if (g.post_id) post[g.post_id] = g; });
-  const split = [], weg = [];
-  r1.regels.forEach(g => { if (g.post_id) return split.push(g); const rs = rows.filter(r => r.lot === g.lot && !post[r.id] && Math.abs(rowSigned(r)) > 0.005); const rests = rs.map(restOf);
-    if (rs.length > 1 && Math.max(...rests) - Math.min(...rests) > 1e-6) { if (g.id) weg.push(g); rs.forEach(r => split.push({ lot: g.lot, post_id: r.id, pct: g.pct })); } else split.push(g); });
-  if (!weg.length && split.length === r1.regels.length) return { ...r1, weg: [] };
-  const r2 = fitKern(pid, rows, split, bedrag, restOf); return r2.tekort < r1.tekort - 0.005 ? { ...r2, weg } : { ...r1, weg: [] };
-}
-function fitKern(pid, rows, regels, bedrag, restOf) {
-  const post = {}; regels.forEach(g => { if (g.post_id) post[g.post_id] = g; });
-  let base = regels.map(g => ({ ...g, pct: Number(g.pct) })); let excl0 = regelsExcl(rows, base);
-  if (!(Math.abs(excl0) > 0.005)) { base = base.map(g => ({ ...g, pct: 1 })); excl0 = regelsExcl(rows, base); }
-  if (!(Math.abs(excl0) > 0.005)) return { regels: base, excl: 0, tekort: bedrag };
-  const capOf = (g) => { const rs = g.post_id ? rows.filter(r => r.id === g.post_id) : rows.filter(r => r.lot === g.lot && !post[r.id]); return rs.length ? Math.min(...rs.map(restOf)) : 1; };
-  // 1.48.4: bijvullen — botst een regel op zijn maximum, dan gaat het verschil naar de regels die nog ruimte hebben (vroeger bleef het daar steken)
-  const caps = base.map(capOf); const unit = base.map(g => regelsExcl(rows, [{ ...g, pct: 1 }].concat(g.post_id ? [] : base.filter(x => x.post_id).map(x => ({ ...x, pct: 0 })))));
-  const f0 = bedrag / excl0;   // minwerk (negatief bedrag) niet mee omhoog trekken als er meer gefactureerd moet worden
-  let out = base.map((g, i) => ({ ...g, pct: Math.max(0, Math.min(caps[i], unit[i] < 0 && bedrag > excl0 && f0 > 1 ? g.pct : g.pct * f0)) }));
-  for (let k = 0; k < 25; k++) {
-    const excl = out.reduce((s, g, i) => s + g.pct * unit[i], 0), nodig = bedrag - excl; if (Math.abs(nodig) < 0.005) break;
-    const vrij = out.map((g, i) => i).filter(i => unit[i] > 0.005 && (nodig > 0 ? out[i].pct < caps[i] - 1e-9 : out[i].pct > 1e-9));
-    if (!vrij.length) {   // geen ruimte meer bij de gewone posten: minwerk in deze factuur verlagen
-      const neg = nodig > 0 ? out.map((g, i) => i).filter(i => unit[i] < -0.005 && out[i].pct > 1e-9) : []; if (!neg.length) break;
-      const kan = neg.reduce((s, i) => s - out[i].pct * unit[i], 0); const f = Math.min(1, nodig / kan); neg.forEach(i => out[i].pct = Math.max(0, out[i].pct * (1 - f))); continue; }
-    const som = vrij.reduce((s, i) => s + out[i].pct * unit[i], 0);
-    if (som > 0.005) { const f = (som + nodig) / som; vrij.forEach(i => out[i].pct = Math.max(0, Math.min(caps[i], out[i].pct * f))); }
-    else if (nodig > 0) { const ruimte = vrij.reduce((s, i) => s + (caps[i] - out[i].pct) * unit[i], 0); if (!(ruimte > 0.005)) break; const f = Math.min(1, nodig / ruimte); vrij.forEach(i => out[i].pct = Math.max(0, Math.min(caps[i], out[i].pct + (caps[i] - out[i].pct) * f))); }
-    else break;
-  }
-  const excl = regelsExcl(rows, out); return { regels: out, excl, tekort: bedrag - excl };
-}
-/* 1.48.4: wat er per lot nog openstaat buiten deze vordering (calcs zonder de vordering zelf) */
-const lotOpen = (pid, soort, lot, calcs) => regelsExcl(vordRows(pid, soort), restRegels(pid, soort, [lot], calcs));
-/* bestaande, nog open vordering: percentages afleiden uit het ingevulde factuurbedrag */
-async function vordFit(vid, naFormulier) {
-  const v = S.vorderingen[vid]; if (!v || v.bedrag_excl == null || v.bedrag_excl === "") return;
-  if (!naFormulier && vordLocked(v) && !confirm("Deze vordering is al verzonden of betaald. Het factuurbedrag blijft hetzelfde; enkel de verdeling in percentages over de loten en posten wordt herrekend zodat de vorderingsstaat (ook voor de klant) weer precies op het factuurbedrag uitkomt. Doorgaan?")) return;
-  const bedrag = Number(v.bedrag_excl); const pid = v.project_id;
-  const calcs = {}; vordOf(pid).filter(x => x.id !== vid).forEach(x => calcs[x.id] = vordCalc(x));
-  let regels = Object.values(S.vordering_regels).filter(r => r.vordering_id === vid).map(r => ({ id: r.id, lot: r.lot, post_id: r.post_id, pct: Number(r.pct) }));
-  if (!regels.length) { const basis = lotBasis(pid); const lots = Object.keys(basis).map(Number).filter(l => Math.abs(vordBase(basis, l, v.soort)) > 0.005); regels = restRegels(pid, v.soort, lots, calcs); }
-  const fit = regels.length ? fitRegels(pid, v.soort, regels, bedrag, calcs) : { regels: [], excl: 0, tekort: bedrag };
-  // 1.48.4: volstaan de loten van deze vordering niet voor het factuurbedrag, dan kies je over welke andere loten de rest gaat
-  const soortR = v.soort === "meerwerk" ? "meerwerk" : "vordering"; const basis = lotBasis(pid);
-  const eigenLots = [...new Set(regels.map(g => g.lot))];
-  const andere = Object.keys(basis).map(Number).sort((a, b) => a - b).filter(l => !eigenLots.includes(l) && Math.abs(vordBase(basis, l, soortR)) > 0.005).map(l => ({ l, open: lotOpen(pid, soortR, l, calcs) })).filter(x => x.open > 0.5);
-  if (fit.tekort > 0.5 && andere.length) { vordFitKies(v, regels, fit, calcs, andere, eigenLots); if (naFormulier) toast(`${eur(fit.tekort)} meer dan er nog openstaat voor de gekozen loten — kies over welke andere loten de rest gaat`, 7000); return; }
-  if (naFormulier) return;   // nieuwe vordering: de regels zijn net bewaard, er valt niets te kiezen
-  if (!fit.regels.length) return toast("Er staat niets meer open om te verdelen.");
-  await vordFitBewaar(v, fit.regels, fit.weg || [], fit.tekort);
-}
-async function vordFitBewaar(v, nieuw, weg, tekort) {
-  const vid = v.id, bedrag = Number(v.bedrag_excl);
-  const mis = (e) => { render(); toast("Mislukt: " + e.message + " — kijk de verdeling van deze vordering na", 8000); };
-  for (const g of nieuw) {   // eerst bewaren/toevoegen, pas daarna weghalen (een fout halverwege laat geen loten weg)
-    if (g.id) { const { data, error } = await sb.from("vordering_regels").update({ pct: g.pct }).eq("id", g.id).select().single(); if (error) return mis(error); S.vordering_regels[rowKey("vordering_regels", data)] = data; }
-    else { const { data, error } = await sb.from("vordering_regels").insert({ vordering_id: vid, lot: g.lot, post_id: g.post_id || null, pct: g.pct }).select().single(); if (error) return mis(error); S.vordering_regels[rowKey("vordering_regels", data)] = data; }
-  }
-  if (weg.length) { const { error } = await sb.from("vordering_regels").delete().in("id", weg.map(g => g.id)); if (error) return mis(error); const ids = new Set(weg.map(g => g.id)); Object.keys(S.vordering_regels).forEach(k => { if (ids.has(S.vordering_regels[k].id)) delete S.vordering_regels[k]; }); }
-  // verstuurde factuur zonder (geldige) bevroren btw: de databank berekent ze nu opnieuw op de nieuwe verdeling
-  if (vordLocked(v) && schemaV() >= 33 && (v.btw_bedrag == null || (Number(v.btw_bedrag) === 0 && Math.abs(bedrag) > 0.005))) await dbUpdate("vorderingen", vid, { btw_bedrag: null }).catch(() => { });
-  render(); toast(Math.abs(tekort) > 0.5 ? `Percentages op het maximum gezet — ${eur(tekort)} meer dan er nog openstaat voor deze loten` : `Percentages afgeleid uit ${eur(bedrag)}`, Math.abs(tekort) > 0.5 ? 8000 : undefined);
-}
-/* 1.48.4: kiezer — eerst de aangevinkte loten van de vordering tot hun maximum, het verschil over de gekozen andere loten (naar wat er per lot openstaat) */
-function vordFitKies(v, regels, fit, calcs, andere, eigenLots) {
-  const pid = v.project_id, bedrag = Number(v.bedrag_excl), soortR = v.soort === "meerwerk" ? "meerwerk" : "vordering";
-  const eigen = eigenLots.sort((a, b) => a - b).map(l => ({ l, open: lotOpen(pid, soortR, l, calcs) }));
-  const rij = (x, aan, naam) => `<label class="chk"><input type="checkbox" name="${naam}" value="${x.l}" ${aan ? "checked" : ""}> <span>${esc(lotName(x.l))}<small class="muted" style="display:block">nog open ${eur2(x.open)}</small></span></label>`;
-  openModal(`Factuurbedrag verdelen — ${v.nr === 0 ? "voorschot" : "#" + v.nr}${v.omschrijving ? " " + v.omschrijving : ""}`, `<div class="form-grid">
-    <div class="field span2"><p style="margin:0">De factuur is <b>${eur2(bedrag)}</b> excl. btw, maar in ${eigen.length ? `de loten van deze vordering staat nog maar <b>${eur2(eigen.reduce((s, x) => s + x.open, 0))}</b>` : "deze vordering staan nog geen loten"} open. Kies over welke andere loten het verschil gaat. De loten van de vordering worden eerst tot hun maximum gevuld, de rest wordt over de gekozen loten verdeeld naar verhouding van wat er per lot nog openstaat. Nadien kan je per lot of per post bijsturen in de tabel.</p>${vordLocked(v) ? `<p style="margin:8px 0 0;color:var(--warn)">Deze factuur is al ${v.status === "betaald" ? "betaald" : "verzonden"}: ook de klant ziet dan deze nieuwe verdeling over de loten.</p>` : ""}</div>
-    ${eigen.length ? `<div class="field span2"><label>Loten van deze vordering (vink af om ze eruit te halen)</label><div class="fase-list">${eigen.map(x => rij(x, true, "fk_eigen")).join("")}</div></div>` : ""}
-    <div class="field span2"><label>Andere loten met een open bedrag</label><div class="fase-list">${andere.map(x => rij(x, false, "fk_lot")).join("")}</div></div>
-    <div class="field span2"><div id="fk_sam" class="muted"></div></div></div>`, {
-    saveLabel: "Verdelen", wide: true,
-    onSave: async () => {
-      const f = $("#mform"); const kies = (n) => [...f.querySelectorAll(`input[name="${n}"]:checked`)].map(i => Number(i.value));
-      const houd = kies("fk_eigen"), extra = kies("fk_lot");
-      const r = vordFitPlan(v, regels, calcs, houd, extra);
-      if (!r.nieuw.length) { toast("Vink minstens één lot aan."); return false; }
-      await vordFitBewaar(v, r.nieuw, r.weg, r.tekort);
-    },
-  });
-  const f = $("#mform");
-  const sam = () => { const kies = (n) => [...f.querySelectorAll(`input[name="${n}"]:checked`)].map(i => Number(i.value)); const houd = kies("fk_eigen"), extra = kies("fk_lot");
-    const open = eigen.filter(x => houd.includes(x.l)).concat(andere.filter(x => extra.includes(x.l))).reduce((s, x) => s + x.open, 0);
-    $("#fk_sam").innerHTML = open + 0.5 >= bedrag ? `Gekozen loten: ${eur2(open)} open — volstaat voor ${eur2(bedrag)}.` : `<span style="color:var(--warn)">Gekozen loten: ${eur2(open)} open — nog ${eur2(bedrag - open)} te kort voor ${eur2(bedrag)}.</span>`; };
-  f.addEventListener("change", sam); sam();
-}
-/* plan: behouden regels eerst tot het bedrag (bijvullen tot hun maximum), het tekort over de nieuwe loten */
-function vordFitPlan(v, regels, calcs, houd, extra) {
-  const pid = v.project_id, bedrag = Number(v.bedrag_excl), soortR = v.soort === "meerwerk" ? "meerwerk" : "vordering";
-  const blijft = regels.filter(g => houd.includes(g.lot)), weg = regels.filter(g => g.id && !houd.includes(g.lot));
-  let nieuw = [], tekort = bedrag;
-  if (blijft.length) { const a = fitRegels(pid, v.soort, blijft, bedrag, calcs); nieuw = a.regels; tekort = a.tekort; weg.push(...a.weg); }
-  // nieuwe loten: enkel wat echt gebruikt wordt (geen regels van 0 %)
-  if (extra.length && tekort > 0.005) { const rr = restRegels(pid, soortR, extra, calcs); if (rr.length) { const b = fitRegels(pid, v.soort, rr, tekort, calcs); nieuw = nieuw.concat(b.regels.filter(g => g.pct > 1e-9)); tekort = b.tekort; } }
-  return { nieuw, weg, tekort };
-}
-function vFacturatie(p) {
-  if (S.prijsFout) return `<div class="panel"><div class="empty"><b>Prijzen niet correct geladen</b>Herlaad de pagina (⌘⌥R) — tot dan worden er geen bedragen getoond om fouten te vermijden.</div></div>`;
-  if (!msReady()) return `<div class="panel"><div class="empty"><b>Facturatie nog niet beschikbaar</b>Voer eerst databasescript <code>sql/007_meetstaat.sql</code> uit.</div></div>`;
-  const beheer = isBeheer(); const basis = lotBasis(p.id); const vs = vordOf(p.id); const calcs = {}; vs.forEach(v => calcs[v.id] = vordCalc(v));
-  const lots = Object.keys(basis).map(Number).sort((a, b) => a - b);
-  const contract = lots.reduce((s, l) => s + basis[l].offerte, 0), meerwerk = lots.reduce((s, l) => s + basis[l].meerwerk, 0);
-  const gefact = vs.filter(vordLocked).reduce((s, v) => s + vordBedrag(v, calcs[v.id]), 0);
-  const betaald = vs.filter(v => v.status === "betaald").reduce((s, v) => s + vordBedrag(v, calcs[v.id]), 0);
-  const open = vs.filter(v => !vordLocked(v)).reduce((s, v) => s + calcs[v.id].excl, 0);
-  const kpi = `<div class="rend">
-    <div class="panel"><div class="k">Contract excl. btw</div><div class="v">${eur2(contract)}</div></div>
-    <div class="panel"><div class="k">Meer-/minwerk</div><div class="v ${meerwerk < 0 ? "neg" : ""}">${meerwerk ? eur2(meerwerk) : "—"}</div></div>
-    <div class="panel"><div class="k">Gefactureerd excl. btw</div><div class="v">${eur2(gefact)}</div><div class="muted" style="font-size:12px">${contract + meerwerk ? nl(gefact / (contract + meerwerk) * 100, 0) : 0} % · betaald ${eur2(betaald)}</div></div>
-    <div class="panel"><div class="k">Op te maken</div><div class="v">${open ? eur2(open) : "—"}</div></div>
-    <div class="panel"><div class="k">Nog te factureren</div><div class="v ${contract + meerwerk - gefact - open < -0.5 ? "neg" : ""}">${eur2(contract + meerwerk - gefact - open)}</div></div></div>`;
-  const zonderHoev = msRows(p.id).filter(r => msTelt(r) && !(Number(r.hoeveelheid) > 0) && Number(r.eenheidsprijs) > 0);
-  const waarschuwing = zonderHoev.length ? `<div class="banner show" style="border:1px solid var(--line);border-radius:8px;margin-bottom:16px">${zonderHoev.length} post${zonderHoev.length > 1 ? "en" : ""} in de meetstaat ${zonderHoev.length > 1 ? "hebben" : "heeft"} wel een prijs maar nog geen hoeveelheid (${zonderHoev.slice(0, 3).map(r => esc(r.code + " " + r.omschrijving.slice(0, 30))).join(", ")}${zonderHoev.length > 3 ? ", …" : ""}) — die tellen voor € 0 mee in het contract. Vul de hoeveelheid in op het tabblad Meetstaat.</div>` : "";
-  if (!lots.length || contract + Math.abs(meerwerk) < 0.005) return kpi + waarschuwing + `<div class="panel" style="margin-bottom:16px"><div class="empty"><b>${lots.length ? "Het contract staat op € 0" : "Nog geen meetstaat"}</b>${lots.length ? "De vorderingsstaat rekent op hoeveelheid × prijs van de posten in de meetstaat; vul eerst de hoeveelheden in." : "Maak eerst de meetstaat op (tabblad Meetstaat); de vorderingsstaat rekent op de loten en posten daarvan."}</div></div>` + (typeof vAfPanel === "function" ? vAfPanel(p) : "");
-  const heeftVoorschot = vs.some(v => v.soort === "voorschot");
-  S.vordOpen = S.vordOpen || {};
-  const pctFmt = (x) => Math.round(x * 10000) / 100; /* 2 decimalen: na "Percentages herrekenen" zijn de percentages niet rond (31,33 %) en moet % × basis het getoonde bedrag geven */
-  const pctTxt = (x) => nl(pctFmt(x), 2) + " %";
-  /* cel voor een lot: invoerveld als het lot-% geldt, anders het gewogen % (per post ingesteld) */
-  const lotCell = (v, lot, soort) => { const c = calcs[v.id]; const base = vordBase(basis, lot, soort); if ((v.soort === "meerwerk") !== (soort === "meerwerk") || !base) return `<td class="c muted">·</td>`;
-    const L = c.perLot[lot]; const overrides = vordRows(p.id, soort).some(r => r.lot === lot && c.rg.post[r.id]); const lotPct = c.rg.lot[lot] ? Number(c.rg.lot[lot].pct) : null;
-    const amt = L ? L.excl : 0; const w = base ? amt / base : 0;
-    if (overrides || vordLocked(v) || !beheer) return `<td class="c num">${(L || lotPct != null) ? pctTxt(w) : ""}${overrides ? `<small class="muted" style="display:block">per post</small>` : ""}<small class="muted" style="display:block">${L ? eur2(amt) : ""}</small></td>`;
-    return `<td class="c"><input class="inline num" style="width:58px;text-align:right" data-vr="${v.id}" data-lot="${lot}" type="text" inputmode="decimal" autocomplete="off" value="${getalVeld(lotPct == null ? "" : pctFmt(lotPct))}" placeholder="0"> <span class="muted">%</span><small class="muted" style="display:block">${L ? eur2(amt) : ""}</small></td>`; };
-  const postCell = (v, r) => { const c = calcs[v.id]; if ((v.soort === "meerwerk") !== isMw(r)) return `<td class="c muted">·</td>`; const P = c.perPost[r.id]; const own = !!c.rg.post[r.id];
-    if (vordLocked(v) || !beheer) return `<td class="c num">${P ? pctTxt(P.pct) : ""}<small class="muted" style="display:block">${P ? eur2(P.excl) : ""}</small></td>`;
-    return `<td class="c"><input class="inline num ${own ? "" : "muted"}" style="width:58px;text-align:right" data-vr="${v.id}" data-lot="${r.lot}" data-vpost="${r.id}" type="text" inputmode="decimal" autocomplete="off" value="${P ? getalVeld(pctFmt(P.pct)) : ""}" placeholder="0" title="${own ? "eigen % voor deze post" : "volgt het lot-%"}"> <span class="muted">%</span><small class="muted" style="display:block">${P ? eur2(P.excl) : ""}</small></td>`; };
-  const lotRows = (soort) => lots.filter(l => Math.abs(vordBase(basis, l, soort)) > 0.005).map(l => { const base = vordBase(basis, l, soort); const rows = vordRows(p.id, soort).filter(r => r.lot === l); const inv = vs.reduce((s, v) => s + (calcs[v.id].perLot[l]?.excl || 0) * ((v.soort === "meerwerk") === (soort === "meerwerk") ? 1 : 0), 0); const cum = base ? inv / base : 0; const rest = base - inv; const key = soort + l; const openL = !!S.vordOpen[key];
-    return `<tr class="${soort === "meerwerk" ? "ms-mw" : ""}"><td class="sticky"><button class="btn ghost sm" data-vtoggle="${key}" aria-label="Posten tonen" style="padding:0 4px">${openL ? "▾" : "▸"}</button> <b>${esc(lotName(l))}</b>${soort === "meerwerk" ? ` <span class="pill st-offerte" style="font-size:10px">meerwerk</span>` : ""}<small class="muted" style="display:block;margin-left:22px">${rows.length} posten</small></td><td class="r num">${eur2(base)}</td>${vs.map(v => lotCell(v, l, soort)).join("")}<td class="c num" style="white-space:nowrap"><b>${pctTxt(cum)}</b></td><td class="r num ${Math.abs(rest) < 0.005 ? "muted" : ""}">${eur2(rest)}</td></tr>` +
-      (openL ? rows.map(r => { const amt = rowSigned(r); const invP = vs.reduce((s, v) => s + (calcs[v.id].perPost[r.id]?.excl || 0), 0); const cumP = amt ? invP / amt : 0;
-        return `<tr class="vpost"><td class="sticky" style="padding-left:30px"><span class="muted num" style="font-size:11px">${esc(r.code)}</span> ${esc(r.omschrijving)}${r.locatie ? ` <small class="muted">· ${esc(r.locatie)}</small>` : ""}</td><td class="r num">${eur2(amt)}</td>${vs.map(v => postCell(v, r)).join("")}<td class="c num" style="white-space:nowrap">${pctTxt(cumP)}</td><td class="r num ${Math.abs(amt - invP) < 0.005 ? "muted" : ""}">${eur2(amt - invP)}</td></tr>`; }).join("") : ""); }).join("");
-  const totRow = (label, base, f, rest) => `<tr class="tot"><td class="sticky"><b>${label}</b></td><td class="r num"><b>${eur2(base)}</b></td>${vs.map(v => `<td class="c num"><b>${eur2(f(v))}</b></td>`).join("")}<td></td><td class="r num"><b>${eur2(rest)}</b></td></tr>`;
-  const sumInv = (soort) => vs.filter(v => (v.soort === "meerwerk") === (soort === "meerwerk")).reduce((s, v) => s + calcs[v.id].excl, 0);
-  const head = vs.map(v => { const c = calcs[v.id]; const frozen = c.vast; const diff = frozen ? Number(v.bedrag_excl) - c.calcExcl : 0;
-    return `<th class="vh"><div class="vh-top"><span class="pill st-${v.status === "betaald" ? "afgerond" : v.status === "verzonden" ? "lopend" : "offerte"}">${v.nr === 0 ? "Voorschot" : "#" + v.nr}${v.soort === "meerwerk" ? " · MW" : ""}</span>${beheer && !vordLocked(v) ? `<button class="btn ghost sm danger" data-act="vord-del" data-id="${v.id}" aria-label="Verwijderen">✕</button>` : ""}</div>
-      <div class="vh-body">${beheer ? `<input class="inline" data-vf="${v.id}" data-f="omschrijving" value="${esc(v.omschrijving || "")}" placeholder="${esc(VORD_SOORT[v.soort])}">` : `<div>${esc(v.omschrijving || VORD_SOORT[v.soort])}</div>`}
-      <div class="vh-row"><span class="muted">Datum</span>${beheer ? `<input class="inline num" data-vf="${v.id}" data-f="datum" type="date" value="${v.datum || ""}">` : `<span class="num">${fmtLong(v.datum)}</span>`}</div>
-      <div class="vh-row"><span class="muted">Yuki-nr</span>${beheer ? `<input class="inline num" data-vf="${v.id}" data-f="factuurnummer" value="${esc(v.factuurnummer || "")}" placeholder="—">` : `<span class="num">${esc(v.factuurnummer || "—")}</span>`}</div>
-      ${schemaV() >= 34 && beheer ? `<div class="vh-row"><span class="muted" title="Gestructureerde mededeling voor de betaling (komt normaal uit de Yuki-mail)">Mededeling</span><input class="inline num" data-vf="${v.id}" data-f="mededeling" value="${esc(v.mededeling || "")}" placeholder="+++…+++" style="width:150px"></div>
-      <div class="vh-row"><span class="muted">Vervaldag</span><input class="inline num" data-vf="${v.id}" data-f="vervaldag" type="date" value="${v.vervaldag || ""}"></div>
-      <div class="vh-row"><span class="muted" title="De factuur als pdf voor de klant (een gedeeld document van dit project)">Factuur-pdf</span><select class="inline" data-vf="${v.id}" data-f="factuur_document" style="max-width:150px"><option value="">—</option>${opts(Object.values(S.documenten).filter(d => d.project_id === p.id && /pdf/i.test(d.mime || d.naam || "")).sort((a, b) => (b.gewijzigd || "").localeCompare(a.gewijzigd || "")).map(d => [d.id, d.naam]), v.factuur_document || "")}</select></div>` : ""}
-      <div class="vh-row"><span class="muted">Berekend</span><span class="num">${eur2(c.calcExcl)}</span></div>
-      <div class="vh-row"><span class="muted">Btw · incl.</span><span class="num">${eur2(c.btw)} · <b>${eur2(c.incl)}</b></span></div>
-      ${beheer ? `<div class="vh-row"><span class="muted" title="Bedrag op de factuur in Yuki (excl. btw) — wordt bevroren zodra de status verzonden of betaald is. Wijkt het af van de berekening, dan kan je de percentages eruit laten afleiden.">Factuur excl.</span><input class="inline num" data-vf="${v.id}" data-f="bedrag_excl" type="text" inputmode="decimal" autocomplete="off" value="${getalVeld(v.bedrag_excl)}" placeholder="${Math.round(c.calcExcl)}"></div>` : ""}
-      ${frozen && Math.abs(diff) > 0.5 ? `<div class="vh-row" style="color:var(--warn)"><span>Verschil</span><span class="num">${eur2(diff)}</span></div>` : ""}
-      ${beheer && v.bedrag_excl != null && v.bedrag_excl !== "" && Math.abs(Number(v.bedrag_excl) - c.calcExcl) > 0.5 ? `<div class="vh-row"><button class="btn ghost sm" data-act="vord-fit" data-id="${v.id}" title="De percentages van deze vordering zo herrekenen dat de berekening precies op het factuurbedrag uitkomt (verschil nu ${eur2(Number(v.bedrag_excl) - c.calcExcl)})${vordLocked(v) ? " — het factuurbedrag verandert niet, enkel de verdeling" : ""}">Percentages herrekenen op ${eur2(Number(v.bedrag_excl))}</button></div>` : ""}
-      <div class="vh-row"><span class="muted">Status</span>${beheer ? `<select class="inline" data-vf="${v.id}" data-f="status">${opts(Object.entries(VORD_STATUS), v.status)}</select>` : `<span>${VORD_STATUS[v.status]}</span>`}</div></div></th>`; }).join("");
-  const grid = `<div class="panel" style="margin-bottom:16px"><div class="panel-head"><div><h3>Vorderingsstaat</h3><div class="muted" style="font-size:12px;margin-top:2px">Per lot het % dat je in elke vordering factureert; klap een lot open (▸) om per post te werken — een post-% overschrijft het lot-%. Het voorschot telt overal mee. Meerwerk staat apart en zit niet in het voorschot.</div></div>
-      <div class="actions">${beheer ? `${heeftVoorschot ? "" : `<button class="btn sm" data-act="vord-new" data-pid="${p.id}" data-soort="voorschot">+ Voorschot</button>`}<button class="btn sm primary" data-act="vord-new" data-pid="${p.id}" data-soort="vordering">+ Vordering</button>${meerwerk ? `<button class="btn sm" data-act="vord-new" data-pid="${p.id}" data-soort="meerwerk">+ Meerwerkfactuur</button>` : ""}<button class="btn sm" data-act="vord-new" data-pid="${p.id}" data-soort="slotfactuur" title="Alles wat nog openstaat, per post">+ Slotfactuur</button>` : ""}</div></div>
-    ${vs.length ? `<div class="tw"><table class="t vord"><thead><tr><th class="sticky">Lot / post</th><th class="r">Basis excl.</th>${head}<th class="c">Cumul.</th><th class="r">Rest</th></tr></thead><tbody>
-      ${lotRows("vordering")}${totRow("Contract", contract, (v) => v.soort === "meerwerk" ? 0 : calcs[v.id].excl, contract - sumInv("vordering"))}
-      ${meerwerk ? lotRows("meerwerk") + totRow("Meer-/minwerk", meerwerk, (v) => v.soort === "meerwerk" ? calcs[v.id].excl : 0, meerwerk - sumInv("meerwerk")) : ""}
-      ${totRow("Totaal excl. btw", contract + meerwerk, (v) => calcs[v.id].excl, contract + meerwerk - sumInv("vordering") - sumInv("meerwerk"))}
-      <tr class="tot"><td class="sticky"><b>Totaal incl. btw</b></td><td></td>${vs.map(v => `<td class="c num"><b>${eur2(calcs[v.id].incl)}</b></td>`).join("")}<td></td><td></td></tr></tbody></table></div>` : `<div class="empty"><b>Nog geen vorderingen</b>Begin met het voorschot (bv. 30 % op het contract), daarna een vordering per afgewerkt lot of per post.</div>`}</div>`;
-  const klant = `<div class="panel"><div class="panel-head"><div><h3>Overzicht voor de klant</h3><div class="muted" style="font-size:12px;margin-top:2px">Zo ziet de klant het in het portaal: de facturen en, per lot en post, welk aandeel in welke factuur zat (cumulatief en rest) — zonder kostprijzen, berekend-versus-factuurverschillen of Yuki-details.</div></div></div>
-    <div class="tw"><table class="t"><thead><tr><th>Nr</th><th>Datum</th><th>Omschrijving</th><th>Loten</th><th class="r">Excl. btw</th><th class="r">Btw</th><th class="r">Incl. btw</th><th>Status</th></tr></thead><tbody>
-      ${vs.map(v => { const c = calcs[v.id]; const excl = c.excl; const btw = c.btw; const lotsTxt = v.soort === "voorschot" ? "alle loten" : Object.keys(c.perLot).filter(l => Math.abs(c.perLot[l].excl) > 0.005).map(l => lotName(Number(l))).join(", ");
-        return `<tr><td class="num">${v.nr === 0 ? "V" : v.nr}</td><td class="num">${fmtLong(v.datum)}</td><td>${esc(v.omschrijving || VORD_SOORT[v.soort])}${v.factuurnummer ? `<small class="muted" style="display:block">factuur ${esc(v.factuurnummer)}</small>` : ""}</td><td class="muted" style="font-size:12px;max-width:260px">${esc(lotsTxt)}</td><td class="r num">${eur2(excl)}</td><td class="r num">${eur2(btw)}</td><td class="r num"><b>${eur2(excl + btw)}</b></td><td><span class="pill st-${v.status === "betaald" ? "afgerond" : v.status === "verzonden" ? "lopend" : "offerte"}">${VORD_STATUS[v.status]}</span></td></tr>`; }).join("") || `<tr><td class="muted" colspan="8">Nog geen facturen.</td></tr>`}
-      ${(() => {   // 1.48.3: ook wat al gefactureerd en betaald is (niet enkel wat nog moet)
-        const som = (lijst) => lijst.reduce((t, v) => { const c = calcs[v.id]; t.excl += c.excl; t.btw += c.btw; t.incl += c.incl; return t; }, { excl: 0, btw: 0, incl: 0 });
-        const rij = (label, t, extra = "") => `<tr class="tot"><td colspan="4"><b>${label}</b>${extra}</td><td class="r num"><b>${eur2(t.excl)}</b></td><td class="r num">${eur2(t.btw)}</td><td class="r num"><b>${eur2(t.incl)}</b></td><td></td></tr>`;
-        const verst = vs.filter(vordLocked), betaaldL = vs.filter(v => v.status === "betaald"), opg = vs.filter(v => !vordLocked(v));
-        return (verst.length ? rij("Gefactureerd (verzonden en betaald)", som(verst), ` <span class="muted" style="font-weight:400">· ${verst.length} factu${verst.length === 1 ? "ur" : "ren"} · ${contract + meerwerk ? nl(gefact / (contract + meerwerk) * 100, 0) : 0} % van contract + meerwerk</span>`) : "")
-          + (betaaldL.length ? rij("waarvan betaald", som(betaaldL)) : "")
-          + (verst.length - betaaldL.length > 0 ? rij("Nog te betalen (verzonden)", som(verst.filter(v => v.status !== "betaald"))) : "")
-          + (opg.length ? rij("Opgemaakt, nog niet verzonden", som(opg)) : ""); })()}
-      <tr class="tot"><td colspan="4"><b>Nog te factureren (contract + meerwerk − gefactureerd/opgemaakt)</b></td><td class="r num"><b>${eur2(contract + meerwerk - gefact - open)}</b></td><td></td><td></td><td></td></tr></tbody></table></div></div>`;
-  return kpi + waarschuwing + grid + (typeof vAfPanel === "function" ? vAfPanel(p) : "") + klant;   // 1.49: facturen van aannemers (af-beheer.js, script 047)
-}
-/* regels voor "de rest" van gekozen loten: lot-% als alle posten gelijk staan, anders per post */
-function restRegels(pid, soort, lots, calcs) {
-  const out = [];
-  lots.forEach(l => { const rows = vordRows(pid, soort).filter(r => r.lot === l && Math.abs(rowSigned(r)) > 0.005); if (!rows.length) return;
-    const rests = rows.map(r => Math.max(0, 1 - cumPost(pid, calcs, r)));
-    const uniform = rests.every(x => Math.abs(x - rests[0]) < 1e-6);
-    if (uniform) { if (rests[0] > 1e-6) out.push({ lot: l, post_id: null, pct: rests[0] }); }
-    else rows.forEach((r, i) => { if (rests[i] > 1e-6) out.push({ lot: l, post_id: r.id, pct: rests[i] }); }); });
-  return out;
-}
-function vordForm(pid, soort) {
-  const p = S.projecten[pid]; const basis = lotBasis(pid); const vs = vordOf(pid); const calcs = {}; vs.forEach(v => calcs[v.id] = vordCalc(v));
-  const lots = Object.keys(basis).map(Number).sort((a, b) => a - b).filter(l => Math.abs(vordBase(basis, l, soort === "slotfactuur" ? "vordering" : soort)) > 0.005);
-  const nextNr = soort === "voorschot" ? 0 : Math.max(0, ...vs.map(v => v.nr)) + 1;
-  const isVoorschot = soort === "voorschot", isSlot = soort === "slotfactuur";
-  const restLot = (l, srt) => { const base = vordBase(basis, l, srt); const inv = vs.reduce((s, v) => s + ((v.soort === "meerwerk") === (srt === "meerwerk") ? (calcs[v.id].perLot[l]?.excl || 0) : 0), 0); return base - inv; };
-  /* per post invullen (vordering en meerwerk): alle posten in één tabel, per lot een veld 'alle', live totaal */
-  const perPost = !isVoorschot && !isSlot;
-  const pf = (x) => nl(Math.round(x * 10000) / 100, 2) + " %";
-  const rowsAll = perPost ? vordRows(pid, soort).filter(r => Math.abs(rowSigned(r)) > 0.005) : [];
-  const ppHtml = !perPost ? "" : `<div class="field span2 pp-wrap" hidden>
-      <div class="pp-modus"><span class="muted">Wat typ je in?</span>
-        <label class="chk"><input type="radio" name="pp_modus" value="factuur" checked> <span>% van de post <b>in deze factuur</b></span></label>
-        <label class="chk"><input type="radio" name="pp_modus" value="totaal"> <span>% <b>klaar in totaal</b> (stand van de werken)</span></label></div>
-      <div class="tw pp-tw"><table class="t pp"><thead><tr><th>Post</th><th class="r">Bedrag</th><th class="r">Al gefactureerd</th><th class="r" id="pp_kop">Deze factuur</th><th class="r">Excl. btw</th></tr></thead>
-      ${lots.map(l => { const rs = rowsAll.filter(r => r.lot === l); if (!rs.length) return "";
-        return `<tbody><tr class="pp-lot"><td><b>${esc(lotName(l))}</b> <small class="muted">${rs.length} post${rs.length === 1 ? "" : "en"}</small></td><td class="r num">${eur2(rs.reduce((t, r) => t + rowSigned(r), 0))}</td><td></td><td class="r" style="white-space:nowrap"><input class="inline num pp-all" data-pplot="${l}" inputmode="decimal" autocomplete="off" placeholder="alle" title="Zelfde % voor alle posten van dit lot"> %</td><td class="r num" data-pplotsum="${l}">—</td></tr>`
-          + rs.map(r => { const amt = rowSigned(r), cum = cumPost(pid, calcs, r), dicht = 1 - cum < 1e-6;
-            return `<tr class="${dicht ? "pp-dicht" : ""}"><td><span class="muted num" style="font-size:11px">${esc(r.code || "")}</span> ${esc(r.omschrijving)}${r.locatie ? ` <small class="muted">· ${esc(r.locatie)}</small>` : ""}</td><td class="r num">${eur2(amt)}</td><td class="r num muted">${cum > 1e-6 ? pf(cum) : "—"}</td><td class="r" style="white-space:nowrap"><input class="inline num pp-in" name="pp_${r.id}" data-pp="${r.id}" data-lot="${l}" data-amt="${amt}" data-cum="${cum}" inputmode="decimal" autocomplete="off" ${dicht ? `disabled title="Volledig gefactureerd"` : ""}> %</td><td class="r num" data-ppeur="${r.id}">—</td></tr>`; }).join("") + `</tbody>`; }).join("")}
-      <tfoot><tr><td><b>Totaal deze factuur</b></td><td></td><td></td><td></td><td class="r num"><b id="pp_tot">—</b></td></tr></tfoot></table></div>
-      <small class="muted">Tab of Enter springt naar de volgende post. Een veld 'alle' in de lotrij vult elke post van dat lot. Rood = meer dan wat nog openstaat (of, bij 'klaar in totaal', minder dan wat al gefactureerd is).</small></div>`;
-  openModal({ voorschot: "Voorschotfactuur", vordering: "Nieuwe vordering", slotfactuur: "Slotfactuur", meerwerk: "Meerwerkfactuur" }[soort] + " — " + p.klant, `<div class="form-grid">
-      <div class="field"><label for="vo_oms">Omschrijving</label><input id="vo_oms" name="omschrijving" value="${esc(isVoorschot ? "Voorschot bij ondertekening" : isSlot ? "Slotfactuur bij oplevering" : "")}" placeholder="bv. Afwerking lot 8 en 9"></div>
-      <div class="field"><label for="vo_datum">Datum</label><input id="vo_datum" name="datum" type="date" value="${todayIso}"></div>
-      ${isVoorschot ? `<div class="field"><label for="vo_pct">Voorschot % op het contract</label><input id="vo_pct" name="pct" type="number" step="any" min="0" max="100" value="30"></div><div class="field"><label>Contract excl. btw</label><div class="num" style="padding:8px 0">${eur(lots.reduce((s, l) => s + basis[l].offerte, 0))}</div></div>`
-      : isSlot ? `<div class="field span2"><p class="muted" style="margin:0">Alles wat nog openstaat wordt gefactureerd: per post het resterende % op het contract${lots.some(l => basis[l].meerwerk) ? " (meerwerk factureer je apart via + Meerwerkfactuur)" : ""}. Nog open: <b>${eur(lots.reduce((s, l) => s + restLot(l, "vordering"), 0))}</b> excl. btw.</p></div>`
-      : `<div class="field span2 vo-keuze"><div class="seg-row"><button type="button" class="btn sm primary" data-vomode="lot">Per lot</button><button type="button" class="btn sm" data-vomode="post">Per post</button></div></div>${ppHtml}<div class="field span2 vo-lot"><label>Loten die je nu factureert — het resterende % wordt voorgesteld (of vul hieronder een bedrag in); daarna per lot of per post aanpasbaar in de tabel</label><div class="fase-list">${lots.map(l => { const rest = restLot(l, soort); const base = vordBase(basis, l, soort); return `<label class="chk"><input type="checkbox" name="lot" value="${l}" ${Math.abs(rest) <= 0.005 ? "disabled" : ""}> <span>${esc(lotName(l))}<small class="muted" style="display:block">rest ${base ? nl(rest / base * 100, 0) : 0} % · ${eur(rest)}</small></span></label>`; }).join("")}</div></div>`}
-      ${isSlot ? "" : `<div class="field span2 vo-lot"><label for="vo_bedrag">${isVoorschot ? "Of een bedrag excl. btw" : "Bedrag excl. btw (optioneel)"}</label><input id="vo_bedrag" name="bedrag" type="number" step="any" min="0" placeholder="${isVoorschot ? "leeg = het % hierboven" : "leeg = het resterende % van de gekozen loten"}" style="max-width:220px"><small class="muted" style="display:block;margin-top:4px">Vul je een bedrag in — bv. een factuur die al verstuurd is — dan worden de percentages zo berekend dat deze vordering precies op dat bedrag uitkomt en wordt het van de rest afgehouden.</small></div>`}
-    </div>`, {
-    saveLabel: "Aanmaken", wide: !isVoorschot,
-    onSave: async (d) => {
-      const f = $("#mform"); const modusPost = perPost && f.dataset.mode === "post";
-      let regels, bedrag = null, fitMsg = "", kiesNa = false;
-      if (modusPost) {
-        const per = {}; let fout = 0;
-        f.querySelectorAll(".pp-in").forEach(inp => { const x = ppInc(inp); if (x === 0) return; if (ppBad(inp, x)) { fout++; return; } (per[inp.dataset.lot] = per[inp.dataset.lot] || []).push({ id: inp.dataset.pp, pct: x }); });
-        if (fout) { toast(`${fout} post${fout > 1 ? "en hebben" : " heeft"} een ongeldig percentage (in het rood).`, 6000); return false; }
-        regels = [];
-        Object.entries(per).forEach(([l, arr]) => { const lot = Number(l), alle = rowsAll.filter(r => r.lot === lot);
-          if (arr.length === alle.length && arr.every(a => Math.abs(a.pct - arr[0].pct) < 1e-9)) regels.push({ lot, post_id: null, pct: arr[0].pct });   // overal hetzelfde: één lot-%
-          else arr.forEach(a => regels.push({ lot, post_id: a.id, pct: a.pct })); });
-        if (!regels.length) { toast("Vul bij minstens één post een percentage in."); return false; }
-      } else {
-      const sel = isVoorschot || isSlot ? lots : [...$("#mform").querySelectorAll('input[name="lot"]:checked')].map(i => Number(i.value));
-      if (!sel.length) { toast("Kies minstens één lot."); return false; }
-      regels = isVoorschot ? sel.map(l => ({ lot: l, post_id: null, pct: (Number(d.pct) || 0) / 100 })) : restRegels(pid, isSlot ? "vordering" : soort, sel, calcs);
-      if (!regels.length) { toast("Er staat niets meer open voor deze loten."); return false; }
-      bedrag = d.bedrag == null || String(d.bedrag).trim() === "" ? null : Number(String(d.bedrag).replace(",", "."));
-      if (bedrag != null && !isSlot) { if (!(bedrag > 0)) { toast("Vul een bedrag groter dan 0 in, of laat het veld leeg."); return false; } const fit = fitRegels(pid, soort, regels, bedrag, calcs); regels = fit.regels; if (Math.abs(fit.tekort) > 0.5) { fitMsg = ` — let op: ${eur(fit.tekort)} meer dan er nog openstaat voor deze loten; percentages op het maximum gezet`; kiesNa = fit.tekort > 0.5; } else fitMsg = ` — percentages afgeleid uit ${eur(bedrag)}`; }
-      }
-      const { data: v, error } = await sb.from("vorderingen").insert({ project_id: pid, nr: nextNr, soort, omschrijving: d.omschrijving.trim(), datum: d.datum || null, status: "opgemaakt", bedrag_excl: bedrag }).select().single();
-      if (error) { toast("Mislukt: " + error.message); return false; }
-      S.vorderingen[v.id] = v;
-      const r2 = await sb.from("vordering_regels").insert(regels.map(r => ({ vordering_id: v.id, lot: r.lot, post_id: r.post_id, pct: r.pct }))).select();
-      if (r2.error) { toast("Regels niet bewaard: " + r2.error.message + (/post_id/.test(r2.error.message) ? " — voer sql/008_vordering_posten.sql uit" : "")); } else (r2.data || []).forEach(r => S.vordering_regels[rowKey("vordering_regels", r)] = r);
-      render(); toast(`${VORD_SOORT[soort]} aangemaakt${fitMsg}`, kiesNa ? 7000 : undefined);
-      if (kiesNa && !r2.error) setTimeout(() => vordFit(v.id, true), 80);   // 1.48.4: meteen de lotkiezer (na het sluiten van dit formulier)
-    },
-  });
-  if (!perPost) return;
-  const f = $("#mform"); f.dataset.mode = "lot";
-  const modus = () => f.querySelector('[name="pp_modus"]:checked').value;
-  const parse = (v) => { const t = String(v || "").replace(",", ".").replace("%", "").trim(); if (!t) return null; const x = Number(t); return isFinite(x) ? x / 100 : NaN; };
-  const ins = [...f.querySelectorAll(".pp-in")]; const eurCel = {}; f.querySelectorAll("[data-ppeur]").forEach(td => eurCel[td.dataset.ppeur] = td);
-  ppInc = (inp) => { const v = parse(inp.value); if (v == null) return 0; if (isNaN(v)) return NaN; return modus() === "totaal" ? v - Number(inp.dataset.cum) : v; };
-  ppBad = (inp, x) => isNaN(x) || x < -1e-9 || x > Math.max(0, 1 - Number(inp.dataset.cum)) + 1e-6;
-  const recalc = () => { let tot = 0; const lotSum = {};
-    ins.forEach(inp => { const x = ppInc(inp), bad = !!inp.value.trim() && ppBad(inp, x); inp.classList.toggle("bad", bad); const e = !bad && x ? x * Number(inp.dataset.amt) : 0; eurCel[inp.dataset.pp].textContent = e ? eur2(e) : "—"; tot += e; lotSum[inp.dataset.lot] = (lotSum[inp.dataset.lot] || 0) + e; });
-    f.querySelectorAll("[data-pplotsum]").forEach(td => { const v = lotSum[td.dataset.pplotsum] || 0; td.textContent = v ? eur2(v) : "—"; }); $("#pp_tot").textContent = eur2(tot); };
-  f.addEventListener("input", (e) => { const t = e.target;
-    if (t.classList.contains("pp-all")) ins.filter(i => i.dataset.lot === t.dataset.pplot && !i.disabled).forEach(i => i.value = t.value);
-    if (t.classList.contains("pp-in") || t.classList.contains("pp-all")) recalc(); });
-  f.querySelectorAll('[name="pp_modus"]').forEach(rb => rb.addEventListener("change", () => {
-    const naarTotaal = modus() === "totaal"; $("#pp_kop").textContent = naarTotaal ? "Klaar in totaal" : "Deze factuur";
-    ins.forEach(i => { const v = parse(i.value); if (v == null || isNaN(v)) return; const n = naarTotaal ? v + Number(i.dataset.cum) : v - Number(i.dataset.cum); i.value = String(Math.round(n * 10000) / 100).replace(".", ","); });
-    f.querySelectorAll(".pp-all").forEach(a => a.value = ""); recalc(); }));
-  f.addEventListener("keydown", (e) => { if (e.key !== "Enter" || !e.target.matches(".pp-in,.pp-all")) return; e.preventDefault();
-    const alle = [...f.querySelectorAll(".pp-all,.pp-in")].filter(i => !i.disabled); const k = alle.indexOf(e.target); if (alle[k + 1]) { alle[k + 1].focus(); alle[k + 1].select(); } });
-  f.querySelectorAll("[data-vomode]").forEach(b => b.onclick = () => { const post = b.dataset.vomode === "post"; f.dataset.mode = post ? "post" : "lot";
-    f.querySelectorAll("[data-vomode]").forEach(x => x.classList.toggle("primary", x === b)); f.querySelectorAll(".vo-lot").forEach(x => x.hidden = post); f.querySelector(".pp-wrap").hidden = !post;
-    if (post) { const eerste = ins.find(i => !i.disabled); if (eerste) eerste.focus(); } });
-  recalc();
-}
-let ppInc = () => 0, ppBad = () => false;
-/* % wijzigen: op lot-niveau (post_id leeg → post-regels van dat lot worden gewist) of op post-niveau */
-async function vordEditPct(vid, lot, raw, postId) {
-  const v = S.vorderingen[vid]; if (!v || vordLocked(v)) return;
-  const n = leesGetal(raw); if (Number.isNaN(n)) { toast(`"${raw}" is geen geldig percentage`, 5000); render(); return; }
-  if (n != null && (n < 0 || n > 100)) { toast("Geef een percentage tussen 0 en 100", 5000); render(); return; }
-  const P = schemaV() >= 33 ? 1e9 : 1e4; const pct = n == null ? null : Math.round(n / 100 * P) / P;
-  if (pct) {   // samen met de andere vorderingen van dezelfde soort nooit ongemerkt meer dan 100 % factureren
-    const calcs = {}; vordOf(v.project_id).filter(x => x.id !== vid).forEach(x => calcs[x.id] = vordCalc(x));
-    const rows = vordRows(v.project_id, v.soort).filter(r => postId ? r.id === postId : r.lot === lot);
-    const over = rows.map(r => ({ r, al: cumPost(v.project_id, calcs, r) })).filter(x => x.al + pct > 1 + 1e-6);
-    if (over.length && !confirm(`Met ${nl(n, 2)} % wordt ${over.length === 1 ? `post ${over[0].r.code}` : `bij ${over.length} posten`} meer dan 100 % gefactureerd (al ${nl(over[0].al * 100, 2)} % in andere vorderingen). Toch bewaren?`)) { render(); return; }
-  }
-  const all = Object.values(S.vordering_regels).filter(r => r.vordering_id === vid && r.lot === lot);
-  const cur = all.find(r => (postId ? r.post_id === postId : !r.post_id));
-  if (cur && pct != null && Math.abs(Number(cur.pct) - pct) < 1e-6) return;
-  if (!cur && pct == null) return;
-  if (pct == null) { const { error } = await sb.from("vordering_regels").delete().eq("id", cur.id); if (error) return toast("Mislukt: " + error.message); delete S.vordering_regels[rowKey("vordering_regels", cur)]; }
-  else if (cur) { const { data, error } = await sb.from("vordering_regels").update({ pct }).eq("id", cur.id).select().single(); if (error) return toast("Mislukt: " + error.message); S.vordering_regels[rowKey("vordering_regels", data)] = data; }
-  else { const { data, error } = await sb.from("vordering_regels").insert({ vordering_id: vid, lot, post_id: postId || null, pct }).select().single(); if (error) return toast("Mislukt: " + error.message + (/post_id|column/.test(error.message) ? " — voer sql/008_vordering_posten.sql uit" : "")); S.vordering_regels[rowKey("vordering_regels", data)] = data; }
-  if (!postId) { const posts = all.filter(r => r.post_id); if (posts.length) { await sb.from("vordering_regels").delete().in("id", posts.map(r => r.id)); posts.forEach(r => delete S.vordering_regels[rowKey("vordering_regels", r)]); } }
-  render();
-}
-async function vordEdit(vid, f, raw) {
-  const v = S.vorderingen[vid]; if (!v) return; let val = raw;
-  if (f === "bedrag_excl") { const n = duizendKeuze(raw, leesGetal(raw)); if (Number.isNaN(n)) { toast(`"${raw}" is geen geldig bedrag`, 5000); render(); return; } val = n == null ? null : r2(n); }
-  if (f === "datum" || f === "vervaldag" || f === "factuur_document") val = raw || null;
-  if (f === "mededeling") { const o = ogmLees(raw); if (Number.isNaN(o)) { toast(`"${raw}" is geen geldige gestructureerde mededeling (12 cijfers met een kloppend controlegetal)`, 6000); render(); return; } val = o; }
-  if (f === "factuur_document" && val) { const d = S.documenten[val]; if (d && !d.gedeeld && !confirm(`"${d.naam}" is nog niet gedeeld met de klant. Nu delen, zodat de klant de factuur in het portaal kan openen?`)) { render(); return; } if (d && !d.gedeeld) await docShare(d.id, true).catch(() => { }); }
-  const heeftB = v.bedrag_excl != null && v.bedrag_excl !== "";
-  if (f === "bedrag_excl" ? (val == null ? !heeftB : heeftB && Math.abs(Number(v.bedrag_excl) - val) < 0.005) : String(v[f] ?? "") === String(val ?? "")) return;
-  if (S.prijsFout && (f === "status" || f === "bedrag_excl")) { toast("De prijzen zijn niet correct geladen — herlaad de pagina (⌘⌥R) vóór je een factuur verstuurt.", 6000); render(); return; }
-  const patch = { [f]: val }; const btwKol = schemaV() >= 33; const c = vordCalc(v);
-  const btwVoor = (B) => Math.abs(c.calcExcl) > 0.005 ? r2(c.calcBtw * B / c.calcExcl) : Math.abs(B) < 0.005 ? 0 : null;   // btw volgens de tarieven van de posten, op het factuurbedrag (nog geen percentages → later)
-  if (f === "status" && val !== "opgemaakt" && (!vordLocked(v) || (btwKol && v.btw_bedrag == null))) {
-    const B = heeftB ? Number(v.bedrag_excl) : r2(c.calcExcl);
-    if (!heeftB) patch.bedrag_excl = B;   // bevriezen op het berekende bedrag
-    if (btwKol) patch.btw_bedrag = btwVoor(B);   // en de btw mee bevriezen (wijzigt de meetstaat nadien, dan blijft de factuur gelijk)
-  }
-  if (f === "status" && val === "opgemaakt" && vordLocked(v)) {
-    if (btwKol) patch.btw_bedrag = null;
-    if (heeftB && confirm(`De factuur gaat terug naar 'Op te maken'. Het bevroren factuurbedrag (${eur2(v.bedrag_excl)}) ook wissen, zodat het opnieuw uit de percentages berekend wordt?\n\nOK = wissen · Annuleren = bewaren (bv. om de percentages erop af te stemmen)`)) patch.bedrag_excl = null;
-  }
-  if (f === "bedrag_excl" && vordLocked(v)) {
-    if (val == null) { toast("Een verzonden of betaalde factuur moet een bedrag hebben", 5000); render(); return; }
-    if (!confirm(`Deze factuur is al ${VORD_STATUS[v.status].toLowerCase()}. Het factuurbedrag wijzigen van ${eur2(v.bedrag_excl)} naar ${eur2(val)} excl. btw?\n\nDoe dit enkel als het bedrag in Yuki ook zo is. De btw wordt mee herrekend en het klantenportaal toont het nieuwe bedrag.`)) { render(); return; }
-    if (btwKol) patch.btw_bedrag = btwVoor(val);
-  }
-  await dbUpdate("vorderingen", vid, patch).catch(() => { });
-}
-/* gegevens voor het tabblad VORDERINGSSTAAT in de Excel-export (klantversie: bevroren bedragen, geen kostprijzen) */
-function vordExportData(p) {
-  const vs = vordOf(p.id); if (!vs.length) return null;
-  const basis = lotBasis(p.id); const lots = Object.keys(basis).map(Number).sort((a, b) => a - b); const calcs = {}; vs.forEach(v => calcs[v.id] = vordCalc(v));
-  const list = vs.map(v => { const c = calcs[v.id]; const excl = c.excl; const btw = c.btw;
-    return { nr: v.nr, soort: v.soort, datum: fmtLong(v.datum), omschrijving: v.omschrijving || VORD_SOORT[v.soort], factuurnummer: v.factuurnummer || "", loten: v.soort === "voorschot" ? "alle loten" : Object.keys(c.perLot).filter(l => Math.abs(c.perLot[l].excl) > 0.005).map(l => lotName(Number(l))).join(", "), excl: Math.round(excl * 100) / 100, btw: Math.round(btw * 100) / 100, incl: Math.round((excl + btw) * 100) / 100, status: VORD_STATUS[v.status] || v.status }; });
-  const loten = [];
-  ["vordering", "meerwerk"].forEach(soort => lots.forEach(l => { const base = vordBase(basis, l, soort); if (Math.abs(base) < 0.005) return;
-    loten.push({ naam: lotName(l), basis: base, meerwerk: soort === "meerwerk", pcts: vs.map(v => (v.soort === "meerwerk") !== (soort === "meerwerk") ? null : (calcs[v.id].perLot[l] ? calcs[v.id].perLot[l].excl / base : null)) });
-    vordRows(p.id, soort).filter(r => r.lot === l).forEach(r => loten.push({ naam: "   " + r.code + " " + r.omschrijving + (r.locatie ? " · " + r.locatie : ""), basis: rowSigned(r), meerwerk: soort === "meerwerk", post: true, pcts: vs.map(v => (v.soort === "meerwerk") !== (soort === "meerwerk") ? null : (calcs[v.id].perPost[r.id]?.pct ?? null)) })); }));
-  return { list, loten, contract: lots.reduce((s, l) => s + basis[l].offerte, 0), meerwerk: lots.reduce((s, l) => s + basis[l].meerwerk, 0) };
-}
-async function vordDel(vid) {
-  const v = S.vorderingen[vid]; if (!v || vordLocked(v) || !confirm(`${VORD_SOORT[v.soort]} ${v.nr ? "#" + v.nr : ""} verwijderen?`)) return;
-  Object.values(S.vordering_regels).filter(r => r.vordering_id === vid).forEach(r => delete S.vordering_regels[rowKey("vordering_regels", r)]);
-  await dbDelete("vorderingen", vid).catch(() => { });
-}
-
-/* export naar het Excel-sjabloon in de projectmap (Documenten/Meetstaat) */
-let templateCache = null; // { name, bytes } — sjabloon één keer per sessie ophalen
-/* ---------- Meetstaat importeren uit een bestaand Excel-bestand ---------- */
-function msImportPick(pid) {
-  if (!window.JSZip || !window.MeetstaatImport) return toast("Importmodule niet geladen — herlaad de pagina.");
-  const inp = document.createElement("input"); inp.type = "file"; inp.accept = ".xlsx,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet";
-  inp.onchange = () => { const f = inp.files && inp.files[0]; if (f) msImportFile(pid, f).catch(err => { loader.fail(); toast("Import: " + err.message); }); };
-  inp.click();
-}
-async function msImportPlaceholders() {
-  // regels van het lege sjabloon: onaangeroerde sjabloonregels (zonder cijfers) worden niet geïmporteerd
-  if (msImportPlaceholders.cache) return msImportPlaceholders.cache;
-  try {
-    if (!templateCache && driveReady()) { const j = await driveCall("template", { match: "MEETSTAAT" }); const bin = atob(j.base64); const bytes = new Uint8Array(bin.length); for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i); templateCache = { name: j.name, bytes }; }
-    if (!templateCache) return [];
-    const t = await window.MeetstaatImport.parse(templateCache.bytes, window.JSZip, []);
-    msImportPlaceholders.cache = t.lots.flatMap(l => l.posts.filter(p => !p._groep).map(p => p.omschrijving.split("\n")[0]));
-  } catch (e) { msImportPlaceholders.cache = []; }
-  return msImportPlaceholders.cache;
-}
-async function msImportFile(pid, file) {
-  const p = S.projecten[pid]; if (!p) return;
-  loader.start("ms.import", "Excel lezen…", 3000);
-  const bytes = new Uint8Array(await file.arrayBuffer());
-  // sjabloonregels ophalen via het Drive-script; duurt dat te lang (of hapert het script), dan zonder verder
-  const ph = await Promise.race([msImportPlaceholders(), new Promise(r => setTimeout(() => r(msImportPlaceholders.cache || []), 8000))]);
-  loader.step("Posten herkennen…");
-  const parsed = await window.MeetstaatImport.parse(bytes, window.JSZip, ph);
-  loader.done("ms.import");
-  if (!parsed.lots.length) return toast("Geen loten met posten gevonden in dit bestand.");
-  const existing = msRows(pid).length;
-  const ov = parsed.overzicht.onvoorzien;
-  const lotRows = parsed.lots.map(l => `<tr><td class="num">${l.lot}</td><td>${esc(l.naam)}${S.loten[l.lot] ? "" : ` <span class="pill late">lot ${l.lot} bestaat niet in het Planbord</span>`}</td><td class="r num">${l.posts.filter(x => !x._groep).length}</td><td class="r num">${eur(l.som)}</td></tr>`).join("");
-  openModal("Meetstaat importeren", `<div class="muted" style="margin-bottom:10px"><b>${esc(file.name)}</b>${parsed.head.titel ? ` · ${esc(parsed.head.titel)}` : ""}</div>
-    <div class="tw" style="max-height:300px;overflow:auto"><table class="t"><thead><tr><th>Lot</th><th>Naam in Excel</th><th class="r">Posten</th><th class="r">Excl. btw</th></tr></thead><tbody>${lotRows}
-    ${ov ? `<tr><td class="num">21</td><td>Onvoorziene kost / extra budget (10 %) <span class="muted">uit het blad OVERZICHT</span></td><td class="r num">1</td><td class="r num">${eur(ov)}</td></tr>` : ""}
-    <tr class="tot"><td></td><td><b>Totaal</b></td><td class="r num"><b>${parsed.posts}</b></td><td class="r num"><b>${eur(parsed.totaal + (ov || 0))}</b></td></tr></tbody></table></div>
-    <div class="form-grid" style="margin-top:12px">
-      ${msProjVast(pid) ? `<div class="field span2"><div class="ms-vast-banner" style="margin:0">🔒 De meetstaat is goedgekeurd door de klant: de posten uit dit bestand komen erbij als <b>meerwerk</b>; de bestaande posten blijven staan.</div><input type="hidden" name="status" value="meerwerk"><input type="hidden" name="mode" value="append"></div>` : `<div class="field"><label for="mi_status">Status van de posten</label><select id="mi_status" name="status"><option value="akkoord">Akkoord (getekend contract)</option><option value="offerte">Offerte</option></select></div>`}
-      ${msProjVast(pid) ? "" : msRows(pid).some(msVast) ? `<div class="field"><label>Dit project heeft al ${existing} posten</label><div class="muted" style="padding:7px 0;font-size:13px">De nieuwe posten komen erbij — vervangen kan niet: de klant keurde al posten goed.</div><input type="hidden" name="mode" value="append"></div>` : existing ? `<div class="field"><label for="mi_mode">Dit project heeft al ${existing} posten</label><select id="mi_mode" name="mode"><option value="replace">Bestaande posten vervangen</option><option value="append">Toevoegen aan de bestaande posten</option></select></div>` : `<div class="field"><label>Bestaande posten</label><div class="muted" style="padding:7px 0">Nog geen — alles wordt nieuw aangemaakt.</div></div>`}
-      ${ov ? `<div class="field span2"><label class="chk"><input type="checkbox" name="budget21" value="1" checked> Onvoorziene kost (10 %) overnemen als post in lot 21</label></div>` : ""}
-    </div>
-    <div class="muted" style="font-size:12px;margin-top:10px">De eenheidsprijs in de Excel is de klantprijs: die komt binnen als prijs met marge 0 %, zodat de totalen exact gelijk blijven. Vul daarna per post de echte kost en marge in. Lege sjabloonregels worden overgeslagen.</div>
-    ${parsed.warnings.length ? `<details style="margin-top:10px"><summary class="muted" style="cursor:pointer">${parsed.warnings.length} opmerking${parsed.warnings.length === 1 ? "" : "en"} bij het inlezen</summary><ul class="muted" style="font-size:12px;margin:6px 0 0 16px">${parsed.warnings.slice(0, 40).map(w => `<li>${esc(w)}</li>`).join("")}</ul></details>` : ""}`, {
-    saveLabel: "Importeren", wide: true,
-    onSave: async (d) => {
-      const rows = window.MeetstaatImport.toRows(parsed, pid, { status: d.status, budget21: !!d.budget21, opmerking: `Import uit ${file.name} · ${fmtLong(todayIso)}` });
-      const missing = [...new Set(rows.map(r => r.lot))].filter(l => !S.loten[l]);
-      if (missing.length) { toast(`Lot ${missing.join(", ")} bestaat niet in het Planbord — voeg dat lot eerst toe onder Instellingen › Loten.`); return false; }
-      if (existing && d.mode !== "replace") {   // 1.48.2: dezelfde meetstaat nog eens toevoegen verdubbelt alles — eerst vragen
-        const sleutel = (r) => r.lot + "|" + String(r.omschrijving || "").trim().toLowerCase().slice(0, 80) + "|" + (Number(r.hoeveelheid) || 0);
-        const al = new Set(msRows(pid).filter(r => r.status !== "vervallen").map(sleutel)); const dubbel = rows.filter(r => al.has(sleutel(r))).length;
-        if (dubbel >= 5 && dubbel >= rows.length * 0.3 && !confirm(`${dubbel} van de ${rows.length} posten in dit bestand staan al in de meetstaat (zelfde lot, omschrijving en hoeveelheid).\n\nToevoegen maakt ze dubbel. Wil je de meetstaat vervangen, kies dan "Bestaande posten vervangen".\n\nOK = toch toevoegen · Annuleren = terug`)) return false;
-      }
-      loader.start("ms.import2", "Posten bewaren…", 4000);
-      let nieuwIds = [], oudWeg = 0;
-      try {
-        // eerst de nieuwe posten bewaren, pas daarna de oude weghalen: mislukt het bewaren, dan blijft de bestaande meetstaat staan
-        const oude = existing && d.mode === "replace" ? msRows(pid).map(r => r.id) : [];
-        const gf = msGefactureerd(oude); if (gf) { loader.fail(); toast(`${gf} bestaande post${gf === 1 ? "" : "en"} sta${gf === 1 ? "at" : "an"} al in een vordering — vervangen zou die facturen wijzigen. Kies "Toevoegen aan de bestaande posten".`, 10000); return false; }
-        S.bulk = true; nieuwIds = [];
-        // sinds script 012 staan kostprijs en marge in meetstaat_prijzen: msInsert splitst dat (klantprijs = prijs met marge 0 %)
-        for (let i = 0; i < rows.length; i += 200) { const ins = await msInsert(rows.slice(i, i + 200), true); nieuwIds.push(...ins.map(r => r.id)); }
-        for (let i = 0; i < oude.length; i += 200) { const { error } = await sb.from("meetstaat_posten").delete().in("id", oude.slice(i, i + 200)); if (error) throw error; oudWeg += Math.min(200, oude.length - i); }
-        bulkKlaar(); await refetch("meetstaat_posten"); loader.done("ms.import2");
-        toast(`${rows.length} posten geïmporteerd uit ${file.name}`);
-      } catch (e) {
-        // half mislukt: zolang er nog geen oude post weg is, de al bewaarde nieuwe posten terug weghalen (geen verdubbeling); anders de nieuwe houden (niets kwijt)
-        if (e && e.ids) nieuwIds.push(...e.ids.filter(id => !nieuwIds.includes(id)));   // posten van de mislukte reeks (prijzen niet bewaard) ook opruimen
-        if (!oudWeg) for (let i = 0; i < nieuwIds.length; i += 200) { try { await sb.from("meetstaat_posten").delete().in("id", nieuwIds.slice(i, i + 200)); } catch (x) { } }
-        bulkKlaar(); loader.fail(); toast(oudWeg ? "Import onderbroken: de nieuwe posten staan erin, maar niet alle oude posten konden weg — kijk de meetstaat na (" + e.message + ")" : "Import mislukt (niets gewijzigd): " + e.message, 9000); await refetch("meetstaat_posten"); return false; }
-    },
-  });
-}
-async function exportMeetstaat(p) {
-  if (!driveReady()) throw new Error("Drive-koppeling niet ingesteld (Instellingen → Drive).");
-  if (!p.drive_folder_id) throw new Error("Dit project heeft nog geen Drive-map (Dossier → map koppelen of aanmaken).");
-  if (!window.JSZip || !window.MeetstaatExport) throw new Error("Exportmodule niet geladen — herlaad de pagina.");
-  loader.start("ms.export", "Sjabloon ophalen…", 9000);
-  if (!templateCache) { const j = await driveCall("template", { match: "MEETSTAAT" }); const bin = atob(j.base64); const bytes = new Uint8Array(bin.length); for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i); templateCache = { name: j.name, bytes }; }
-  loader.step("Meetstaat opbouwen…");
-  const rows = msRows(p.id).filter(msTelt).map(r => ({ lot: r.lot, groep: r.groep, omschrijving: r.omschrijving, locatie: r.locatie, artikelnr: r.artikelnr, hoeveelheid: r.status === "minwerk" ? -Math.abs(Number(r.hoeveelheid) || 0) : Number(r.hoeveelheid) || 0 /* minwerk negatief: in het sjabloon is eindsaldo = hoeveelheid × prijs + kolom T, de tekst WEGGELATEN telt niet mee */, eenheid: r.eenheid, prijs: msVerkoopEP(r), btw: Number(r.btw) || 0, status: r.status }));
-  const { bytes } = await window.MeetstaatExport.build(templateCache.bytes, { project: p, rows, titel: "MEETSTAAT", date: new Date(), vorderingen: vordExportData(p) });
-  loader.step("Wegschrijven in Documenten/Meetstaat…");
-  let b64 = ""; for (let i = 0; i < bytes.length; i += 0x8000) b64 += String.fromCharCode.apply(null, bytes.subarray(i, i + 0x8000)); b64 = btoa(b64);
-  const name = `MEETSTAAT ${(p.klant || "").toUpperCase()}.xlsx`;
-  // nieuwe versie komt in Documenten/Meetstaat/DEF; de vorige versie verhuist naar Documenten/Meetstaat met haar datum in de naam (logboek)
-  const j = await driveCall("put", { folderId: p.drive_folder_id, subpath: "Documenten/Meetstaat/DEF", archiveTo: "Documenten/Meetstaat", name, base64: b64 });
-  const f = j.file; const now = new Date().toISOString();
-  const docs = [{ project_id: p.id, drive_id: f.id, naam: f.name, pad: f.path || "Documenten/Meetstaat/DEF", url: f.url, mime: f.mime || "", grootte: f.size || null, gewijzigd: f.updated || null, gesynct_op: now }]
-    .concat((j.archived || []).map(a => ({ project_id: p.id, drive_id: a.id, naam: a.name, pad: a.path || "Documenten/Meetstaat", url: a.url, mime: a.mime || "", grootte: a.size || null, gewijzigd: a.updated || null, gesynct_op: now })));
-  const { data } = await sb.from("documenten").upsert(docs, { onConflict: "project_id,drive_id" }).select(); (data || []).forEach(d => S.documenten[d.id] = d);
-  loader.done("ms.export"); render(); toast(j.archived && j.archived.length ? `Nieuwe versie bewaard in DEF · vorige versie gearchiveerd als "${j.archived[0].name}"` : `Meetstaat bewaard: ${f.name}`);
-  window.open(f.url, "_blank", "noopener");
-}
-/* bibliotheek beheren (Instellingen) */
-function vPostenBeheer() {
-  if (!msReady()) return `<div class="panel" style="margin-bottom:16px"><div class="panel-head"><h3>Postenbibliotheek meetstaat</h3></div><div class="empty">Voer eerst <code>sql/007_meetstaat.sql</code> uit in Supabase.</div></div>`;
-  const ls = lotenList(); if (S.selLot == null || !S.loten[S.selLot]) S.selLot = ls[0]?.nr;
-  const l = S.loten[S.selLot]; const ps = Object.values(S.posten).filter(x => x.lot === S.selLot).sort((a, b) => a.volgorde - b.volgorde);
-  return `<div class="grid two" style="grid-template-columns: 1fr 2fr;margin-bottom:16px">
-    <div class="panel"><div class="panel-head"><h3>Loten meetstaat</h3></div>
-      <div class="tw"><table class="t"><thead><tr><th></th><th>Lot</th><th class="r" title="Standaardmarge op de kostprijs">Marge</th><th></th></tr></thead><tbody>${ls.map(x => `<tr class="click ${x.nr === S.selLot ? "sel" : ""}" data-sellot="${x.nr}"><td class="num" style="width:36px;color:var(--muted)">${x.nr}</td><td>${esc(x.naam)}<small class="muted" style="display:block">${postenOf(x.nr).filter(p => p.standaard_aan).length} standaard · ${postenOf(x.nr).length} posten${x.buildwise ? " · BBW " + esc(x.buildwise) : ""}</small></td><td class="r" style="width:90px;white-space:nowrap"><input class="inline num" style="width:52px;text-align:right" data-lot="${x.nr}" data-f="marge" type="text" inputmode="decimal" autocomplete="off" value="${pctVeld(Number(x.marge) || 0)}" aria-label="Marge %"> %</td><td style="width:40px"><input type="checkbox" data-lot="${x.nr}" data-f="standaard_aan" ${x.standaard_aan ? "checked" : ""} title="Standaard aan bij nieuw project"></td></tr>`).join("")}</tbody></table></div>
-      <div class="panel-body muted" style="font-size:12px;border-top:1px solid var(--line)">Marge = standaardopslag op de kostprijs voor alle posten van het lot (per post te overschrijven in de meetstaat). Vinkje = lot staat standaard aangevinkt bij "+ Lot toevoegen".</div></div>
-    <div class="panel"><div class="panel-head"><h3>${l ? esc(lotName(l.nr)) : "Posten"}</h3>${l ? `<button class="btn sm primary" data-act="post-new" data-lot="${l.nr}">+ Post</button>` : ""}</div>
-      ${ps.length ? `<div class="tw"><table class="t"><thead><tr><th title="Standaard aan">Std</th><th>Groep</th><th>Omschrijving</th><th>Eenh.</th><th class="r">Richtprijs</th><th>Btw</th><th title="Actief">Act.</th><th></th></tr></thead><tbody>${ps.map(x => `<tr class="${x.actief === false ? "ms-dead" : ""}"><td style="width:32px"><input type="checkbox" data-post="${x.id}" data-f="standaard_aan" ${x.standaard_aan ? "checked" : ""}></td><td style="width:130px"><input class="inline" data-post="${x.id}" data-f="groep" value="${esc(x.groep || "")}"></td><td><input class="inline wide" data-post="${x.id}" data-f="omschrijving" value="${esc(x.omschrijving)}"></td><td style="width:84px"><select class="inline" data-post="${x.id}" data-f="eenheid">${opts(EENHEDEN.map(e => [e, e]), x.eenheid)}</select></td><td style="width:100px"><input class="inline num" data-post="${x.id}" data-f="richtprijs" type="text" inputmode="decimal" autocomplete="off" value="${getalVeld(x.richtprijs)}" title="${x.n ? `mediaan uit ${x.n} waarneming(en), ${eur2(x.prijs_min)} – ${eur2(x.prijs_max)}` : "nog geen data"}"></td><td style="width:78px"><select class="inline" data-post="${x.id}" data-f="btw">${opts([[0.06, "6 %"], [0.21, "21 %"], [0, "0 %"]], Number(x.btw))}</select></td><td style="width:32px"><input type="checkbox" data-post="${x.id}" data-f="actief" ${x.actief !== false ? "checked" : ""}></td><td class="r" style="width:36px"><button class="btn ghost sm danger" data-act="post-del" data-id="${x.id}" aria-label="Verwijderen">✕</button></td></tr>`).join("")}</tbody></table></div>` : `<div class="empty"><b>Geen posten in dit lot</b>Voeg er een toe.</div>`}
-      <div class="panel-body muted" style="font-size:12px;border-top:1px solid var(--line)">Std = komt standaard mee bij "+ Lot toevoegen". Act. uit = blijft bewaard maar verschijnt niet meer in de keuzelijst. Richtprijs = kostprijs excl. btw die als startwaarde in nieuwe meetstaten komt.</div></div></div>`;
-}
-async function postEdit(id, f, raw, checked) {
-  const x = S.posten[id]; if (!x) return; let v = raw;
-  if (f === "standaard_aan" || f === "actief") v = !!checked;
-  else if (f === "richtprijs") { const n = duizendKeuze(raw, leesGetal(raw)); if (Number.isNaN(n) || (n != null && n < 0)) { toast(`"${raw}" is geen geldige prijs`, 5000); render(); return; } v = n == null ? null : r2(n); }
-  else if (f === "btw") v = Number(raw);
-  if (String(x[f] ?? "") === String(v ?? "")) return;
-  await dbUpdate("posten", id, { [f]: v, updated_at: new Date().toISOString() }).catch(() => { });
-}
-async function lotEdit(nr, f, raw, checked) {
-  const l = S.loten[nr]; if (!l) return;
-  if (f !== "marge") { const v = !!checked; if (l[f] === v) return; await dbUpdate("loten", nr, { [f]: v }).catch(() => { }); return; }
-  const n = leesGetal(raw);
-  if (n == null || Number.isNaN(n) || n <= -100 || n > 1000) { toast(n == null ? "Vul een marge in (bv. 15 of 12,5) — leeg laten kan niet bij een lot." : `"${raw}" is geen geldige marge — geef een % tussen -99 en 1000, bv. 15 of 12,5`, 6000); render(); return; }
-  const v = Math.round(n * 100) / 10000;   // % → fractie (de lotmarge heeft 4 decimalen: 12,35 % = 0,1235)
-  if (Math.abs((Number(l.marge) || 0) - v) < 1e-9) return;
-  // posten die de klant al goedkeurde en geen eigen marge hebben, krijgen anders stilletjes een andere klantprijs
-  const geraakt = Object.values(S.meetstaat_posten).filter(r => r.lot === nr && msTelt(r) && !msVast(r) && (r.marge == null || r.marge === "") && ["akkoord", "meerwerk", "minwerk"].includes(r.status));   // 1.65: posten met een goedkeuring uit het portaal houden hun klantprijs (de databank zet hun marge vast)
-  if (geraakt.length) { const np = new Set(geraakt.map(r => r.project_id)).size;
-    if (!confirm(`Let op: ${geraakt.length} goedgekeurde post${geraakt.length > 1 ? "en" : ""} (akkoord, meer- of minwerk) in ${np} project${np > 1 ? "en" : ""} volg${geraakt.length > 1 ? "en" : "t"} de marge van dit lot. Hun klantprijs verandert dan mee, terwijl de klant een andere prijs goedkeurde.\n\nGeef die posten eerst een eigen marge in de meetstaat als hun prijs moet blijven.\n\nToch de marge van ${lotName(nr)} wijzigen naar ${nl(n, 2)} %?`)) { render(); return; } }
-  try { await dbUpdate("loten", nr, { marge: v }); } catch (e) { return; }
-  await refetch("meetstaat_posten"); toast(`Marge ${lotName(nr)}: ${nl(n, 2)} % — klantprijzen herrekend`);
-}
-async function postAdd(lot) {
-  const oms = prompt("Omschrijving van de nieuwe post:"); if (!oms || !oms.trim()) return;
-  const volgorde = Math.max(0, ...postenOf(lot).map(x => x.volgorde)) + 1; const code = `${String(lot).padStart(2, "0")}.${String(postenOf(lot).length + 1).padStart(2, "0")}`;
-  try { await dbInsert("posten", { code, lot, omschrijving: oms.trim(), eenheid: "stk", prijstype: "EP", btw: 0.06, standaard_aan: false, actief: true, volgorde }); toast("Post toegevoegd"); } catch (e) { }
-}
-async function postDel(id) {
-  const x = S.posten[id]; if (!x || !confirm(`"${x.omschrijving}" verwijderen uit de bibliotheek? (Bestaande meetstaten behouden hun regels.)`)) return;
-  await dbDelete("posten", id).catch(() => { });
-}
-const docIcon = (m, n) => /spreadsheet|excel/.test(m) ? "xls" : /word|document/.test(m) ? "doc" : /pdf/.test(m) ? "pdf" : /^image\//.test(m) || /\.(jpe?g|png|heic|gif|webp|tiff?)$/i.test(n) ? "img" : /skp|sketchup|vwx|dwg|dxf/i.test(n) ? "dwg" : "map";
-
+/* 1.72: meetstaat → meetstaat.js · notities, werf, werfverslagen, assistent → werf.js · goedkeuringen en facturatie → facturatie.js */
 /* ---------- render root ---------- */
-const TABS = [["overzicht", "Overzicht"], ["projecten", "Projecten"], ["aankoop", "Facturen", "beheer"], ["taken", "Taken"], ["planning", "Planning"], ["uren", "Uren"], ["contacten", "Contacten"], ["notities", "Notities"], ["voorstellen", "Voorstellen"], ["team", "Team"], ["rapporten", "Rapporten"], ["instellingen", "Instellingen", "beheer"]];
+const TABS = [["overzicht", "Overzicht"], ["mijnwerk", "Mijn werk"], ["projecten", "Projecten"], ["aankoop", "Facturen", "beheer"], ["taken", "Taken"], ["planning", "Planning"], ["uren", "Uren"], ["contacten", "Contacten"], ["notities", "Notities"], ["voorstellen", "Voorstellen"], ["team", "Team"], ["rapporten", "Rapporten"], ["instellingen", "Instellingen", "beheer"]];
 const ACCT_TABS = ["team", "instellingen"];   // 1.51: in het accountmenu (wacht.js) i.p.v. de bovenbalk
 const factTeDoen = () => (typeof afbTeDoen === "function" ? afbTeDoen().length : 0) + (typeof debTeDoen === "function" ? debTeDoen().length : 0) + (typeof yukiTeDoen === "function" ? yukiTeDoen() : 0);   // 1.66: + Yuki-koppeling   // 1.50: badge op Facturen
 let renderPending = false;
@@ -2702,7 +829,8 @@ function render() {
   if (S.loadError) { app.innerHTML = `<div class="login"><div class="card"><h1>Kon de gegevens niet laden</h1><p class="err">${esc(S.loadError)}</p><button class="btn" data-act="logout">Uitloggen</button> <button class="btn primary" data-act="reload">Opnieuw proberen</button></div></div>`; return; }
   if (!S.ready) { app.innerHTML = `<div class="login"><div class="card"><h1>BROS Planbord</h1><p>Gegevens laden…</p></div></div>`; return; }
   if (!S.me) { app.innerHTML = `<div class="login"><div class="card"><h1>Nog geen profiel</h1><p>Je login werkt, maar er is nog geen medewerkersprofiel gekoppeld. Vraag de beheerder om je uit te nodigen, of herlaad de pagina.</p><button class="btn" data-act="logout">Uitloggen</button> <button class="btn primary" data-act="reload">Herladen</button></div></div>`; return; }
-  const views = { overzicht: vOverzicht, projecten: vProjecten, taken: vTaken, planning: vPlanning, uren: vUren, contacten: vContacten, notities: vNotitiesAlle, voorstellen: vVoorstellen, aankoop: (typeof vFactuurTab === "function" ? vFactuurTab : typeof vAankoop === "function" ? vAankoop : vOverzicht), team: vTeam, rapporten: vRapporten, instellingen: vInstellingen };   // 1.50: aankoop = tabblad Facturen (klanten + aannemers)
+  if (schemaV() < SCHEMA_MIN) { app.innerHTML = `<div class="login"><div class="card"><h1>Databank bijwerken</h1><p>Deze versie van het Planbord heeft minstens databasescript ${String(SCHEMA_MIN).padStart(3, "0")} nodig (nu: ${schemaV() ? String(schemaV()).padStart(3, "0") : "onbekend"}). Voer de scripts in de map <code>sql/</code> uit in Supabase (SQL Editor), in volgorde, en herlaad.</p><button class="btn" data-act="logout">Uitloggen</button> <button class="btn primary" data-act="reload">Herladen</button></div></div>`; return; }   // 1.73
+  const views = { overzicht: vOverzicht, mijnwerk: (typeof vMijnWerk === "function" ? vMijnWerk : vOverzicht), projecten: vProjecten, taken: vTaken, planning: vPlanning, uren: vUren, contacten: vContacten, notities: vNotitiesAlle, voorstellen: vVoorstellen, aankoop: (typeof vFactuurTab === "function" ? vFactuurTab : typeof vAankoop === "function" ? vAankoop : vOverzicht), team: vTeam, rapporten: vRapporten, instellingen: vInstellingen };   // 1.50: aankoop = tabblad Facturen (klanten + aannemers)
   // 1.48.3: horizontale/verticale scrollpositie van tabellen (.tw, bv. de vorderingsstaat) bewaren bij het hertekenen — anders springt de tabel terug naar links
   const acctI = typeof acctFocusIndex === "function" ? acctFocusIndex() : -1;   // 1.51: focus in het accountmenu bewaren
   const scrollSleutel = [S.view, S.project, S.ptab].join("|"); const scrolls = app.dataset.scroll === scrollSleutel ? [...app.querySelectorAll(".tw")].map(e => [e.scrollLeft, e.scrollTop]) : [];
@@ -2710,18 +838,20 @@ function render() {
   <header class="top">
     <div class="top-in">
       <div class="brand"><span class="mark">BROS</span><span class="name">Planbord</span></div>
-      <nav class="tabs" aria-label="Hoofdnavigatie">${TABS.filter(([, , r]) => !r || isBeheer()).filter(([k]) => typeof acctMenu !== "function" || !ACCT_TABS.includes(k)).filter(([k]) => k !== "voorstellen" || schemaV() >= 23).filter(([k]) => k !== "aankoop" || (schemaV() >= 47 && typeof vAankoop === "function")).map(([k, l]) => `<button data-nav="${k}" ${S.view === k ? 'aria-current="page"' : ""}>${l}${k === "voorstellen" && voorstellenOpen().length ? ` <span class="cnt" style="background:var(--crit);color:#fff">${voorstellenOpen().length}</span>` : ""}${k === "aankoop" && factTeDoen() ? ` <span class="cnt" style="background:var(--crit);color:#fff">${factTeDoen()}</span>` : ""}</button>`).join("")}</nav>
+      <nav class="tabs" aria-label="Hoofdnavigatie">${TABS.filter(([, , r]) => !r || isBeheer()).filter(([k]) => typeof acctMenu !== "function" || !ACCT_TABS.includes(k)).filter(([k]) => k !== "aankoop" || ((typeof vAankoop === "function"))).filter(([k]) => typeof navMeer !== "function" || !MEER_TABS.includes(k)).map(([k, l]) => `<button data-nav="${k}" ${S.view === k ? 'aria-current="page"' : ""}>${l}${k === "voorstellen" && voorstellenOpen().length ? ` <span class="cnt" style="background:var(--crit);color:#fff">${voorstellenOpen().length}</span>` : ""}${k === "mijnwerk" && typeof mwTeller === "function" && mwTeller() ? ` <span class="cnt" style="background:var(--crit);color:#fff" title="te laat">${mwTeller()}</span>` : ""}${k === "aankoop" && factTeDoen() ?` <span class="cnt" style="background:var(--crit);color:#fff">${factTeDoen()}</span>` : ""}</button>`).join("")}</nav>${typeof navMeer === "function" ? navMeer() : ""}
       <div class="who"><button class="zk-knop" type="button" data-act="zoek" title="Snel zoeken — ⌘K of /"><span>⌕</span><span class="zk-lbl">Zoeken</span><kbd>${/Mac|iPhone|iPad/.test(navigator.platform || navigator.userAgent) ? "⌘" : "Ctrl "}K</kbd></button>${dagRing()}${typeof acctMenu === "function" ? acctMenu() : `<span class="who-cell">${avatar(S.me.id)}<span style="font-weight:600">${esc(S.me.name)}</span></span>${typeof tmKnop === "function" ? tmKnop() : ""}<button class="btn ghost sm" data-act="change-password" title="Wachtwoord wijzigen">Wachtwoord</button><button class="btn ghost sm" data-act="logout" title="Uitloggen">Uitloggen</button>`}</div>
     </div>
     <div class="update" id="updateBar"><span>Er is een nieuwe versie van het Planbord.</span><button class="btn sm primary" data-act="reload">Nu herladen</button><button class="btn sm ghost" data-act="update-later">Later</button></div>
   </header>
-  <main>${(views[S.view] || vOverzicht)()}</main>
+  ${typeof gsmBalk === "function" ? gsmBalk() : ""}
+  <main>${zwaarWacht() ? `<div class="panel" style="margin-top:24px"><div class="empty"><b>Laden…</b><span class="muted">nog even de documenten, verslagen en beelden ophalen</span></div></div>` : (views[S.view] || vOverzicht)()}</main>
   <footer>BROS Planbord v${APP_VERSION}</footer>`;
   app.dataset.scroll = scrollSleutel;
   if (scrolls.length) app.querySelectorAll(".tw").forEach((e, i) => { const k = scrolls[i]; if (k && (k[0] || k[1])) { e.scrollLeft = k[0]; e.scrollTop = k[1]; } });
   if (updateAvailable) $("#updateBar").classList.add("show");
   if (acctI >= 0 && typeof acctFocus === "function") acctFocus(acctI);
   if (typeof vgNaRender === "function") vgNaRender();   // 1.54: de vaste opnamespeler verbergen buiten de vergadering
+  if (typeof uitlegInklappen === "function") uitlegInklappen();   // 1.71: lange uitleg in panelen achter een ⓘ
 }
 let loginMode = "password";
 let loginNotice = URL_AUTH.error ? (/expired|invalid|otp/i.test(URL_AUTH.error) ? "Deze link is vervallen of al gebruikt. Log in met je wachtwoord, of vraag hieronder een nieuwe link aan." : "Inloggen via de link lukte niet: " + URL_AUTH.error.replace(/\+/g, " ")) : "";
@@ -2800,7 +930,8 @@ function vOverzicht() {
   const ps = projects(), lopend = ps.filter(p => p.status === "lopend");
   const ts = Object.values(S.taken), open = ts.filter(t => t.status !== "done"), late = open.filter(isLate);
   const wk0 = mondayOf(todayIso), wk1 = addDays(wk0, 6);
-  const weekHours = hoursOf(h => h.datum >= wk0 && h.datum <= wk1);
+  const weekHours = hoursOf(h => h.datum >= wk0 && h.datum <= wk1), mijnWeek = hoursOf(h => h.user_id === S.me.id && h.datum >= wk0 && h.datum <= wk1);
+  const mijnOpen = open.filter(t => t.assignee === S.me.id), mijnLaat = mijnOpen.filter(isLate).length;   // 1.70: tegels voor jezelf, het team klein eronder
   const wj = typeof vWachtOpJou === "function";   // 1.51: wat al in "Wacht op jou" staat (te laat, vandaag en morgen) niet nog eens tonen
   const mineVol = open.filter(t => t.assignee === S.me.id && !(wj && wjInLijst(t))).sort((a, b) => (a.eind || "9").localeCompare(b.eind || "9")), mineAll = mineVol.length, mine = mineVol.slice(0, 10);
   return `
@@ -2809,19 +940,19 @@ function vOverzicht() {
   ${typeof vWachtOpJou === "function" ? vWachtOpJou() : ""}
   <div class="grid kpi" style="margin-bottom:16px">
     <div class="panel kpi-tile kpi-klik" data-nav="projecten" role="button" tabindex="0" title="Naar Projecten"><div class="eyebrow">Lopende projecten</div><div class="v">${lopend.length}<small>/ ${ps.length}</small></div><div class="d">${ps.filter(p => p.status === "offerte").length} in offerte</div></div>
-    <div class="panel kpi-tile kpi-klik" data-nav="taken" role="button" tabindex="0" title="Naar Taken"><div class="eyebrow">Open taken</div><div class="v">${open.length}</div><div class="d">${open.filter(t => t.status === "busy").length} bezig</div></div>
-    <div class="panel kpi-tile ${late.length ? "crit" : ""}${typeof vWachtOpJou === "function" ? " kpi-klik" : ""}" ${typeof vWachtOpJou === "function" ? `data-wj-act="naar-laat" role="button" tabindex="0" title="Naar de te late taken"` : ""}><div class="eyebrow">Te laat</div><div class="v">${late.length}</div><div class="d">einddatum verstreken</div></div>
-    <div class="panel kpi-tile kpi-klik" data-nav="uren" role="button" tabindex="0" title="Naar Uren"><div class="eyebrow">Uren deze week</div><div class="v">${nl(weekHours)}<small>u</small></div><div class="d">team, wk ${weekNr(todayIso)}</div></div>
+    <div class="panel kpi-tile kpi-klik" data-nav="taken" role="button" tabindex="0" title="Naar Taken"><div class="eyebrow">Mijn open taken</div><div class="v">${mijnOpen.length}</div><div class="d">${mijnOpen.filter(t => t.status === "busy").length} bezig · team ${open.length}</div></div>
+    <div class="panel kpi-tile ${mijnLaat ? "crit" : ""}${typeof vWachtOpJou === "function" ? " kpi-klik" : ""}" ${typeof vWachtOpJou === "function" ? `data-wj-act="naar-laat" role="button" tabindex="0" title="Naar de te late taken"` : ""}><div class="eyebrow">Te laat</div><div class="v">${mijnLaat}</div><div class="d">van jou · team ${late.length}</div></div>
+    <div class="panel kpi-tile kpi-klik" data-nav="uren" role="button" tabindex="0" title="Naar Uren"><div class="eyebrow">Mijn uren deze week</div><div class="v">${nl(mijnWeek)}<small>u</small></div><div class="d">wk ${weekNr(todayIso)} · team ${nl(weekHours)} u</div></div>
   </div>
   ${hartslagMelding()}${vWeekkaart()}
   <div class="grid two">
     <div class="panel" id="mijn-taken"><div class="panel-head"><h3>${wj ? "Mijn volgende taken" : "Mijn taken"}${mineAll > mine.length ? ` <span class="muted" style="font-size:12px;font-weight:400">${mine.length} van ${mineAll}</span>` : ""}</h3><button class="btn ghost sm" data-nav="taken">Alle taken →</button></div>
       ${mine.length ? `<div class="tw"><table class="t"><thead><tr><th></th><th>Taak</th><th>Project</th><th>Deadline</th><th class="r">Uren</th><th>Status</th></tr></thead><tbody>${mine.map(t => taskRow(t, true)).join("")}</tbody></table></div>` : `<div class="empty"><b>${wj ? "Niets meer gepland voor jou" : "Niets open voor jou"}</b>${wj ? "Wat te laat is of vandaag en morgen valt, staat hierboven bij Wacht op jou." : "Maak een taak aan of laat er een aan jou toewijzen."}</div>`}
     </div>
-    <div class="panel"><div class="panel-head"><h3>Uren per project</h3><span class="muted" style="font-size:12px">gepresteerd / gepland</span></div>
+    <div class="panel"><div class="panel-head"><h3>Uren per project</h3><span class="muted" style="font-size:12px">gepresteerd / gepland · ${nl(weekHours)} u deze week</span></div>
       <div class="panel-body" style="display:grid;gap:12px">
-      ${lopend.concat(ps.filter(p => p.status === "offerte")).map(p => { const pl = projPlanned(p.id), dn = projDone(p.id), pct = pl ? Math.min(dn / pl, 1) * 100 : 0; return `
-        <div><div style="display:flex;justify-content:space-between;gap:8px;margin-bottom:4px"><button class="btn ghost sm" style="padding-left:0" data-open="${p.id}">${esc(projName(p))}</button><span class="num">${nl(dn)} / ${nl(pl)} u</span></div><div class="bar"><i class="${dn > pl && pl ? "over" : ""}" style="width:${pct}%"></i></div></div>`; }).join("") || `<div class="empty">Nog geen projecten.</div>`}
+      ${lopend.concat(ps.filter(p => p.status === "offerte")).map(p => ({ p, pl: projPlanned(p.id), dn: projDone(p.id), wk: hoursOf(h => h.project_id === p.id && h.datum >= wk0 && h.datum <= wk1) })).filter(x => x.pl > 0 || x.wk > 0).sort((a, b) => b.wk - a.wk || b.dn - a.dn).slice(0, 8).map(({ p, pl, dn }) => { const pct = pl ? Math.min(dn / pl, 1) * 100 : 0; return `
+        <div><div style="display:flex;justify-content:space-between;gap:8px;margin-bottom:4px"><button class="btn ghost sm" style="padding-left:0" data-open="${p.id}">${esc(projName(p))}</button><span class="num">${nl(dn)} / ${nl(pl)} u</span></div><div class="bar"><i class="${dn > pl && pl ? "over" : ""}" style="width:${pct}%"></i></div></div>`; }).join("") || `<div class="empty">Nog geen geplande of gepresteerde uren.</div>`}
       </div></div>
   </div>
   <div style="margin-top:16px">${ganttHtml(ps.filter(p => p.status !== "afgerond" && p.status !== "verloren"), { compact: true, title: "Timing alle projecten" })}</div>`;
@@ -2866,9 +997,9 @@ function vProjecten() {
 function vProjectDetail(p) {
   const ts = tasksOf(p.id), pl = projPlanned(p.id), dn = projDone(p.id);
   const [st, en] = projSpan(p);
-  const tabs = [["taken", "Taken"], ["notities", "Notities" + (schemaV() >= 14 && notesOf(p.id).length ? ` <span class="cnt">${notesOf(p.id).length}</span>` : "")], ["meetstaat", "Meetstaat"], ["facturatie", "Facturatie"], ["werf", "Werf" + (schemaV() >= 16 && vsOf(p.id).some(v => v.status === "open") ? ` <span class="cnt">${vsOf(p.id).filter(v => v.status === "open").length}</span>` : "")], ["tekenen", "Plannen"]].concat(typeof vKeuzes === "function" && schemaV() >= 35 ? [["keuzes", "Keuzes" + (kzOf(p.id).filter(k => k.status === "gekozen").length ? ` <span class="cnt">${kzOf(p.id).filter(k => k.status === "gekozen").length}</span>` : "")]] : []).concat([["planning", "Planning"], ["uren", "Uren"], ["dossier", "Dossier"]]).concat(schemaV() >= 23 ? [["vragen", "Vragen" + (voorstellenOpen().some(v => v.project_id === p.id) ? ` <span class="cnt" style="background:var(--crit);color:#fff">${voorstellenOpen().filter(v => v.project_id === p.id).length}</span>` : "")]] : []);
-  if (typeof vVergaderingen === "function" && schemaV() >= 51) { const nC = vgOf(p.id).filter(v => v.status === "controle").length; tabs.splice(1, 0, ["vergaderingen", "Vergaderingen" + (nC ? ` <span class="cnt">${nC}</span>` : "")]); }   // 1.54 (script 051)
-  if (typeof vRenders === "function" && schemaV() >= 55) { const i = tabs.findIndex(t => t[0] === "tekenen"); const nB = rdOpdrachten(p.id).filter(o => o.status === "wachtrij" || o.status === "bezig").length; tabs.splice(i >= 0 ? i + 1 : tabs.length, 0, ["renders", "Renders" + (nB ? ` <span class="cnt">${nB}</span>` : "")]); }   // 1.59: renders (renders.js, script 055)
+  const tabs = [["taken", "Taken"], ["notities", "Notities" + (notesOf(p.id).length ? ` <span class="cnt">${notesOf(p.id).length}</span>` : "")], ["meetstaat", "Meetstaat"], ["facturatie", "Facturatie"], ["werf", "Werf" + (vsOf(p.id).some(v => v.status === "open") ? ` <span class="cnt">${vsOf(p.id).filter(v => v.status === "open").length}</span>` : "")], ["tekenen", "Plannen"]].concat((typeof vKeuzes === "function") ? [["keuzes", "Keuzes" + (kzOf(p.id).filter(k => k.status === "gekozen").length ? ` <span class="cnt">${kzOf(p.id).filter(k => k.status === "gekozen").length}</span>` : "")]] : []).concat([["planning", "Planning"], ["uren", "Uren"], ["dossier", "Dossier"]]).concat([["vragen", "Vragen" + (voorstellenOpen().some(v => v.project_id === p.id) ? ` <span class="cnt" style="background:var(--crit);color:#fff">${voorstellenOpen().filter(v => v.project_id === p.id).length}</span>` : "")]]);
+  if (typeof vVergaderingen === "function") { const nC = vgOf(p.id).filter(v => v.status === "controle").length; tabs.splice(1, 0, ["vergaderingen", "Vergaderingen" + (nC ? ` <span class="cnt">${nC}</span>` : "")]); }   // 1.54 (script 051)
+  { const i = tabs.findIndex(t => t[0] === "tekenen"); const nB = Object.values(S.render_opdrachten || {}).filter(o => o.project_id === p.id && (o.status === "wachtrij" || o.status === "bezig")).length;   /* 1.72: renders.js wordt pas bij het openen geladen */ tabs.splice(i >= 0 ? i + 1 : tabs.length, 0, ["renders", "Renders" + (nB ? ` <span class="cnt">${nB}</span>` : "")]); }   // 1.59: renders (renders.js, script 055)
   if (typeof vOntwerp === "function" && typeof oOk === "function" && oOk() && !p.intern) { const i = tabs.findIndex(t => t[0] === "meetstaat"); const nO = oOpenFb(p.id).length; tabs.splice(i >= 0 ? i : tabs.length, 0, ["ontwerp", "Ontwerp" + (nO ? ` <span class="cnt">${nO}</span>` : "")]); }   // 1.63: ontwerptraject + Budgetkompas (ontwerp.js, script 059)
   if (p.intern && typeof vgIntern === "function") tabs.unshift(["intern", "Overzicht"]);
   let body = "";
@@ -2893,9 +1024,10 @@ function vProjectDetail(p) {
   } else if (S.ptab === "werf") {
     body = vWerf(p);
   } else if (S.ptab === "tekenen") {   // tekenmodule (tekenen.js) — NIET verwijderen bij een update
-    body = (typeof p2cSectie === "function" ? p2cSectie(p) : "") + (typeof vTekenen === "function" ? vTekenen(p) : "");   // 1.57: Plannen omzetten met Plan2CAD (plan2cad.js, script 054) boven de tekenmodule — niet verwijderen
-  } else if (S.ptab === "renders" && typeof vRenders === "function") {   // 1.59: renders (renders.js, script 055)
-    body = vRenders(p);
+    // 1.72: tekenmodule + Plan2CAD worden geladen wanneer je dit tabblad opent (modules.js, groep "teken")
+    body = !modOk("teken") ? moduleLaden("Tekenmodule") : (typeof p2cSectie === "function" ? p2cSectie(p) : "") + (typeof vTekenen === "function" ? vTekenen(p) : "");   // 1.57: Plannen omzetten met Plan2CAD (plan2cad.js, script 054) boven de tekenmodule — niet verwijderen
+  } else if (S.ptab === "renders") {   // 1.59: renders (renders.js, script 055) — 1.72: geladen bij het openen
+    body = modOk("renders") && typeof vRenders === "function" ? vRenders(p) : moduleLaden("Renders");
   } else if (S.ptab === "ontwerp" && typeof vOntwerp === "function") {   // 1.63: ontwerptraject + Budgetkompas (ontwerp.js, script 059)
     body = vOntwerp(p);
   } else if (S.ptab === "keuzes") {   // klantenportaal fase 2 (kp-beheer.js)
@@ -2908,7 +1040,7 @@ function vProjectDetail(p) {
     const byTask = ts.map(t => ({ t, d: taskDone(t.id) })).filter(x => x.d > 0 || x.t.uren_gepland > 0 || x.t.status === "done");
     const byUser = users().map(u => ({ u, d: hoursOf(h => h.project_id === p.id && h.user_id === u.id) })).filter(x => x.d > 0);
     const logs = Object.values(S.uren).filter(h => h.project_id === p.id).sort((a, b) => b.datum.localeCompare(a.datum) || String(b.tijd_van || "").localeCompare(String(a.tijd_van || ""))).slice(0, 30);
-    const v10 = schemaV() >= 10;
+    const v10 = true;
     const klantRows = v10 ? Object.values(S.uren).filter(h => h.project_id === p.id && S.taken[h.taak_id]?.uren_klant).sort((a, b) => a.datum.localeCompare(b.datum) || String(a.tijd_van || "").localeCompare(String(b.tijd_van || ""))) : [];
     const klantTot = klantRows.reduce((s, h) => s + (Number(h.uren) || 0), 0);
     const klantPanel = v10 ? `<div class="panel"><div class="panel-head"><div><h3>Wat de klant ziet</h3><div class="muted" style="font-size:12px;margin-top:2px">Uren van taken met de schakelaar <b>Klant</b> aan · ${ts.filter(t => t.uren_klant).length} ${ts.filter(t => t.uren_klant).length === 1 ? "taak" : "taken"}</div></div><div class="actions">${klantRows.length ? `<button class="btn sm" data-act="uren-klant-print" data-pid="${p.id}">Afdrukken / pdf</button>` : ""}</div></div>
@@ -2932,7 +1064,7 @@ function vProjectDetail(p) {
     const docs = docsOf(p.id); const groups = [...new Set(docs.map(d => d.pad || ""))];
     body = vProjectContacten(p) + (typeof vOvereenkomsten === "function" ? vOvereenkomsten(p) : "") + (typeof vWoningdossier === "function" ? vWoningdossier(p) : "") + `<div class="panel" style="margin-bottom:16px"><div class="panel-head"><div><h3>Projectmap op Google Drive</h3><div class="muted" style="font-size:12px;margin-top:2px"><span class="drive-path">${esc(map)}</span></div></div>
       <div class="actions">${p.drive_url ? `<a class="btn" href="${esc(safeUrl(p.drive_url))}" target="_blank" rel="noopener">Open map in Drive ↗</a><button class="btn sm" data-act="drive-list" data-pid="${p.id}">Vernieuwen</button>` : driveReady() ? `<button class="btn sm" data-act="drive-link" data-pid="${p.id}">Bestaande map koppelen</button><button class="btn sm primary" data-act="drive-create" data-pid="${p.id}">Map aanmaken uit sjabloon</button>` : `<span class="pill st-offerte">Drive-koppeling nog niet ingesteld</span>`}</div></div>
-      ${docs.length ? `<div class="panel-body">${schemaV() >= 11 ? `<p class="muted" style="font-size:12px;margin:0 0 10px">Schakelaars bij een bestand: <b>klant</b> = zichtbaar in het klantenportaal${docPerAannemer() ? `, <b>aannemers</b> = zichtbaar voor de aannemers die je kiest (elk ziet enkel wat met hem gedeeld is)` : schemaV() >= 25 ? `, <b>aannemers</b> = zichtbaar voor de aannemers van dit project in hun portaal` : ""} (het bestand wordt dan leesbaar via de link). ${docs.filter(d => d.gedeeld).length} met de klant${schemaV() >= 25 ? `, ${docs.filter(d => d.gedeeld_aannemers).length} met aannemers` : ""} gedeeld.</p>` : ""}<div class="docs">${groups.map(g => `${g ? `<div style="grid-column:1/-1" class="eyebrow">${esc(g)}</div>` : ""}${docs.filter(d => (d.pad || "") === g).map(d => `<div class="doc-wrap ${d.gedeeld ? "shared" : ""}"><a class="doc" href="${esc(safeUrl(d.url))}" target="_blank" rel="noopener" style="text-decoration:none;color:inherit"><div class="ico ${docIcon(d.mime, d.naam)}">${docIcon(d.mime, d.naam) === "map" ? "DOC" : docIcon(d.mime, d.naam).toUpperCase()}</div><div style="min-width:0"><div class="n" style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(d.naam)}</div><div class="s">${d.gewijzigd ? "gewijzigd " + fmtLong(d.gewijzigd.slice(0, 10)) : ""}${d.gedeeld ? ` · <span style="color:var(--ok)">klant</span>` : ""}${d.gedeeld_aannemers ? ` · <span style="color:var(--ok)">${docPerAannemer() ? (docAannOf(d.id).length === 1 ? "1 aannemer" : docAannOf(d.id).length + " aannemers") : "aannemers"}</span>` : ""}</div></div></a>${schemaV() >= 11 ? `<label class="sw-lbl" title="${d.gedeeld ? "Gedeeld met de klant" : "Delen met de klant"}"><input type="checkbox" class="sw" data-dshare="${d.id}" ${d.gedeeld ? "checked" : ""} ${DOC_BUSY.has(d.id) ? "disabled" : ""} aria-label="Delen met de klant"><small>klant</small></label>` : ""}${docPerAannemer() ? `<button type="button" class="btn sm ${docAannOf(d.id).length ? "" : "ghost"} doc-aann" data-act="doc-aann" data-id="${d.id}" ${DOC_BUSY.has(d.id) ? "disabled" : ""} title="${docAannOf(d.id).length ? "Gedeeld met: " + esc(docAannOf(d.id).map(c => S.contacten[c]?.naam || "?").join(", ")) + " — klik om te wijzigen" : "Delen met gekozen aannemers"}">${docAannOf(d.id).length ? "aannemers · " + docAannOf(d.id).length : "+ aannemers"}</button>` : schemaV() >= 25 ? `<label class="sw-lbl" title="${d.gedeeld_aannemers ? "Gedeeld met de aannemers van dit project" : "Delen met de aannemers van dit project"}"><input type="checkbox" class="sw" data-dshare-a="${d.id}" ${d.gedeeld_aannemers ? "checked" : ""} ${DOC_BUSY.has(d.id) ? "disabled" : ""} aria-label="Delen met aannemers"><small>aannemers</small></label>` : ""}</div>`).join("")}`).join("")}</div>
+      ${docs.length ? `<div class="panel-body"><p class="muted" style="font-size:12px;margin:0 0 10px">Schakelaars bij een bestand: <b>klant</b> = zichtbaar in het klantenportaal${docPerAannemer() ? `, <b>aannemers</b> = zichtbaar voor de aannemers die je kiest (elk ziet enkel wat met hem gedeeld is)` : `, <b>aannemers</b> = zichtbaar voor de aannemers van dit project in hun portaal`} (het bestand wordt dan leesbaar via de link). ${docs.filter(d => d.gedeeld).length} met de klant, ${docs.filter(d => d.gedeeld_aannemers).length} met aannemers gedeeld.</p><div class="docs">${groups.map(g => `${g ? `<div style="grid-column:1/-1" class="eyebrow">${esc(g)}</div>` : ""}${docs.filter(d => (d.pad || "") === g).map(d => `<div class="doc-wrap ${d.gedeeld ? "shared" : ""}"><a class="doc" href="${esc(safeUrl(d.url))}" target="_blank" rel="noopener" style="text-decoration:none;color:inherit"><div class="ico ${docIcon(d.mime, d.naam)}">${docIcon(d.mime, d.naam) === "map" ? "DOC" : docIcon(d.mime, d.naam).toUpperCase()}</div><div style="min-width:0"><div class="n" style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(d.naam)}</div><div class="s">${d.gewijzigd ? "gewijzigd " + fmtLong(d.gewijzigd.slice(0, 10)) : ""}${d.gedeeld ? ` · <span style="color:var(--ok)">klant</span>` : ""}${d.gedeeld_aannemers ? ` · <span style="color:var(--ok)">${docPerAannemer() ? (docAannOf(d.id).length === 1 ? "1 aannemer" : docAannOf(d.id).length + " aannemers") : "aannemers"}</span>` : ""}</div></div></a><label class="sw-lbl" title="${d.gedeeld ? "Gedeeld met de klant" : "Delen met de klant"}"><input type="checkbox" class="sw" data-dshare="${d.id}" ${d.gedeeld ? "checked" : ""} ${DOC_BUSY.has(d.id) ? "disabled" : ""} aria-label="Delen met de klant"><small>klant</small></label>${docPerAannemer() ? `<button type="button" class="btn sm ${docAannOf(d.id).length ? "" : "ghost"} doc-aann" data-act="doc-aann" data-id="${d.id}" ${DOC_BUSY.has(d.id) ? "disabled" : ""} title="${docAannOf(d.id).length ? "Gedeeld met: " + esc(docAannOf(d.id).map(c => S.contacten[c]?.naam || "?").join(", ")) + " — klik om te wijzigen" : "Delen met gekozen aannemers"}">${docAannOf(d.id).length ? "aannemers · " + docAannOf(d.id).length : "+ aannemers"}</button>` : `<label class="sw-lbl" title="${d.gedeeld_aannemers ? "Gedeeld met de aannemers van dit project" : "Delen met de aannemers van dit project"}"><input type="checkbox" class="sw" data-dshare-a="${d.id}" ${d.gedeeld_aannemers ? "checked" : ""} ${DOC_BUSY.has(d.id) ? "disabled" : ""} aria-label="Delen met aannemers"><small>aannemers</small></label>`}</div>`).join("")}`).join("")}</div>
         <p class="muted" style="font-size:12px;margin:12px 0 0">Laatst gesynchroniseerd ${docs[0].gesynct_op ? fmtLong(lokDag(docs[0].gesynct_op)) + " " + lokUur(docs[0].gesynct_op) : "—"}${S.driveAuto && S.driveAuto[p.id] && Date.now() - S.driveAuto[p.id] < 15000 ? " · wordt vernieuwd…" : ""}. Bij het openen van dit tabblad wordt de lijst automatisch vernieuwd als ze ouder is dan een uur; anders via "Vernieuwen"; foto's en video's worden niet opgesomd (die open je via de map).</p></div>` : `<div class="empty">${p.drive_url ? "Nog geen bestanden gevonden — klik op Vernieuwen." : "Nog geen map gekoppeld. \"Bestaande map koppelen\" zoekt in PROJECTEN naar een map met de naam uit het veld Drive-map (of de klantnaam)."}</div>`}</div>
       <div class="panel"><div class="panel-head"><h3>Gegevens</h3></div>
       <div class="panel-body"><div class="meta">
@@ -2951,19 +1083,18 @@ function vProjectDetail(p) {
   return `
   <div class="crumb"><button data-back="1">Projecten</button><span>›</span><span>${esc(p.klant)}</span></div>
   <div class="page-head"><div>${projCode(p) ? `<div class="eyebrow">${esc(projCode(p))}${p.projecttype ? " · " + esc(p.projecttype) : ""}</div>` : ""}<h1>${esc(projName(p))}</h1><div class="sub">${esc(p.adres || "")}${(p.postcode || p.gemeente) ? (p.adres ? ", " : "") + esc([p.postcode, p.gemeente].filter(Boolean).join(" ")) : ""}</div></div>
-    <div class="actions">${projStatusKnop(p)}${p.drive_url ? `<a class="btn" href="${esc(safeUrl(p.drive_url))}" target="_blank" rel="noopener" title="Projectmap openen in Google Drive">📁 Drive-map ↗</a>` : (driveReady() ? `<button class="btn" data-act="drive-link" data-pid="${p.id}" title="Bestaande map op Drive koppelen of zoeken">📁 Drive-map koppelen</button>` : "")}${isBeheer() ? `<button class="btn" data-act="edit-project" data-pid="${p.id}">Bewerken</button>` : ""}<button class="btn" data-act="log-hours" data-pid="${p.id}">+ Uren</button>${msReady() ? `<button class="btn" data-act="ms-open" data-pid="${p.id}" title="${msRows(p.id).length ? "Meetstaat openen" : "Meetstaat aanmaken: loten en posten kiezen"}">${msRows(p.id).length ? "Meetstaat" : "+ Meetstaat"}</button>` : ""}<button class="btn primary" data-act="new-task" data-pid="${p.id}">+ Taak</button></div></div>
-  <div class="panel" style="margin-bottom:16px"><div class="panel-body meta">
-    <div><div class="k">Fase</div><div class="v">${esc(faseName(p.fase_nr) || "—")}${schemaV() >= 60 && !p.intern ? `<div class="fase-klant" title="${esc(faseBron(p))}">Klant ziet: <b>${esc(klantStap(p))}</b><small>${esc(faseBron(p))}</small></div>` : ""}</div></div>
-    <div><div class="k">Lead</div><div class="v"><span class="who-cell">${p.lead ? avatar(p.lead) : ""}${esc(userById(p.lead).name)}</span></div></div>
-    <div><div class="k">Timing</div><div class="v num">${fmtLong(st)} → ${fmtLong(en)}</div></div>
-    ${isBeheer() ? `<div><div class="k">Forfait</div><div class="v num">${eur(p.forfait)}</div></div>` : ""}
-    <div><div class="k">Uren</div><div class="v num">${nl(dn)} / ${nl(pl)} u</div></div>
-    <div><div class="k">Taken</div><div class="v num">${ts.filter(t => t.status === "done").length} / ${ts.length} klaar</div></div>
-    ${p.klanttype === "zakelijk" ? `<div><div class="k">Bedrijf</div><div class="v">${esc(p.bedrijf || "—")}${p.btw_nummer ? `<br><span class="num">${esc(p.btw_nummer)}</span>` : ""}</div></div>` : ""}
-    <div><div class="k">Contact</div><div class="v">${esc(p.contact || "—")}${p.gsm1 ? `<br><a href="tel:${esc(p.gsm1)}">${esc(p.gsm1)}</a>` : ""}${p.gsm2 ? ` · <a href="tel:${esc(p.gsm2)}">${esc(p.gsm2)}</a>` : ""}</div></div>
-    <div><div class="k">E-mail</div><div class="v">${[["email1", "factuur_email1"], ["email2", "factuur_email2"]].filter(([e]) => p[e]).map(([e, f]) => `<a href="mailto:${esc(p[e])}">${esc(p[e])}</a>${p[f] ? ` <span class="pill st-offerte" style="font-size:10px">facturatie</span>` : ""}`).join("<br>") || "—"}</div></div>
-  </div></div>
-  <div class="subtabs">${tabs.map(([k, l]) => `<button data-ptab="${k}" aria-current="${S.ptab === k}">${l}</button>`).join("")}</div>
+    <div class="actions">${projStatusKnop(p)}${p.drive_url ? `<a class="btn" href="${esc(safeUrl(p.drive_url))}" target="_blank" rel="noopener" title="Projectmap openen in Google Drive">📁 Drive-map ↗</a>` : (driveReady() ? `<button class="btn" data-act="drive-link" data-pid="${p.id}" title="Bestaande map op Drive koppelen of zoeken">📁 Drive-map koppelen</button>` : "")}${isBeheer() ? `<button class="btn" data-act="edit-project" data-pid="${p.id}">Bewerken</button>` : ""}<button class="btn" data-act="log-hours" data-pid="${p.id}">+ Uren</button>${msReady() && !msRows(p.id).length ? `<button class="btn" data-act="ms-open" data-pid="${p.id}" title="Meetstaat aanmaken: loten en posten kiezen">+ Meetstaat</button>` : ""}<button class="btn primary" data-act="new-task" data-pid="${p.id}">+ Taak</button></div></div>
+  <div class="pmeta">
+    ${faseName(p.fase_nr) || (!p.intern) ? `<span>${faseName(p.fase_nr) ? `<span class="k">Fase</span> ${esc(faseName(p.fase_nr))}` : ""}${!p.intern ? ` <span class="fase-klant-k" title="${esc(faseBron(p))}">${faseName(p.fase_nr) ? "· " : ""}klant ziet <b>${esc(klantStap(p))}</b></span>` : ""}</span>` : ""}
+    ${p.lead ? `<span><span class="k">Lead</span> <span class="who-cell">${avatar(p.lead)}${esc(userById(p.lead).name)}</span></span>` : ""}
+    ${st || en ? `<span><span class="k">Timing</span> <span class="num">${st && en ? fmtLong(st) + " → " + fmtLong(en) : st ? "vanaf " + fmtLong(st) : "tot " + fmtLong(en)}</span></span>` : ""}
+    ${isBeheer() && Number(p.forfait) ? `<span><span class="k">Forfait</span> <span class="num">${eur(p.forfait)}</span></span>` : ""}
+    ${pl || dn ? `<span><span class="k">Uren</span> <span class="num">${nl(dn)} / ${nl(pl)} u</span></span>` : ""}
+    ${ts.length ? `<span><span class="k">Taken</span> <span class="num">${ts.filter(t => t.status === "done").length} / ${ts.length}</span></span>` : ""}
+    ${p.klanttype === "zakelijk" && p.bedrijf ? `<span><span class="k">Bedrijf</span> ${esc(p.bedrijf)}${p.btw_nummer ? ` <span class="num muted">${esc(p.btw_nummer)}</span>` : ""}</span>` : ""}
+    ${p.contact || p.gsm1 || p.email1 ? `<span><span class="k">Contact</span> ${esc(p.contact || "")}${p.gsm1 ? ` <a href="tel:${esc(p.gsm1)}">${esc(p.gsm1)}</a>` : ""}${p.gsm2 ? ` · <a href="tel:${esc(p.gsm2)}">${esc(p.gsm2)}</a>` : ""}${[["email1", "factuur_email1"], ["email2", "factuur_email2"]].filter(([e]) => p[e]).map(([e, f]) => ` <a href="mailto:${esc(p[e])}">${esc(p[e])}</a>${p[f] ? ` <span class="pill st-offerte" style="font-size:10px">facturatie</span>` : ""}`).join("")}</span>` : ""}
+  </div>
+  ${typeof projGroepNav === "function" ? projGroepNav(tabs) : `<div class="subtabs">${tabs.map(([k, l]) => `<button data-ptab="${k}" aria-current="${S.ptab === k}">${l}</button>`).join("")}</div>`}
   ${body}`;
 }
 
@@ -3181,6 +1312,13 @@ function exportProjects() {
 }
 
 /* ---------- Instellingen (beheer): fasen en standaardtaken ---------- */
+/* 1.70: lopende projecten zonder Drive-map (zonder map komt er geen factuur-pdf bij de klant) — één klik koppelt een bestaande map met die naam of maakt ze aan */
+const zonderMap = () => projects().filter(p => (p.status === "lopend" || p.status === "offerte") && !p.intern && !p.drive_folder_id).sort((a, b) => (b.nummer || "").localeCompare(a.nummer || ""));
+function zonderMapPaneel() {
+  const l = zonderMap(); if (!l.length || !driveReady()) return "";
+  return `<div class="panel" style="margin-bottom:16px;border-color:var(--warn)"><div class="panel-head"><div><h3>Projecten zonder Drive-map <span class="cnt" style="background:var(--warn);color:#fff">${l.length}</span></h3><div class="muted" style="font-size:12px;margin-top:2px">Zonder map kan een factuur-pdf niet bij de klant en zie je de documenten niet in het dossier. De knop koppelt een bestaande map in PROJECTEN met die naam, of maakt ze aan uit het sjabloon.</div></div></div>
+    <div class="tw"><table class="t"><tbody>${l.map(p => `<tr><td><a href="#" data-open="${p.id}" data-optab="dossier">${esc(p.nummer ? p.nummer + " · " : "")}${esc(projName(p))}</a></td><td class="muted">${esc(PROJ_STATUS[p.status] || p.status)}</td><td class="r"><button class="btn sm" data-act="drive-create" data-pid="${p.id}">Map koppelen of aanmaken</button></td></tr>`).join("")}</tbody></table></div></div>`;
+}
 function vInstellingen() {
   if (!isBeheer()) return `<div class="empty">Alleen voor beheerders.</div>`;
   const fs = Object.values(S.fasen).sort((a, b) => a.nr - b.nr);
@@ -3188,6 +1326,8 @@ function vInstellingen() {
   const f = S.fasen[S.selFase]; const ts = S.standaardtaken.filter(t => t.fase_nr === S.selFase);
   return `
   <div class="page-head"><div><div class="eyebrow">Beheer</div><h1>Instellingen</h1><div class="sub">Drive-koppeling, postenbibliotheek voor meetstaten, fasen en standaardtaken. Wijzigingen gelden voor wat je hierna aanmaakt; bestaande projecten houden hun taken en meetstaatregels.</div></div></div>
+  ${zonderMapPaneel()}
+  <div class="panel" style="margin-bottom:16px"><div class="panel-head"><div><h3>Weergave</h3></div></div><div class="panel-body"><label class="sw-row"><input type="checkbox" class="sw" data-act-uitleg="1" ${(() => { try { return localStorage.getItem("bros.uitleg") === "1"; } catch (e) { return false; } })() ? "checked" : ""}><span><b>Uitleg in panelen altijd tonen</b><small class="muted" style="display:block">Anders staat lange uitleg achter een ⓘ naast de titel. Geldt voor deze browser.</small></span></label></div></div>
   <div class="panel" style="margin-bottom:16px"><div class="panel-head"><h3>Drive-koppeling</h3><span class="pill ${driveReady() ? "st-afgerond" : "st-offerte"}">${driveReady() ? "ingesteld" : "niet ingesteld"}</span></div>
     <div class="panel-body"><div class="form-grid">
       <div class="field"><label for="dr_url">Web app-URL van het Drive-script</label><input id="dr_url" value="${esc(driveCfg().url || "")}" placeholder="https://script.google.com/macros/s/…/exec"></div>
@@ -3197,7 +1337,7 @@ function vInstellingen() {
   ${vPortaalBeheer()}
   ${vAssistentBeheer()}
   ${typeof vVergaderInstellingen === "function" ? vVergaderInstellingen() : ""}
-  ${typeof vRenderInstellingen === "function" ? vRenderInstellingen() : ""}
+  ${modOk("renders") && typeof vRenderInstellingen === "function" ? vRenderInstellingen() : ""}
   ${vPostenBeheer()}
   ${vStandaardWie()}
   <div class="grid two" style="grid-template-columns: 1fr 1.4fr">
@@ -3218,28 +1358,27 @@ const ogmLees = (raw) => { const d = String(raw || "").replace(/[^0-9]/g, ""); i
 /* Klantenportaal: teksten en overzicht van wie toegang heeft */
 const portaalCfg = () => (S.instellingen.portaal && S.instellingen.portaal.value) || {};
 function vPortaalBeheer() {
-  if (schemaV() < 11) return `<div class="panel" style="margin-bottom:16px"><div class="panel-head"><h3>Klantenportaal</h3><span class="pill st-offerte">nog niet geactiveerd</span></div><div class="panel-body">${SCHEMA_HINT(11)}<p class="muted" style="font-size:12px;margin:0">Daarna: in het Drive-script de <code>PORTAAL.SERVICE_KEY</code> invullen en opnieuw deployen, en in Supabase de portaal-URL toevoegen bij Redirect URLs (zie README).</p></div></div>`;
   const c = portaalCfg(); const url = c.url || (location.origin + location.pathname.replace(/[^/]*$/, "") + "klant/");
   const metLogin = Object.values(S.contacten).filter(x => x.user_id).sort((a, b) => a.naam.localeCompare(b.naam));
   const rolVan = (k) => S.profiles[k.user_id]?.role || (k.soort === "klant" ? "klant" : "aannemer");
   const klanten = metLogin.filter(k => rolVan(k) !== "aannemer"), aannemers = metLogin.filter(k => rolVan(k) === "aannemer"); const urlA = c.url_aannemer || url.replace(/klant\/?$/, "aannemer/");
-  return `<div class="panel" style="margin-bottom:16px"><div class="panel-head"><div><h3>Klantenportaal en aannemersportaal</h3><div class="muted" style="font-size:12px;margin-top:2px">Klanten loggen in op <a href="${esc(safeUrl(url))}" target="_blank" rel="noopener">${esc(url)}</a>${schemaV() >= 25 ? `, aannemers op <a href="${esc(safeUrl(urlA))}" target="_blank" rel="noopener">${esc(urlA)}</a>` : ""}. Toegang geef je per project: Dossier → Contacten → knop in de kolom Portaal.</div></div><span class="pill st-afgerond">${klanten.length} klant${klanten.length === 1 ? "" : "en"}${schemaV() >= 25 ? ` · ${aannemers.length} aannemer${aannemers.length === 1 ? "" : "s"}` : ""} met toegang</span></div>
+  return `<div class="panel" style="margin-bottom:16px"><div class="panel-head"><div><h3>Klantenportaal en aannemersportaal</h3><div class="muted" style="font-size:12px;margin-top:2px">Klanten loggen in op <a href="${esc(safeUrl(url))}" target="_blank" rel="noopener">${esc(url)}</a>, aannemers op <a href="${esc(safeUrl(urlA))}" target="_blank" rel="noopener">${esc(urlA)}</a>. Toegang geef je per project: Dossier → Contacten → knop in de kolom Portaal.</div></div><span class="pill st-afgerond">${klanten.length} klant${klanten.length === 1 ? "" : "en"} · ${aannemers.length} aannemer${aannemers.length === 1 ? "" : "s"} met toegang</span></div>
     <div class="panel-body"><div class="form-grid">
       <div class="field span2"><label for="po_welkom">Welkomtekst (bovenaan de startpagina)</label><textarea id="po_welkom" rows="2">${esc(c.welkom || "")}</textarea></div>
       <div class="field span2"><label for="po_werk">Inleiding bij "Zo werkt het bij BROS" (de fasen uit Instellingen staan eronder)</label><textarea id="po_werk" rows="2">${esc(c.werkwijze || "")}</textarea></div>
       <div class="field span2"><label for="po_contact">Contactblok ("Vragen?")</label><textarea id="po_contact" rows="2">${esc(c.contact || "")}</textarea></div>
-      ${schemaV() >= 36 ? `<div class="field span2" style="border-top:1px solid var(--line);padding-top:10px"><label>In het Engels (voor klanten met taal English — leeg = de Nederlandse tekst)</label></div>
+      <div class="field span2" style="border-top:1px solid var(--line);padding-top:10px"><label>In het Engels (voor klanten met taal English — leeg = de Nederlandse tekst)</label></div>
       <div class="field span2"><label for="po_welkom_en">Welcome text</label><textarea id="po_welkom_en" rows="2">${esc(c.welkom_en || "")}</textarea></div>
       <div class="field span2"><label for="po_werk_en">"How we work at BROS"</label><textarea id="po_werk_en" rows="2">${esc(c.werkwijze_en || "")}</textarea></div>
-      <div class="field span2"><label for="po_contact_en">"Questions?"</label><textarea id="po_contact_en" rows="2">${esc(c.contact_en || "")}</textarea></div>` : ""}
-      ${schemaV() >= 34 ? `<div class="field span2" style="border-top:1px solid var(--line);padding-top:10px"><label>Betalen in het portaal</label><div class="muted" style="font-size:12px">Bij een factuur die nog te betalen is, toont het portaal het rekeningnummer, het bedrag, de gestructureerde mededeling en een QR-code die de klant met zijn bankapp scant. Mededeling, vervaldag en pdf komen uit de Yuki-mail (of vul je in bij Facturatie).</div></div>
+      <div class="field span2"><label for="po_contact_en">"Questions?"</label><textarea id="po_contact_en" rows="2">${esc(c.contact_en || "")}</textarea></div>
+      <div class="field span2" style="border-top:1px solid var(--line);padding-top:10px"><label>Betalen in het portaal</label><div class="muted" style="font-size:12px">Bij een factuur die nog te betalen is, toont het portaal het rekeningnummer, het bedrag, de gestructureerde mededeling en een QR-code die de klant met zijn bankapp scant. Mededeling, vervaldag en pdf komen uit de Yuki-mail (of vul je in bij Facturatie).</div></div>
       <div class="field"><label for="po_iban">IBAN</label><input id="po_iban" autocomplete="off" spellcheck="false" placeholder="BE.. .... .... ...." value="${esc(c.iban ? ibanFmt(c.iban) : "")}"></div>
       <div class="field"><label for="po_bic">BIC (optioneel)</label><input id="po_bic" autocomplete="off" spellcheck="false" value="${esc(c.bic || "")}"></div>
-      <div class="field"><label for="po_begunstigde">Begunstigde (naam op de rekening)</label><input id="po_begunstigde" autocomplete="off" value="${esc(c.begunstigde || "")}" placeholder="bv. BROS BV"></div>` : ""}
-      ${schemaV() >= 62 ? `<div class="field span2" style="border-top:1px solid var(--line);padding-top:10px"><label>Bedrijfsgegevens op het bankdossier</label><div class="muted" style="font-size:12px">De klant downloadt in het portaal (Facturatie) een dossier voor zijn bank bij een verbouwlening: per factuur de vorderingsstaat met de factuur-pdf. Deze gegevens staan bovenaan, samen met de verklaring van de projectverantwoordelijke.</div></div>
+      <div class="field"><label for="po_begunstigde">Begunstigde (naam op de rekening)</label><input id="po_begunstigde" autocomplete="off" value="${esc(c.begunstigde || "")}" placeholder="bv. BROS BV"></div>
+      <div class="field span2" style="border-top:1px solid var(--line);padding-top:10px"><label>Bedrijfsgegevens op het bankdossier</label><div class="muted" style="font-size:12px">De klant downloadt in het portaal (Facturatie) een dossier voor zijn bank bij een verbouwlening: per factuur de vorderingsstaat met de factuur-pdf. Deze gegevens staan bovenaan, samen met de verklaring van de projectverantwoordelijke.</div></div>
       <div class="field"><label for="po_bnaam">Bedrijfsnaam</label><input id="po_bnaam" autocomplete="off" value="${esc(c.bedrijf_naam || "")}" placeholder="bv. BROS BV"></div>
       <div class="field"><label for="po_bbtw">Ondernemings-/btw-nummer</label><input id="po_bbtw" autocomplete="off" value="${esc(c.bedrijf_btw || "")}" placeholder="BE 0123.456.789"></div>
-      <div class="field span2"><label for="po_badres">Adres</label><input id="po_badres" autocomplete="off" value="${esc(c.bedrijf_adres || "")}" placeholder="bv. Kloosterstraat 165, 2000 Antwerpen"></div>` : ""}
+      <div class="field span2"><label for="po_badres">Adres</label><input id="po_badres" autocomplete="off" value="${esc(c.bedrijf_adres || "")}" placeholder="bv. Kloosterstraat 165, 2000 Antwerpen"></div>
       <div class="field span2"><div class="actions"><button class="btn primary" data-act="portaal-save">Bewaren</button><span class="muted" style="font-size:12px">Teamfoto's, functie en biografie voor "Wie is wie": Team → Bewerken.</span></div></div>
     </div>${metLogin.length ? `<div class="tw" style="margin-top:12px"><table class="t"><thead><tr><th>Wie</th><th>Portaal</th><th>E-mail</th><th>Projecten</th><th>Uitgenodigd</th><th>Laatste bezoek</th></tr></thead><tbody>${metLogin.map(k => { const aan = rolVan(k) === "aannemer"; return `<tr class="click" data-contact="${k.id}"><td>${esc(k.naam)}</td><td><span class="pill ${aan ? "st-on_hold" : "st-lopend"}">${aan ? "aannemer" : "klant"}</span></td><td class="muted" style="font-size:12px">${esc(k.email)}</td><td class="muted" style="font-size:12px">${projectsOfContact(k.id).filter(x => aan ? !KLANT_ROLLEN.includes(x.rol) : KLANT_ROLLEN.includes(x.rol)).map(x => esc(x.p.klant)).join(", ") || "—"}</td><td class="num">${k.portaal_sinds ? fmtLong(lokDag(k.portaal_sinds)) : "—"}</td><td class="num">${k.portaal_login ? fmtLong(lokDag(k.portaal_login)) : "nog niet"}</td></tr>`; }).join("")}</tbody></table></div>` : ""}</div></div>`;
 }
@@ -3335,7 +1474,7 @@ async function stDel(id) {
 }
 
 /* ---------- Standaardverantwoordelijken (script 040): wie krijgt een standaardtaak? taak → fase → projectlead ---------- */
-const swReady = () => schemaV() >= 40;
+const swReady = () => true;
 const swNaam = (v) => !v || v === "lead" ? "Projectlead" : (S.profiles[v]?.name || "onbekend");
 const swActief = (id) => { const u = S.profiles[id]; return !!u && u.active !== false && !EXTERN.includes(u.role); };
 /* keuzelijst: bij een taak ook "zoals de fase" ("" = volgt de fase, "lead" = projectlead); bij een fase is "" = projectlead */
@@ -3451,7 +1590,6 @@ async function ktClear(pid, nr) {
   delete S.klant_timing[pid + "|" + nr]; render();
 }
 function vKlantTiming(p) {
-  if (schemaV() < 17) return `<div class="panel" style="margin-top:16px"><div class="panel-head"><h3>Timing voor de klant</h3></div>${SCHEMA_HINT(17)}</div>`;
   const fs = fasenList(); const ts = tasksOf(p.id); const shared = ts.filter(t => t.timing_klant);
   const rows = fs.map(f => { const kt = ktOf(p.id, f.nr); const [ts0, ts1] = ktTaskSpan(p.id, f.nr); const n = ts.filter(t => (t.fase_nr || 0) === f.nr).length; const vast = !!(kt && (kt.start || kt.eind));
     const toon = vast ? `${fmt(kt.start || ts0)} → ${fmt(kt.eind || ts1)}` : ts0 ? `${fmt(ts0)} → ${fmt(ts1)}` : "—";
@@ -3590,15 +1728,15 @@ function projectForm(p = {}) {
     <div class="field"><label for="f_nr">Projectnummer</label><input id="f_nr" name="nummer" value="${esc(p.nummer || "")}" placeholder="automatisch (jaar + volgnummer)" ${isNew ? "" : ""}><span class="muted" style="font-size:12px">${isNew ? "Leeg laten = automatisch volgend nummer" : "Enkel wijzigen als het echt moet"}</span></div>
     <div class="field"><label for="f_lead">Projectlead</label><select id="f_lead" name="lead">${userOpts(p.lead || S.me.id)}</select></div>
     <div class="field"><label for="f_status">Status</label><select id="f_status" name="status">${opts(Object.entries(PROJ_STATUS), p.status || "offerte")}</select></div>
-    <div class="field"><label for="f_fase">Huidige fase</label><select id="f_fase" name="fase_nr">${faseOpts(p.fase_nr || 1, true)}</select>${schemaV() >= 60 && !isNew ? `<label class="chk"><input type="checkbox" name="fase_vast" id="f_fase_vast" ${p.fase_vast ? "checked" : ""}> vastzetten (niet automatisch laten opschuiven)</label><span class="muted" id="f_fase_hint" style="font-size:12px">${p.fase_vast ? "Vastgezet: de fase blijft staan tot je dit uitvinkt." : "Schuift vanzelf vooruit met het werk: taken bezig/klaar, overeenkomst goedgekeurd, ontwerpronde gepubliceerd."}</span>` : ""}</div>
+    <div class="field"><label for="f_fase">Huidige fase</label><select id="f_fase" name="fase_nr">${faseOpts(p.fase_nr || 1, true)}</select>${!isNew ? `<label class="chk"><input type="checkbox" name="fase_vast" id="f_fase_vast" ${p.fase_vast ? "checked" : ""}> vastzetten (niet automatisch laten opschuiven)</label><span class="muted" id="f_fase_hint" style="font-size:12px">${p.fase_vast ? "Vastgezet: de fase blijft staan tot je dit uitvinkt." : "Schuift vanzelf vooruit met het werk: taken bezig/klaar, overeenkomst goedgekeurd, ontwerpronde gepubliceerd."}</span>` : ""}</div>
     <div class="field"><label for="f_forfait">Forfait (€, excl. btw)</label><input id="f_forfait" type="number" step="1" name="forfait" value="${esc(p.forfait ?? "")}"></div>
     <div class="field"><label for="f_start">Start</label><input id="f_start" type="date" name="start" value="${esc(p.start || todayIso)}"></div>
     <div class="field"><label for="f_eind">Geplande oplevering</label><input id="f_eind" type="date" name="eind" value="${esc(p.eind || "")}"></div>
     <div class="field"><label for="f_map">Drive-map</label><input id="f_map" name="drive_map" value="${esc(p.drive_map || "")}" placeholder="PROJECTEN/klantnaam (automatisch)"></div>
     <div class="field verloren"><label for="f_vr">Reden verloren</label><input id="f_vr" name="verloren_reden" value="${esc(p.verloren_reden || "")}" placeholder="bv. prijs, timing, ander bureau"></div>
-    ${schemaV() >= 51 && isBeheer() ? `<div class="field span2"><label class="sw-row"><input type="checkbox" class="sw" name="intern" value="1" ${p.intern ? "checked" : ""}><span><b>Intern project (BROS — Interne werking)</b><small class="muted" style="display:block">Het interne project van BROS: eigen vergaderingen en de interne takenlijst, zichtbaar voor het hele team en nooit voor klanten. Er is er maar één.</small></span></label></div>` : ""}
+    ${isBeheer() ? `<div class="field span2"><label class="sw-row"><input type="checkbox" class="sw" name="intern" value="1" ${p.intern ? "checked" : ""}><span><b>Intern project (BROS — Interne werking)</b><small class="muted" style="display:block">Het interne project van BROS: eigen vergaderingen en de interne takenlijst, zichtbaar voor het hele team en nooit voor klanten. Er is er maar één.</small></span></label></div>` : ""}
     <div class="field span2"><label for="f_not">Notities</label><textarea id="f_not" name="notities">${esc(p.notities || "")}</textarea></div>
-    ${schemaV() >= 23 ? `<div class="field span2"><label class="sw-row"><input type="checkbox" class="sw" name="assistent" ${p.assistent !== false ? "checked" : ""}><span><b>AI-assistent in het klantenportaal</b><small class="muted" style="display:block">Uit bij een moeilijk dossier of geschil: het tabblad Vragen verdwijnt dan voor deze klant.</small></span></label></div>` : ""}
+    <div class="field span2"><label class="sw-row"><input type="checkbox" class="sw" name="assistent" ${p.assistent !== false ? "checked" : ""}><span><b>AI-assistent in het klantenportaal</b><small class="muted" style="display:block">Uit bij een moeilijk dossier of geschil: het tabblad Vragen verdwijnt dan voor deze klant.</small></span></label></div>
     <div class="field span2"><div class="eyebrow" style="margin-top:4px">Extra gegevens <span class="muted" style="font-weight:400;letter-spacing:0;text-transform:none">— niet verplicht, handig voor rapportage en nacalculatie</span></div></div>
     <div class="field"><label for="f_ptype">Type project</label><select id="f_ptype" name="projecttype"><option value="">—</option>${opts(PROJECTTYPES.map(x => [x, x]), p.projecttype || "")}</select></div>
     <div class="field"><label for="f_bron">Hoe kwam de klant bij BROS?</label><select id="f_bron" name="bron"><option value="">—</option>${opts(BRONNEN.map(x => [x, x]), p.bron || "")}</select></div>
@@ -3616,12 +1754,12 @@ function projectForm(p = {}) {
       const row = { klant: d.klant.trim(), naam: d.naam.trim(), klanttype: d.klanttype || "particulier", bedrijf: (d.bedrijf || "").trim(), btw_nummer: (d.btw_nummer || "").trim(), projecttype: d.projecttype || "", bron: d.bron || "", oppervlakte_m2: d.oppervlakte_m2 === "" ? null : Number(d.oppervlakte_m2), btw_tarief: d.btw_tarief === "" ? null : Number(d.btw_tarief), offerte_datum: d.offerte_datum || null, contract_datum: d.contract_datum || null, opgeleverd_op: d.opgeleverd_op || null, verloren_reden: d.status === "verloren" ? d.verloren_reden.trim() : "", tags: d.tags.trim(), contact: d.contact.trim(), adres: d.adres.trim(), postcode: d.postcode.trim(), gemeente: d.gemeente.trim(), gsm1: telFmt(d.gsm1), gsm2: telFmt(d.gsm2), email1: d.email1.trim(), email2: d.email2.trim(), factuur_email1: d.factuur_email1 === "on", factuur_email2: d.factuur_email2 === "on", lead: d.lead || null, status: d.status, fase_nr: d.fase_nr ? Number(d.fase_nr) : null, start: d.start || null, eind: d.eind || null, forfait: d.forfait === "" ? null : Number(d.forfait), drive_map: d.drive_map.trim() || ("PROJECTEN/" + d.klant.trim()), notities: d.notities };
       // Klantnaam gewijzigd terwijl er nog geen Drive-map gekoppeld is en de mapnaam niet zelf aangepast werd → mapnaam volgt de klantnaam
       if (!isNew && !p.drive_folder_id && row.klant !== (p.klant || "") && row.drive_map === (p.drive_map || "")) row.drive_map = "PROJECTEN/" + row.klant;
-      if (schemaV() >= 23) row.assistent = d.assistent === "on";
-      if (schemaV() >= 60 && !isNew) {   // 1.64: fase enkel meesturen als ze echt gewijzigd werd (anders overschrijft een open formulier een automatisch opgeschoven fase)
+      row.assistent = d.assistent === "on";
+      if (!isNew) {   // 1.64: fase enkel meesturen als ze echt gewijzigd werd (anders overschrijft een open formulier een automatisch opgeschoven fase)
         row.fase_vast = d.fase_vast === "on";
         if (!$("#f_fase")?.dataset.gewijzigd) delete row.fase_nr;
       }
-      if (schemaV() >= 51 && isBeheer() && !!d.intern !== !!p.intern) {   // 1.54 (script 051): er is maar één intern project
+      if (isBeheer() && !!d.intern !== !!p.intern) {   // 1.54 (script 051): er is maar één intern project
         const ander = Object.values(S.projecten).find(x => x.intern && x.id !== p.id);
         if (d.intern && ander) { toast(`"${ander.klant}" is al het interne project. Zet het daar eerst uit.`, 6000); return false; }
         row.intern = !!d.intern;
@@ -3708,23 +1846,23 @@ function taskForm(t = {}, pid) {
     <div class="field span2"><label for="t_titel">Taak</label><input id="t_titel" name="titel" required value="${esc(t.titel || "")}" placeholder="bv. Meetstaat opmaken"></div>
     <div class="field"><label for="t_proj">Project</label><select id="t_proj" name="project_id">${projOpts(projectId)}</select></div>
     <div class="field"><label for="t_fase">Fase</label><select id="t_fase" name="fase_nr">${faseOpts(t.fase_nr ?? S.projecten[projectId]?.fase_nr ?? "", true)}</select></div>
-    <div class="field"><label for="t_who">Toegewezen aan</label><select id="t_who" name="assignee">${schemaV() >= 15 ? wieOpts(projectId, t) : userOpts(t.assignee ?? S.me.id, true)}</select></div>
+    <div class="field"><label for="t_who">Toegewezen aan</label><select id="t_who" name="assignee">${wieOpts(projectId, t)}</select></div>
     <div class="field"><label for="t_status">Status</label><select id="t_status" name="status" ${t.bundel && typeof tdOk === "function" && tdOk() ? `disabled title="Een to-dotaak volgt haar checklist"` : ""}>${opts(Object.entries(TASK_STATUS), t.status || "todo")}</select>${t.bundel && typeof tdOk === "function" && tdOk() ? `<small class="muted">Volgt de checklist hieronder.</small>` : ""}</div>
     <div class="field"><label for="t_start">Start</label><input id="t_start" type="date" name="start" value="${esc(t.start || "")}"></div>
     <div class="field"><label for="t_eind">Einde</label><input id="t_eind" type="date" name="eind" value="${esc(t.eind || "")}"></div>
     <div class="field"><label for="t_uren">Geplande uren</label><input id="t_uren" type="number" step="0.5" min="0" name="uren_gepland" value="${esc(t.uren_gepland ?? 0)}"></div>
-    ${schemaV() >= 14 ? `<div class="field"><label for="t_note">Uit verslag</label><select id="t_note" name="notitie_id"><option value="">— geen —</option>${opts(notesOf(projectId).map(n => [n.id, `${fmt(n.datum)} · ${n.titel || NOTE_SOORT[n.soort]}`]), t.notitie_id || "")}</select>${t.notitie_id && S.notities[t.notitie_id] ? `<button type="button" class="btn ghost sm" data-act="note-open" data-id="${t.notitie_id}" style="align-self:flex-start;margin-top:4px">Verslag openen →</button>` : ""}</div>` : ""}
+    <div class="field"><label for="t_note">Uit verslag</label><select id="t_note" name="notitie_id"><option value="">— geen —</option>${opts(notesOf(projectId).map(n => [n.id, `${fmt(n.datum)} · ${n.titel || NOTE_SOORT[n.soort]}`]), t.notitie_id || "")}</select>${t.notitie_id && S.notities[t.notitie_id] ? `<button type="button" class="btn ghost sm" data-act="note-open" data-id="${t.notitie_id}" style="align-self:flex-start;margin-top:4px">Verslag openen →</button>` : ""}</div>
     <div class="field"><label for="t_not">Notitie</label><input id="t_not" name="notitie" value="${esc(t.notitie || "")}"></div>
-    ${schemaV() >= 10 ? `<div class="field span2"><label class="sw-row"><input type="checkbox" class="sw" name="uren_klant" value="1" ${t.uren_klant ? "checked" : ""}><span><b>Gepresteerde uren zichtbaar voor de klant</b><small class="muted" style="display:block">De klant ziet de geregistreerde uren van deze taak, met datum en tijdstip. Staat standaard uit.</small></span></label></div>` : ""}
-    ${schemaV() >= 17 ? `<div class="field span2"><label class="sw-row"><input type="checkbox" class="sw" name="timing_klant" value="1" ${t.timing_klant ? "checked" : ""}><span><b>Timing delen met de klant</b><small class="muted" style="display:block">Titel en van–tot van deze taak verschijnen onder de fase in de planning van het portaal (geen uren, geen wie). Staat standaard uit.</small></span></label></div>` : ""}
+    <div class="field span2"><label class="sw-row"><input type="checkbox" class="sw" name="uren_klant" value="1" ${t.uren_klant ? "checked" : ""}><span><b>Gepresteerde uren zichtbaar voor de klant</b><small class="muted" style="display:block">De klant ziet de geregistreerde uren van deze taak, met datum en tijdstip. Staat standaard uit.</small></span></label></div>
+    <div class="field span2"><label class="sw-row"><input type="checkbox" class="sw" name="timing_klant" value="1" ${t.timing_klant ? "checked" : ""}><span><b>Timing delen met de klant</b><small class="muted" style="display:block">Titel en van–tot van deze taak verschijnen onder de fase in de planning van het portaal (geen uren, geen wie). Staat standaard uit.</small></span></label></div>
     ${typeof afsVelden === "function" ? afsVelden(t, projectId) : ""}
     ${typeof vgTaakLink === "function" ? vgTaakLink(t) : ""}
     ${typeof tdVelden === "function" ? tdVelden(t) : ""}
   </div>`, {
     onSave: async (d) => {
-      const row = { titel: d.titel.trim(), project_id: d.project_id, fase_nr: d.fase_nr ? Number(d.fase_nr) : null, ...(schemaV() >= 15 ? wieSplit(d.assignee) : { assignee: d.assignee || null }), status: d.status, start: d.start || null, eind: d.eind || null, uren_gepland: Number(d.uren_gepland) || 0, notitie: d.notitie , ...(schemaV() >= 14 && "notitie_id" in d ? { notitie_id: d.notitie_id || null } : {}) };
-      if (schemaV() >= 10) row.uren_klant = !!d.uren_klant;
-      if (schemaV() >= 17) row.timing_klant = !!d.timing_klant;
+      const row = { titel: d.titel.trim(), project_id: d.project_id, fase_nr: d.fase_nr ? Number(d.fase_nr) : null, ...(wieSplit(d.assignee)), status: d.status, start: d.start || null, eind: d.eind || null, uren_gepland: Number(d.uren_gepland) || 0, notitie: d.notitie , ...(("notitie_id" in d) ? { notitie_id: d.notitie_id || null } : {}) };
+      row.uren_klant = !!d.uren_klant;
+      row.timing_klant = !!d.timing_klant;
       if (t.bundel && typeof tdOk === "function" && tdOk()) { const tl = S.taken[t.id] || t; row.status = tl.status; if (!d.eind || d.eind === (t.eind || "")) { row.eind = tl.eind || null; if (!d.start) row.start = tl.start || null; } }   // 1.63: de status van een to-dotaak volgt de checklist
       if (row.start && !row.eind) row.eind = row.start; if (row.eind && !row.start) row.start = row.eind; if (row.eind < row.start) row.eind = row.start;
       if (typeof afsUitForm === "function") { const fout = afsUitForm(d, row, t); if (fout) { toast(fout, 6000); return false; } }   // afspraak ter plaatse (script 041)
@@ -3746,14 +1884,14 @@ function hoursForm(h = {}, pid) {
     <div class="field"><label for="h_datum">Datum</label><input id="h_datum" type="date" name="datum" required value="${esc(h.datum || todayIso)}"></div>
     <div class="field"><label for="h_proj">Project</label><select id="h_proj" name="project_id">${projOpts(projectId)}</select></div>
     <div class="field"><label for="h_task">Taak</label><select id="h_task" name="taak_id">${taskOptsFor(projectId, h.taak_id)}</select></div>
-    ${schemaV() >= 10 ? `<div class="field"><label for="h_van">Van <span class="muted">(optioneel)</span></label><input id="h_van" type="time" name="tijd_van" step="900" value="${esc(tijd(h.tijd_van))}"></div>
-    <div class="field"><label for="h_tot">Tot</label><input id="h_tot" type="time" name="tijd_tot" step="900" value="${esc(tijd(h.tijd_tot))}"></div>` : ""}
-    <div class="field"><label for="h_uren">Uren</label><input id="h_uren" type="number" step="0.25" min="0.25" name="uren" required value="${esc(h.uren ?? 1)}">${schemaV() >= 10 ? `<small class="muted" id="h_hint">Vul van/tot in en de uren worden berekend.</small>` : ""}</div>
+    <div class="field"><label for="h_van">Van <span class="muted">(optioneel)</span></label><input id="h_van" type="time" name="tijd_van" step="900" value="${esc(tijd(h.tijd_van))}"></div>
+    <div class="field"><label for="h_tot">Tot</label><input id="h_tot" type="time" name="tijd_tot" step="900" value="${esc(tijd(h.tijd_tot))}"></div>
+    <div class="field"><label for="h_uren">Uren</label><input id="h_uren" type="number" step="0.25" min="0.25" name="uren" required value="${esc(h.uren ?? 1)}"><small class="muted" id="h_hint">Vul van/tot in en de uren worden berekend.</small></div>
     <div class="field"><label for="h_not">Notitie</label><input id="h_not" name="notitie" value="${esc(h.notitie || "")}" placeholder="wat heb je gedaan?"></div>
   </div>`, {
     onSave: async (d) => {
       const row = { user_id: isBeheer() ? d.user_id : (h.user_id || S.me.id), datum: d.datum, project_id: d.project_id, taak_id: d.taak_id || null, uren: Number(d.uren) || 0, notitie: d.notitie };
-      if (schemaV() >= 10) { row.tijd_van = d.tijd_van || null; row.tijd_tot = d.tijd_tot || null; if (row.tijd_van && row.tijd_tot && row.tijd_tot <= row.tijd_van) { toast("Het einduur moet na het beginuur liggen."); return false; } }
+      row.tijd_van = d.tijd_van || null; row.tijd_tot = d.tijd_tot || null; if (row.tijd_van && row.tijd_tot && row.tijd_tot <= row.tijd_van) { toast("Het einduur moet na het beginuur liggen."); return false; }
       const voor = mijnUrenOp(todayIso) - (!isNew && h.user_id === S.me.id && h.datum === todayIso ? Number(h.uren) || 0 : 0);
       if (isNew) await dbInsert("uren", row); else await dbUpdate("uren", h.id, row);
       if (!(isNew && vierUren(row, voor))) toast(`${nl(row.uren)} u geregistreerd`);
@@ -3772,11 +1910,11 @@ function userForm(u) {
     <div class="field"><label for="u_name">Naam</label><input id="u_name" name="name" required value="${esc(u.name || "")}"></div>
     <div class="field"><label for="u_ini">Initialen</label><input id="u_ini" name="initials" maxlength="3" value="${esc(u.initials || "")}"></div>
     <div class="field"><label for="u_color">Kleur</label><select id="u_color" name="color">${opts(PALETTE.map((c, i) => [c, "Kleur " + (i + 1)]), u.color)}</select></div>
-    ${schemaV() >= 11 ? `<div class="field span2" style="border-top:1px solid var(--line);padding-top:10px"><label>Klantenportaal — pagina "Wie is wie"</label></div>
+    <div class="field span2" style="border-top:1px solid var(--line);padding-top:10px"><label>Klantenportaal — pagina "Wie is wie"</label></div>
     <div class="field"><label for="u_functie">Functie</label><input id="u_functie" name="functie" value="${esc(u.functie || "")}" placeholder="bv. Co-founder · Creative Director"></div>
     <div class="field"><label for="u_foto">Foto</label><div style="display:flex;gap:10px;align-items:center">${u.foto_url ? `<img src="${esc(safeSrc(u.foto_url))}" alt="" style="width:44px;height:44px;border-radius:50%;object-fit:cover">` : avatar(u.id)}<input id="u_foto" name="foto" type="file" accept="image/*" style="font-size:12px"></div></div>
     <div class="field span2"><label for="u_bio">Korte biografie (2–3 zinnen)</label><textarea id="u_bio" name="bio" rows="3">${esc(u.bio || "")}</textarea></div>
-    <div class="field span2"><label class="sw-row"><input type="checkbox" class="sw" name="portaal_zichtbaar" ${u.portaal_zichtbaar !== false ? "checked" : ""}><span>Tonen op de pagina "Wie is wie" in het klantenportaal</span></label></div>` : ""}
+    <div class="field span2"><label class="sw-row"><input type="checkbox" class="sw" name="portaal_zichtbaar" ${u.portaal_zichtbaar !== false ? "checked" : ""}><span>Tonen op de pagina "Wie is wie" in het klantenportaal</span></label></div>
     ${isBeheer() ? `<div class="field"><label for="u_role">Rol</label><select id="u_role" name="role">${opts([["medewerker", "Medewerker"], ["beheer", "Beheer"]], u.role)}</select></div>
     <div class="field"><label for="u_active">Actief</label><select id="u_active" name="active"><option value="1" ${u.active !== false ? "selected" : ""}>Ja</option><option value="0" ${u.active === false ? "selected" : ""}>Nee (verbergen)</option></select></div>
     <div class="field"><label for="u_ti">Uurtarief intern (€)</label><input id="u_ti" type="number" step="1" name="intern" value="${esc(tar.intern ?? 0)}"></div>
@@ -3785,7 +1923,7 @@ function userForm(u) {
     onSave: async (d) => {
       const patch = { name: d.name.trim(), initials: (d.initials || d.name.slice(0, 2)).toUpperCase(), color: d.color };
       if (isBeheer()) { patch.role = d.role; patch.active = d.active === "1"; }
-      if (schemaV() >= 11) {
+      {
         patch.functie = (d.functie || "").trim(); patch.bio = (d.bio || "").trim(); patch.portaal_zichtbaar = d.portaal_zichtbaar === "on";
         const f = $("#u_foto")?.files?.[0];
         if (f) { const ext = (f.name.match(/\.([a-z0-9]+)$/i) || [, "jpg"])[1].toLowerCase(); const path = `team/${u.id}.${ext}`;
@@ -3821,7 +1959,7 @@ function zkIndex() {
   const hier = S.project && S.projecten[S.project] ? S.project : null;
   add({ k: "a:uren", type: "actie", ic: "⏱", titel: "Uren registreren", extra: "uren invullen tijd registratie", go: () => hoursForm({}, hier) });
   add({ k: "a:taak", type: "actie", ic: "＋", titel: "Nieuwe taak", extra: "taak toevoegen todo", go: () => taskForm({}, hier) });
-  if (hier && schemaV() >= 14) add({ k: "a:verslag", type: "actie", ic: "📝", titel: "Nieuw verslag", sub: projName(S.projecten[hier]), extra: "notitie vergadering werfverslag", go: () => noteForm({}, hier) });
+  if (hier) add({ k: "a:verslag", type: "actie", ic: "📝", titel: "Nieuw verslag", sub: projName(S.projecten[hier]), extra: "notitie vergadering werfverslag", go: () => noteForm({}, hier) });
   add({ k: "a:contact", type: "actie", ic: "＋", titel: "Nieuw contact", extra: "aannemer leverancier klant toevoegen", go: () => contactForm({}) });
   if (isBeheer()) add({ k: "a:project", type: "actie", ic: "＋", titel: "Nieuw project", extra: "project aanmaken", go: () => projectForm({}) });
   add({ k: "a:dag", type: "actie", ic: "◔", titel: "Jouw dag", extra: "dagring dagdoel uren vandaag geluid animaties", go: () => dagForm() });
@@ -3989,8 +2127,8 @@ document.addEventListener("click", (e) => {
   if (d.act === "gk-new") return gkForm(d.pid, d.soort || null);
   if (d.act === "note-new") return noteForm({}, d.pid);
   if (d.act === "vs-new") return vsForm({}, d.pid);
-  if (d.act === "tk-new") return tkPlanForm(d.pid);   // tekenmodule — niet verwijderen
-  if (d.act === "tk-open") return tkOpen(d.id);
+  if (d.act === "tk-new") return modLaad("teken").then(() => tkPlanForm(d.pid));   // tekenmodule — niet verwijderen (1.72: eerst laden indien nodig)
+  if (d.act === "tk-open") return modLaad("teken").then(() => tkOpen(d.id));
   if (d.act === "am-open") return amOpen(d.pid, d.cid);   // meetstaat met prijzen voor de aannemer (script 032)
   if (d.vs) { e.stopPropagation(); if (!closeModal()) return; return vsForm(S.vaststellingen[d.vs]); }
   if (d.act === "kt-fill") { const [a, b] = ktTaskSpan(d.pid, Number(d.nr)); return ktSave(d.pid, Number(d.nr), { start: a, eind: b }); }
@@ -4027,6 +2165,10 @@ document.addEventListener("click", (e) => {
   if (d.contact) { e.stopPropagation(); const c = S.contacten[d.contact]; if (!c) return toast("Dit contact bestaat niet meer."); return contactForm(c); }
   if (d.act === "vord-del") return vordDel(d.id);
   if (d.act === "vord-fit") return vordFit(d.id);
+  if (d.act === "vord-vast") return vordVastzetten(d.id, true);
+  if (d.act === "vord-los") return vordVastzetten(d.id, false);
+  if (d.act === "vord-kopie") return vordKopieYuki(d.id);
+  if (d.act === "vord-yuki") return vordNaarYuki(d.id);   // 1.73: rechtstreeks in Yuki (proefmodus)
   if (d.act === "post-del") return postDel(d.id);
   if (d.act === "logout") return sb.auth.signOut().then(() => { opruimenNaUitloggen(); location.reload(); });
   if (d.act === "dagring") { dagForm(); return; }
@@ -4066,6 +2208,7 @@ document.addEventListener("change", (e) => {
   if (el.dataset.cfilter) { S.cfilters[el.dataset.cfilter] = el.value; return render(); }
   if (el.dataset.werff) { S.werfF = S.werfF || { status: "actief", wie: "", q: "", groep: false }; S.werfF[el.dataset.werff] = el.type === "checkbox" ? el.checked : el.value; return render(); }
   if (el.dataset.hoursUser != null) { S.hoursUser = el.value; return render(); }
+  if (el.dataset.actUitleg) { try { localStorage.setItem("bros.uitleg", el.checked ? "1" : "0"); } catch (x) { } return render(); }
   if (el.dataset.rapjaar != null) { S.rapJaar = el.value; return render(); }
   if (el.dataset.toggle) { const t = S.taken[el.dataset.toggle]; if (t && typeof tdToggle === "function" && tdToggle(t, el)) return; if (t) { if (el.checked && t.status !== "done") vierTaak(t, el); dbUpdate("taken", t.id, { status: el.checked ? "done" : "todo" }).catch(() => { }); } }
   if (el.dataset.kt && el.type === "date") { const cur = ktOf(el.dataset.pid, Number(el.dataset.kt)); if ((cur?.[el.dataset.f] || "") !== el.value) ktSave(el.dataset.pid, Number(el.dataset.kt), { [el.dataset.f]: el.value || null }); return; }
@@ -4135,8 +2278,8 @@ async function boot() {
 }
 async function start() {
   loader.start("app.load", "Planbord laden…", 2500);
-  try { await loadAll(); if (S.me && S.me.role === "klant") { location.replace("klant/"); return; } if (S.me && S.me.role === "aannemer") { location.replace("aannemer/"); return; } if (S.me && S.me.role === "verwerker") { loader.done("app.load"); $("#app").innerHTML = `<div class="login"><div class="card"><h1>Login van de verwerkingscomputer</h1><p>Deze login is enkel voor de verwerkingscomputer (Mac mini) en kan het Planbord niet gebruiken.</p><button class="btn" data-act="logout">Uitloggen</button></div></div>`; return; } S.ready = true; S.loadError = null; S.laadPoging = 0; render(); loader.done("app.load");
-    if (!S.gestart) { S.gestart = true; subscribe(); if (typeof ovAuto === "function") { setTimeout(ovAuto, 5000); setInterval(ovAuto, 120000); } setInterval(checkVersion, 5 * 60 * 1000); setTimeout(checkVersion, 20000); setInterval(() => { if (document.visibilityState === "visible") refetch("instellingen"); }, 30 * 60000); } }   // 1.48.2: instellingen (o.a. de hartslag van het Drive-script) elk half uur vers   // 1.48: na opnieuw inloggen niet dubbel abonneren
+  try { await loadAll({ gefaseerd: true }); if (S.me && S.me.role === "klant") { location.replace("klant/"); return; } if (S.me && S.me.role === "aannemer") { location.replace("aannemer/"); return; } if (S.me && S.me.role === "verwerker") { loader.done("app.load"); $("#app").innerHTML = `<div class="login"><div class="card"><h1>Login van de verwerkingscomputer</h1><p>Deze login is enkel voor de verwerkingscomputer (Mac mini) en kan het Planbord niet gebruiken.</p><button class="btn" data-act="logout">Uitloggen</button></div></div>`; return; } S.ready = true; S.loadError = null; S.laadPoging = 0; render(); loader.done("app.load");
+    if (!S.gestart) { S.gestart = true; subscribe(); if (typeof modulesVoorladen === "function") modulesVoorladen(); if (typeof ovAuto === "function") { setTimeout(ovAuto, 5000); setInterval(ovAuto, 120000); } setInterval(checkVersion, 5 * 60 * 1000); setTimeout(checkVersion, 20000); setInterval(() => { if (document.visibilityState === "visible") refetch("instellingen"); }, 30 * 60000); } }   // 1.48.2: instellingen (o.a. de hartslag van het Drive-script) elk half uur vers   // 1.48: na opnieuw inloggen niet dubbel abonneren
   catch (e) {
     loader.fail(); S.loadError = e.message || String(e); render();
     // 1.48: even geen verbinding (Supabase/netwerk): zelf opnieuw proberen na 5 s, 15 s, 60 s, daarna elke 2 min.

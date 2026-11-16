@@ -10,7 +10,7 @@
    Niets wijzigt vanzelf de meetstaat: bindend wordt het via de bestaande keuzes en de akkoord-knop.
    ===================================================================== */
 const O = { open: null, urls: {}, pdf: {}, kompas: {}, kLaden: {}, sel: null, hl: null, asp: {}, doek: {} };
-const oOk = () => typeof schemaV === "function" && schemaV() >= 59 && !!S.ontwerp_rondes;
+const oOk = () => (typeof schemaV === "function") && !!S.ontwerp_rondes;
 const O_REACTIE = { open: "Nog te beantwoorden", aangepast: "Aangepast", niet_mogelijk: "Niet mogelijk", afspraak: "Afspraak", genoteerd: "Genoteerd" };
 const O_IMPACT = { geen: "Geen budgetimpact", indicatief: "Indicatief (vork)", akkoord: "Akkoord (bedrag ligt vast)", in_voorstel: "In een meerwerkvoorstel", vervallen: "Vervallen" };
 const O_TYPES = { "application/pdf": "pdf", "image/jpeg": "jpg", "image/png": "png", "image/webp": "webp" };
@@ -242,6 +242,7 @@ function oRondeForm(pid, r) {
 }
 async function oDocMaat(file) {
   if (file.type === "application/pdf") { const pdfjs = await loadPdfJs(); const doc = await pdfjs.getDocument({ data: await file.arrayBuffer(), isEvalSupported: false }).promise; const pg = await doc.getPage(1); const v = pg.getViewport({ scale: 1 }); return { paginas: doc.numPages, w: Math.round(v.width), h: Math.round(v.height) }; }
+  if (typeof laadModule === "function") await laadModule("renders").catch(() => { });   // 1.72: renders.js (met rdMaat) wordt pas geladen wanneer nodig
   const m = typeof rdMaat === "function" ? await rdMaat(file) : null; if (!m) throw new Error("Dit bestand is geen leesbaar beeld."); return { paginas: 1, w: m.w, h: m.h };
 }
 async function oDocOpladen(r, file, titel, bron, bronId) {

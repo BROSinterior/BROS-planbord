@@ -8,7 +8,7 @@
    Drive-map krijgt bij het koppelen of delen meteen zijn map (bestaande map met die naam, anders aangemaakt); vorderingen die al
    lang op "Op te maken" staan, met de Yuki-factuur die erbij lijkt te horen. Het Drive-script probeert elke werkdag zelf opnieuw.
    ===================================================================== */
-const yukiOk = () => schemaV() >= 62 && isBeheer();
+const yukiOk = () => isBeheer();
 const yukiAlle = () => Object.values(S.yuki_facturen || {});
 const yukiOpen = () => yukiAlle().filter(y => y.resultaat !== "gekoppeld" && !y.genegeerd).sort((a, b) => (b.datum || "").localeCompare(a.datum || "") || (b.factuurnummer || "").localeCompare(a.factuurnummer || ""));
 const yukiPdfWacht = () => yukiAlle().filter(y => y.resultaat === "gekoppeld" && y.pdf_drive_id && y.vordering_id && S.vorderingen[y.vordering_id] && !S.vorderingen[y.vordering_id].factuur_document && !y.genegeerd);

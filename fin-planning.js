@@ -14,7 +14,7 @@
    - Scenario's: voorzichtig (enkel offertes met hoge kans, later gestart), verwacht (gewogen met de kans), optimistisch.
    Geladen vóór app.js; app.js roept vFinPlanning aan via vRapporten (typeof).
    ===================================================================== */
-const finOk = () => schemaV() >= 49 && isBeheer() && !!S.fin_plan;
+const finOk = () => isBeheer() && !!S.fin_plan;
 const FIN_STD = { voorschot: 0.3, slot: 0.1, klant_termijn: 15, aannemer_termijn: 30, duur: 4, marge: 0.25, kans: 50, index: 0.02, vz_drempel: 75, vz_vertraging: 1, opt_drempel: 25 };
 const FIN_SCEN = { voorzichtig: "Voorzichtig", verwacht: "Verwacht", optimistisch: "Optimistisch" };
 const FIN_CAT = { lonen: "Lonen en sociale lasten", huur: "Huur en kantoor", wagens: "Wagens en verplaatsingen", verzekeringen: "Verzekeringen", software: "Software en IT", marketing: "Marketing", administratie: "Boekhouding en administratie", financiering: "Leningen en financiering", overig: "Overige" };
@@ -208,7 +208,7 @@ function finGrafiekKasstroom(R) {
 function vFinPlanning() {
   const tabs = finTabs("fin");
   if (!isBeheer()) return tabs + `<div class="panel"><div class="empty"><b>Enkel voor beheer</b></div></div>`;
-  if (schemaV() < 49 || !S.fin_plan) return tabs + `<div class="page-head"><div><div class="eyebrow">Rapporten</div><h1>Financiële planning</h1></div></div><div class="panel"><div class="empty"><b>Nog niet beschikbaar</b>Voer databasescript <code>sql/049_financiele_planning.sql</code> uit in Supabase (SQL Editor) en herlaad.</div></div>`;
+  if (!S.fin_plan) return tabs + `<div class="page-head"><div><div class="eyebrow">Rapporten</div><h1>Financiële planning</h1></div></div><div class="panel"><div class="empty"><b>Nog niet beschikbaar</b>Voer databasescript <code>sql/049_financiele_planning.sql</code> uit in Supabase (SQL Editor) en herlaad.</div></div>`;
   if (S.prijsFout) return tabs + `<div class="page-head"><div><div class="eyebrow">Rapporten</div><h1>Financiële planning</h1></div></div><div class="panel"><div class="empty"><b>Prijzen niet correct geladen</b>Herlaad de pagina (⌘⌥R) — tot dan wordt er niets berekend, om foute cijfers te vermijden.</div></div>`;
   const I = finInst(); const jaar = S.finJaar || todayIso.slice(0, 4); const scen = S.finScen || "verwacht";
   const alle = finModel(scen, true); const model = alle.filter(x => !x.uit); const R = finReeks(model, I, jaar + "-01", jaar + "-12");
@@ -235,7 +235,7 @@ function vFinPlanning() {
   // projecten
   const inJaar = (x) => ({ o: r2(finSom(x.inkomsten.filter(i => i.datum.slice(0, 4) === jaar), i => i.bedrag)), k: x.kostRatio != null ? r2(finSom(x.inkomsten.filter(i => i.datum.slice(0, 4) === jaar), i => i.kost || 0)) : r2(finSom(x.kosten.filter(c => c.datum.slice(0, 4) === jaar), c => c.bedrag)) });
   const relevant = alle.filter(x => x.status !== "afgerond" || inJaar(x).o || inJaar(x).k);
-  const kanUit = schemaV() >= 50; const nUit = relevant.filter(x => x.uit).length;
+  const kanUit = true; const nUit = relevant.filter(x => x.uit).length;
   const groepen = [["Getekend", relevant.filter(x => x.getekend)], ["Offertes", relevant.filter(x => x.status === "offerte")], ["Geraamde projecten (nog niet in het Planbord)", relevant.filter(x => x.geraamd)]];
   const datumVeld = (x, f) => `<input class="inline fin-datum" type="date" data-fin-d="${f}" data-k="${esc(x.key)}" value="${esc(x.geraamd ? (x.f[f] || "") : (x.p[f] || ""))}" aria-label="${f === "start" ? "Start" : "Geplande einde"} ${esc(x.naam)}">`;
   const projRij = (x) => { const j = inJaar(x); const gefT = r2(finSom(x.inkomsten.filter(i => i.soort === "gefactureerd"), i => i.bruto));
@@ -394,7 +394,7 @@ document.addEventListener("click", async (e) => {
 document.addEventListener("change", async (e) => {
   const el = e.target; if (!el || !el.dataset) return;
   if (el.matches("[data-fin-jaar]")) { S.finJaar = el.value; render(); return; }
-  if (el.matches("[data-fin-in]")) { if (schemaV() < 50) return; const aan = el.checked; el.disabled = true;
+  if (el.matches("[data-fin-in]")) { const aan = el.checked; el.disabled = true;
     try { const r = await finZetPlan(el.dataset.k, { meetellen: aan }); if (!r) { toast("Dit project bestaat niet meer."); render(); return; } toast(aan ? "Telt weer mee in de planning" : "Telt niet meer mee in de planning"); } catch (x) { render(); } return; }
   if (el.matches("[data-fin-kans]")) { const raw = el.value.trim(); const n = raw === "" ? null : leesGetal(raw); if (n != null && (!isFinite(n) || n < 0 || n > 100)) { toast("Kans tussen 0 en 100 %."); el.value = ""; return; } try { await finZetPlan(el.dataset.k, { kans: n == null ? null : Math.round(n) }); } catch (x) { } return; }
   if (el.matches("[data-fin-d]")) { const f = el.dataset.finD, k = el.dataset.k, v = el.value || null; const { p, f: fp } = finZoek(k);
@@ -462,6 +462,7 @@ function finXlsxBestand(sheets) {
   return z.generateAsync({ type: "blob", mimeType: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" });
 }
 async function finExcel() {
+  if (typeof laadModule === "function") { try { await laadModule("excel"); } catch (e) { } }   // 1.72: jszip wordt pas geladen wanneer nodig
   if (!window.JSZip) return toast("Excel-module niet geladen — herlaad de pagina.");
   const E = finExportData(); const { R, jaar } = E; const M = R.maanden.map(m => MONTHS[Number(m.slice(5, 7)) - 1] + " " + m.slice(2, 4));
   const k = (t) => ({ v: t, s: 5 }), e2 = (v) => ({ v: r2(v), s: 2 }), col = (i) => String.fromCharCode(66 + i);   // B..M

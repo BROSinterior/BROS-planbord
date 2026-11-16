@@ -6,7 +6,7 @@
    Hooks in app.js: klantTag (☑ 2/5 in takenlijsten), taakformulier (checklist), notitieformulier (per persoon),
    afvinken in een takenlijst. vergaderingen.js: punt → to-do, verslag → notitie.
    ===================================================================== */
-const tdOk = () => typeof schemaV === "function" && schemaV() >= 59 && !!S.taak_punten;
+const tdOk = () => (typeof schemaV === "function") && !!S.taak_punten;
 const tdPunten = (tid) => Object.values(S.taak_punten || {}).filter(p => p.taak_id === tid && !p.los_taak_id)
   .sort((a, b) => (a.volgorde || 0) - (b.volgorde || 0) || (a.created_at || "").localeCompare(b.created_at || ""));
 const tdLos = (tid) => Object.values(S.taak_punten || {}).filter(p => p.taak_id === tid && p.los_taak_id);

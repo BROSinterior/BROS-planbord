@@ -2,6 +2,51 @@
 
 De nieuwste versie staat bovenaan. (Vanaf 1.48 houdt `version.json` enkel de laatste versie bij; het Planbord vraagt dat bestand elke 5 minuten op.)
 
+## 1.73.0 — 2026-11-16 (scripts 064, 065 en 066 uitvoeren, nieuw drive/Code.gs online zetten, pushen; geen update van de Mac mini nodig)
+
+**Mijn werk.** Nieuw hoofdtabblad met één lijst per persoon voor alles wat op je wacht, uit alle projecten en gesorteerd op datum. Het bevat taken, to-do's (met hun open punten), werfpunten en afspraken, plus keuzes, vragen van klanten en meerwerkaanvragen op projecten waar je lead bent. De lijst is gegroepeerd in Te laat, Deze week, Volgende week, Later en Zonder datum, en je kunt filteren per soort. Beheer kan het werk van een collega bekijken. Op de gsm staat Mijn werk in de balk onderaan; Taken staat daar onder Meer. "Wacht op jou" blijft het korte lijstje voor vandaag en morgen.
+**Afspraken uit de Google Agenda in Uren.** De weekagenda toont ook afspraken uit de BROS-agenda die niet via het Planbord gemaakt zijn, grijs met 🗓. Ze verschijnen bij wie ze horen: een deelnemer, of de initialen vooraan in de titel ("PB/ …"). **✓ Uren…** opent het urenformulier met de tijden en de titel al ingevuld. **✕** verbergt een afspraak (bewaard in de databank). Privé-afspraken tonen enkel "Bezet". Dit vraagt het nieuwe Drive-script.
+**Rechtstreeks factureren in Yuki (proefmodus).** Bij een vordering die Klaar voor Yuki staat, verschijnt **Naar Yuki…**. Zolang het Drive-script geen `YUKI_FACTUUR_ADMIN_ID` heeft, gaat er niets naar Yuki: je ziet enkel wat Yuki zou krijgen, met de regels per btw-tarief, de klant, de vervaldag en de waarschuwingen. Vul eerst het id van een proefadministratie in, en de btw-codes `YUKI_BTW_6` en `YUKI_BTW_21`. Daarna komt de factuur in Yuki bij **Te verzenden**: geen mail aan de klant, en je verwerkt ze zelf. Het script controleert dat het bedrag exact het vastgezette bedrag is, en stuurt een vordering hooguit één keer door (script 066).
+**Opgeruimd.** De code voor databanken ouder dan script 063 is weg (±160 controles minder). Een te oude databank krijgt een duidelijke melding in plaats van halve schermen.
+**Beheer.**
+- `deploy/versie.sh` zet de versie in één keer overal (APP_VERSION, alle ?v=, version.json).
+- `deploy/online-zetten.sh` voert na jouw akkoord de openstaande databasescripts uit en zet het Drive-script online met clasp (zie deploy/LEESMIJ.md).
+- `verwerker/HERSTARTEN.md` en `verwerker/herstart-controle.sh` regelen dat de Mac mini na een stroomonderbreking vanzelf terug opstart.
+
+## 1.72.0 — 2026-11-16 (script 065)
+
+**Sneller laden, minder verkeer bij Supabase.**
+- Elke wijziging laat nu een korte regel na in een logboek (script 065): welke tabel, welke rij, zonder inhoud. Het Planbord luistert nog maar op **één** live-verbinding in plaats van ±60.
+- Na een pauze (laptop dicht, ander tabblad) haalt het Planbord enkel op wat sindsdien veranderde, in plaats van de volledige databank. Dat gebeurt al na 30 seconden weg.
+- De zware tabellen (documenten, verslagpunten, renders, werffoto's …) komen pas ná het eerste scherm binnen. Overzicht, Mijn werk, Taken, Planning en Uren staan er meteen; de andere schermen tonen heel even "Laden…".
+
+**Modules bij gebruik.** De tekenmodule met Plan2CAD, Renders en de Excel-import en -export laden pas wanneer je ze opent, of stil enkele seconden na het opstarten. app.js is opgesplitst: meetstaat.js, werf.js en facturatie.js, met ongewijzigde code.
+
+## 1.71.0 — 2026-11-16 (nieuw drive/Code.gs online zetten + eenmalig instellingenBewaren en openbareLinksOpruimen; pushen)
+
+**Navigatie.**
+- Het hoofdmenu bevat Overzicht, Projecten, Facturen, Taken, Planning en Uren, met **Meer ▾** voor Contacten, Notities, Voorstellen en Rapporten.
+- Op de gsm staat een vaste balk onderaan.
+- Een project heeft 5 groepen (Werk, Ontwerp, Geld, Werf, Dossier) met hun tabbladen; elke groep onthoudt het laatst gebruikte tabblad.
+- De projectkop is compact en toont enkel wat ingevuld is.
+- Lange uitleg in panelen staat achter een ⓘ. Bij Instellingen › Weergave zet je de uitleg altijd open.
+
+**Documenten via het portaal.** Klanten en aannemers openen een pdf of beeld enkel nog na login, via het Drive-script, en niet meer via een openbare Drive-link. Een doorgestuurde link opent dus niets meer. Nieuwe factuur-pdf's krijgen geen openbare link meer (`DOCUMENTEN_PRIVE`). Met `openbareLinksProef()` en daarna `openbareLinksOpruimen()` sluit je de bestaande links.
+
+**Eén Drive-script.** De 5 vaste waarden (mappen, Supabase-URL en -sleutel, bot-e-mail) staan in de scripteigenschappen: voer één keer `instellingenBewaren()` uit. Daarna volstaat drive/Code.gs uit de repository.
+
+## 1.70.0 — 2026-11-16 (script 064)
+
+**Klaar voor Yuki.** Een vordering op Op te maken kun je vastzetten. Het bedrag en de btw liggen dan vast, ook als de meetstaat nadien wijzigt. Zo is het bedrag in Yuki altijd exact hetzelfde en koppelt het script de factuur automatisch. **Kopiëren voor Yuki** zet de klant, de omschrijving en de bedragen per btw-tarief op het klembord. **Losmaken** zet de vordering terug.
+**Gezien, Later en "niet gewerkt"** staan in de databank in plaats van in de browser, dus hetzelfde op laptop en gsm (script 064).
+**Projecten zonder Drive-map.** Bij Instellingen staat een lijst met één knop per project, en Wacht op jou meldt ze.
+**Rustiger beeld.**
+- De tellers zijn rond en cijfers staan in het gewone lettertype.
+- Knoppen lopen niet meer over twee regels.
+- Het Overzicht toont tegels voor jezelf (met het team eronder) en enkel projecten met uren of planning.
+
+**Tests in de repository.** In de map `tests/` staan ±280 controles; GitHub voert ze uit bij elke push (`.github/workflows/tests.yml`).
+
 ## 1.69.0 — 2026-11-16 (enkel pushen; geen databasescript, geen nieuw Drive-script, geen update van de Mac mini)
 
 **Uren als weekagenda.** Het tabblad Uren toont nu je week als agenda (ma–vr, 7–19 u, ruimer als er iets buiten valt; weekend op vraag). Je ziet meteen wat al ingegeven is: elke registratie is een blok in de kleur van het project, met per dag het totaal en een balkje tegenover je dagdoel. **Slepen over een leeg vak** = nieuwe registratie voor dat tijdvak (het formulier staat klaar met datum, van, tot, uren en het project waar je laatst op werkte); één klik = één uur. **Een blok slepen** = verplaatsen (ook naar een andere dag), **de onderrand slepen** = langer of korter, **klikken** = bewerken. Uren zonder tijdstip staan als kaartje boven de dag. Op een gsm: tikken = één uur, de agenda scrolt opzij.

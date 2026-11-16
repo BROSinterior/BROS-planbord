@@ -28,13 +28,57 @@ function uwBezig() { return !!(UW.drag && UW.drag.actief); }
 
 /* ---------- afspraken die als uren klaarstaan ---------- */
 const uwVerborgenSleutel = (uid) => "bros.uw.weg." + uid;
-function uwVerborgen(uid) { try { return new Set(JSON.parse(localStorage.getItem(uwVerborgenSleutel(uid)) || "[]")); } catch (e) { return new Set(); } }
-function uwVerberg(uid, tid) { try { const l = [...uwVerborgen(uid)].filter(x => x !== tid).concat(tid).slice(-400); localStorage.setItem(uwVerborgenSleutel(uid), JSON.stringify(l)); } catch (e) { } }
+/* 1.70 (script 064): "niet gewerkt" in de databank (mijn_markeringen, soort uw) — ook zichtbaar in het teamoverzicht en op elk toestel */
+const uwDbOk = () => typeof schemaV === "function" && schemaV() >= 64 && !!S.mijn_markeringen;
+function uwLokaal(uid) { try { return JSON.parse(localStorage.getItem(uwVerborgenSleutel(uid)) || "[]") || []; } catch (e) { return []; } }
+function uwVerborgen(uid) {
+  const l = new Set(uwLokaal(uid)); if (!uwDbOk()) return l;
+  if (S.me && uid === S.me.id && l.size) { const vlag = "bros.uw.db." + uid; let al = false; try { al = !!localStorage.getItem(vlag); if (!al) localStorage.setItem(vlag, "1"); } catch (e) { al = true; }
+    if (!al) { const rijen = [...l].slice(-200).map(t => ({ user_id: uid, soort: "uw", sleutel: t })); sb.from("mijn_markeringen").upsert(rijen).then(({ error }) => { if (!error) rijen.forEach(r => S.mijn_markeringen[rowKey("mijn_markeringen", r)] = r); }); } }
+  Object.values(S.mijn_markeringen).forEach(m => { if (m.user_id === uid && m.soort === "uw") l.add(m.sleutel); });
+  return l;
+}
+function uwVerberg(uid, tid) {
+  if (uwDbOk()) { const rij = { user_id: uid, soort: "uw", sleutel: tid, updated_at: new Date().toISOString() }; S.mijn_markeringen[rowKey("mijn_markeringen", rij)] = rij;
+    sb.from("mijn_markeringen").upsert(rij).then(({ error }) => { if (error) { toast("Niet bewaard: " + error.message, 5000); delete S.mijn_markeringen[rowKey("mijn_markeringen", rij)]; render(); } }); return; }
+  try { const l = [...uwVerborgen(uid)].filter(x => x !== tid).concat(tid).slice(-400); localStorage.setItem(uwVerborgenSleutel(uid), JSON.stringify(l)); } catch (e) { }
+}
 /** de afspraak (taak) als tijdvak: { d, van, tot } in minuten; zonder einduur = 1 uur */
 function uwAfsVak(t) {
   const van = uwMin(t.afspraak_van); if (!t.start || van == null) return null;
   let tot = uwMin(t.afspraak_tot); if (tot == null || tot <= van) tot = Math.min(van + 60, 24 * 60);
   return { d: t.start, van, tot };
+}
+/* ---------- 1.73: afspraken uit de Google Agenda die niet via het Planbord gemaakt zijn (Drive-script, actie agendaweek) ---------- */
+const UW_GA = {};   // week → { t, items, bezig, fout }
+function uwGaWeek(ws) {
+  if (typeof driveReady !== "function" || !driveReady()) return [];
+  const c = UW_GA[ws];
+  if (c && (c.bezig || Date.now() - c.t < 5 * 60000)) return (c && c.items) || [];
+  UW_GA[ws] = { t: Date.now(), bezig: true, items: c && c.items };
+  driveCall("agendaweek", { van: ws, tot: addDays(ws, 6) })
+    .then(j => { UW_GA[ws] = { t: Date.now(), items: Array.isArray(j.items) ? j.items : [] }; if (S.view === "uren") render(); })
+    .catch(e => { UW_GA[ws] = { t: Date.now(), items: (c && c.items) || [], fout: e.message }; });
+  return (c && c.items) || [];
+}
+/** de agenda-afspraken van deze persoon: deelnemer, maker, of initialen vooraan in de titel ("PB/ …", "PB + NDK/ …") */
+function uwGaVan(uid, items) {
+  const p = S.profiles[uid] || {}; const mail = String(p.email || "").toLowerCase(); const ini = String(p.initials || String(p.name || "").slice(0, 2)).toUpperCase();
+  return items.filter(e => { if (e.heledag || !e.van) return false;
+    const m = String(e.titel || "").match(/^\s*([A-Z]{1,4}(?:\s*\+\s*[A-Z]{1,4})*)\s*\//); const inis = m ? m[1].split("+").map(x => x.trim()) : [];
+    return (!!mail && ((e.gasten || []).includes(mail) || e.maker === mail)) || (!!ini && inis.includes(ini)); });
+}
+const uwGaVak = (e) => { const van = uwMin(e.van); let tot = uwMin(e.tot); if (van == null) return null; if (tot == null || tot <= van) tot = Math.min(van + 60, 24 * 60); return { van, tot }; };
+/** al uren in dat tijdvak (minstens de helft overlapt) → de agenda-afspraak hoeft er niet meer te staan */
+function uwGaGeboekt(e, uid) {
+  const x = uwGaVak(e); if (!x) return true; const duur = x.tot - x.van;
+  return Object.values(S.uren || {}).some(h => { if (h.user_id !== uid || h.datum !== e.dag) return false; const v = uwMin(h.tijd_van), t = uwMin(h.tijd_tot); if (v == null || t == null) return false; return Math.min(t, x.tot) - Math.max(v, x.van) >= duur / 2; });
+}
+/** project raden uit de titel (klantnaam of projectnummer), anders het laatst gebruikte project */
+function uwGaProject(e, uid) {
+  const t = String(e.titel || "").toLowerCase() + " " + String(e.plaats || "").toLowerCase();
+  const p = Object.values(S.projecten || {}).filter(x => ["lopend", "offerte"].includes(x.status) && ((x.nummer && t.includes(String(x.nummer))) || (x.klant && x.klant.length >= 4 && t.includes(x.klant.toLowerCase().split(/\s+/)[0]))))[0];
+  return (p && p.id) || uwLaatsteProject(uid);
 }
 const uwAfspraken = (uid, van, tot) => Object.values(S.taken || {}).filter(t => t.afspraak && t.assignee === uid && t.start && t.start >= van && t.start <= tot && uwAfsVak(t));
 const uwGeboekt = (t, uid) => Object.values(S.uren || {}).some(h => h.taak_id === t.id && h.user_id === uid && h.datum === t.start);
@@ -81,6 +125,7 @@ function uwAgenda() {
   const u = S.hoursUser || S.me.id, mag = uwMag(u), ws = S.weekStart, we = addDays(ws, 6);
   const uren = Object.values(S.uren || {}).filter(h => h.user_id === u && h.datum >= ws && h.datum <= we);
   const afs = uwAfspraken(u, ws, we); const weg = uwVerborgen(u);
+  const ga = uwGaVan(u, uwGaWeek(ws)).filter(e => e.dag >= ws && e.dag <= we && !weg.has("ga:" + e.id) && !uwGaGeboekt(e, u));   // 1.73
   const weekend = uwWeekend() || uren.some(h => (pd(h.datum).getUTCDay() + 6) % 7 >= 5) || afs.some(t => (pd(t.start).getUTCDay() + 6) % 7 >= 5);
   const dagen = Array.from({ length: weekend ? 7 : 5 }, (_, i) => addDays(ws, i));
   const vak = (h) => { const v = uwMin(h.tijd_van); if (v == null) return null; let t = uwMin(h.tijd_tot); if (t == null || t <= v) t = Math.min(v + Math.round((Number(h.uren) || 1) * 60), 24 * 60); return { van: v, tot: t }; };
@@ -88,6 +133,7 @@ function uwAgenda() {
   let h0 = 7 * 60, h1 = 19 * 60;
   uren.forEach(h => { const x = vak(h); if (x) { h0 = Math.min(h0, Math.floor(x.van / 60) * 60); h1 = Math.max(h1, Math.ceil(x.tot / 60) * 60); } });
   afs.forEach(t => { const x = uwAfsVak(t); h0 = Math.min(h0, Math.floor(x.van / 60) * 60); h1 = Math.max(h1, Math.ceil(x.tot / 60) * 60); });
+  ga.forEach(e => { const x = uwGaVak(e); h0 = Math.min(h0, Math.floor(x.van / 60) * 60); h1 = Math.max(h1, Math.ceil(x.tot / 60) * 60); });
   UW.bereik = { h0, h1 };
   const hoogte = (h1 - h0) * UW_PX; const doel = typeof FX !== "undefined" && FX.doel ? FX.doel() : 8;
   const perDag = (d) => uren.filter(h => h.datum === d).reduce((s, h) => s + (Number(h.uren) || 0), 0);
@@ -99,13 +145,18 @@ function uwAgenda() {
   const nu = new Date(); const nuMin = nu.getHours() * 60 + nu.getMinutes();
   const kolom = (d) => {
     const items = uwSchik(uren.filter(h => h.datum === d && vak(h)).map(h => Object.assign({ h, soort: "uur" }, vak(h)))
-      .concat(afs.filter(t => t.start === d && !uwGeboekt(t, u) && !weg.has(t.id)).map(t => Object.assign({ t, soort: "afs" }, uwAfsVak(t)))));
+      .concat(afs.filter(t => t.start === d && !uwGeboekt(t, u) && !weg.has(t.id)).map(t => Object.assign({ t, soort: "afs" }, uwAfsVak(t))))
+      .concat(ga.filter(e => e.dag === d).map(e => Object.assign({ e, soort: "ga" }, uwGaVak(e)))));
     const pos = (it) => `top:${(it.van - h0) * UW_PX}px;height:${Math.max(18, (it.tot - it.van) * UW_PX - 2)}px;left:calc(${(100 / it.n) * it.kol}% + 2px);width:calc(${100 / it.n}% - 4px)`;
     return `<div class="uw-dag${d === todayIso ? " vandaag" : ""}${mag ? " mag" : ""}" data-uw-dag="${d}" style="height:${hoogte}px">
       ${items.map(it => {
         if (it.soort === "uur") { const h = it.h; const p = S.projecten[h.project_id]; const kort = it.tot - it.van < 45;
           return `<div class="uw-b${kort ? " kort" : ""}${mag ? " mag" : ""}" data-uw-h="${h.id}" style="${pos(it)};--k:${uwKleur(h.project_id)}" title="${esc((p ? projName(p) : "") + (S.taken[h.taak_id] ? " · " + S.taken[h.taak_id].titel : "") + " · " + uwTijd(it.van) + "–" + uwTijd(it.tot) + (h.notitie ? "\n" + h.notitie : ""))}">
             <b>${esc(p ? p.klant || p.nummer || "" : "—")}</b><small>${uwTijd(it.van)}–${uwTijd(it.tot)} · ${nl(h.uren)} u${S.taken[h.taak_id] ? " · " + esc(S.taken[h.taak_id].titel) : ""}${h.notitie && h.notitie !== (S.taken[h.taak_id] || {}).titel ? " · " + esc(h.notitie) : ""}</small>${mag ? `<span class="uw-rek" data-uw-rek="${h.id}" aria-hidden="true"></span>` : ""}</div>`; }
+        if (it.soort === "ga") { const e = it.e; const voorbij = e.dag <= todayIso;   // 1.73: uit de Google Agenda
+          return `<div class="uw-a uw-ga${voorbij ? " open" : ""}" style="${pos(it)}" data-uw-ga="${esc(e.id)}" title="${esc("Google Agenda: " + e.titel + (e.plaats ? "\n" + e.plaats : ""))}">
+            <b>🗓 ${esc(e.titel || "Afspraak")}</b><small>${uwTijd(it.van)}–${uwTijd(it.tot)}${e.plaats ? " · " + esc(e.plaats) : ""}</small>
+            ${mag && voorbij ? `<span class="uw-a-k"><button type="button" class="btn sm primary" data-uw-ga-ok="${esc(e.id)}" data-dag="${e.dag}">✓ Uren…</button><button type="button" class="btn sm ghost" data-uw-ga-weg="${esc(e.id)}" title="Niet gewerkt / hoort niet bij een project: niet meer tonen" aria-label="Niet tonen">✕</button></span>` : voorbij ? "" : `<span class="uw-gepland">agenda</span>`}</div>`; }
         const t = it.t; const p = S.projecten[t.project_id]; const voorbij = t.start <= todayIso;
         return `<div class="uw-a${voorbij ? " open" : ""}" style="${pos(it)};--k:${uwKleur(t.project_id)}" data-uw-afs="${t.id}">
           <b>📅 ${esc(p ? p.klant || "" : "")}</b><small>${uwTijd(it.van)}–${uwTijd(it.tot)} · ${esc(t.titel || "afspraak")}</small>
@@ -243,6 +294,13 @@ document.addEventListener("pointerup", uwLos);
 document.addEventListener("pointercancel", uwLos);
 document.addEventListener("keydown", (e) => { if (e.key === "Escape" && UW.drag) { UW.drag = null; document.body.classList.remove("uw-sleept"); const gh = document.querySelector(".uw-geest"); if (gh) gh.remove(); render(); } });
 document.addEventListener("click", async (e) => {
+  const ga = e.target.closest && e.target.closest("[data-uw-ga-ok],[data-uw-ga-weg]");   // 1.73: Google Agenda
+  if (ga) { e.preventDefault(); e.stopPropagation(); const u = S.hoursUser || S.me.id; const id = ga.dataset.uwGaOk || ga.dataset.uwGaWeg;
+    const ev = Object.values(UW_GA).flatMap(c => c.items || []).find(x => x.id === id); if (!ev) return;
+    if (ga.dataset.uwGaWeg) { uwVerberg(u, "ga:" + id); render(); return; }
+    const x = uwGaVak(ev); const pid = uwGaProject(ev, u);
+    hoursForm({ user_id: u, datum: ev.dag, tijd_van: uwTijd(x.van), tijd_tot: x.tot >= 24 * 60 ? "23:59" : uwTijd(x.tot), uren: Math.round(((x.tot - x.van) / 60) * 4) / 4, notitie: String(ev.titel || "").slice(0, 200), project_id: pid || undefined }, pid || undefined);
+    return; }
   const el = e.target.closest && e.target.closest("[data-uw-modus],[data-uw-ok],[data-uw-aanpas],[data-uw-weg],[data-uw-allesok],[data-uw-week],[data-uw-zie],[data-uw-weekend],[data-uw-vandaag]"); if (!el) return;
   const d = el.dataset; const uid = S.hoursUser || S.me.id; e.preventDefault(); e.stopPropagation();
   if (d.uwModus) { uwZetModus(d.uwModus); return render(); }
