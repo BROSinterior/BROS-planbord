@@ -2,6 +2,10 @@
 
 De nieuwste versie staat bovenaan. (Vanaf 1.48 houdt `version.json` enkel de laatste versie bij; het Planbord vraagt dat bestand elke 5 minuten op.)
 
+## 1.74.2 — 2026-11-17 (enkel pushen)
+
+**Projectpagina: "Geld" heet nu "Financieel".** De vijf groepen bovenaan een project zijn Werk, Ontwerp, Financieel, Werf en Dossier. Klanten kijken soms mee, en "Financieel" leest minder direct.
+
 ## 1.74.1 — 2026-11-17 (enkel nieuw drive/Code.gs online zetten; geen databasescript; de versie van het Planbord blijft 1.74.0)
 
 **Geen uitnodigingsmails meer bij afspraken.** In 1.74 zette het Drive-script de collega's als gast via Google Agenda (CalendarApp), en Google stuurde hen daardoor een uitnodigingsmail. Nu loopt alles via de Calendar-API met "geen meldingen": aanmaken, wijzigen, gasten toevoegen of weghalen en verwijderen gebeuren zonder één mail. De afspraak staat gewoon in ieders agenda.

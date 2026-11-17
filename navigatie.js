@@ -2,7 +2,7 @@
    BROS Planbord — navigatie (v1.71; 1.73: Mijn werk in de gsm-balk, Taken onder Meer)
    - Hoofdmenu: Overzicht, Projecten, Facturen, Taken, Planning, Uren + "Meer ▾" (Contacten, Notities, Voorstellen, Rapporten).
    - Gsm: een vaste balk onderaan (Overzicht, Projecten, Uren, Taken, Meer); de bovenbalk toont dan enkel logo, zoeken en account.
-   - Projectpagina: 5 groepen (Werk, Ontwerp, Geld, Werf, Dossier) met daaronder de tabbladen van die groep.
+   - Projectpagina: 5 groepen (Werk, Ontwerp, Financieel, Werf, Dossier) met daaronder de tabbladen van die groep.
    - Uitleg in panelen (de grijze regels onder een titel) standaard ingeklapt achter een ⓘ; één klik toont ze, "altijd tonen" onthoudt dat.
    Geladen vóór app.js; app.js roept navMeer, gsmBalk, projGroepNav en uitlegInklappen aan (via typeof).
    ===================================================================== */
@@ -33,7 +33,7 @@ function gsmBalk() {
 }
 
 /* ---------- projectpagina: groepen ---------- */
-const PROJ_GROEPEN = [["werk", "Werk", ["intern", "taken", "planning", "uren"]], ["ontwerp", "Ontwerp", ["ontwerp", "tekenen", "renders", "keuzes"]], ["geld", "Geld", ["meetstaat", "facturatie"]], ["werf", "Werf", ["werf", "vragen"]], ["dossier", "Dossier", ["dossier", "vergaderingen", "notities"]]];
+const PROJ_GROEPEN = [["werk", "Werk", ["intern", "taken", "planning", "uren"]], ["ontwerp", "Ontwerp", ["ontwerp", "tekenen", "renders", "keuzes"]], ["geld", "Financieel", ["meetstaat", "facturatie"]], ["werf", "Werf", ["werf", "vragen"]], ["dossier", "Dossier", ["dossier", "vergaderingen", "notities"]]];
 const projGroepVan = (k) => (PROJ_GROEPEN.find(g => g[2].includes(k)) || PROJ_GROEPEN[0])[0];
 /** tabs = [[sleutel, label met teller]] zoals app.js ze opbouwt → groepen + tabbladen van de actieve groep */
 function projGroepNav(tabs) {
