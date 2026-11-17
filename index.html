@@ -856,6 +856,7 @@
   .mw-chips button { border: 1px solid var(--line-2); background: var(--surface); border-radius: 999px; padding: 5px 12px; font: inherit; font-size: 13px; cursor: pointer; color: var(--ink); white-space: nowrap; }
   .mw-chips button[aria-pressed="true"] { background: var(--ink); color: var(--surface); border-color: var(--ink); }
   .mw-chips button[aria-pressed="true"] .cnt { background: var(--surface); color: var(--ink); }
+  .mw-chips .proj-zicht-std { border-style: dashed; color: var(--muted); }   /* 1.75: Projecten — terug naar standaard */
   .mw-g + .mw-g { margin-top: 18px; }
   .mw-g h4 { margin: 0 0 6px; font-size: 12px; text-transform: uppercase; letter-spacing: .05em; color: var(--muted); }
   .mw-it { display: grid; grid-template-columns: 22px 1fr auto auto; gap: 10px; align-items: center; padding: 8px 0; border-top: 1px solid var(--line); }
@@ -992,31 +993,31 @@
 <div class="toast" id="toast" role="status"></div>
 <div class="loader" id="loader" aria-live="polite"><div class="logo"><i class="base"></i><i class="fill" id="loaderFill"></i></div><div class="pct" id="loaderPct">0%</div><div class="msg" id="loaderMsg">Even geduld…</div></div>
 <script src="vendor/supabase-2.45.4.js"></script>
-<script src="config.js?v=1.74.2"></script>
-<script src="postcodes.js?v=1.74.2"></script>
+<script src="config.js?v=1.75.0"></script>
+<script src="postcodes.js?v=1.75.0"></script>
 <!-- 1.72: modules.js laadt deze onderdelen pas wanneer je ze opent (en anders kort na het opstarten):
      tekenmodule (tabblad Plannen): vendor/dxf-parser.js, symbolen.js, tekenen.js + plan2cad.js — niet verwijderen
      renders: renders.js · Excel: jszip, meetstaat-export.js, meetstaat-import.js -->
-<script src="modules.js?v=1.74.2"></script>
-<script src="agenda.js?v=1.74.2"></script>
-<script src="afspraken.js?v=1.74.2"></script>
-<script src="kp-beheer.js?v=1.74.2"></script>
-<script src="pv-beheer.js?v=1.74.2"></script>
-<script src="af-beheer.js?v=1.74.2"></script>
-<script src="deb-beheer.js?v=1.74.2"></script>
-<script src="yuki-beheer.js?v=1.74.2"></script>
-<script src="wacht.js?v=1.74.2"></script>
-<script src="navigatie.js?v=1.74.2"></script>
-<script src="mijnwerk.js?v=1.74.2"></script>
-<script src="uren-week.js?v=1.74.2"></script>
-<script src="fin-planning.js?v=1.74.2"></script>
-<script src="vergaderingen.js?v=1.74.2"></script>
-<script src="todo.js?v=1.74.2"></script>
-<script src="ontwerp.js?v=1.74.2"></script>
+<script src="modules.js?v=1.75.0"></script>
+<script src="agenda.js?v=1.75.0"></script>
+<script src="afspraken.js?v=1.75.0"></script>
+<script src="kp-beheer.js?v=1.75.0"></script>
+<script src="pv-beheer.js?v=1.75.0"></script>
+<script src="af-beheer.js?v=1.75.0"></script>
+<script src="deb-beheer.js?v=1.75.0"></script>
+<script src="yuki-beheer.js?v=1.75.0"></script>
+<script src="wacht.js?v=1.75.0"></script>
+<script src="navigatie.js?v=1.75.0"></script>
+<script src="mijnwerk.js?v=1.75.0"></script>
+<script src="uren-week.js?v=1.75.0"></script>
+<script src="fin-planning.js?v=1.75.0"></script>
+<script src="vergaderingen.js?v=1.75.0"></script>
+<script src="todo.js?v=1.75.0"></script>
+<script src="ontwerp.js?v=1.75.0"></script>
 <!-- 1.72: app.js opgesplitst — deze drie horen erbij en laden vóór app.js -->
-<script src="meetstaat.js?v=1.74.2"></script>
-<script src="werf.js?v=1.74.2"></script>
-<script src="facturatie.js?v=1.74.2"></script>
-<script src="app.js?v=1.74.2"></script>
+<script src="meetstaat.js?v=1.75.0"></script>
+<script src="werf.js?v=1.75.0"></script>
+<script src="facturatie.js?v=1.75.0"></script>
+<script src="app.js?v=1.75.0"></script>
 </body>
 </html>

@@ -2,6 +2,13 @@
 
 De nieuwste versie staat bovenaan. (Vanaf 1.48 houdt `version.json` enkel de laatste versie bij; het Planbord vraagt dat bestand elke 5 minuten op.)
 
+## 1.75.0 — 2026-11-17 (enkel pushen)
+
+**Projecten: standaard enkel "In offerte" en "Lopend".** Bovenaan het tabblad Projecten staan nu vinkjes per status (In offerte, Lopend, On hold, Afgerond, Verloren), met het aantal projecten erbij.
+- Vink een status aan om die projecten ook te tonen. Het Planbord onthoudt je keuze op dit toestel, en **standaard** zet het terug.
+- Een afgerond of verloren project open je nog altijd via Zoeken.
+- Opgelost: de filter "Te laat" bij Taken maakte de lijst van Projecten soms leeg.
+
 ## 1.74.2 — 2026-11-17 (enkel pushen)
 
 **Projectpagina: "Geld" heet nu "Financieel".** De vijf groepen bovenaan een project zijn Werk, Ontwerp, Financieel, Werf en Dossier. Klanten kijken soms mee, en "Financieel" leest minder direct.

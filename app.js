@@ -3,7 +3,7 @@
    Statische webapp op Supabase (login, live-synchronisatie, rechten)
    ===================================================================== */
 if (window.top !== window.self) { try { window.top.location.replace(window.location.href); } catch (e) { document.documentElement.innerHTML = ""; } }   // niet in een vreemd frame (clickjacking)
-const APP_VERSION = "1.74.2";
+const APP_VERSION = "1.75.0";
 const PROJ_STATUS = { offerte: "In offerte", lopend: "Lopend", on_hold: "On hold", afgerond: "Afgerond", verloren: "Verloren" };
 const KLANTTYPE = { particulier: "Particulier", zakelijk: "Zakelijk" };
 const KLANTCODE = { particulier: "PAR", zakelijk: "ZAK" };
@@ -969,18 +969,34 @@ function taskRow(t, withProject) {
 }
 
 /* ---------- Projecten ---------- */
+/* 1.75: tabblad Projecten toont standaard enkel "In offerte" en "Lopend"; de andere statussen vink je aan (onthouden per browser) */
+const PROJ_ZICHT_STD = ["offerte", "lopend"];
+function projZicht() {
+  if (S.projZicht) return S.projZicht;
+  let v = null; try { v = JSON.parse(localStorage.getItem("bros.proj.zicht") || "null"); } catch (e) { }
+  S.projZicht = Array.isArray(v) ? v.filter(k => PROJ_STATUS[k]) : PROJ_ZICHT_STD.slice(); return S.projZicht;
+}
+document.addEventListener("click", (e) => {
+  const b = e.target.closest && e.target.closest("[data-projzicht]"); if (!b) return; e.preventDefault();
+  const k = b.dataset.projzicht; let z = projZicht().slice();
+  z = k === "*" ? PROJ_ZICHT_STD.slice() : z.includes(k) ? z.filter(x => x !== k) : z.concat(k);
+  S.projZicht = z; try { localStorage.setItem("bros.proj.zicht", JSON.stringify(z)); } catch (x) { } render();
+});
 function vProjecten() {
   if (S.project && S.projecten[S.project]) return vProjectDetail(S.projecten[S.project]);
   const beheer = isBeheer();
-  const ps = projects().filter(p => !S.filters.status || p.status === S.filters.status).map(p => { const ts = tasksOf(p.id); const [st, en] = projSpan(p); return { p, ts, pl: projPlanned(p.id), dn: projDone(p.id), st, en }; });
+  const zicht = projZicht(); const alle = projects(); const nSt = (k) => alle.filter(p => p.status === k).length;
+  const std = zicht.length === PROJ_ZICHT_STD.length && PROJ_ZICHT_STD.every(k => zicht.includes(k));
+  const ps = alle.filter(p => zicht.includes(p.status)).map(p => { const ts = tasksOf(p.id); const [st, en] = projSpan(p); return { p, ts, pl: projPlanned(p.id), dn: projDone(p.id), st, en }; });
   const STATUS_ORDER = { offerte: 0, lopend: 1, on_hold: 2, afgerond: 3, verloren: 4 };
   const val = (r, k) => ({ nummer: r.p.nummer || "", klant: (r.p.klant || "").toLowerCase(), status: STATUS_ORDER[r.p.status] ?? 9, fase: r.p.fase_nr || 0, lead: userById(r.p.lead).name.toLowerCase(), timing: r.st || "9999", forfait: Number(r.p.forfait) || 0, taken: r.ts.length, uren: r.dn })[k];
   const { key, dir } = S.sort; const m = dir === "asc" ? 1 : -1;
   ps.sort((a, b) => { const x = val(a, key), y = val(b, key); return (x < y ? -1 : x > y ? 1 : 0) * m || (a.p.klant || "").localeCompare(b.p.klant || ""); });
   const th = (k, label, cls = "") => `<th class="sortable ${cls} ${key === k ? "on" : ""}" data-sort="${k}">${label}<span class="arrow">${key === k ? (dir === "asc" ? "↑" : "↓") : ""}</span></th>`;
   return `
-  <div class="page-head"><div><div class="eyebrow">${ps.length} projecten</div><h1>Projecten</h1></div>
-    <div class="actions"><select data-filter="status"><option value="">Alle statussen</option>${Object.entries(PROJ_STATUS).map(([k, v]) => `<option value="${k}" ${S.filters.status === k ? "selected" : ""}>${v}</option>`).join("")}</select>${beheer ? `<button class="btn primary" data-act="new-project">+ Nieuw project</button>` : ""}</div></div>
+  <div class="page-head"><div><div class="eyebrow">${ps.length === alle.length ? ps.length + " projecten" : ps.length + " van " + alle.length + " projecten"}</div><h1>Projecten</h1></div>
+    <div class="actions">${beheer ? `<button class="btn primary" data-act="new-project">+ Nieuw project</button>` : ""}</div></div>
+  <div class="mw-chips proj-zicht" role="group" aria-label="Welke projecten tonen">${Object.entries(PROJ_STATUS).map(([k, v]) => `<button type="button" data-projzicht="${k}" aria-pressed="${zicht.includes(k)}" title="${zicht.includes(k) ? "Verbergen" : "Ook tonen"}">${v} <span class="cnt">${nSt(k)}</span></button>`).join("")}${std ? "" : `<button type="button" class="proj-zicht-std" data-projzicht="*" title="Terug naar In offerte en Lopend">standaard</button>`}</div>
   <div class="panel tw"><table class="t"><thead><tr>${th("nummer", "Nr")}${th("klant", "Klant · project")}${th("status", "Status")}${th("fase", "Fase")}${th("lead", "Lead")}${th("timing", "Timing")}${beheer ? th("forfait", "Forfait", "r") : ""}${th("taken", "Taken", "r")}<th class="sortable ${key === "uren" ? "on" : ""}" data-sort="uren" style="min-width:140px">Uren<span class="arrow">${key === "uren" ? (dir === "asc" ? "↑" : "↓") : ""}</span></th></tr></thead><tbody>
   ${ps.map(({ p, ts, pl, dn, st, en }) => `<tr class="click" data-open="${p.id}">
     <td class="num muted">${esc(p.nummer || "")}</td>
@@ -991,7 +1007,7 @@ function vProjecten() {
     <td class="num">${fmt(st)} → ${fmt(en)}</td>
     ${beheer ? `<td class="r num">${eur(p.forfait)}</td>` : ""}
     <td class="r num">${ts.filter(t => t.status === "done").length}/${ts.length}</td>
-    <td><div class="num" style="font-size:12px;margin-bottom:3px">${nl(dn)} / ${nl(pl)} u</div><div class="bar"><i class="${dn > pl && pl ? "over" : ""}" style="width:${pl ? Math.min(dn / pl, 1) * 100 : 0}%"></i></div></td></tr>`).join("") || `<tr><td colspan="9"><div class="empty"><b>Nog geen projecten</b>${beheer ? "Maak het eerste project aan met de knop rechtsboven." : "De beheerder maakt projecten aan."}</div></td></tr>`}
+    <td><div class="num" style="font-size:12px;margin-bottom:3px">${nl(dn)} / ${nl(pl)} u</div><div class="bar"><i class="${dn > pl && pl ? "over" : ""}" style="width:${pl ? Math.min(dn / pl, 1) * 100 : 0}%"></i></div></td></tr>`).join("") || `<tr><td colspan="9"><div class="empty">${alle.length ? `<b>Geen projecten met deze status</b>Vink hierboven aan welke projecten je wilt zien.` : `<b>Nog geen projecten</b>${beheer ? "Maak het eerste project aan met de knop rechtsboven." : "De beheerder maakt projecten aan."}`}</div></td></tr>`}
   </tbody></table></div>`;
 }
 function vProjectDetail(p) {
