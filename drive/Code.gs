@@ -878,6 +878,22 @@ function afspraakSync(body) {
   const lock = LockService.getUserLock(); if (!lock.tryLock(30000)) return { ok: false, error: "Het Drive-script is bezig; probeer het zo opnieuw." };
   try { return afspraakSyncIn(body, id); } finally { lock.releaseLock(); }
 }
+/** 1.74: gasten van het agenda-item = de mensen van BROS die meegaan (verantwoordelijke + afspraak_team).
+ *  Enkel e-mailadressen van BROS-profielen worden toegevoegd of weggehaald; andere gasten (zelf toegevoegd in Google Agenda) blijven staan.
+ *  Geen aparte uitnodigingsmail: het item verschijnt in hun agenda (Google zet uitnodigingen standaard automatisch in je agenda). */
+function afsGastenBijwerken(ev, cal, team, res) {
+  try {
+    const eigen = String(cal.getId() || "").toLowerCase();
+    const geldig = (m) => /^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(m);
+    const wil = team.filter(r => r.active !== false).map(r => String(r.email || "").trim().toLowerCase()).filter(m => geldig(m) && m !== eigen);
+    const alle = (pbAdmin("/rest/v1/profiles?role=in.(beheer,medewerker)&select=email", "get") || []).map(r => String(r.email || "").trim().toLowerCase()).filter(Boolean);
+    const nu = ev.getGuestList().map(g => String(g.getEmail() || "").toLowerCase());
+    const bij = wil.filter(m => nu.indexOf(m) < 0), weg = nu.filter(m => alle.indexOf(m) >= 0 && wil.indexOf(m) < 0);
+    if (!bij.length && !weg.length) return;
+    weg.forEach(m => ev.removeGuest(m)); bij.forEach(m => ev.addGuest(m));
+    res.gasten = wil;
+  } catch (e) { console.error("gasten: " + e); res.waarschuwing = (res.waarschuwing ? res.waarschuwing + " · " : "") + "De collega's konden niet als gast op het agenda-item gezet worden: " + String(e.message || e).slice(0, 150); }
+}
 function afspraakSyncIn(body, id) {
   const t = (pbAdmin("/rest/v1/taken?id=eq." + id + "&select=*", "get") || [])[0];
   if (!t) return { ok: false, error: "Taak niet gevonden." };
@@ -888,7 +904,14 @@ function afspraakSyncIn(body, id) {
   const voor = String(onderwerpRuw).match(/^\s*([A-Z]{1,4}(?:\s*\+\s*[A-Z]{1,4})*)\s*\/\s*/);
   const onderwerp = voor ? String(onderwerpRuw).slice(voor[0].length).trim() || onderwerpRuw : onderwerpRuw;
   const prof = t.assignee ? ((pbAdmin("/rest/v1/profiles?id=eq." + t.assignee + "&select=name,initials,email", "get") || [])[0] || null) : null;
-  const ini = prof ? String(prof.initials || String(prof.name || "").slice(0, 2)).toUpperCase() : "BROS";
+  // 1.74 (script 067): ook mee van BROS (afspraak_team) — initialen in de titel, als gast op het agenda-item, namen in de mail
+  const teamIds = [t.assignee].concat(t.afspraak_team || []).filter((x, i, a) => x && UUID_RE.test(String(x)) && a.indexOf(x) === i);
+  const teamRij = teamIds.length ? (pbAdmin("/rest/v1/profiles?id=in.(" + teamIds.join(",") + ")&select=id,name,initials,email,role,active", "get") || []) : [];
+  const team = teamIds.map(id => teamRij.find(r => r.id === id)).filter(r => r && (r.role === "beheer" || r.role === "medewerker"));
+  const iniVan = (r) => String(r.initials || String(r.name || "").slice(0, 2)).toUpperCase();
+  const ini = team.length ? team.map(iniVan).join(" + ") : prof ? iniVan(prof) : "BROS";
+  const teamNamen = team.map(r => r.name).filter(Boolean);
+  const namenTxt = (en) => teamNamen.length <= 1 ? (teamNamen[0] || "") : teamNamen.slice(0, -1).join(", ") + (en ? " and " : " en ") + teamNamen[teamNamen.length - 1];
   const ids = (t.afspraak_contacten || []).filter(x => UUID_RE.test(String(x)));
   const cs = ids.length ? (pbAdmin("/rest/v1/contacten?id=in.(" + ids.join(",") + ")&select=id,naam,contactpersoon,email,taal,actief", "get") || []) : [];
   const van = String(t.afspraak_van || "").slice(0, 5), tot = t.afspraak_tot ? String(t.afspraak_tot).slice(0, 5) : "";
@@ -905,10 +928,11 @@ function afspraakSyncIn(body, id) {
     if (einde <= begin) einde = new Date(begin.getTime() + 3600000);
     const titel = (voor ? voor[1].replace(/\s*\+\s*/g, " + ") : ini) + "/" + (p.klant || "") + ", " + onderwerp;   // "PB/Klant, onderwerp" (of "PB + NDK/…")
     const besch = [(p.nummer ? p.nummer + " · " : "") + (p.klant || "") + (p.naam && p.naam !== p.klant ? " · " + p.naam : ""),
-      prof ? "BROS: " + prof.name : "", cs.length ? "Deelnemers: " + cs.map(c => c.naam).join(", ") : "", t.notitie ? "Notitie: " + t.notitie : "", "(Aangemaakt vanuit het BROS Planbord — wijzig de afspraak in het Planbord, niet hier.)"].filter(Boolean).join("\n");
+      teamNamen.length ? "BROS: " + teamNamen.join(", ") : prof ? "BROS: " + prof.name : "", cs.length ? "Deelnemers: " + cs.map(c => c.naam).join(", ") : "", t.notitie ? "Notitie: " + t.notitie : "", "(Aangemaakt vanuit het BROS Planbord — wijzig de afspraak in het Planbord, niet hier.)"].filter(Boolean).join("\n");
     if (ev) { ev.setTitle(titel); ev.setTime(begin, einde); ev.setLocation(t.afspraak_adres || ""); ev.setDescription(besch); res.agenda = "gewijzigd"; }
     else { ev = cal.createEvent(titel, begin, einde, { location: t.afspraak_adres || "", description: besch }); res.agenda = "gezet"; }
-    if (ev.getId() !== t.agenda_event_id) pbAdmin("/rest/v1/taken?id=eq." + t.id, "patch", { agenda_event_id: ev.getId() });   // meteen bewaren (geen dubbel item als iets hierna misloopt)
+    if (ev.getId() !== t.agenda_event_id) pbAdmin("/rest/v1/taken?id=eq." + t.id, "patch", { agenda_event_id: ev.getId() });
+    afsGastenBijwerken(ev, cal, team, res);   // 1.74: de mensen van BROS als gast → de afspraak staat ook in hun eigen agenda   // meteen bewaren (geen dubbel item als iets hierna misloopt)
   } else if (ev || t.agenda_event_id) {
     if (ev) { try { ev.deleteEvent(); } catch (e) { } res.agenda = "verwijderd"; }
     patch.agenda_event_id = null;
@@ -926,7 +950,7 @@ function afspraakSyncIn(body, id) {
   const stuur = (c, weg, nieuwsoort) => {
     const en = String(c.taal || "") === "en"; const naam = c.contactpersoon || c.naam;
     const a = { id: t.id, seq: seq, datum: t.start, van: van, tot: tot, adres: t.afspraak_adres || "", titel: "BROS: " + onderwerp,
-      omschrijving: (en ? "Appointment with " : "Afspraak met ") + (prof ? prof.name + " (BROS)" : "BROS") + "\n" + (en ? "Questions? info@bros.be" : "Vragen? info@bros.be") };
+      omschrijving: (en ? "Appointment with " : "Afspraak met ") + (teamNamen.length ? namenTxt(en) + " (BROS)" : prof ? prof.name + " (BROS)" : "BROS") + "\n" + (en ? "Questions? info@bros.be" : "Vragen? info@bros.be") };
     const ics = Utilities.newBlob(afsIcs(a, weg, PORTAAL.VAN, weg ? { naam: naam, email: String(c.email).trim() } : null), "text/calendar; charset=utf-8; method=" + (weg ? "CANCEL" : "PUBLISH"), weg ? "annulering-bros.ics" : "afspraak-bros.ics");
     const kop = weg ? (en ? "Cancelled: appointment with BROS" : "Geannuleerd: afspraak met BROS") : nieuwsoort === "gewijzigd" ? (en ? "Changed appointment with BROS" : "Gewijzigde afspraak met BROS") : (en ? "Appointment with BROS" : "Afspraak met BROS");
     const onderwerpMail = kop + ": " + onderwerp + " — " + datumTxt(en);

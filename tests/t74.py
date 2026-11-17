@@ -1,0 +1,55 @@
+"""1.74 — afspraak met meerdere mensen van BROS (script 067): taakformulier, databank, weekagenda (Uren), Mijn werk, Wacht op jou."""
+import os, sys, re, datetime; sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "lib")); from h import *
+herstel("basis")
+VANDAAG = datetime.date.today().isoformat(); MAANDAG = (datetime.date.today() - datetime.timedelta(days=datetime.date.today().weekday())).isoformat()
+R = {}
+def ok(k, c, x=""): R[k] = "OK" if c else "FOUT " + str(x)[:600]
+r = psql_file(REPO + "/sql/067_afspraak_team.sql"); ok("067 mag opnieuw (controle 1|1|67)", re.search(r"^1\|1\|6[7-9]$", r.stdout, re.M) is not None, r.stdout[-200:] + r.stderr[-300:])
+# ---- databank ----
+T = pg("insert into taken (project_id, titel, status, assignee, start, eind, afspraak, afspraak_van, afspraak_adres, afspraak_team) values (%s,'Bespreking','todo',%s,%s,%s,'kantoor','10:00','BROS',%s) returning id::text, afspraak_team::text[]",
+       (P, B, VANDAAG, VANDAAG, [M, B, M, K]))
+ok("team: dubbels, de verantwoordelijke zelf en klanten eruit", T[1] == [M], T[1])
+pg("update taken set assignee=%s where id=%s", (M, T[0]), f=None)
+ok("verantwoordelijke wordt de collega → die valt uit het team", pg("select afspraak_team::text[] from taken where id=%s", (T[0],))[0] == [], pg("select afspraak_team from taken where id=%s", (T[0],)))
+pg("delete from taken where id=%s", (T[0],), f=None)
+# ---- Planbord ----
+start_postgrest(); poort(); zetapp()
+from playwright.sync_api import sync_playwright
+with sync_playwright() as pw:
+    b = pw.chromium.launch(); p, errs = nieuwe_pagina(b, 1440, 950)
+    login(p, "beheer@test.local")
+    p.evaluate(f"() => {{ S.view='projecten'; S.project='{P}'; S.ptab='taken'; render(); taskForm({{}}, '{P}'); }}"); p.wait_for_timeout(500)
+    f = p.locator("#modal")
+    f.locator("[name=titel]").fill("Bespreking voorontwerp")
+    opt = p.evaluate(f"() => [...document.querySelectorAll('#modal [name=assignee] option')].map(o => o.value).find(v => v.includes('{B}'))")
+    f.locator("[name=assignee]").select_option(opt)
+    f.locator("[name=start]").fill(VANDAAG)
+    f.locator("[name=afs_aan]").check(); p.wait_for_timeout(200)
+    f.locator("input[name=afs_plaats][value=kantoor]").check(); f.locator("[name=afs_van]").fill("10:00"); f.locator("[name=afs_tot]").fill("11:30")
+    ok("formulier: 'Ook mee van BROS' met de collega's; de verantwoordelijke niet aanvinkbaar", f.locator("#afs_team").count() == 1 and f.locator(f"input[name=afs_team][value='{M}']").count() == 1 and f.locator(f"input[name=afs_team][value='{B}']").is_disabled())
+    f.locator(f"input[name=afs_team][value='{M}']").check(); p.wait_for_timeout(200)
+    titel = f.locator("#afs_titel_toon").inner_text()
+    ok("agendatitel met beide initialen (PH + NO/…)", re.search(r"PH \+ NO/", titel) is not None, titel)
+    gw.DRIVE_LOG.clear(); f.locator("button[type=submit]").click(); p.wait_for_timeout(1500)
+    t = pg("select id::text, assignee::text, afspraak_team::text[] from taken where titel='Bespreking voorontwerp'")
+    ok("bewaard: verantwoordelijke + team", t and t[1] == B and t[2] == [M], t)
+    ok("Drive-script gevraagd de agenda bij te werken", any(x.get("action") == "afspraak" and x.get("id") == t[0] for x in gw.DRIVE_LOG), gw.DRIVE_LOG[-2:])
+    p.evaluate("() => { S.view='taken'; render(); }"); p.wait_for_timeout(400)
+    ok("takenlijst: '+1' bij de afspraak", "+1" in p.locator("main").inner_text())
+    ok("geen JS-fouten (beheer)", not [e for e in errs if "PE " in e], errs)
+    # de collega
+    m, e2 = nieuwe_pagina(b, 1440, 950); login(m, "medewerker@test.local")
+    m.evaluate(f"() => {{ try {{ localStorage.setItem('bros.uw.weekend', '1'); }} catch (e) {{ }} S.view='uren'; S.weekStart='{MAANDAG}'; render(); }}"); m.wait_for_timeout(800)
+    ok("Uren van de collega: de afspraak staat in haar week, met ✓ Uren", m.locator(f"[data-uw-afs='{t[0]}']").count() == 1 and m.locator(f"[data-uw-ok='{t[0]}']").count() == 1, m.locator("main").inner_text()[:500])
+    m.locator(f"[data-uw-ok='{t[0]}']").click(); m.wait_for_timeout(1000)
+    ok("✓ Uren boekt 1,5 u op naam van de collega", pg("select count(*) from uren where user_id=%s and taak_id=%s and uren=1.5", (M, t[0]))[0] == 1)
+    m.evaluate("() => { S.view='mijnwerk'; render(); }"); m.wait_for_timeout(400)
+    ok("Mijn werk van de collega: de afspraak staat erbij", "Bespreking voorontwerp" in m.locator("main").inner_text())
+    m.evaluate("() => { S.view='overzicht'; render(); }"); m.wait_for_timeout(400)
+    ok("Wacht op jou van de collega: vandaag de afspraak", "Bespreking voorontwerp" in m.locator("#wachtopjou").inner_text(), m.locator("#wachtopjou").inner_text()[:400])
+    ok("geen JS-fouten (collega)", not [e for e in e2 if "PE " in e], e2)
+    p.evaluate(f"() => taskForm(S.taken['{t[0]}'])"); p.wait_for_timeout(400)
+    ok("taak opnieuw openen: collega staat aangevinkt", p.locator(f"#modal input[name=afs_team][value='{M}']").is_checked())
+    p.screenshot(path=WORK + "/shots/t74.png")
+for kk, v in R.items(): print(("  " if v == "OK" else "✗ ") + kk + ("" if v == "OK" else "  → " + v))
+print(f"\n{sum(v == 'OK' for v in R.values())}/{len(R)} OK")

@@ -11,7 +11,7 @@ const AFS_BROS_ADRES = (window.BROS_AGENDA && window.BROS_AGENDA.BROS_ADRES) || 
 const afsWerfAdres = (p) => p ? [p.adres, [p.postcode, p.gemeente].filter(Boolean).join(" ")].filter(Boolean).join(", ") : "";
 const afsTijd = (x) => String(x || "").slice(0, 5);
 /* label in de takenlijsten */
-const afsTag = (t) => t && t.afspraak ? ` <span class="pill" style="background:var(--accent-soft);color:var(--accent)" title="${esc(AFS_PLAATS[t.afspraak] + (t.afspraak_adres ? " · " + t.afspraak_adres : ""))}${t.agenda_event_id ? " · staat in de agenda" : ""}">📍 ${esc(afsTijd(t.afspraak_van))}${t.afspraak_tot ? "–" + esc(afsTijd(t.afspraak_tot)) : ""} ${t.afspraak === "werf" ? "werf" : t.afspraak === "kantoor" ? "kantoor" : "afspraak"}</span>` : "";
+const afsTag = (t) => t && t.afspraak ? ` <span class="pill" style="background:var(--accent-soft);color:var(--accent)" title="${esc(AFS_PLAATS[t.afspraak] + (t.afspraak_adres ? " · " + t.afspraak_adres : ""))}${t.agenda_event_id ? " · staat in de agenda" : ""}${(t.afspraak_team || []).length ? esc(" · mee: " + t.afspraak_team.map(id => (S.profiles[id] || {}).name || "").filter(Boolean).join(", ")) : ""}">📍 ${esc(afsTijd(t.afspraak_van))}${t.afspraak_tot ? "–" + esc(afsTijd(t.afspraak_tot)) : ""} ${t.afspraak === "werf" ? "werf" : t.afspraak === "kantoor" ? "kantoor" : "afspraak"}${(t.afspraak_team || []).length ? " +" + t.afspraak_team.length : ""}</span>` : "";
 
 /* deelnemers: klant(en) en aannemers van dit project (+ wie al aangevinkt was) */
 function afsKandidaten(pid, t) {
@@ -35,6 +35,7 @@ function afsVelden(t, pid) {
       <div class="field"><label for="afs_van">Van</label><input id="afs_van" type="time" name="afs_van" step="900" value="${esc(afsTijd(t.afspraak_van))}"></div>
       <div class="field"><label for="afs_tot">Tot</label><input id="afs_tot" type="time" name="afs_tot" step="900" value="${esc(afsTijd(t.afspraak_tot))}"><small class="muted">Leeg = 1 uur. De datum is de startdatum hierboven.</small></div>
       <div class="field span2"><label for="afs_ond">Onderwerp in de agenda en het portaal</label><input id="afs_ond" name="afs_onderwerp" value="${esc(t.afspraak_onderwerp || "")}" placeholder="${esc(t.titel || "bv. Bespreking voorontwerp")}"><small class="muted" id="afs_titel_toon"></small></div>
+      ${afsTeamOk() ? `<div class="field span2"><label>Ook mee van BROS</label><div id="afs_team" style="display:flex;flex-wrap:wrap;gap:4px 16px">${afsTeamHtml(t)}</div><small class="muted">Staat dan ook in hun Google Agenda (als gast) en in hun weekagenda bij Uren.</small></div>` : ""}
       <div class="field span2"><label>Deelnemers (klant en aannemers)</label><div id="afs_deeln">${afsDeelnemersHtml(pid, t)}</div></div>
       <div class="field span2"><label class="chk" style="display:flex;gap:8px"><input type="checkbox" name="afs_agenda" value="1" ${t.afspraak_agenda === false ? "" : "checked"}> In de Google Agenda van BROS (brosburo) zetten</label>
         <label class="chk" style="display:flex;gap:8px"><input type="checkbox" name="afs_mailen" value="1" ${t.afspraak_mailen === false ? "" : "checked"}> Deelnemers mailen bij een nieuwe, gewijzigde of geannuleerde afspraak (met agendabestand)</label>
@@ -43,6 +44,15 @@ function afsVelden(t, pid) {
 }
 /* initialen voor de agendatitel: "PB/Klant, onderwerp" */
 const afsInitialen = (uid) => { const u = uid && S.profiles[uid]; return (u && (u.initials || (u.name || "").slice(0, 2)).toUpperCase()) || "BROS"; };
+/* 1.74 (script 067): meerdere mensen van BROS op één afspraak — de verantwoordelijke + afspraak_team */
+const afsTeamOk = () => typeof schemaV === "function" && schemaV() >= 67;
+const afsWie = (t) => [...new Set([t && t.assignee, ...((t && t.afspraak_team) || [])].filter(Boolean))];
+/** gaat uid mee naar deze afspraak? (verantwoordelijke of extra deelnemer van BROS) */
+const afsMet = (t, uid) => !!t && !!uid && (t.assignee === uid || (!!t.afspraak && (t.afspraak_team || []).includes(uid)));
+function afsTeamHtml(t) {
+  const sel = new Set(t.afspraak_team || []);
+  return users().map(u => `<label class="chk" style="display:flex;gap:6px;align-items:center"><input type="checkbox" name="afs_team" value="${u.id}" ${sel.has(u.id) ? "checked" : ""}> ${typeof avatar === "function" ? avatar(u.id) : ""} ${esc(u.name)}</label>`).join("");
+}
 function afsWire(t) {
   const f = $("#mform"); if (!f || !f.querySelector("#afs_box")) return;
   const sync = () => {
@@ -52,7 +62,10 @@ function afsWire(t) {
     const adr = pl === "werf" ? afsWerfAdres(p) : pl === "kantoor" ? AFS_BROS_ADRES : "";
     f.querySelector("#afs_adres_toon").textContent = pl === "elders" ? "" : (adr || (pl === "werf" ? "⚠ Geen werfadres bij dit project — vul het adres in bij het project of kies 'Ander adres'." : ""));
     const wie = (typeof wieSplit === "function" ? wieSplit(f.querySelector('[name="assignee"]').value) : { assignee: f.querySelector('[name="assignee"]').value }).assignee;
-    f.querySelector("#afs_titel_toon").textContent = "In de agenda van BROS: " + afsInitialen(wie) + "/" + (p ? p.klant || "" : "") + ", " + (f.querySelector("#afs_ond").value.trim() || f.querySelector('[name="titel"]').value.trim());
+    // 1.74: de verantwoordelijke staat al op de afspraak — niet nog eens aanvinkbaar bij "Ook mee van BROS"
+    f.querySelectorAll('input[name="afs_team"]').forEach(i => { const zelf = i.value === wie; i.disabled = zelf; if (zelf) i.checked = false; i.closest("label").style.opacity = zelf ? ".45" : ""; i.closest("label").title = zelf ? "Verantwoordelijke van de taak" : ""; });
+    const team = [wie, ...[...f.querySelectorAll('input[name="afs_team"]:checked')].map(i => i.value)].filter(Boolean);
+    f.querySelector("#afs_titel_toon").textContent = "In de agenda van BROS: " + (team.length ? team.map(afsInitialen).join(" + ") : "BROS") + "/" + (p ? p.klant || "" : "") + ", " + (f.querySelector("#afs_ond").value.trim() || f.querySelector('[name="titel"]').value.trim());
   };
   f.addEventListener("input", sync); f.addEventListener("change", (e) => {
     if (e.target.name === "project_id") { const pid = e.target.value; f.querySelector("#afs_deeln").innerHTML = afsDeelnemersHtml(pid, { afspraak_contacten: [] }); }
@@ -72,10 +85,11 @@ function afsUitForm(d, row, t) {
   if (!adres) return pl === "werf" ? "Dit project heeft geen werfadres. Vul het in bij het project, of kies 'Ander adres'." : "Vul het adres van de afspraak in.";
   Object.assign(row, { afspraak: pl, afspraak_van: d.afs_van, afspraak_tot: d.afs_tot || null, afspraak_adres: adres, afspraak_onderwerp: (d.afs_onderwerp || "").trim(),
     afspraak_contacten: [...f.querySelectorAll('input[name="afs_c"]:checked')].map(i => i.value), afspraak_agenda: !!d.afs_agenda, afspraak_mailen: !!d.afs_mailen, eind: row.start });
+  if (afsTeamOk() && f.querySelector("#afs_team")) row.afspraak_team = [...f.querySelectorAll('input[name="afs_team"]:checked')].map(i => i.value).filter(id => id !== row.assignee);   // 1.74
   return null;
 }
 /* het Drive-script bijwerken (agenda + mails) */
-const AFS_VELDEN = ["afspraak", "start", "afspraak_van", "afspraak_tot", "afspraak_adres", "afspraak_onderwerp", "afspraak_contacten", "afspraak_agenda", "afspraak_mailen", "assignee", "titel", "project_id"];
+const AFS_VELDEN = ["afspraak", "start", "afspraak_van", "afspraak_tot", "afspraak_adres", "afspraak_onderwerp", "afspraak_contacten", "afspraak_agenda", "afspraak_mailen", "assignee", "titel", "project_id", "afspraak_team"];
 async function afsSync(id, weg, stil) {
   if (!afsReady() || typeof driveReady !== "function" || !driveReady()) { if (!stil) toast("Niet in de agenda gezet: het Drive-script is niet ingesteld (Instellingen › Drive).", 7000); return null; }
   try {

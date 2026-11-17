@@ -80,7 +80,7 @@ function uwGaProject(e, uid) {
   const p = Object.values(S.projecten || {}).filter(x => ["lopend", "offerte"].includes(x.status) && ((x.nummer && t.includes(String(x.nummer))) || (x.klant && x.klant.length >= 4 && t.includes(x.klant.toLowerCase().split(/\s+/)[0]))))[0];
   return (p && p.id) || uwLaatsteProject(uid);
 }
-const uwAfspraken = (uid, van, tot) => Object.values(S.taken || {}).filter(t => t.afspraak && t.assignee === uid && t.start && t.start >= van && t.start <= tot && uwAfsVak(t));
+const uwAfspraken = (uid, van, tot) => Object.values(S.taken || {}).filter(t => t.afspraak && (t.assignee === uid || (t.afspraak_team || []).includes(uid)) && t.start && t.start >= van && t.start <= tot && uwAfsVak(t));
 const uwGeboekt = (t, uid) => Object.values(S.uren || {}).some(h => h.taak_id === t.id && h.user_id === uid && h.datum === t.start);
 /** nog te bevestigen: voorbij of vandaag, niet geboekt, niet weggeklikt */
 function uwTeBevestigen(uid, van, tot) {
@@ -126,7 +126,7 @@ function uwAgenda() {
   const uren = Object.values(S.uren || {}).filter(h => h.user_id === u && h.datum >= ws && h.datum <= we);
   const afs = uwAfspraken(u, ws, we); const weg = uwVerborgen(u);
   const ga = uwGaVan(u, uwGaWeek(ws)).filter(e => e.dag >= ws && e.dag <= we && !weg.has("ga:" + e.id) && !uwGaGeboekt(e, u));   // 1.73
-  const weekend = uwWeekend() || uren.some(h => (pd(h.datum).getUTCDay() + 6) % 7 >= 5) || afs.some(t => (pd(t.start).getUTCDay() + 6) % 7 >= 5);
+  const weekend = uwWeekend() || uren.some(h => (pd(h.datum).getUTCDay() + 6) % 7 >= 5) || afs.some(t => (pd(t.start).getUTCDay() + 6) % 7 >= 5) || ga.some(e => (pd(e.dag).getUTCDay() + 6) % 7 >= 5);   // 1.74: ook agenda-afspraken in het weekend
   const dagen = Array.from({ length: weekend ? 7 : 5 }, (_, i) => addDays(ws, i));
   const vak = (h) => { const v = uwMin(h.tijd_van); if (v == null) return null; let t = uwMin(h.tijd_tot); if (t == null || t <= v) t = Math.min(v + Math.round((Number(h.uren) || 1) * 60), 24 * 60); return { van: v, tot: t }; };
   // zichtbaar bereik: 7–19 u, ruimer als er iets buiten valt

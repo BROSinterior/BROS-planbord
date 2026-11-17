@@ -62,7 +62,7 @@ function wjTaken() {
   const team = wjTeam(); const open = Object.values(S.taken).filter(t => t.status !== "done" && (team || t.assignee === S.me.id));
   const laat = open.filter(isLate).sort((a, b) => (a.eind || "").localeCompare(b.eind || "") || (a.titel || "").localeCompare(b.titel || ""));
   const dag = wjTaakDag;
-  const nu = Object.values(S.taken).filter(t => t.status !== "done" && t.assignee === S.me.id && wjBinnenkort(t) && !isLate(t))
+  const nu = Object.values(S.taken).filter(t => t.status !== "done" && (t.assignee === S.me.id || (t.afspraak && (t.afspraak_team || []).includes(S.me.id))) && wjBinnenkort(t) && !isLate(t))   // 1.74: ook afspraken waar je mee naartoe gaat
     .sort((a, b) => (dag(a) || "").localeCompare(dag(b) || "") || (a.afspraak_van || "").localeCompare(b.afspraak_van || ""));
   return { laat, nu, dag };
 }

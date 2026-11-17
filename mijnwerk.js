@@ -17,7 +17,7 @@ const mwLead = (pid, uid) => { const p = S.projecten[pid]; return !!p && (p.lead
 /** alle items voor persoon uid: { soort, titel, sub, datum, laat, taak?, pid, tab } */
 function mwItems(uid) {
   const uit = [];
-  Object.values(S.taken || {}).filter(t => t.status !== "done" && t.assignee === uid).forEach(t => {
+  Object.values(S.taken || {}).filter(t => t.status !== "done" && (t.assignee === uid || (t.afspraak && (t.afspraak_team || []).includes(uid)))).forEach(t => {   // 1.74: ook afspraken waar je mee naartoe gaat
     const punten = typeof tdPunten === "function" ? tdPunten(t.id).filter(x => !x.klaar) : [];
     const soort = t.vaststelling_id ? "werf" : t.afspraak ? "afspraak" : (t.bundel || punten.length) ? "todo" : "taak";
     const pDl = punten.map(x => x.deadline).filter(Boolean).sort()[0];

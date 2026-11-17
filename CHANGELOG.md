@@ -2,6 +2,14 @@
 
 De nieuwste versie staat bovenaan. (Vanaf 1.48 houdt `version.json` enkel de laatste versie bij; het Planbord vraagt dat bestand elke 5 minuten op.)
 
+## 1.74.0 — 2026-11-17 (script 067 uitvoeren, nieuw drive/Code.gs online zetten, pushen)
+
+**Afspraak met meerdere mensen van BROS.** In het taakformulier staat bij "Afspraak ter plaatse" nu **Ook mee van BROS**: vink de collega's aan die mee naar de klant gaan.
+- **Google Agenda:** het agenda-item krijgt ieders initialen ("PB + NDK/Klant, onderwerp"), en iedereen die meegaat (ook de verantwoordelijke) staat erop als gast. Zo staat de afspraak in ieders eigen Google Agenda, zonder aparte uitnodigingsmail. Wie je uitvinkt, verdwijnt er weer van. Gasten die je zelf in Google Agenda toevoegde, blijven staan.
+- **In het Planbord:** de afspraak staat ook in de weekagenda bij Uren van elke collega die meegaat (met **✓ Uren** voor hun eigen uren), bij Mijn werk en in Wacht op jou. In de takenlijsten toont het afspraaklabel "+1", "+2" … met de namen erbij.
+- **Klantmail:** die noemt iedereen die komt ("Afspraak met Phil en Noa (BROS)").
+- **Weekend in Uren:** valt een afspraak uit de Google Agenda in het weekend, dan toont de weekagenda nu vanzelf het weekend.
+
 ## 1.73.0 — 2026-11-16 (scripts 064, 065 en 066 uitvoeren, nieuw drive/Code.gs online zetten, pushen; geen update van de Mac mini nodig)
 
 **Mijn werk.** Nieuw hoofdtabblad met één lijst per persoon voor alles wat op je wacht, uit alle projecten en gesorteerd op datum. Het bevat taken, to-do's (met hun open punten), werfpunten en afspraken, plus keuzes, vragen van klanten en meerwerkaanvragen op projecten waar je lead bent. De lijst is gegroepeerd in Te laat, Deze week, Volgende week, Later en Zonder datum, en je kunt filteren per soort. Beheer kan het werk van een collega bekijken. Op de gsm staat Mijn werk in de balk onderaan; Taken staat daar onder Meer. "Wacht op jou" blijft het korte lijstje voor vandaag en morgen.

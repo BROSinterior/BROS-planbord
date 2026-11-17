@@ -1,7 +1,8 @@
 """1.73 — Mijn werk, Google Agenda-afspraken in de weekagenda, Naar Yuki (proefmodus), script 066, minimale databankversie,
 opgeruimde compatibiliteitscode."""
-import os, sys, re; sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "lib")); from h import *
+import os, sys, re, datetime; sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "lib")); from h import *
 herstel("basis")
+VANDAAG = datetime.date.today(); dag = lambda n: (VANDAAG + datetime.timedelta(days=n)).isoformat(); MAANDAG = VANDAAG - datetime.timedelta(days=VANDAAG.weekday())
 R = {}
 def ok(k, c, x=""): R[k] = "OK" if c else "FOUT " + str(x)[:600]
 # ---- databank: 066 ----
@@ -13,21 +14,21 @@ ok("Planbord kan 'naar Yuki gestuurd' niet zelf zetten", "Drive-script" in (fout
 ok("…het Drive-script (service) wel", pg("update vorderingen set yuki_bericht='x' where id=%s returning id::text", (V3,)) == (V3,))
 pg("update vorderingen set yuki_bericht=null where id=%s", (V3,), f=None)
 # ---- testgegevens Mijn werk ----
-T_LAAT = pg("insert into taken (project_id, titel, status, assignee, eind) values (%s,'Offerte nakijken','todo',%s,'2026-11-10') returning id::text", (P, B))[0]
-T_LATER = pg("insert into taken (project_id, titel, status, assignee, eind) values (%s,'Lichtplan tekenen','todo',%s,'2026-12-15') returning id::text", (P, B))[0]
+T_LAAT = pg("insert into taken (project_id, titel, status, assignee, eind) values (%s,'Offerte nakijken','todo',%s,%s) returning id::text", (P, B, dag(-7)))[0]
+T_LATER = pg("insert into taken (project_id, titel, status, assignee, eind) values (%s,'Lichtplan tekenen','todo',%s,%s) returning id::text", (P, B, dag(40)))[0]
 T_TODO = pg("insert into taken (project_id, titel, status, assignee, bundel) values (%s,'To do''s · werfvergadering','todo',%s,true) returning id::text", (P, B))[0]
-pg("insert into taak_punten (taak_id, tekst, deadline) values (%s,'Stopcontacten keuken uitzetten','2026-11-19'), (%s,'Stalen bestellen',null)", (T_TODO, T_TODO), f=None)
-pg("insert into vaststellingen (project_id, titel, omschrijving, assignee, deadline, status) values (%s,'Barst in de tegel','Barst naast de deur',%s,'2026-11-25','open')", (P, B), f=None)
-pg("insert into taken (project_id, titel, status, assignee, eind) values (%s,'Klaar','done',%s,'2026-11-10')", (P, B), f=None)
-pg("insert into keuzes (project_id, onderwerp, deadline, status) values (%s,'Kleur van de keukenfronten','2026-11-20','open')", (P,), f=None)
+pg("insert into taak_punten (taak_id, tekst, deadline) values (%s,'Stopcontacten keuken uitzetten',%s), (%s,'Stalen bestellen',null)", (T_TODO, dag(0), T_TODO), f=None)
+pg("insert into vaststellingen (project_id, titel, omschrijving, assignee, deadline, status) values (%s,'Barst in de tegel','Barst naast de deur',%s,%s,'open')", (P, B, (MAANDAG + datetime.timedelta(days=9)).isoformat()), f=None)
+pg("insert into taken (project_id, titel, status, assignee, eind) values (%s,'Klaar','done',%s,%s)", (P, B, dag(-7)), f=None)
+pg("insert into keuzes (project_id, onderwerp, deadline, status) values (%s,'Kleur van de keukenfronten',%s,'open')", (P, dag(3)), f=None)
 pg("insert into taak_voorstellen (project_id, titel, onderwerp, status, urgentie) values (%s,'Wanneer komt de schilder?','planning','open','normaal')", (P,), f=None)
 # ---- Planbord ----
 start_postgrest(); poort(); zetapp()
 gw.AGENDA[:] = [
-    {"id": "ga-1", "titel": "NO/ Showroom Alfa", "plaats": "Gent", "dag": "2026-11-16", "van": "10:00", "tot": "11:30", "heledag": False, "gasten": [], "maker": "kantoor@test.local"},
-    {"id": "ga-2", "titel": "Overleg aannemer", "plaats": "", "dag": "2026-11-16", "van": "14:00", "tot": "15:00", "heledag": False, "gasten": ["medewerker@test.local"], "maker": "kantoor@test.local"},
-    {"id": "ga-3", "titel": "PH/ Iets van Phil", "plaats": "", "dag": "2026-11-17", "van": "09:00", "tot": "10:00", "heledag": False, "gasten": [], "maker": "kantoor@test.local"},
-    {"id": "ga-4", "titel": "Verlof", "plaats": "", "dag": "2026-11-18", "van": None, "tot": None, "heledag": True, "gasten": ["medewerker@test.local"], "maker": ""}]
+    {"id": "ga-1", "titel": "NO/ Showroom Alfa", "plaats": "Gent", "dag": dag(0), "van": "10:00", "tot": "11:30", "heledag": False, "gasten": [], "maker": "kantoor@test.local"},
+    {"id": "ga-2", "titel": "Overleg aannemer", "plaats": "", "dag": dag(0), "van": "14:00", "tot": "15:00", "heledag": False, "gasten": ["medewerker@test.local"], "maker": "kantoor@test.local"},
+    {"id": "ga-3", "titel": "PH/ Iets van Phil", "plaats": "", "dag": dag(1), "van": "09:00", "tot": "10:00", "heledag": False, "gasten": [], "maker": "kantoor@test.local"},
+    {"id": "ga-4", "titel": "Verlof", "plaats": "", "dag": dag(2), "van": None, "tot": None, "heledag": True, "gasten": ["medewerker@test.local"], "maker": ""}]
 from playwright.sync_api import sync_playwright
 with sync_playwright() as pw:
     b = pw.chromium.launch(); p, errs = nieuwe_pagina(b, 1440, 950)
@@ -64,14 +65,14 @@ with sync_playwright() as pw:
     ok("geen JS-fouten (beheer)", not [e for e in errs if "PE " in e], errs)
     # medewerker: weekagenda met Google Agenda
     m, e2 = nieuwe_pagina(b, 1440, 950); login(m, "medewerker@test.local")
-    m.evaluate("() => { S.view='uren'; render(); }"); m.wait_for_timeout(1500)
+    m.evaluate("() => { try { localStorage.setItem('bros.uw.weekend', '1'); } catch (e) { } S.view='uren'; render(); }"); m.wait_for_timeout(1500)
     ga = m.locator(".uw-ga").all_inner_texts()
     ok("Uren: agenda-afspraken van Noa (initialen + deelnemer), niet die van Phil, geen hele dag", len(ga) == 2 and any("Showroom Alfa" in x for x in ga) and any("Overleg aannemer" in x for x in ga) and not any("Phil" in x for x in ga), ga)
     m.locator("[data-uw-ga-ok='ga-1']").click(); m.wait_for_timeout(500)
     f = m.locator("#modal")
     ok("✓ Uren… → urenformulier met 10:00–11:30, 1,5 u en de titel", f.locator("[name=tijd_van]").input_value() == "10:00" and f.locator("[name=tijd_tot]").input_value() == "11:30" and "Showroom Alfa" in (f.locator("[name=notitie]").input_value() if f.locator("[name=notitie]").count() else ""), f.inner_text()[:400])
     f.locator("button[type=submit]").click(); m.wait_for_timeout(1200)
-    ok("na boeken: afspraak verdwijnt (uren in dat tijdvak)", m.locator("[data-uw-ga='ga-1']").count() == 0 and pg("select count(*) from uren where user_id=%s and datum='2026-11-16'", (M,))[0] == 1)
+    ok("na boeken: afspraak verdwijnt (uren in dat tijdvak)", m.locator("[data-uw-ga='ga-1']").count() == 0 and pg("select count(*) from uren where user_id=%s and datum=%s", (M, dag(0)))[0] == 1)
     m.locator("[data-uw-ga-weg='ga-2']").click(); m.wait_for_timeout(800)
     ok("✕ → niet meer getoond (in de databank)", m.locator("[data-uw-ga='ga-2']").count() == 0 and pg("select count(*) from mijn_markeringen where user_id=%s and sleutel='ga:ga-2'", (M,))[0] == 1)
     ok("geen JS-fouten (medewerker)", not [e for e in e2 if "PE " in e], e2)

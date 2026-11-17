@@ -7,7 +7,7 @@ if [ -z "$PB_OVERSLAAN" ]; then
   python3 voorbereiden.py > /tmp/pbtest-voorbereiden.txt 2>&1; rc=$?; tail -5 /tmp/pbtest-voorbereiden.txt
   if [ $rc -ne 0 ]; then tail -30 /tmp/pbtest-voorbereiden.txt; meld "voorbereiden.py" "$(grep -v '^\s*$' /tmp/pbtest-voorbereiden.txt | tail -8)"; exit 1; fi
 fi
-for t in t_gs.js t67_gs.js t70_gs.js t73_gs.js t73b_gs.js; do
+for t in t_gs.js t67_gs.js t70_gs.js t73_gs.js t73b_gs.js t74_gs.js; do
   [ -f "$t" ] || continue
   echo "== $t"; node $t > /tmp/pbtest-uit.txt 2>&1; rc=$?; tail -1 /tmp/pbtest-uit.txt
   if [ $rc -ne 0 ] || grep -q "✗\|FOUT" /tmp/pbtest-uit.txt; then fout=1; grep "✗" /tmp/pbtest-uit.txt; tail -15 /tmp/pbtest-uit.txt
