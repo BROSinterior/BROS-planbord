@@ -415,6 +415,16 @@ async function ovIntrekken(gid) {
 }
 /* getekende pdf: de vaste kopie + akkoordpagina → Documenten/Overeenkomsten (gedeeld met de klant) */
 const OV_BEZIG = new Set();
+/* 1.76: een rij "claimen" zodat maar één Planbord de pdf maakt (kolOp leeg, of een vastgelopen poging ouder dan `minuten`).
+   Bewust zonder or-filter: PostgREST 12 geeft bij een update met een or-filter de gewijzigde rij niet terug (de or-voorwaarde
+   wordt opnieuw getoetst aan de nieuwe waarde), waardoor het leek alsof een ander Planbord al bezig was en er nooit een pdf kwam. */
+async function pbClaim(tabel, id, kolOp, kolKlaar, minuten) {
+  const nu = new Date().toISOString(), grens = new Date(Date.now() - minuten * 60000).toISOString();
+  let r = await sb.from(tabel).update({ [kolOp]: nu }).eq("id", id).is(kolKlaar, null).is(kolOp, null).select("id");
+  if (!r.error && (r.data || []).length) return true;
+  r = await sb.from(tabel).update({ [kolOp]: nu }).eq("id", id).is(kolKlaar, null).lt(kolOp, grens).select("id");
+  return !r.error && (r.data || []).length > 0;
+}
 const ovTxt = (s) => String(s == null ? "" : s).replace(/[‘’]/g, "'").replace(/[“”]/g, '"').replace(/[–—]/g, "-").replace(/…/g, "...").replace(/[^\x20-\x7E\xA0-\xFF€]/g, "?");
 async function ovGetekend(gid, stil) {
   const g = S.goedkeuringen[gid]; const p = g && S.projecten[g.project_id]; if (!g || !p || g.status !== "akkoord" || g.getekend_drive_id || OV_BEZIG.has(gid)) return;
@@ -422,9 +432,7 @@ async function ovGetekend(gid, stil) {
   if (!p.drive_folder_id || !driveReady()) { if (!stil) toast("Geen projectmap op Drive gekoppeld (of Drive-script niet ingesteld)."); return; }
   OV_BEZIG.add(gid);
   // claimen: maar één Planbord maakt de pdf
-  const nu = new Date().toISOString();
-  const claim = await sb.from("goedkeuringen").update({ getekend_op: nu }).eq("id", gid).is("getekend_drive_id", null).or(`getekend_op.is.null,getekend_op.lt.${new Date(Date.now() - 10 * 60000).toISOString()}`).select();
-  if (claim.error || !(claim.data || []).length) { OV_BEZIG.delete(gid); if (!stil) toast("De getekende pdf wordt al gemaakt (door een ander Planbord)."); return; }
+  if (!(await pbClaim("goedkeuringen", gid, "getekend_op", "getekend_drive_id", 10))) { OV_BEZIG.delete(gid); if (!stil) toast("De getekende pdf wordt al gemaakt (door een ander Planbord)."); return; }
   if (!stil) loader.start("ov.teken", "Getekende pdf maken…", 15000);
   try {
     const dl = await sb.storage.from("overeenkomsten").download(g.bestand_path); if (dl.error) throw dl.error;

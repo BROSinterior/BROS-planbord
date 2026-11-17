@@ -47,6 +47,7 @@ class H(http.server.BaseHTTPRequestHandler):
             for k, v in self.headers.items():
                 if k.lower() in ("authorization", "content-type", "accept", "prefer", "range", "range-unit", "accept-profile", "content-profile"): req.add_header(k, v)
             if not self.headers.get("Authorization") or self.headers.get("Authorization", "").endswith("undefined"): req.add_header("Authorization", "Bearer " + ANON)
+            req.add_header("X-Forwarded-For", self.client_address[0]); req.add_header("User-Agent", self.headers.get("User-Agent", "test"))   # 1.76: zoals Supabase (IP en browser bij goedkeuren)
             try: r = urllib.request.urlopen(req, timeout=30); code, data, hdrs = r.status, r.read(), r.headers
             except urllib.error.HTTPError as e: code, data, hdrs = e.code, e.read(), e.headers
             self.send_response(code); self._cors()
@@ -61,6 +62,13 @@ class H(http.server.BaseHTTPRequestHandler):
             if a == "yukikoppel": return self._json(200, {"ok": True, "document": b.get("_doc")})
             if a == "yukifactuur": return self._json(200, {"ok": True, "proef": True, "regels": [{"tarief": r.get("tarief"), "excl": r.get("excl"), "omschrijving": b.get("omschrijving"), "btwcode": ""} for r in b.get("regels", [])], "klant": "Test", "datum": "2026-11-16", "vervaldag": "2026-12-01", "waarschuwingen": ["test"], "xml": "<SalesInvoices/>"})
             if a == "agendaweek": return self._json(200, {"ok": True, "items": AGENDA})   # 1.73: testafspraken uit de Google Agenda
+            if a == "put":   # 1.76: bestand bewaren in de projectmap (de pdf blijft in DRIVE_LOG)
+                fid = "drv-" + uuid.uuid4().hex[:12]
+                return self._json(200, {"ok": True, "file": {"id": fid, "name": b.get("name"), "path": b.get("subpath"), "url": "https://drive.google.com/file/d/" + fid, "size": len(b.get("base64") or "") * 3 // 4}})
+            if a == "mwmail":   # 1.76: zoals het Drive-script: wie nog niet gemeld werd en een e-mailadres heeft
+                with psycopg.connect(DSN) as c:
+                    rs = c.execute("update goedkeuring_aannemers a set gemeld_op = now() from contacten k where k.id = a.contact_id and a.goedkeuring_id = %s and a.gemeld_op is null and k.email <> '' returning k.email", (b.get("id"),)).fetchall(); c.commit()
+                return self._json(200, {"ok": True, "naar": [r[0] for r in rs], "zonder": []})
             return self._json(200, {"ok": True})
         if p.startswith("/app/"):
             f = os.path.join(APP, p[5:].split("?")[0]) or APP

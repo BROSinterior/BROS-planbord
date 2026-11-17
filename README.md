@@ -22,7 +22,7 @@ Statische webapp (geen build-stap) op een Supabase-database.
 | `version.json` | versienummer (enkel de laatste versie); de app meldt een nieuwe versie aan wie ze open heeft |
 | `CHANGELOG.md` | versiegeschiedenis (vanaf 1.48 niet meer in version.json) |
 | `vendor/supabase-2.45.4.js` (+ `591.supabase.js`) | de Supabase-bibliotheek, zelf gehost (geen CDN nodig) |
-| `sql/001_init.sql` … `sql/067_*.sql` | databasescripts, in volgorde uit te voeren (`versie_schema` in instellingen bewaakt de volgorde vanaf 022) |
+| `sql/001_init.sql` … `sql/068_*.sql` | databasescripts, in volgorde uit te voeren (`versie_schema` in instellingen bewaakt de volgorde vanaf 022) |
 | `drive/Code.gs` | Google Apps Script dat projectmappen aanmaakt/koppelt op Drive en de meetstaat-export wegschrijft (installatie: zie bovenaan dat bestand) |
 | `drive/YukiArchief.gs` | klein Apps Script voor het account archief@bros.be: leest daar de Yuki-factuurmails en stuurt ze naar het Drive-script (v1.50.1, zie *Yuki-mails uit archief@bros.be*) |
 | `agenda.js` | gedeeld (Planbord en portalen): agendabestand (.ics) en Google Agenda-link voor afspraken (script 041) |
@@ -209,6 +209,12 @@ Veel meetstaten zijn met klantprijzen uit Excel ingelezen: kostprijs = klantprij
 - Alleen beheer ziet of wijzigt dit (tabel `ms_raming`, RLS). Klanten, aannemers en medewerkers zien niets; de pdf/Excel voor de klant blijven ongewijzigd.
 
 Activeren: Supabase → SQL Editor → `sql/052_marges_raming.sql` → Run (na 051; controle `1 | 1 | 52`). Optioneel: nieuw `drive/Code.gs` (neemt `ms_raming` mee in de wekelijkse back-up) als `Code.ingevuld.gs` plakken en een nieuwe versie deployen.
+
+## Meer-/minderwerk naar de aannemer (script 068 + drive/Code.gs, v1.76)
+
+- Bij een meer-/minwerkvoorstel kies je minstens één aannemer. Een externe partij kan erbij en wordt aannemer op het project.
+- Na de goedkeuring door de klant volgt een bevestiging in pdf zonder prijzen (Documenten/Meerwerk). Ze wordt gedeeld in het aannemersportaal en gemaild met bijlage (actie `mwmail` in het Drive-script). De aannemer klikt **Ontvangen**: naam, login, tijdstip en IP worden vast bewaard.
+- Activeren: `sql/068` (controle `7|1|1|68`), nieuw `drive/Code.gs`, pushen.
 
 ## Afspraak met meerdere mensen van BROS (script 067 + drive/Code.gs, v1.74)
 

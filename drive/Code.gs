@@ -37,7 +37,8 @@ function doPost(e) {
     const body = JSON.parse((e.postData && e.postData.contents) || "{}");
     try { onderhoudZeker(); } catch (x) { }   // 1.48: de onderhoudstrigger bestaat (zonder dat iemand iets moet uitvoeren)
     if (body.action === "reset") return json(portaalReset(body));   // klantenportaal: "wachtwoord vergeten" — bewust zonder secret, stuurt enkel een mail naar een bestaande klantlogin
-    if (body.action === "gkmail") return json(goedkeuringMail(body)); // portaal (klant beslist) én Planbord: identiteit en rol via het meegestuurde login-token
+    if (body.action === "gkmail") return json(goedkeuringMail(body));
+    if (body.action === "mwmail") return json(meerwerkMail(body));   // 1.76: goedgekeurd meer-/minderwerk → pdf-bevestiging aan de aannemer(s) // portaal (klant beslist) én Planbord: identiteit en rol via het meegestuurde login-token
     if (body.action === "voorstelmail") return json(voorstelMailAannemer(body)); // aannemersportaal: melding van een vraag/opmerking (token-gecontroleerd, aannemer)
     if (body.action === "prijsaanvraagmail") return json(prijsaanvraagMail(body)); // prijsaanvragen: team (token) → aannemer, of aannemer (token) → BROS
     if (body.action === "koppelmail") return json(koppelMail(body));
@@ -320,9 +321,10 @@ const PORTAAL = {
   ONDERWERP: "Welkom in je BROS-klantenportaal",
 };
 /** Mail naar de klant: vanuit PORTAAL.VAN als dat een Gmail-alias is, anders vanuit het scriptaccount met PORTAAL.VAN als reply-to. */
-function portaalMail(to, subject, text, html) {
+function portaalMail(to, subject, text, html, bijlagen) {
   subject = String(subject || "").replace(/[\r\n]+/g, " ").slice(0, 240);
   const opt = { htmlBody: html, name: PORTAAL.AFZENDER };
+  if (bijlagen && bijlagen.length) opt.attachments = bijlagen;   // 1.76: bv. de bevestiging van meer-/minderwerk (pdf)
   if (PORTAAL.VAN) { const aliases = GmailApp.getAliases(); if (aliases.indexOf(PORTAAL.VAN) >= 0) opt.from = PORTAAL.VAN; else opt.replyTo = PORTAAL.VAN; }
   GmailApp.sendEmail(to, subject, text, opt);
 }
@@ -535,6 +537,48 @@ function goedkeuringMail(body) {
     }
   }
   return { ok: true, naar: naar };
+}
+/* 1.76 (script 068): de klant keurde meer-/minderwerk goed → het Planbord maakte de bevestiging (pdf, ZONDER prijzen) en vraagt
+   hier om ze te mailen, met de pdf in bijlage, naar de gekoppelde aannemer(s) die nog geen mail kregen (gemeld_op leeg). */
+function meerwerkMail(body) {
+  const wie = caller(body.token);
+  const g = (pbAdmin("/rest/v1/goedkeuringen?id=eq." + uuid(body.id) + "&select=id,project_id,soort,status,titel,toelichting,posten,beslist_op,beslist_naam,bevestiging_drive_id", "get") || [])[0];
+  if (!g || g.soort !== "meerwerk") return { ok: false, error: "Meer-/minderwerk niet gevonden." };
+  if (g.status !== "akkoord") return { ok: false, error: "Dit meer-/minderwerk is niet (meer) goedgekeurd door de klant." };
+  if (!g.bevestiging_drive_id) return { ok: false, error: "De bevestiging (pdf) is nog niet gemaakt." };
+  const rijen = pbAdmin("/rest/v1/goedkeuring_aannemers?goedkeuring_id=eq." + g.id + "&gemeld_op=is.null&select=id,contact_id", "get") || [];
+  if (!rijen.length) return { ok: true, naar: [], zonder: [] };
+  if (!eenmalig("mw:" + g.id + ":" + rijen.map(r => r.id).sort().join(","), 120)) return { ok: false, error: "Deze mail wordt net al verstuurd; probeer het zo dadelijk opnieuw." };
+  const contacten = pbIn("/rest/v1/contacten?", "id", rijen.map(r => r.contact_id), "&select=id,naam,contactpersoon,email,user_id");
+  const p = (pbAdmin("/rest/v1/projecten?id=eq." + g.project_id + "&select=nummer,klant,naam,adres,gemeente", "get") || [])[0] || {};
+  const pdf = DriveApp.getFileById(g.bevestiging_drive_id).getBlob().setContentType("application/pdf");
+  const proj = (p.klant || "") + (p.naam && p.naam !== p.klant ? " · " + p.naam : "");
+  const adres = [p.adres, p.gemeente].filter(Boolean).join(", ");
+  const wanneer = g.beslist_op ? new Date(g.beslist_op).toLocaleString("nl-BE", { timeZone: "Europe/Brussels", dateStyle: "long", timeStyle: "short" }) : "";
+  const nl = (n) => Number(n || 0).toLocaleString("nl-BE", { maximumFractionDigits: 2 });
+  const ST = { meerwerk: "Meerwerk", minwerk: "Minwerk" };
+  const rows = (g.posten || []).map(x => "<tr><td style=\"padding:4px 8px;color:#767D78;font-family:monospace\">" + H(x.code) + "</td><td style=\"padding:4px 8px\">" + H(x.omschrijving) + (x.locatie ? " <span style=\"color:#767D78\">· " + H(x.locatie) + "</span>" : "") + "</td><td style=\"padding:4px 8px;text-align:right;white-space:nowrap\">" + nl(x.hoeveelheid) + " " + H(x.eenheid) + "</td><td style=\"padding:4px 8px;color:#767D78\">" + H(ST[x.status] || x.status || "") + "</td></tr>").join("");
+  const tabel = "<table style=\"border-collapse:collapse;width:100%;font-size:13px\"><thead><tr style=\"color:#767D78;font-size:11px;text-transform:uppercase\"><th align=\"left\" style=\"padding:4px 8px\">Nr</th><th align=\"left\" style=\"padding:4px 8px\">Omschrijving</th><th align=\"right\" style=\"padding:4px 8px\">Hoev.</th><th align=\"left\" style=\"padding:4px 8px\">Soort</th></tr></thead><tbody>" + rows + "</tbody></table>";
+  const lijstTxt = (g.posten || []).map(x => "- " + (x.code ? x.code + " " : "") + (x.omschrijving || "") + (x.locatie ? " (" + x.locatie + ")" : "") + ": " + nl(x.hoeveelheid) + " " + (x.eenheid || "") + (ST[x.status] ? " · " + ST[x.status] : "")).join("\n");
+  const naar = [], zonder = [];
+  for (let i = 0; i < rijen.length; i++) {
+    const r = rijen[i]; const c = contacten.find(x => x.id === r.contact_id); const email = c ? String(c.email || "").trim() : "";
+    if (!email) { zonder.push(c ? c.naam : "onbekend contact"); continue; }
+    if (!mailRuimte(1)) return { ok: false, naar: naar, zonder: zonder, error: "Het dagelijkse mailquotum is bereikt; probeer het morgen opnieuw." };
+    const naam = c.contactpersoon || c.naam;
+    const portaal = c.user_id ? "<p>Bevestig in het aannemersportaal dat je het ontvangen hebt (knop <b>Ontvangen</b>); de pdf staat daar ook onder Documenten.</p><p style=\"margin:24px 0\"><a href=\"" + PORTAAL.URL_AANNEMER + "\" style=\"background:#1B1E1C;color:#fff;text-decoration:none;padding:12px 20px;border-radius:8px;font-weight:600;display:inline-block\">Naar het aannemersportaal</a></p>"
+      : "<p>Bevestig je graag de ontvangst door op deze mail te antwoorden?</p>";
+    const html = "<div style=\"font-family:Helvetica,Arial,sans-serif;font-size:15px;line-height:1.5;color:#1B1E1C;max-width:720px\"><p>Beste " + H(naam) + ",</p><p>De klant heeft het volgende <b>meer-/minderwerk goedgekeurd</b> voor <b>" + H(proj) + "</b>" + (adres ? " (" + H(adres) + ")" : "") + ". Jij voert het uit.</p>"
+      + "<p><b>" + H(g.titel) + "</b>" + (wanneer ? "<br><span style=\"color:#767D78;font-size:13px\">Goedgekeurd door " + H(g.beslist_naam) + " op " + H(wanneer) + "</span>" : "") + "</p>" + (g.toelichting ? "<p style=\"white-space:pre-line\">" + H(g.toelichting) + "</p>" : "") + tabel
+      + "<p style=\"margin-top:18px\">In bijlage vind je de <b>bevestiging in pdf</b> met de volledige goedkeuring door de klant (naam, login, tijdstip en controlecode). Ze vermeldt geen prijzen; de prijsafspraken met BROS blijven zoals overeengekomen.</p>" + portaal
+      + "<p>Met vriendelijke groeten,<br>" + H(wie.name) + " — BROS</p></div>";
+    const tekst = "Beste " + naam + ",\n\nDe klant heeft het volgende meer-/minderwerk goedgekeurd voor " + proj + (adres ? " (" + adres + ")" : "") + ". Jij voert het uit.\n\n" + g.titel + (wanneer ? " — goedgekeurd door " + g.beslist_naam + " op " + wanneer : "") + "\n" + lijstTxt + "\n\nIn bijlage: de bevestiging in pdf (zonder prijzen) met de volledige goedkeuring door de klant."
+      + (c.user_id ? "\nBevestig de ontvangst in het aannemersportaal: " + PORTAAL.URL_AANNEMER : "\nBevestig je de ontvangst door op deze mail te antwoorden?") + "\n\n" + wie.name + " — BROS";
+    portaalMail(email, "Goedgekeurd meer-/minderwerk · " + proj + " · " + g.titel, tekst, html, [pdf]);
+    pbAdmin("/rest/v1/goedkeuring_aannemers?id=eq." + r.id, "patch", { gemeld_op: new Date().toISOString() });
+    naar.push(email);
+  }
+  return { ok: true, naar: naar, zonder: zonder };
 }
 /* =====================================================================
    Vergaderingen & opnames (script 051, v1.54) — voor de verwerkingscomputer (Mac mini)

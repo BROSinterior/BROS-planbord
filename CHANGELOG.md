@@ -2,6 +2,14 @@
 
 De nieuwste versie staat bovenaan. (Vanaf 1.48 houdt `version.json` enkel de laatste versie bij; het Planbord vraagt dat bestand elke 5 minuten op.)
 
+## 1.76.0 — 2026-11-17 (script 068 uitvoeren, nieuw drive/Code.gs online zetten, pushen)
+
+**Meer- en minderwerk naar de aannemer.** Bij een meer-/minwerkvoorstel kies je verplicht de aannemer(s) die het uitvoeren, ook als er maar één op het project staat. Een andere aannemer of een nieuwe externe partij voeg je in hetzelfde venster toe; die wordt aannemer op het project.
+**Bevestiging in pdf.** Keurt de klant goed, dan maakt het Planbord automatisch een bevestiging zonder prijzen. Daarin staan de posten met hoeveelheden, de goedkeuring van de klant (naam, login, tijdstip, IP-adres, browser, opmerking), voor wie ze bestemd is en een controlecode (SHA-256). Ze komt in Documenten/Meerwerk, wordt gedeeld in het aannemersportaal en per mail verstuurd met de pdf in bijlage.
+**Ontvangen.** In het aannemersportaal staat het goedgekeurde werk bovenaan het project, met de knop **Ontvangen**. Naam, login, tijdstip en IP-adres worden bewaard en zijn achteraf niet te wijzigen. In het Planbord zie je per aannemer of hij wacht op de klant, gemeld is of het ontvangen heeft. Ook na de goedkeuring kan je nog een aannemer toevoegen; die krijgt de pdf dan meteen.
+**Bij elke goedkeuring** bewaart de databank voortaan ook het IP-adres en de browser van de klant (script 068).
+**Hersteld.** Bij de getekende pdf van een overeenkomst kon het Planbord denken dat een ander Planbord er al mee bezig was, waardoor de pdf niet automatisch gemaakt werd.
+
 ## 1.75.0 — 2026-11-17 (enkel pushen)
 
 **Projecten: standaard enkel "In offerte" en "Lopend".** Bovenaan het tabblad Projecten staan nu vinkjes per status (In offerte, Lopend, On hold, Afgerond, Verloren), met het aantal projecten erbij.

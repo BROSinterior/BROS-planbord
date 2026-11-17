@@ -15,8 +15,13 @@ function vGoedkeuringen(p) {
   const klanten = contactsOf(p.id).filter(x => ["bouwheer", "contactpersoon"].includes(x.rol) && x.c.user_id);
   return `<div class="panel" style="margin-bottom:16px"><div class="panel-head"><div><h3>Goedkeuringen door de klant</h3><div class="muted" style="font-size:12px;margin-top:2px">${klanten.length ? `Zichtbaar in het portaal voor ${klanten.map(x => esc(x.c.naam)).join(", ")}.` : `<span style="color:var(--warn)">Nog niemand van dit project heeft portaal-toegang (Dossier › Contacten).</span>`}</div></div></div>
     <div class="tw"><table class="t"><thead><tr><th>Voorstel</th><th>Voorgelegd</th><th>Reageren vóór</th><th class="r">Excl. btw</th><th class="r">Incl. btw</th><th>Status</th><th>Beslist</th><th></th></tr></thead><tbody>
-    ${gs.map(g => { const verlopen = g.status === "open" && g.geldig_tot && g.geldig_tot < todayIso; return `<tr><td><b>${esc(g.titel || (g.soort === "meerwerk" ? "Meerwerk" : "Offerte"))}</b><small class="muted" style="display:block">${(g.posten || []).length} posten${g.toelichting ? " · " + esc(g.toelichting.slice(0, 80)) : ""}</small></td><td class="num">${fmtLong((g.voorgelegd_op || "").slice(0, 10))}<small class="muted" style="display:block">${esc(userById(g.voorgelegd_door).name)}</small></td><td class="num" style="${verlopen ? "color:var(--crit)" : ""}">${g.geldig_tot ? fmtLong(g.geldig_tot) : "—"}</td><td class="r num">${eur(g.totaal_excl)}</td><td class="r num">${eur(g.totaal_incl)}</td><td><span class="pill ${g.status === "akkoord" ? "st-afgerond" : verlopen ? "late" : g.status === "open" ? "st-lopend" : g.status === "geweigerd" ? "late" : "st-on_hold"}">${verlopen ? "Termijn verstreken" : GK_STATUS[g.status] || g.status}</span></td><td style="font-size:12px">${g.beslist_op ? `${fmtLong(lokDag(g.beslist_op))} · ${esc(g.beslist_naam)}${g.opmerking ? `<div style="color:var(--crit)">“${esc(g.opmerking)}”</div>` : ""}` : "—"}${g.status === "geannuleerd" ? `<div class="muted" title="${esc(g.annuleer_reden || "")}">geannuleerd ${g.geannuleerd_op ? fmtLong(lokDag(g.geannuleerd_op)) : ""}${g.geannuleerd_door ? " door " + esc(userById(g.geannuleerd_door).name) : ""}${g.annuleer_reden ? ` · “${esc(g.annuleer_reden.slice(0, 120))}”` : ""}</div>` : ""}</td>
+    ${gs.map(g => { const verlopen = g.status === "open" && g.geldig_tot && g.geldig_tot < todayIso; return `<tr><td><b>${esc(g.titel || (g.soort === "meerwerk" ? "Meerwerk" : "Offerte"))}</b><small class="muted" style="display:block">${(g.posten || []).length} posten${g.toelichting ? " · " + esc(g.toelichting.slice(0, 80)) : ""}</small>${g.soort === "meerwerk" && mwKlaar() ? gkAanKort(g) : ""}</td><td class="num">${fmtLong((g.voorgelegd_op || "").slice(0, 10))}<small class="muted" style="display:block">${esc(userById(g.voorgelegd_door).name)}</small></td><td class="num" style="${verlopen ? "color:var(--crit)" : ""}">${g.geldig_tot ? fmtLong(g.geldig_tot) : "—"}</td><td class="r num">${eur(g.totaal_excl)}</td><td class="r num">${eur(g.totaal_incl)}</td><td><span class="pill ${g.status === "akkoord" ? "st-afgerond" : verlopen ? "late" : g.status === "open" ? "st-lopend" : g.status === "geweigerd" ? "late" : "st-on_hold"}">${verlopen ? "Termijn verstreken" : GK_STATUS[g.status] || g.status}</span></td><td style="font-size:12px">${g.beslist_op ? `${fmtLong(lokDag(g.beslist_op))} · ${esc(g.beslist_naam)}${g.opmerking ? `<div style="color:var(--crit)">“${esc(g.opmerking)}”</div>` : ""}` : "—"}${g.status === "geannuleerd" ? `<div class="muted" title="${esc(g.annuleer_reden || "")}">geannuleerd ${g.geannuleerd_op ? fmtLong(lokDag(g.geannuleerd_op)) : ""}${g.geannuleerd_door ? " door " + esc(userById(g.geannuleerd_door).name) : ""}${g.annuleer_reden ? ` · “${esc(g.annuleer_reden.slice(0, 120))}”` : ""}</div>` : ""}</td>
       <td class="r" style="white-space:nowrap"><button class="btn ghost sm" data-act="gk-view" data-id="${g.id}">Bekijken</button>${g.status === "open" ? `<button class="btn ghost sm danger" data-act="gk-withdraw" data-id="${g.id}">Intrekken</button>` : ""}${g.status === "akkoord" && gkKanAnnuleren(g) ? `<button class="btn ghost sm danger" data-act="gk-annuleer" data-id="${g.id}" title="Het akkoord van de klant ongedaan maken: de posten gaan terug naar Offerte en kunnen opnieuw voorgelegd worden">Annuleren</button>` : ""}${g.status === "geweigerd" || g.status === "ingetrokken" || g.status === "geannuleerd" || verlopen ? `<button class="btn ghost sm" data-act="gk-new" data-pid="${p.id}" data-soort="${g.soort}">Opnieuw voorleggen</button>` : ""}</td></tr>`; }).join("")}</tbody></table></div></div>`;
+}
+function gkAanKort(g) {   // 1.76: wie voert het uit en is het ontvangen?
+  const ids = g.aannemers || []; if (!ids.length) return g.status === "akkoord" || g.status === "open" ? `<small style="display:block;color:var(--warn)">Geen aannemer gekoppeld</small>` : "";
+  const rijen = gkAanOf(g.id);
+  return `<small style="display:block">${ids.map(id => { const a = rijen.find(x => x.contact_id === id); const n = esc(S.contacten[id]?.naam || "?"); return a && a.gezien_op ? `<span style="color:var(--ok)">${n} ✓ ontvangen</span>` : g.status === "akkoord" ? `<span style="color:var(--warn)">${n} · ${a && a.gemeld_op ? "gemeld" : "nog te melden"}</span>` : `<span class="muted">${n}</span>`; }).join(" · ")}</small>`;
 }
 function gkForm(pid, soortVoorkeur) {
   const p = S.projecten[pid]; const rows = msRows(pid).filter(gkKandidaat);
@@ -32,6 +37,7 @@ function gkForm(pid, soortVoorkeur) {
     <div class="field"><label for="gk_tot">Reageren vóór</label><input id="gk_tot" name="geldig_tot" type="date" value="${addDays(todayIso, 14)}"><small class="muted">Na deze datum kan de klant niet meer goedkeuren; leeg = geen deadline.</small></div>
     <div class="field span2"><label for="gk_toel">Toelichting voor de klant (optioneel)</label><textarea id="gk_toel" name="toelichting" rows="2" placeholder="bv. Zoals besproken op de werf van 12/09: extra stopcontacten in de keuken."></textarea></div>
     <div class="field span2"><label>Posten in dit voorstel</label><div class="fase-list" id="gk_list" style="max-height:320px;overflow:auto">${lijst(soort === "meerwerk" ? mw : off)}</div></div>
+    ${mwKlaar() ? gkAanBlok(pid, [], soort === "meerwerk") : ""}
     <div class="field span2"><p class="muted" style="font-size:12px;margin:0">Het Planbord bewaart een bevroren kopie van deze posten met hoeveelheden en klantprijzen; latere wijzigingen in de meetstaat veranderen het voorstel niet. ${klanten.length ? `De klant (${klanten.map(x => esc(x.c.naam)).join(", ")}) krijgt een mail en ziet het voorstel in het portaal.` : `<span style="color:var(--warn)">Let op: niemand van dit project heeft nog portaal-toegang — geef die eerst via Dossier › Contacten, anders kan de klant niet reageren.</span>`}</p></div>
   </div>`, {
     saveLabel: "Voorleggen", wide: true,
@@ -40,19 +46,255 @@ function gkForm(pid, soortVoorkeur) {
       const sel = ids.map(id => S.meetstaat_posten[id]).filter(Boolean); const posten = sel.map(gkSnapshot);
       const excl = posten.reduce((s, x) => s + x.totaal, 0), btw = sel.reduce((s, r) => s + rowSigned(r) * (Number(r.btw) || 0), 0);
       const row = { project_id: pid, soort: d.soort, titel: d.titel.trim(), toelichting: (d.toelichting || "").trim(), status: "open", geldig_tot: d.geldig_tot || null, posten, totaal_excl: Math.round(excl * 100) / 100, btw: Math.round(btw * 100) / 100, totaal_incl: Math.round((excl + btw) * 100) / 100, voorgelegd_door: S.me.id };
+      // 1.76: bij meer-/minwerk minstens één aannemer die het uitvoert (krijgt na de goedkeuring de bevestiging in pdf)
+      let aan = null;
+      if (d.soort === "meerwerk" && mwKlaar()) {
+        const k = gkAanKeuze(); if (k.fout) { toast(k.fout, 6000); return false; }
+        if (!k.ids.length && !k.nieuw) { toast("Kies minstens één aannemer die dit meer-/minderwerk uitvoert (of voeg er een toe)."); return false; }
+        aan = await gkAanKoppel(pid, k); row.aannemers = aan;
+      }
       const g = await dbInsert("goedkeuringen", row);
+      if (aan && aan.length) await gkAanRijen(g.id, aan).catch(e => toast("Voorstel bewaard, maar de aannemers niet: " + e.message, 7000));
       toast("Voorstel staat klaar in het portaal");
       if (driveReady() && klanten.length) driveCall("gkmail", { id: g.id, soort: "voorgelegd", token: S.session?.access_token || "" }).then(j => toast(`Mail gestuurd naar ${(j.naar || []).join(", ") || "de klant"}`)).catch(e => toast("Mail niet verstuurd: " + e.message, 6000));
     },
   });
-  $("#gk_soort").addEventListener("change", () => { const srt = $("#gk_soort").value; $("#gk_list").innerHTML = lijst(srt === "meerwerk" ? mw : off); $("#gk_titel").value = srt === "meerwerk" ? "Meerwerk " + fmtLong(todayIso) : "Offerte " + (p.naam && p.naam !== p.klant ? p.naam : p.klant); });
+  $("#gk_soort").addEventListener("change", () => { const srt = $("#gk_soort").value; $("#gk_list").innerHTML = lijst(srt === "meerwerk" ? mw : off); $("#gk_titel").value = srt === "meerwerk" ? "Meerwerk " + fmtLong(todayIso) : "Offerte " + (p.naam && p.naam !== p.klant ? p.naam : p.klant); const b = $("#gk_aan_blok"); if (b) b.style.display = srt === "meerwerk" ? "" : "none"; });
+  gkAanBlokInit(pid);
 }
 function gkView(id) {
   const g = S.goedkeuringen[id]; if (!g) return; const ps = g.posten || [];
   openModal(`${g.titel || GK_STATUS[g.status]} — ${GK_STATUS[g.status]}`, `<div class="form-grid"><div class="field span2">
-    <p style="margin:0 0 8px">${g.toelichting ? esc(g.toelichting) + "<br>" : ""}<span class="muted" style="font-size:12px">Voorgelegd ${fmtLong((g.voorgelegd_op || "").slice(0, 10))} door ${esc(userById(g.voorgelegd_door).name)}${g.geldig_tot ? ` · reageren vóór ${fmtLong(g.geldig_tot)}` : ""}${g.beslist_op ? ` · ${g.status === "geannuleerd" ? "Goedgekeurd" : GK_STATUS[g.status]} op ${fmtLong(lokDag(g.beslist_op))} door ${esc(g.beslist_naam)} (${esc(g.beslist_email)})` : ""}</span>${g.status === "geannuleerd" ? `<p style="margin:8px 0 0;color:var(--crit)">Geannuleerd${g.geannuleerd_op ? " op " + fmtLong(lokDag(g.geannuleerd_op)) : ""}${g.geannuleerd_door ? " door " + esc(userById(g.geannuleerd_door).name) : ""}${g.annuleer_reden ? `: “${esc(g.annuleer_reden)}”` : ""}</p>` : ""}${g.opmerking ? `<p style="margin:8px 0 0;color:var(--crit)">Opmerking van de klant: “${esc(g.opmerking)}”</p>` : ""}</p>
+    <p style="margin:0 0 8px">${g.toelichting ? esc(g.toelichting) + "<br>" : ""}<span class="muted" style="font-size:12px">Voorgelegd ${fmtLong((g.voorgelegd_op || "").slice(0, 10))} door ${esc(userById(g.voorgelegd_door).name)}${g.geldig_tot ? ` · reageren vóór ${fmtLong(g.geldig_tot)}` : ""}${g.beslist_op ? ` · ${g.status === "geannuleerd" ? "Goedgekeurd" : GK_STATUS[g.status]} op ${fmtLong(lokDag(g.beslist_op))} door ${esc(g.beslist_naam)} (${esc(g.beslist_email)})${g.beslist_ip ? ` · IP ${esc(g.beslist_ip)}` : ""}` : ""}</span>${g.status === "geannuleerd" ? `<p style="margin:8px 0 0;color:var(--crit)">Geannuleerd${g.geannuleerd_op ? " op " + fmtLong(lokDag(g.geannuleerd_op)) : ""}${g.geannuleerd_door ? " door " + esc(userById(g.geannuleerd_door).name) : ""}${g.annuleer_reden ? `: “${esc(g.annuleer_reden)}”` : ""}</p>` : ""}${g.opmerking ? `<p style="margin:8px 0 0;color:var(--crit)">Opmerking van de klant: “${esc(g.opmerking)}”</p>` : ""}</p>
     <div class="tw"><table class="t"><thead><tr><th>Nr</th><th>Omschrijving</th><th class="r">Hoev.</th><th class="r">Prijs</th><th class="r">Totaal</th></tr></thead><tbody>${ps.map(x => `<tr><td class="num muted">${esc(x.code)}</td><td>${esc(x.omschrijving)}${x.locatie ? ` <small class="muted">· ${esc(x.locatie)}</small>` : ""}</td><td class="r num">${nl(x.hoeveelheid, 2)} ${esc(x.eenheid)}</td><td class="r num">${eur2(x.prijs)}</td><td class="r num">${eur2(x.totaal)}</td></tr>`).join("")}
-    <tr class="tot"><td colspan="4"><b>Totaal excl. btw</b></td><td class="r num"><b>${eur2(g.totaal_excl)}</b></td></tr><tr><td colspan="4">Btw</td><td class="r num">${eur2(g.btw)}</td></tr><tr><td colspan="4"><b>Totaal incl. btw</b></td><td class="r num"><b>${eur2(g.totaal_incl)}</b></td></tr></tbody></table></div></div></div>`, { saveLabel: "Sluiten", wide: true, onSave: async () => { } });
+    <tr class="tot"><td colspan="4"><b>Totaal excl. btw</b></td><td class="r num"><b>${eur2(g.totaal_excl)}</b></td></tr><tr><td colspan="4">Btw</td><td class="r num">${eur2(g.btw)}</td></tr><tr><td colspan="4"><b>Totaal incl. btw</b></td><td class="r num"><b>${eur2(g.totaal_incl)}</b></td></tr></tbody></table></div></div>${g.soort === "meerwerk" && mwKlaar() ? gkAanSectie(g) : ""}</div>`, { saveLabel: "Sluiten", wide: true, onSave: async () => { } });
+}
+
+/* ---------- 1.76 (script 068): goedgekeurd meer-/minderwerk naar de aannemer(s) ----------
+   Bij het voorleggen kies je de aannemer(s) die het uitvoeren (ook al is er maar één; een externe partij kan je meteen toevoegen
+   en wordt aannemer op het project). Keurt de klant goed, dan maakt het Planbord een bevestiging in pdf ZONDER prijzen, met de
+   volledige goedkeuring van de klant (naam, login, tijdstip, IP-adres, browser, opmerking) en een controlecode (SHA-256).
+   Die komt in Documenten/Meerwerk, wordt gedeeld met de aannemer(s) en het Drive-script mailt ze met de pdf in bijlage.
+   In het aannemersportaal bevestigt de aannemer de ontvangst ("Ontvangen": naam, login, tijdstip, IP-adres). */
+const mwKlaar = () => !!S.goedkeuring_aannemers;   // script 068 uitgevoerd
+const gkAanOf = (gid) => Object.values(S.goedkeuring_aannemers || {}).filter(a => a.goedkeuring_id === gid);
+const gkAanOpProject = (pid) => { const z = new Map(); contactsOf(pid).filter(x => !["bouwheer", "contactpersoon"].includes(x.rol)).forEach(x => { if (!z.has(x.c.id)) z.set(x.c.id, x); }); return [...z.values()]; };
+function gkAanLabel(c, rol, extra) {
+  const w = !c.email ? `<small style="display:block;color:var(--crit)">Geen e-mailadres: krijgt geen mail (vul het aan bij Contacten)</small>`
+    : !c.user_id ? `<small class="muted" style="display:block">Geen portaaltoegang: krijgt de pdf per mail, maar kan de ontvangst niet bevestigen in het portaal</small>` : "";
+  return `<span>${esc(c.naam)}${c.bedrijf && c.bedrijf !== c.naam ? ` <small class="muted">· ${esc(c.bedrijf)}</small>` : ""} <small class="muted">· ${esc(rol ? CONTACT_ROL[rol] || rol : CONTACT_SOORT[c.soort] || c.soort)}</small>${extra ? ` <small style="color:var(--accent)">${extra}</small>` : ""}${w}</span>`;
+}
+function gkAanBlok(pid, uitsluiten, zichtbaar) {
+  const weg = new Set(uitsluiten || []);
+  const op = gkAanOpProject(pid).filter(x => !weg.has(x.c.id));
+  const opIds = new Set(contactsOf(pid).map(x => x.c.id));
+  const anderen = Object.values(S.contacten || {}).filter(c => !opIds.has(c.id) && !weg.has(c.id) && c.soort !== "klant").sort((a, b) => (a.naam || "").localeCompare(b.naam || ""));
+  return `<div class="field span2" id="gk_aan_blok"${zichtbaar === false ? ' style="display:none"' : ""}><label>Aannemer(s) die dit uitvoeren <span style="color:var(--crit)">*</span></label>
+    <div class="fase-list" id="gk_aan_list">${op.map(x => `<label class="chk"><input type="checkbox" name="gk_aan" value="${x.c.id}"> ${gkAanLabel(x.c, x.rol)}</label>`).join("")}</div>
+    ${op.length ? "" : `<p class="muted" id="gk_aan_leeg" style="font-size:12px;margin:4px 0 0">Er staat nog geen aannemer op dit project — voeg er hieronder een toe.</p>`}
+    <select id="gk_aan_extra" style="margin-top:8px;max-width:420px"><option value="">+ Andere aannemer toevoegen…</option>${anderen.map(c => `<option value="${c.id}">${esc(c.naam)}${c.bedrijf && c.bedrijf !== c.naam ? " – " + esc(c.bedrijf) : ""} (${esc(CONTACT_SOORT[c.soort] || c.soort)})</option>`).join("")}<option value="__nieuw">Nieuw contact (externe partij)…</option></select>
+    <div id="gk_aan_nieuw" style="display:none;margin-top:8px;gap:8px;flex-wrap:wrap"><input id="gk_aan_nnaam" placeholder="Naam (bedrijf of persoon)" style="flex:1;min-width:180px"><input id="gk_aan_nmail" type="email" placeholder="E-mailadres" style="flex:1;min-width:180px"></div>
+    <small class="muted">Na de goedkeuring door de klant krijgen zij een bevestiging in pdf (zonder prijzen) per mail en in het aannemersportaal. Een aannemer die nog niet op het project staat, wordt eraan gekoppeld als aannemer.</small></div>`;
+}
+function gkAanBlokInit(pid) {
+  const sel = $("#gk_aan_extra"); if (!sel) return;
+  sel.addEventListener("change", () => {
+    const v = sel.value; if (!v) return;
+    if (v === "__nieuw") { $("#gk_aan_nieuw").style.display = "flex"; $("#gk_aan_nnaam").focus(); sel.value = ""; return; }
+    const c = S.contacten[v]; if (!c) return;
+    const lab = document.createElement("label"); lab.className = "chk";
+    lab.innerHTML = `<input type="checkbox" name="gk_aan" value="${c.id}" checked data-nieuw-op-project="1"> ${gkAanLabel(c, null, "wordt aan het project gekoppeld")}`;
+    $("#gk_aan_list").appendChild(lab); const leeg = $("#gk_aan_leeg"); if (leeg) leeg.remove();
+    sel.querySelector(`option[value="${v}"]`).remove(); sel.value = "";
+  });
+}
+/** keuze uit het blok: { ids, nieuw: {naam, email} | null, fout } */
+function gkAanKeuze() {
+  const ids = [...document.querySelectorAll('#gk_aan_list input[name="gk_aan"]:checked')].map(i => i.value);
+  const nb = $("#gk_aan_nieuw"); let nieuw = null;
+  if (nb && nb.style.display !== "none") {
+    const naam = ($("#gk_aan_nnaam").value || "").trim(), email = ($("#gk_aan_nmail").value || "").trim();
+    if (naam || email) {
+      if (!naam) return { ids, fout: "Geef de naam van de nieuwe aannemer." };
+      if (email && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) return { ids, fout: "Het e-mailadres van de nieuwe aannemer klopt niet." };
+      if (!email) return { ids, fout: "Geef het e-mailadres van de nieuwe aannemer: daar gaat de bevestiging naartoe." };
+      nieuw = { naam, email };
+    }
+  }
+  return { ids, nieuw };
+}
+/** nieuw contact aanmaken en wie nog niet op het project staat koppelen als aannemer → lijst contact-id's */
+async function gkAanKoppel(pid, k) {
+  const ids = [...new Set(k.ids)];
+  if (k.nieuw) { const c = await dbInsert("contacten", { soort: "aannemer", naam: k.nieuw.naam, email: k.nieuw.email }); ids.push(c.id); }
+  const op = new Set(gkAanOpProject(pid).map(x => x.c.id));
+  for (const id of ids) if (!op.has(id)) await dbInsert("project_contacten", { project_id: pid, contact_id: id, rol: "aannemer" });
+  return ids;
+}
+async function gkAanRijen(gid, ids) {
+  if (!ids.length) return [];
+  const { data, error } = await sb.from("goedkeuring_aannemers").upsert(ids.map(c => ({ goedkeuring_id: gid, contact_id: c })), { onConflict: "goedkeuring_id,contact_id", ignoreDuplicates: true }).select();
+  if (error) throw error;
+  [].concat(data || []).forEach(r => { S.goedkeuring_aannemers[r.id] = r; }); return data || [];
+}
+function gkAanStatus(g, a) {
+  const wanneer = (x) => new Date(x).toLocaleString("nl-BE", { timeZone: "Europe/Brussels", dateStyle: "short", timeStyle: "short" });
+  if (a && a.gezien_op) return `<span style="color:var(--ok)">Ontvangen op ${wanneer(a.gezien_op)}</span><small class="muted" style="display:block">door ${esc(a.gezien_naam)} (${esc(a.gezien_email)})${a.gezien_ip ? " · IP " + esc(a.gezien_ip) : ""}</small>`;
+  if (g.status === "open") return `<span class="muted">Wacht op de klant</span>`;
+  if (g.status !== "akkoord") return `<span class="muted">—</span>`;
+  if (a && a.gemeld_op) return `Gemeld op ${wanneer(a.gemeld_op)}<small class="muted" style="display:block">wacht op "Ontvangen" in het portaal</small>`;
+  return g.bevestiging_drive_id ? `<span style="color:var(--warn)">Nog niet gemaild</span>` : `<span class="muted">Bevestiging wordt gemaakt…</span>`;
+}
+function gkAanSectie(g) {
+  const rijen = gkAanOf(g.id); const ids = [...new Set([...(g.aannemers || []), ...rijen.map(a => a.contact_id)])];
+  const doc = g.bevestiging_document && S.documenten && S.documenten[g.bevestiging_document];
+  const nietGemeld = g.status === "akkoord" && g.bevestiging_drive_id && rijen.some(a => !a.gemeld_op && S.contacten[a.contact_id]?.email);
+  return `<div class="field span2" style="margin-top:6px"><label>Aannemers (uitvoering)</label>
+    ${ids.length ? `<div class="tw"><table class="t"><tbody>${ids.map(id => { const c = S.contacten[id] || { naam: "?" }; const a = rijen.find(x => x.contact_id === id); return `<tr><td>${esc(c.naam)}${c.email ? `<small class="muted" style="display:block">${esc(c.email)}</small>` : `<small style="display:block;color:var(--crit)">geen e-mailadres</small>`}</td><td>${gkAanStatus(g, a)}</td></tr>`; }).join("")}</tbody></table></div>`
+      : `<p class="muted" style="margin:0;font-size:12px">Nog geen aannemer gekoppeld${g.status === "akkoord" ? " — dit voorstel werd goedgekeurd vóór versie 1.76 of zonder aannemer. Voeg er een toe om de bevestiging te maken en te versturen." : "."}</p>`}
+    <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:8px">
+      ${["open", "akkoord"].includes(g.status) ? `<button type="button" class="btn ghost sm" data-act="gk-aann" data-id="${g.id}">+ Aannemer toevoegen</button>` : ""}
+      ${g.bevestiging_drive_id ? (doc && doc.url ? `<a class="btn ghost sm" href="${esc(doc.url)}" target="_blank" rel="noopener">Bevestiging (pdf)</a>` : `<span class="muted" style="font-size:12px">Bevestiging bewaard in Documenten/Meerwerk</span>`) : g.status === "akkoord" && ids.length ? `<button type="button" class="btn ghost sm" data-act="gk-bev" data-id="${g.id}">Bevestiging nu maken en mailen</button>` : ""}
+      ${nietGemeld ? `<button type="button" class="btn ghost sm" data-act="gk-mwmail" data-id="${g.id}">Mail nu versturen</button>` : ""}
+    </div>${g.bevestiging_sha ? `<small class="muted" style="display:block;margin-top:6px">Controlecode (SHA-256): <span class="num">${esc(g.bevestiging_sha)}</span></small>` : ""}</div>`;
+}
+/* aannemer toevoegen aan een open of goedgekeurd meerwerkvoorstel */
+function gkAannemersForm(gid) {
+  const g = S.goedkeuringen[gid]; if (!g || !mwKlaar() || !["open", "akkoord"].includes(g.status)) return;
+  const al = [...new Set([...(g.aannemers || []), ...gkAanOf(gid).map(a => a.contact_id)])];
+  openModal("Aannemer toevoegen — " + (g.titel || "meerwerk"), `<div class="form-grid">${gkAanBlok(g.project_id, al, true)}
+    <div class="field span2"><p class="muted" style="font-size:12px;margin:0">${g.status === "akkoord" ? (g.bevestiging_drive_id ? "De klant keurde dit al goed: de nieuwe aannemer(s) krijgen meteen de bevestiging in pdf per mail en in het portaal." : "De klant keurde dit al goed: het Planbord maakt nu de bevestiging in pdf en mailt ze.") : "Na de goedkeuring door de klant krijgen ze de bevestiging in pdf."}</p></div></div>`, {
+    saveLabel: "Toevoegen", wide: true,
+    onSave: async () => {
+      const k = gkAanKeuze(); if (k.fout) { toast(k.fout, 6000); return false; }
+      if (!k.ids.length && !k.nieuw) { toast("Vink een aannemer aan of voeg er een toe."); return false; }
+      const ids = await gkAanKoppel(g.project_id, k);
+      const alle = [...new Set([...(g.aannemers || []), ...ids])];
+      await dbUpdate("goedkeuringen", gid, { aannemers: alle });
+      await gkAanRijen(gid, ids);
+      const g2 = S.goedkeuringen[gid];
+      if (g2.status === "akkoord") {
+        if (g2.bevestiging_drive_id) { if (g2.bevestiging_document) await mwDelen(g2, g2.bevestiging_document, ids).catch(e => toast("Delen in het portaal mislukte: " + e.message, 7000)); mwMail(gid, false); }
+        else mwBevestiging(gid, false);
+      } else toast("Aannemer toegevoegd — na de goedkeuring krijgt hij de bevestiging");
+    },
+  });
+  gkAanBlokInit(g.project_id);
+}
+/* delen in het aannemersportaal: projectkoppeling, document (al gemeld: de mail met de pdf vervangt de verzamelmail) en de meldingsrij */
+async function mwDelen(g, docId, ids) {
+  const lijst = ids || g.aannemers || []; if (!lijst.length) return;
+  const op = new Set(gkAanOpProject(g.project_id).map(x => x.c.id));
+  for (const id of lijst) if (!op.has(id) && S.contacten[id]) await dbInsert("project_contacten", { project_id: g.project_id, contact_id: id, rol: "aannemer" });
+  const { data, error } = await sb.from("document_aannemers").upsert(lijst.map(c => ({ document_id: docId, contact_id: c, gemeld: true })), { onConflict: "document_id,contact_id", ignoreDuplicates: true }).select();
+  if (error) throw error; [].concat(data || []).forEach(r => { if (S.document_aannemers) S.document_aannemers[r.document_id + "|" + r.contact_id] = r; });
+  await gkAanRijen(g.id, lijst);
+}
+const MW_GEMAILD = new Set();
+async function mwMail(gid, stil) {
+  try {
+    const j = await driveCall("mwmail", { id: gid, token: S.session?.access_token || "" });
+    MW_GEMAILD.add(gid);
+    if (!stil) toast((j.naar || []).length ? `Bevestiging gemaild naar ${j.naar.join(", ")}${(j.zonder || []).length ? ` — geen e-mailadres: ${j.zonder.join(", ")}` : ""}` : (j.zonder || []).length ? `Niet gemaild: geen e-mailadres voor ${j.zonder.join(", ")}` : "Iedereen werd al gemaild.", 7000);
+    refetch("goedkeuring_aannemers");
+  } catch (e) { if (!stil) toast("Bevestiging bewaard, maar de mail is niet verstuurd: " + e.message, 8000); else console.warn("Meerwerkmail", gid, e); }
+}
+const MW_BEZIG = new Set();
+const mwPdfTekst = (t) => typeof ovTxt === "function" ? ovTxt(t) : String(t == null ? "" : t).replace(/[^\x20-\x7E\xA0-\xFF]/g, "?");
+/** inhoud die de controlecode bepaalt (zonder prijzen): wat de klant goedkeurde en wanneer/door wie */
+const mwCanon = (g) => JSON.stringify({ id: g.id, project_id: g.project_id, titel: g.titel || "", toelichting: g.toelichting || "", posten: (g.posten || []).map(x => [x.code || "", x.omschrijving || "", x.locatie || "", Number(x.hoeveelheid) || 0, x.eenheid || "", x.status || ""]), beslist_op: g.beslist_op, beslist_naam: g.beslist_naam || "", beslist_email: g.beslist_email || "", beslist_ip: g.beslist_ip || "", opmerking: g.opmerking || "" });
+async function mwBevestiging(gid, stil) {
+  const g = S.goedkeuringen[gid]; const p = g && S.projecten[g.project_id];
+  if (!g || !p || g.soort !== "meerwerk" || g.status !== "akkoord" || g.bevestiging_drive_id || MW_BEZIG.has(gid)) return;
+  if (!(g.aannemers || []).length) { if (!stil) toast("Koppel eerst een aannemer aan dit meerwerk."); return; }
+  if (!p.drive_folder_id || !driveReady()) { if (!stil) toast("Geen projectmap op Drive gekoppeld (of Drive-script niet ingesteld)."); return; }
+  MW_BEZIG.add(gid);
+  /* claimen: maar één Planbord maakt de pdf */
+  if (!(await pbClaim("goedkeuringen", gid, "bevestiging_op", "bevestiging_drive_id", 10))) { MW_BEZIG.delete(gid); if (!stil) toast("De bevestiging wordt al gemaakt (door een ander Planbord)."); return; }
+  if (!stil) loader.start("mw.bev", "Bevestiging meer-/minderwerk maken…", 15000);
+  try {
+    if (typeof laadModule === "function") await laadModule("teken");
+    const PDFLib = typeof tkLaadPdfLib === "function" ? await tkLaadPdfLib() : window.PDFLib; if (!PDFLib) throw new Error("pdf-lib niet geladen");
+    const doc = await PDFLib.PDFDocument.create();
+    doc.setTitle(mwPdfTekst("Bevestiging meer-/minderwerk - " + (g.titel || ""))); doc.setAuthor("BROS"); doc.setCreator("BROS Planbord");
+    const font = await doc.embedFont(PDFLib.StandardFonts.Helvetica), vet = await doc.embedFont(PDFLib.StandardFonts.HelveticaBold), mono = await doc.embedFont(PDFLib.StandardFonts.Courier);
+    const grijs = PDFLib.rgb(0.42, 0.44, 0.43), lijn = PDFLib.rgb(0.82, 0.83, 0.82);
+    const W = 595.28, H = 841.89, m = 50, br = W - 2 * m;
+    let pg, y; const nieuwePagina = () => { pg = doc.addPage([W, H]); y = H - 56; };
+    nieuwePagina();
+    const wrap = (t, w, f, sz) => { const out = []; mwPdfTekst(t).split(/\n/).forEach(par => { let ln = ""; par.split(/\s+/).filter(Boolean).forEach(wd => { const pr = ln ? ln + " " + wd : wd; if (f.widthOfTextAtSize(pr, sz) <= w) { ln = pr; return; } if (ln) out.push(ln); while (f.widthOfTextAtSize(wd, sz) > w && wd.length > 1) { let k = wd.length; while (k > 1 && f.widthOfTextAtSize(wd.slice(0, k), sz) > w) k--; out.push(wd.slice(0, k)); wd = wd.slice(k); } ln = wd; }); out.push(ln); }); return out; };
+    const plaats = (n) => { if (y - n < 60) nieuwePagina(); };
+    const regel = (t, o = {}) => { const f = o.font || font, sz = o.size || 10; wrap(t, o.w || br - ((o.x || m) - m), f, sz).forEach(l => { plaats(sz + 4); pg.drawText(l, { x: o.x || m, y, size: sz, font: f, color: o.color }); y -= o.lh || sz + 4.5; }); y -= o.na || 0; };
+    const wanneer = (x) => x && !isNaN(new Date(x)) ? new Date(x).toLocaleString("nl-BE", { timeZone: "Europe/Brussels", dateStyle: "long", timeStyle: "medium" }) : "onbekend";
+    const maker = S.profiles[g.voorgelegd_door];
+    regel("BROS", { font: vet, size: 16, na: 8 }); regel("Bevestiging meer-/minderwerk", { font: vet, size: 18, na: 4 });
+    regel("Goedgekeurd door de klant - bestemd voor de uitvoerder(s). Deze bevestiging vermeldt geen prijzen.", { size: 9.5, color: grijs, na: 12 });
+    regel("Project: " + [p.nummer, p.klant, p.naam && p.naam !== p.klant ? p.naam : ""].filter(Boolean).join(" - "), { font: vet, size: 11 });
+    if (p.adres || p.gemeente) regel("Adres: " + [p.adres, p.gemeente].filter(Boolean).join(", "));
+    regel("Voorstel: " + (g.titel || "Meer-/minderwerk"), { font: vet, size: 11 });
+    regel("Voorgelegd door " + (maker ? maker.name : "BROS") + (g.voorgelegd_op ? " op " + wanneer(g.voorgelegd_op) : ""), { na: g.toelichting ? 2 : 10 });
+    if (g.toelichting) regel("Toelichting: " + g.toelichting, { color: grijs, na: 10 });
+    // posten
+    const kol = { nr: m, oms: m + 52, hv: m + br - 110, st: m + br - 52 };
+    const kop = () => { plaats(30); pg.drawText("Nr", { x: kol.nr, y, size: 9, font: vet }); pg.drawText("Omschrijving", { x: kol.oms, y, size: 9, font: vet }); pg.drawText("Hoeveelheid", { x: kol.hv, y, size: 9, font: vet }); pg.drawText("Soort", { x: kol.st, y, size: 9, font: vet }); y -= 5; pg.drawLine({ start: { x: m, y }, end: { x: m + br, y }, thickness: 0.7, color: lijn }); y -= 12; };
+    kop();
+    (g.posten || []).forEach(x => {
+      const oms = wrap((x.omschrijving || "") + (x.locatie ? " - " + x.locatie : ""), kol.hv - kol.oms - 10, font, 9.5);
+      const h = oms.length * 12 + 4; if (y - h < 60) { nieuwePagina(); kop(); }
+      const hv = mwPdfTekst(nl(x.hoeveelheid, 2) + " " + (x.eenheid || ""));
+      pg.drawText(mwPdfTekst(x.code || ""), { x: kol.nr, y, size: 9.5, font: mono });
+      oms.forEach((l, i) => pg.drawText(l, { x: kol.oms, y: y - i * 12, size: 9.5, font }));
+      pg.drawText(hv, { x: kol.st - 10 - font.widthOfTextAtSize(hv, 9.5), y, size: 9.5, font });
+      pg.drawText(mwPdfTekst((typeof MS_STATUS === "object" && MS_STATUS[x.status]) || x.status || ""), { x: kol.st, y, size: 9.5, font });
+      y -= h - 4; pg.drawLine({ start: { x: m, y: y + 6 }, end: { x: m + br, y: y + 6 }, thickness: 0.4, color: lijn }); y -= 4;
+    });
+    y -= 10;
+    // goedkeuring door de klant
+    plaats(120); regel("Goedkeuring door de klant", { font: vet, size: 12, na: 2 });
+    const i = m + 12;
+    regel("Naam zoals getypt: " + (g.beslist_naam || "-"), { x: i });
+    regel("Login (e-mail): " + (g.beslist_email || "-"), { x: i });
+    regel("Goedgekeurd op: " + wanneer(g.beslist_op), { x: i });
+    regel("IP-adres: " + (g.beslist_ip || "niet geregistreerd"), { x: i });
+    regel("Browser: " + (g.beslist_agent || "niet geregistreerd").slice(0, 160), { x: i, size: 8, color: grijs });
+    if (g.opmerking) regel("Opmerking van de klant: " + g.opmerking, { x: i });
+    regel("Goedgekeurd met de knop 'Akkoord geven' in het BROS-klantenportaal, na aanmelden met de persoonlijke login van de klant.", { x: i, size: 8.5, color: grijs, na: 12 });
+    // bestemd voor
+    const aan = (g.aannemers || []).map(id => S.contacten[id]).filter(Boolean);
+    plaats(40 + aan.length * 15); regel("Bestemd voor (uitvoering)", { font: vet, size: 12, na: 2 });
+    aan.forEach(c => regel("- " + c.naam + (c.bedrijf && c.bedrijf !== c.naam ? " (" + c.bedrijf + ")" : "") + (c.email ? " - " + c.email : ""), { x: i }));
+    y -= 10;
+    const sha = await ovSha(new TextEncoder().encode(mwCanon(g)));
+    plaats(60); regel("Controlecode van de goedgekeurde inhoud (SHA-256):", { size: 9, color: grijs });
+    regel(sha, { font: mono, size: 8.5, na: 10 });
+    regel("Gemaakt door het BROS Planbord op " + wanneer(new Date().toISOString()) + ". De controlecode wordt bewaard in het Planbord; elke wijziging aan de goedgekeurde posten of aan de gegevens van de goedkeuring geeft een andere code.", { size: 8, color: grijs });
+    const n = doc.getPageCount(); doc.getPages().forEach((pp, k) => pp.drawText(mwPdfTekst(`BROS - bevestiging meer-/minderwerk - blz. ${k + 1}/${n}`), { x: m, y: 30, size: 7.5, font, color: grijs }));
+    const uit = await doc.save(); const datum = new Date().toLocaleDateString("nl-BE").replace(/\//g, "-");
+    const naam = `${(g.titel || "Meerwerk").replace(/[\\/:*?"<>|]/g, "-").slice(0, 110)} - bevestiging ${datum}.pdf`;
+    if (!stil) loader.step("Bewaren in Documenten/Meerwerk…");
+    const j = await driveCall("put", { folderId: p.drive_folder_id, subpath: "Documenten/Meerwerk", name: naam, base64: ovB64(uit), mime: "application/pdf" });
+    const f = j.file; if (!f || !f.id) throw new Error("Drive gaf geen bestand terug.");
+    // meteen als klaar markeren (Drive-id): ook als hierna iets mislukt, komt er geen tweede pdf
+    await dbUpdate("goedkeuringen", gid, { bevestiging_drive_id: f.id, bevestiging_op: new Date().toISOString(), bevestiging_sha: sha });
+    const { data, error } = await sb.from("documenten").upsert([{ project_id: p.id, drive_id: f.id, naam: f.name, pad: f.path || "Documenten/Meerwerk", url: f.url, mime: "application/pdf", grootte: f.size || null, gewijzigd: f.updated || null, gesynct_op: new Date().toISOString() }], { onConflict: "project_id,drive_id" }).select();
+    if (error) throw error; const d = data[0]; S.documenten[d.id] = d;
+    await dbUpdate("goedkeuringen", gid, { bevestiging_document: d.id });
+    await mwDelen(S.goedkeuringen[gid], d.id);
+    if (!stil) loader.done("mw.bev");
+    await mwMail(gid, stil);
+  } catch (e) {
+    await sb.from("goedkeuringen").update({ bevestiging_op: null }).eq("id", gid).is("bevestiging_drive_id", null);
+    if (!stil) { loader.fail(); toast("Bevestiging niet gemaakt: " + (e.message || e), 8000); } else console.warn("Bevestiging meerwerk", gid, e);
+  } finally { MW_BEZIG.delete(gid); }
+}
+/* automatisch (elke 2 min zolang het Planbord open staat): goedgekeurd meerwerk met aannemer(s) → bevestiging maken en mailen;
+   een bevestiging waarvan de mail mislukte, wordt per sessie één keer opnieuw gemaild */
+function mwAuto() {
+  if (!mwKlaar() || !S.me || !["beheer", "medewerker"].includes(S.me.role) || !driveReady()) return;
+  Object.values(S.goedkeuringen || {}).filter(g => g.soort === "meerwerk" && g.status === "akkoord" && (g.aannemers || []).length).forEach(g => {
+    if (!g.bevestiging_drive_id) { if (!(g.bevestiging_op && Date.now() - new Date(g.bevestiging_op).getTime() < 10 * 60000)) mwBevestiging(g.id, true); return; }
+    if (!MW_GEMAILD.has(g.id) && Date.now() - new Date(g.bevestiging_op || 0).getTime() > 5 * 60000 && gkAanOf(g.id).some(a => !a.gemeld_op && S.contacten[a.contact_id]?.email)) { MW_GEMAILD.add(g.id); mwMail(g.id, true); }
+  });
 }
 /* 1.53 (script 050): een goedgekeurde offerte of goedgekeurd meerwerk annuleren — enkel beheer, via de databankfunctie
    (die zet het voorstel op geannuleerd én haalt het akkoord van de posten: Akkoord → Offerte, meer-/minwerk houdt zijn status) */
