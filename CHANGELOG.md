@@ -2,6 +2,12 @@
 
 De nieuwste versie staat bovenaan. (Vanaf 1.48 houdt `version.json` enkel de laatste versie bij; het Planbord vraagt dat bestand elke 5 minuten op.)
 
+## 1.74.1 — 2026-11-17 (enkel nieuw drive/Code.gs online zetten; geen databasescript; de versie van het Planbord blijft 1.74.0)
+
+**Geen uitnodigingsmails meer bij afspraken.** In 1.74 zette het Drive-script de collega's als gast via Google Agenda (CalendarApp), en Google stuurde hen daardoor een uitnodigingsmail. Nu loopt alles via de Calendar-API met "geen meldingen": aanmaken, wijzigen, gasten toevoegen of weghalen en verwijderen gebeuren zonder één mail. De afspraak staat gewoon in ieders agenda.
+- Gasten die je zelf in Google Agenda toevoegde, blijven staan, met hun antwoord.
+- Staat de Google Calendar API nog niet aan voor het script, dan staat de afspraak wel in de BROS-agenda en meldt het Planbord hoe je ze aanzet (scripteditor › Services › Google Calendar API). Er gaat dan nooit een mail naar de collega's.
+
 ## 1.74.0 — 2026-11-17 (script 067 uitvoeren, nieuw drive/Code.gs online zetten, pushen)
 
 **Afspraak met meerdere mensen van BROS.** In het taakformulier staat bij "Afspraak ter plaatse" nu **Ook mee van BROS**: vink de collega's aan die mee naar de klant gaan.

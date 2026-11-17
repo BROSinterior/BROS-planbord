@@ -878,21 +878,26 @@ function afspraakSync(body) {
   const lock = LockService.getUserLock(); if (!lock.tryLock(30000)) return { ok: false, error: "Het Drive-script is bezig; probeer het zo opnieuw." };
   try { return afspraakSyncIn(body, id); } finally { lock.releaseLock(); }
 }
-/** 1.74: gasten van het agenda-item = de mensen van BROS die meegaan (verantwoordelijke + afspraak_team).
- *  Enkel e-mailadressen van BROS-profielen worden toegevoegd of weggehaald; andere gasten (zelf toegevoegd in Google Agenda) blijven staan.
- *  Geen aparte uitnodigingsmail: het item verschijnt in hun agenda (Google zet uitnodigingen standaard automatisch in je agenda). */
-function afsGastenBijwerken(ev, cal, team, res) {
-  try {
-    const eigen = String(cal.getId() || "").toLowerCase();
-    const geldig = (m) => /^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(m);
-    const wil = team.filter(r => r.active !== false).map(r => String(r.email || "").trim().toLowerCase()).filter(m => geldig(m) && m !== eigen);
-    const alle = (pbAdmin("/rest/v1/profiles?role=in.(beheer,medewerker)&select=email", "get") || []).map(r => String(r.email || "").trim().toLowerCase()).filter(Boolean);
-    const nu = ev.getGuestList().map(g => String(g.getEmail() || "").toLowerCase());
-    const bij = wil.filter(m => nu.indexOf(m) < 0), weg = nu.filter(m => alle.indexOf(m) >= 0 && wil.indexOf(m) < 0);
-    if (!bij.length && !weg.length) return;
-    weg.forEach(m => ev.removeGuest(m)); bij.forEach(m => ev.addGuest(m));
-    res.gasten = wil;
-  } catch (e) { console.error("gasten: " + e); res.waarschuwing = (res.waarschuwing ? res.waarschuwing + " · " : "") + "De collega's konden niet als gast op het agenda-item gezet worden: " + String(e.message || e).slice(0, 150); }
+/** 1.74.1: de Google Calendar-API rechtstreeks, altijd met sendUpdates=none — zo krijgt NIEMAND een uitnodigings-,
+ *  wijzigings- of annuleringsmail. (CalendarApp.addGuest stuurt wel uitnodigingen; dat gebruiken we dus niet meer.) */
+function agendaRest(cal, ev, methode, body) {
+  const url = "https://www.googleapis.com/calendar/v3/calendars/" + encodeURIComponent(cal.getId()) + "/events/" + encodeURIComponent(String(ev.getId()).replace(/@google\.com$/, "")) + "?sendUpdates=none";
+  const opt = { method: methode, headers: { Authorization: "Bearer " + ScriptApp.getOAuthToken() }, muteHttpExceptions: true };
+  if (body) { opt.contentType = "application/json"; opt.payload = JSON.stringify(body); }
+  const r = UrlFetchApp.fetch(url, opt); const c = r.getResponseCode(); const t = r.getContentText() || "";
+  if (methode === "delete" && (c === 404 || c === 410)) return {};
+  if (c >= 300) { const e = new Error("Google Agenda (" + c + "): " + t.slice(0, 200)); e.code = c; e.nietAan = /accessNotConfigured|has not been used|is disabled|SERVICE_DISABLED/i.test(t); throw e; }
+  return t ? JSON.parse(t) : {};
+}
+/** gasten = de mensen van BROS die meegaan (verantwoordelijke + afspraak_team). Enkel e-mailadressen van BROS-profielen worden
+ *  toegevoegd of weggehaald; andere gasten (zelf toegevoegd in Google Agenda) en de eigenaar van de agenda blijven ongemoeid. */
+function afsGasten(huidig, cal, team) {
+  const eigen = String(cal.getId() || "").toLowerCase(); const geldig = (m) => /^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(m);
+  const wil = team.filter(r => r.active !== false).map(r => String(r.email || "").trim().toLowerCase()).filter((m, i, a) => geldig(m) && m !== eigen && a.indexOf(m) === i);
+  const alle = (pbAdmin("/rest/v1/profiles?role=in.(beheer,medewerker)&select=email", "get") || []).map(r => String(r.email || "").trim().toLowerCase()).filter(Boolean);
+  const blijf = (huidig || []).filter(x => { const m = String(x.email || "").toLowerCase(); return x.self || x.organizer || m === eigen || alle.indexOf(m) < 0 || wil.indexOf(m) >= 0; });
+  wil.forEach(m => { if (!blijf.some(x => String(x.email || "").toLowerCase() === m)) blijf.push({ email: m }); });
+  return blijf;
 }
 function afspraakSyncIn(body, id) {
   const t = (pbAdmin("/rest/v1/taken?id=eq." + id + "&select=*", "get") || [])[0];
@@ -929,12 +934,25 @@ function afspraakSyncIn(body, id) {
     const titel = (voor ? voor[1].replace(/\s*\+\s*/g, " + ") : ini) + "/" + (p.klant || "") + ", " + onderwerp;   // "PB/Klant, onderwerp" (of "PB + NDK/…")
     const besch = [(p.nummer ? p.nummer + " · " : "") + (p.klant || "") + (p.naam && p.naam !== p.klant ? " · " + p.naam : ""),
       teamNamen.length ? "BROS: " + teamNamen.join(", ") : prof ? "BROS: " + prof.name : "", cs.length ? "Deelnemers: " + cs.map(c => c.naam).join(", ") : "", t.notitie ? "Notitie: " + t.notitie : "", "(Aangemaakt vanuit het BROS Planbord — wijzig de afspraak in het Planbord, niet hier.)"].filter(Boolean).join("\n");
-    if (ev) { ev.setTitle(titel); ev.setTime(begin, einde); ev.setLocation(t.afspraak_adres || ""); ev.setDescription(besch); res.agenda = "gewijzigd"; }
-    else { ev = cal.createEvent(titel, begin, einde, { location: t.afspraak_adres || "", description: besch }); res.agenda = "gezet"; }
-    if (ev.getId() !== t.agenda_event_id) pbAdmin("/rest/v1/taken?id=eq." + t.id, "patch", { agenda_event_id: ev.getId() });
-    afsGastenBijwerken(ev, cal, team, res);   // 1.74: de mensen van BROS als gast → de afspraak staat ook in hun eigen agenda   // meteen bewaren (geen dubbel item als iets hierna misloopt)
+    const nieuw = !ev;
+    if (nieuw) { ev = cal.createEvent(titel, begin, einde, { location: t.afspraak_adres || "", description: besch }); res.agenda = "gezet"; } else res.agenda = "gewijzigd";   // nieuw item: nog zonder gasten → geen mail
+    if (ev.getId() !== t.agenda_event_id) pbAdmin("/rest/v1/taken?id=eq." + t.id, "patch", { agenda_event_id: ev.getId() });   // meteen bewaren (geen dubbel item als iets hierna misloopt)
+    // 1.74.1: de mensen van BROS als gast (zo staat de afspraak in hun eigen agenda) — via de Calendar-API met sendUpdates=none: geen mails
+    try {
+      const huidig = agendaRest(cal, ev, "get");
+      const gasten = afsGasten(huidig.attendees || [], cal, team);
+      agendaRest(cal, ev, "patch", { summary: titel, location: t.afspraak_adres || "", description: besch, attendees: gasten,
+        start: { dateTime: begin.toISOString(), timeZone: "Europe/Brussels" }, end: { dateTime: einde.toISOString(), timeZone: "Europe/Brussels" } });
+      res.gasten = gasten.map(x => x.email);
+    } catch (e) {
+      console.error("agenda-API: " + e);
+      // zonder Calendar-API: titel en tijd via CalendarApp, maar enkel als er geen gasten op staan (anders zou Google hen mailen)
+      if (!nieuw && !ev.getGuestList().length) { ev.setTitle(titel); ev.setTime(begin, einde); ev.setLocation(t.afspraak_adres || ""); ev.setDescription(besch); }
+      res.waarschuwing = e.nietAan ? "De collega's staan nog niet in hun eigen agenda: zet in de scripteditor bij Services (+) de Google Calendar API aan en bewaar de afspraak opnieuw."
+        : "De collega's konden niet op het agenda-item gezet worden: " + String(e.message || e).slice(0, 150);
+    }
   } else if (ev || t.agenda_event_id) {
-    if (ev) { try { ev.deleteEvent(); } catch (e) { } res.agenda = "verwijderd"; }
+    if (ev) { try { if (ev.getGuestList().length) agendaRest(cal, ev, "delete"); else ev.deleteEvent(); } catch (e) { try { ev.deleteEvent(); } catch (x) { } } res.agenda = "verwijderd"; }   // 1.74.1: met gasten via de API, zonder annuleringsmail
     patch.agenda_event_id = null;
   }
   } catch (e) { console.error("agenda: " + e); const f = agendaFout(e); res.agendaFout = true; res.waarschuwing = "Niet in de Google Agenda gezet: " + (f.message.indexOf(AFS_MACHTIGING) === 0 ? f.message : String(f.message).slice(0, 200)); }
