@@ -16,13 +16,14 @@ Statische webapp (geen build-stap) op een Supabase-database.
 | `modules.js` | laadt de tekenmodule (+ Plan2CAD), Renders en de Excel-modules pas wanneer je ze opent (1.72) |
 | `navigatie.js` | hoofdmenu met Meer, gsm-balk, projectgroepen, inklapbare uitleg (1.71) |
 | `mijnwerk.js` | hoofdtabblad Mijn werk (1.73) |
+| `naservice.js`, `naservice-weergave.js` | naservice: tabblad en overzicht in het Planbord; gedeelde weergave (lijn, stappen, historiek) voor Planbord en portalen (1.77) |
 | `tests/` | de testsuite (databank, Planbord en portalen in een browser, Drive-script): `bash tests/alles.sh` — zie tests/README.md; GitHub draait ze bij elke push |
 | `deploy/` | `versie.sh` (versienummer overal) en `online-zetten.sh` (databasescripts en Drive-script, na jouw akkoord) — zie deploy/LEESMIJ.md |
 | `config.js` | koppeling met de database — **hier de Project URL en anon-sleutel invullen** |
 | `version.json` | versienummer (enkel de laatste versie); de app meldt een nieuwe versie aan wie ze open heeft |
 | `CHANGELOG.md` | versiegeschiedenis (vanaf 1.48 niet meer in version.json) |
 | `vendor/supabase-2.45.4.js` (+ `591.supabase.js`) | de Supabase-bibliotheek, zelf gehost (geen CDN nodig) |
-| `sql/001_init.sql` … `sql/068_*.sql` | databasescripts, in volgorde uit te voeren (`versie_schema` in instellingen bewaakt de volgorde vanaf 022) |
+| `sql/001_init.sql` … `sql/069_*.sql` | databasescripts, in volgorde uit te voeren (`versie_schema` in instellingen bewaakt de volgorde vanaf 022) |
 | `drive/Code.gs` | Google Apps Script dat projectmappen aanmaakt/koppelt op Drive en de meetstaat-export wegschrijft (installatie: zie bovenaan dat bestand) |
 | `drive/YukiArchief.gs` | klein Apps Script voor het account archief@bros.be: leest daar de Yuki-factuurmails en stuurt ze naar het Drive-script (v1.50.1, zie *Yuki-mails uit archief@bros.be*) |
 | `agenda.js` | gedeeld (Planbord en portalen): agendabestand (.ics) en Google Agenda-link voor afspraken (script 041) |
@@ -209,6 +210,14 @@ Veel meetstaten zijn met klantprijzen uit Excel ingelezen: kostprijs = klantprij
 - Alleen beheer ziet of wijzigt dit (tabel `ms_raming`, RLS). Klanten, aannemers en medewerkers zien niets; de pdf/Excel voor de klant blijven ongewijzigd.
 
 Activeren: Supabase → SQL Editor → `sql/052_marges_raming.sql` → Run (na 051; controle `1 | 1 | 52`). Optioneel: nieuw `drive/Code.gs` (neemt `ms_raming` mee in de wekelijkse back-up) als `Code.ingevuld.gs` plakken en een nieuwe versie deployen.
+
+## Naservice (script 069 + drive/Code.gs, v1.77)
+
+- Je vinkt de voorlopige oplevering aan in Project › Werf › Naservice. Standaard loopt de termijn 12 maanden. Bij woningbouw (Wet Breyne) moet er minstens 1 jaar tussen voorlopige en definitieve oplevering liggen; anders volgt de termijn de overeenkomst.
+- Punten komen binnen via het klantenportaal (met foto's) of worden door BROS geregistreerd (mail, telefoon, bezoek). Elke stap gaat via de databankfunctie `naservice_actie` en komt in `naservice_gebeurtenissen`, die niet te wijzigen is.
+- Het Drive-script mailt elk uur, per punt gebundeld (`naserviceMeldingen`). Een melding uit een portaal gaat meteen (actie `naservicemail`).
+- Na de termijn levert `naserviceOpleveringen` definitief op, met een pv (pdf) in Documenten/Oplevering. Open punten staan erop als voorbehoud. Met de actie `oplevering` maakt een beheerder het pv na een manuele definitieve oplevering.
+- Activeren: `sql/069` (controle `7|2|5|69`), nieuw `drive/Code.gs`, pushen.
 
 ## Meer-/minderwerk naar de aannemer (script 068 + drive/Code.gs, v1.76)
 

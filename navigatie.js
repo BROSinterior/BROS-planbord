@@ -6,11 +6,11 @@
    - Uitleg in panelen (de grijze regels onder een titel) standaard ingeklapt achter een ⓘ; één klik toont ze, "altijd tonen" onthoudt dat.
    Geladen vóór app.js; app.js roept navMeer, gsmBalk, projGroepNav en uitlegInklappen aan (via typeof).
    ===================================================================== */
-const MEER_TABS = ["contacten", "notities", "voorstellen", "rapporten"];
+const MEER_TABS = ["contacten", "notities", "voorstellen", "naservice", "rapporten"];   // 1.77: naservice
 const NAV = { meerOpen: false };
 function navMeerItems() {
-  const l = [["contacten", "Contacten"], ["notities", "Notities"], ["voorstellen", "Voorstellen"], ["rapporten", "Rapporten"]].filter(([k]) => true);
-  const n = (k) => k === "voorstellen" && typeof voorstellenOpen === "function" ? voorstellenOpen().length : 0;
+  const l = [["contacten", "Contacten"], ["notities", "Notities"], ["voorstellen", "Voorstellen"], ["naservice", "Naservice"], ["rapporten", "Rapporten"]].filter(([k]) => k !== "naservice" || (typeof nsKlaar === "function" && nsKlaar()));
+  const n = (k) => k === "voorstellen" && typeof voorstellenOpen === "function" ? voorstellenOpen().length : k === "naservice" && typeof nsTeller === "function" ? nsTeller() : 0;
   return { l, n, tot: l.reduce((s, [k]) => s + n(k), 0) };
 }
 /** knop "Meer ▾" in de bovenbalk (het menu zelf komt uit navMenuHtml) */
@@ -33,7 +33,7 @@ function gsmBalk() {
 }
 
 /* ---------- projectpagina: groepen ---------- */
-const PROJ_GROEPEN = [["werk", "Werk", ["intern", "taken", "planning", "uren"]], ["ontwerp", "Ontwerp", ["ontwerp", "tekenen", "renders", "keuzes"]], ["geld", "Financieel", ["meetstaat", "facturatie"]], ["werf", "Werf", ["werf", "vragen"]], ["dossier", "Dossier", ["dossier", "vergaderingen", "notities"]]];
+const PROJ_GROEPEN = [["werk", "Werk", ["intern", "taken", "planning", "uren"]], ["ontwerp", "Ontwerp", ["ontwerp", "tekenen", "renders", "keuzes"]], ["geld", "Financieel", ["meetstaat", "facturatie"]], ["werf", "Werf", ["werf", "naservice", "vragen"]], ["dossier", "Dossier", ["dossier", "vergaderingen", "notities"]]];
 const projGroepVan = (k) => (PROJ_GROEPEN.find(g => g[2].includes(k)) || PROJ_GROEPEN[0])[0];
 /** tabs = [[sleutel, label met teller]] zoals app.js ze opbouwt → groepen + tabbladen van de actieve groep */
 function projGroepNav(tabs) {

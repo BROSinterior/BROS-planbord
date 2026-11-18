@@ -2,6 +2,17 @@
 
 De nieuwste versie staat bovenaan. (Vanaf 1.48 houdt `version.json` enkel de laatste versie bij; het Planbord vraagt dat bestand elke 5 minuten op.)
 
+## 1.77.0 — 2026-11-18 (script 069 uitvoeren, nieuw drive/Code.gs online zetten, pushen)
+
+**Naservice.** Nieuw tabblad in een project (groep Werf) en een overzicht van alle projecten onder Meer ▾.
+- **Voorlopige oplevering aanvinken**, met datum en termijn (standaard 12 maanden). De klant krijgt een mail met uitleg. Een lijn toont voorlopig → vandaag → definitief, met elk gemeld punt erop.
+- **De klant meldt** in zijn portaal (tabblad Naservice) met foto's. **BROS registreert** wat per mail, telefoon of tijdens een bezoek binnenkomt, met de datum van ontvangst.
+- **Per punt een duidelijke opvolging**: ontvangen → beoordeeld → ingepland → opgelost → afgesloten, of "niet onder naservice" met uitleg. Je wijst een punt toe aan een aannemer (ook een externe; die wordt aan het project gekoppeld).
+- **Volledige historiek**: wie deed wat en wanneer (BROS, klant, aannemer, Planbord). Je kan zelf een actie registreren met een eigen datum, zoals een telefoon of bezoek. De historiek kan niet gewijzigd of gewist worden.
+- **Aannemersportaal**: de toegewezen punten met foto's. De aannemer plant een datum en meldt "opgelost" met een foto.
+- **Mails** bij elke belangrijke stap: aan de klant, aan de aannemer, en aan BROS als de klant of aannemer iets meldt. Ze zijn per punt gebundeld en worden elk uur verstuurd; een melding uit een portaal gaat meteen.
+- **Definitieve oplevering automatisch** na de termijn, met een proces-verbaal in pdf (Documenten/Oplevering). Het pv wordt gedeeld met de klant en gemaild. Punten die dan nog open staan, komen erin als voorbehoud en lopen verder. Een beheerder kan ook eerder definitief opleveren.
+
 ## 1.76.0 — 2026-11-17 (script 068 uitvoeren, nieuw drive/Code.gs online zetten, pushen)
 
 **Meer- en minderwerk naar de aannemer.** Bij een meer-/minwerkvoorstel kies je verplicht de aannemer(s) die het uitvoeren, ook als er maar één op het project staat. Een andere aannemer of een nieuwe externe partij voeg je in hetzelfde venster toe; die wordt aannemer op het project.

@@ -38,7 +38,9 @@ function doPost(e) {
     try { onderhoudZeker(); } catch (x) { }   // 1.48: de onderhoudstrigger bestaat (zonder dat iemand iets moet uitvoeren)
     if (body.action === "reset") return json(portaalReset(body));   // klantenportaal: "wachtwoord vergeten" — bewust zonder secret, stuurt enkel een mail naar een bestaande klantlogin
     if (body.action === "gkmail") return json(goedkeuringMail(body));
-    if (body.action === "mwmail") return json(meerwerkMail(body));   // 1.76: goedgekeurd meer-/minderwerk → pdf-bevestiging aan de aannemer(s) // portaal (klant beslist) én Planbord: identiteit en rol via het meegestuurde login-token
+    if (body.action === "mwmail") return json(meerwerkMail(body));
+    if (body.action === "naservicemail") return json(naserviceMail(body));   // 1.77: naservice — meteen mailen na een melding/reactie in een portaal
+    if (body.action === "oplevering") return json(opleveringActie(body));    // 1.77: pv van de definitieve oplevering (beheer)   // 1.76: goedgekeurd meer-/minderwerk → pdf-bevestiging aan de aannemer(s) // portaal (klant beslist) én Planbord: identiteit en rol via het meegestuurde login-token
     if (body.action === "voorstelmail") return json(voorstelMailAannemer(body)); // aannemersportaal: melding van een vraag/opmerking (token-gecontroleerd, aannemer)
     if (body.action === "prijsaanvraagmail") return json(prijsaanvraagMail(body)); // prijsaanvragen: team (token) → aannemer, of aannemer (token) → BROS
     if (body.action === "koppelmail") return json(koppelMail(body));
@@ -579,6 +581,171 @@ function meerwerkMail(body) {
     naar.push(email);
   }
   return { ok: true, naar: naar, zonder: zonder };
+}
+/* =====================================================================
+   Naservice (script 069, v1.77)
+   - naserviceMeldingen: mails over naservicepunten (klant, aannemer, BROS) — per punt en per ontvanger gebundeld.
+     Elk uur (documentenDigest, tussen 7 en 21 u) en meteen na een melding uit een portaal (actie "naservicemail").
+   - naserviceOpleveringen: na de termijn (standaard 12 maanden na de voorlopige oplevering) wordt het project
+     definitief opgeleverd, met een proces-verbaal (pdf) in Documenten/Oplevering: open punten staan erin als voorbehoud.
+   ===================================================================== */
+const NS = { WACHT_MIN: 4, MAX_DAGEN: 7 };
+const NS_LABEL = { ontvangen: "Melding ontvangen", aanvaard: "Aanvaard als naservice", geweigerd: "Valt niet onder de naservice", toegewezen: "Vakman ingeschakeld",
+  ingepland: "Herstelling ingepland", opgelost: "Gemeld als opgelost", afgesloten: "Afgesloten", heropend: "Heropend", bericht: "Bericht", registratie: "Actie",
+  voorlopig: "Voorlopig opgeleverd", definitief: "Definitief opgeleverd", voorbehoud: "Voorbehoud bij de definitieve oplevering", termijn: "Termijn" };
+const NS_STATUS = { ontvangen: "Ontvangen — BROS bekijkt het", aanvaard: "Aanvaard", ingepland: "Ingepland", opgelost: "Opgelost — wordt nagekeken", afgesloten: "Afgesloten", geweigerd: "Niet onder naservice" };
+function nsDatum(d) { return d ? String(d).slice(0, 10).split("-").reverse().join("/") : ""; }
+function nsPlusMaanden(iso, n) {   // zoals Postgres: 31/01 + 1 maand = 28/02 (of 29/02)
+  const y = Number(iso.slice(0, 4)), m = Number(iso.slice(5, 7)) - 1 + Number(n), d = Number(iso.slice(8, 10));
+  const jy = y + Math.floor(m / 12), jm = ((m % 12) + 12) % 12; const max = new Date(Date.UTC(jy, jm + 1, 0)).getUTCDate();
+  return jy + "-" + ("0" + (jm + 1)).slice(-2) + "-" + ("0" + Math.min(d, max)).slice(-2);
+}
+function nsVandaag() { return Utilities.formatDate(new Date(), "Europe/Brussels", "yyyy-MM-dd"); }
+/** actie "naservicemail": meteen mailen wat er voor dit punt klaarstaat (na een melding of reactie in een portaal) */
+function naserviceMail(body) {
+  const wie = callerAny(body.token);
+  if (!quotum("nsmail:" + wie.id, 40, 3600)) return { ok: false, error: "Te veel meldingen in korte tijd." };
+  const id = uuid(body.id);
+  // enkel een punt dat deze login zelf ziet (klant/aannemer via de eigen views, het team via de tabel)
+  const view = wie.role === "klant" ? "klant_naservice_punten" : wie.role === "aannemer" ? "aan_naservice_punten" : "naservice_punten";
+  const rij = (pbReq("/rest/v1/" + view + "?id=eq." + id + "&select=id", "get", null, body.token) || [])[0];
+  if (!rij) return { ok: false, error: "Niet gevonden." };
+  return naserviceMeldingen({ punt: id, direct: true });
+}
+function naserviceMeldingen(opt) {
+  opt = opt || {};
+  const sinds = new Date(Date.now() - NS.MAX_DAGEN * 86400000).toISOString(), tot = new Date(Date.now() - (opt.direct ? 0 : NS.WACHT_MIN * 60000)).toISOString();
+  let ev;
+  try { ev = pbAdmin("/rest/v1/naservice_gebeurtenissen?melden=is.true&gemeld_op=is.null&created_at=gte." + encodeURIComponent(sinds) + "&created_at=lte." + encodeURIComponent(tot)
+    + (opt.punt ? "&punt_id=eq." + opt.punt : "") + "&select=*&order=op.asc&limit=300", "get") || []; }
+  catch (e) { return { ok: true, naar: [], overgeslagen: "script 069 ontbreekt" }; }
+  if (!ev.length) return { ok: true, naar: [] };
+  const puntIds = [...new Set(ev.map(e => e.punt_id).filter(Boolean))], projIds = [...new Set(ev.map(e => e.project_id))];
+  const punten = pbIn("/rest/v1/naservice_punten?", "id", puntIds, "&select=*");
+  const projecten = pbIn("/rest/v1/projecten?", "id", projIds, "&select=id,nummer,klant,naam,adres,gemeente,lead,voorlopig_opgeleverd_op,oplevering_termijn_maanden");
+  const pcs = pbIn("/rest/v1/project_contacten?", "project_id", projIds, "&select=project_id,contact_id,rol");
+  const contacten = pbIn("/rest/v1/contacten?", "id", [...new Set(pcs.map(x => x.contact_id).concat(punten.map(n => n.contact_id)).filter(Boolean))], "&select=id,naam,contactpersoon,email,user_id,actief");
+  const leads = pbIn("/rest/v1/profiles?", "id", projecten.map(p => p.lead), "&select=id,name,email");
+  const planbord = PORTAAL.URL.replace(/klant\/?$/, "");
+  const naar = [], gemeld = {};   // gebeurtenis-id → [adressen]
+  // per project + punt + ontvanger bundelen
+  const bundels = {};
+  const voeg = (wieSoort, adres, naam, e) => { if (!adres) return; const k = e.project_id + "|" + (e.punt_id || "") + "|" + wieSoort + "|" + adres.toLowerCase(); (bundels[k] = bundels[k] || { wieSoort: wieSoort, adres: adres, naam: naam, project_id: e.project_id, punt_id: e.punt_id, ev: [] }).ev.push(e); };
+  ev.forEach(e => {
+    const p = projecten.find(x => x.id === e.project_id); if (!p) return; const n = e.punt_id ? punten.find(x => x.id === e.punt_id) : null; if (e.punt_id && !n) return;
+    const klanten = pcs.filter(x => x.project_id === p.id && (x.rol === "bouwheer" || x.rol === "contactpersoon")).map(x => contacten.find(c => c.id === x.contact_id)).filter(c => c && c.actief !== false && c.email);
+    const aan = n && n.contact_id ? contacten.find(c => c.id === n.contact_id) : null;
+    const lead = leads.find(x => x.id === p.lead); const bros = (lead && lead.email) || YUKI.REPORT_TO;
+    const klantZiet = e.zichtbaar_klant && (!n || n.klant_zichtbaar);
+    if (e.door_rol !== "klant" && klantZiet && ["ontvangen", "aanvaard", "geweigerd", "toegewezen", "ingepland", "opgelost", "afgesloten", "heropend", "bericht", "voorlopig"].indexOf(e.soort) >= 0)
+      klanten.forEach(c => voeg("klant", String(c.email).trim(), c.contactpersoon || c.naam, e));
+    if (e.door_rol === "klant" && e.soort === "ontvangen") klanten.forEach(c => voeg("klant", String(c.email).trim(), c.contactpersoon || c.naam, e));   // ontvangstbevestiging
+    if (aan && aan.email && e.zichtbaar_aannemer && e.door_rol !== "aannemer" && ["toegewezen", "heropend", "bericht", "afgesloten"].indexOf(e.soort) >= 0 && (e.soort !== "bericht" || e.door_rol === "bros"))
+      voeg("aannemer", String(aan.email).trim(), aan.contactpersoon || aan.naam, e);
+    if (e.door_rol === "klant" || e.door_rol === "aannemer") voeg("bros", bros, lead ? lead.name : "BROS", e);
+    gemeld[e.id] = gemeld[e.id] || [];
+  });
+  const lijn = (e) => {
+    const t = e.soort === "ingepland" && e.datum ? "Herstelling ingepland op " + nsDatum(e.datum) : e.soort === "bericht" ? "Bericht van " + (e.door_naam || "BROS") : NS_LABEL[e.soort] || e.soort;
+    return { t: t, sub: (e.door_naam && e.soort !== "bericht" ? e.door_naam + " · " : "") + Utilities.formatDate(new Date(e.op), "Europe/Brussels", "dd/MM/yyyy HH:mm"), tekst: e.tekst || "", fotos: e.fotos || [] };
+  };
+  const foto = (f) => String(f.url || "").indexOf(YUKI.PLANBORD_URL + "/storage/v1/object/public/werf/") === 0 ? "<a href=\"" + H(f.url) + "\"><img src=\"" + H(f.url) + "\" width=\"110\" style=\"border-radius:6px;margin:2px\"></a>" : "";
+  Object.keys(bundels).forEach(k => { const b = bundels[k];
+    try {
+      if (!mailRuimte(1)) { b.ev.forEach(x => delete gemeld[x.id]); return; }   // quotum op: volgende ronde
+      const p = projecten.find(x => x.id === b.project_id); const n = b.punt_id ? punten.find(x => x.id === b.punt_id) : null;
+      const proj = (p.klant || "") + (p.naam && p.naam !== p.klant ? " · " + p.naam : "");
+      const code = n ? "NS-" + ("00" + n.nr).slice(-3) : "";
+      const url = b.wieSoort === "klant" ? PORTAAL.URL : b.wieSoort === "aannemer" ? PORTAAL.URL_AANNEMER : planbord;
+      const knop = b.wieSoort === "klant" ? "Bekijk het in je klantenportaal" : b.wieSoort === "aannemer" ? "Naar het aannemersportaal" : "Openen in het Planbord";
+      const ls = b.ev.map(lijn); let intro;
+      if (!n) intro = b.wieSoort === "klant" ? "Je woning is voorlopig opgeleverd. Vanaf nu loopt de naservice: zie je iets dat niet in orde is, meld het dan in je klantenportaal (tabblad Naservice) met een foto. Je volgt er ook elke stap van de opvolging. De definitieve oplevering volgt na " + p.oplevering_termijn_maanden + " maanden (" + nsDatum(nsPlusMaanden(String(p.voorlopig_opgeleverd_op), p.oplevering_termijn_maanden)) + ")." : "Nieuw bij " + proj + ".";
+      else if (b.wieSoort === "klant") intro = b.ev.some(e => e.soort === "ontvangen") && b.ev.length === 1 ? "We hebben je melding goed ontvangen. BROS bekijkt ze en houdt je op de hoogte." : "Er is nieuws over je naservicepunt.";
+      else if (b.wieSoort === "aannemer") intro = b.ev.some(e => e.soort === "toegewezen") ? "BROS vraagt je dit naservicepunt op te lossen. Plan een datum in het portaal en meld het als opgelost (met een foto) zodra het klaar is." : "Er is nieuws over een naservicepunt dat aan jou is toegewezen.";
+      else intro = (b.ev[0].door_rol === "klant" ? "De klant" : "De aannemer") + " heeft gereageerd op een naservicepunt.";
+      const titel = n ? code + " · " + n.titel : "Naservice";
+      const html = "<div style=\"font-family:Helvetica,Arial,sans-serif;font-size:15px;line-height:1.5;color:#1B1E1C;max-width:640px\"><p>Beste " + H(b.naam || "") + ",</p><p>" + H(intro) + "</p>"
+        + (n ? "<div style=\"border:1px solid #E2E0D8;border-radius:10px;padding:12px 16px;margin:16px 0\"><div style=\"font-size:12px;color:#767D78\">" + H(proj) + "</div><div style=\"font-weight:700;font-size:16px\">" + H(titel) + "</div>"
+          + (n.ruimte ? "<div style=\"color:#767D78;font-size:13px\">" + H(n.ruimte) + "</div>" : "") + "<div style=\"margin-top:6px;font-size:13px\">Status: <b>" + H(NS_STATUS[n.status] || n.status) + "</b>" + (n.gepland_op && n.status === "ingepland" ? " · " + nsDatum(n.gepland_op) : "") + "</div></div>" : "")
+        + ls.map(l => "<div style=\"border-left:3px solid #1B1E1C;padding:2px 0 2px 12px;margin:10px 0\"><div style=\"font-weight:600\">" + H(l.t) + "</div><div style=\"color:#767D78;font-size:12px\">" + H(l.sub) + "</div>" + (l.tekst ? "<div style=\"white-space:pre-line;margin-top:4px\">" + H(l.tekst) + "</div>" : "") + l.fotos.slice(0, 6).map(foto).join("") + "</div>").join("")
+        + "<p style=\"margin:24px 0\"><a href=\"" + url + "\" style=\"background:#1B1E1C;color:#fff;text-decoration:none;padding:12px 20px;border-radius:8px;font-weight:600;display:inline-block\">" + knop + "</a></p><p>BROS</p></div>";
+      const tekst = "Beste " + (b.naam || "") + ",\n\n" + intro + (n ? "\n\n" + proj + " — " + titel + "\nStatus: " + (NS_STATUS[n.status] || n.status) : "") + "\n\n" + ls.map(l => "- " + l.t + " (" + l.sub + ")" + (l.tekst ? ": " + l.tekst : "")).join("\n") + "\n\n" + knop + ": " + url + "\n\nBROS";
+      const onderwerp = "Naservice · " + proj + (n ? " · " + titel : "");
+      if (b.wieSoort === "bros") GmailApp.sendEmail(b.adres, onderwerp, tekst, { htmlBody: html, name: "BROS Planbord" }); else portaalMail(b.adres, onderwerp, tekst, html);
+      naar.push(b.adres); b.ev.forEach(e => gemeld[e.id].push(b.wieSoort + ": " + b.adres));
+    } catch (e) { Logger.log("Naservicemail " + k + ": " + e); b.ev.forEach(x => delete gemeld[x.id]); }
+  });
+  Object.keys(gemeld).forEach(id => { try { pbAdmin("/rest/v1/naservice_gebeurtenissen?id=eq." + id, "patch", { gemeld_op: new Date().toISOString(), gemeld_naar: gemeld[id].join(", ").slice(0, 500) }); } catch (e) { Logger.log("Naservice gemeld " + id + ": " + e); } });
+  return { ok: true, naar: [...new Set(naar)] };
+}
+/** elk uur: projecten waarvan de termijn verstreken is → definitief opgeleverd + proces-verbaal; manueel definitief zonder pv → pv */
+function naserviceOpleveringen() {
+  let ps; try { ps = pbAdmin("/rest/v1/projecten?voorlopig_opgeleverd_op=not.is.null&definitief_pv_drive_id=is.null&select=id,voorlopig_opgeleverd_op,oplevering_termijn_maanden,definitief_opgeleverd_op&limit=200", "get") || []; }
+  catch (e) { return; }   // vóór script 069
+  const vandaag = nsVandaag();
+  ps.forEach(p => { try {
+    const einde = nsPlusMaanden(String(p.voorlopig_opgeleverd_op), p.oplevering_termijn_maanden);
+    if (!p.definitief_opgeleverd_op) {
+      if (einde > vandaag) return;
+      pbAdmin("/rest/v1/projecten?id=eq." + p.id + "&definitief_opgeleverd_op=is.null", "patch", { definitief_opgeleverd_op: einde, definitief_automatisch: true });
+    }
+    opleveringPv(p.id, null);
+  } catch (e) { Logger.log("Definitieve oplevering " + p.id + ": " + e); } });
+}
+/** actie "oplevering": het pv meteen maken na een manuele definitieve oplevering (enkel beheer) */
+function opleveringActie(body) {
+  const wie = callerAny(body.token); if (wie.role !== "beheer") return { ok: false, error: "Enkel een beheerder kan het proces-verbaal laten maken." };
+  return opleveringPv(uuid(body.id), wie);
+}
+function opleveringPv(pid, wie) {
+  if (!eenmalig("pv:" + pid, 600)) return { ok: false, error: "Het proces-verbaal wordt al gemaakt." };
+  const p = (pbAdmin("/rest/v1/projecten?id=eq." + pid + "&select=id,nummer,klant,naam,adres,postcode,gemeente,lead,drive_folder_id,voorlopig_opgeleverd_op,oplevering_termijn_maanden,oplevering_opmerking,definitief_opgeleverd_op,definitief_automatisch,definitief_pv_drive_id", "get") || [])[0];
+  if (!p || !p.definitief_opgeleverd_op) return { ok: false, error: "Dit project is nog niet definitief opgeleverd." };
+  if (p.definitief_pv_drive_id) return { ok: true, al: true };
+  if (!p.drive_folder_id) return { ok: false, error: "Geen projectmap op Drive gekoppeld." };
+  const punten = pbAdmin("/rest/v1/naservice_punten?project_id=eq." + pid + "&select=nr,titel,ruimte,status,ontvangen_op,gepland_op,afgesloten_op,klant_zichtbaar&order=nr", "get") || [];
+  const pcs = pbAdmin("/rest/v1/project_contacten?project_id=eq." + pid + "&rol=in.(bouwheer,contactpersoon)&select=contact_id,rol", "get") || [];
+  const klanten = pcs.length ? pbIn("/rest/v1/contacten?", "id", pcs.map(x => x.contact_id), "&select=id,naam,contactpersoon,email,actief").filter(c => c.actief !== false) : [];
+  const bouwheren = klanten.filter(c => pcs.some(x => x.contact_id === c.id && x.rol === "bouwheer"));
+  const open = punten.filter(n => n.klant_zichtbaar && n.status !== "afgesloten" && n.status !== "geweigerd"), af = punten.filter(n => n.status === "afgesloten");
+  const proj = [p.nummer, p.klant, p.naam && p.naam !== p.klant ? p.naam : ""].filter(Boolean).join(" · ");
+  const adres = [p.adres, [p.postcode, p.gemeente].filter(Boolean).join(" ")].filter(Boolean).join(", ");
+  const gemaakt = Utilities.formatDate(new Date(), "Europe/Brussels", "dd/MM/yyyy 'om' HH:mm");
+  const rij = (k, v) => "<tr><td style=\"padding:6px 0;color:#767D78;width:220px;vertical-align:top\">" + H(k) + "</td><td style=\"padding:6px 0\"><b>" + H(v) + "</b></td></tr>";
+  const html = "<html><head><meta charset=\"utf-8\"><style>body{font-family:Helvetica,Arial,sans-serif;font-size:11pt;color:#1B1E1C;margin:36px 44px}h1{font-size:20pt;margin:4px 0 18px}h2{font-size:12.5pt;margin:22px 0 8px}table{border-collapse:collapse;width:100%}.t td,.t th{border-bottom:1px solid #DDD;padding:6px 4px;text-align:left;font-size:10pt}.t th{color:#767D78;font-weight:600}.klein{color:#767D78;font-size:9pt}</style></head><body>"
+    + "<div style=\"font-weight:700;font-size:15pt;letter-spacing:2px\">BROS</div><h1>Proces-verbaal van definitieve oplevering</h1>"
+    + "<table>" + rij("Project", proj) + (adres ? rij("Adres van de werken", adres) : "") + (bouwheren.length ? rij("Bouwheer", bouwheren.map(c => c.naam).join(", ")) : "")
+    + rij("Voorlopige oplevering", nsDatum(p.voorlopig_opgeleverd_op)) + rij("Termijn tot de definitieve oplevering", p.oplevering_termijn_maanden + " maanden")
+    + rij("Definitieve oplevering", nsDatum(p.definitief_opgeleverd_op) + (p.definitief_automatisch ? " (na afloop van de termijn)" : "")) + "</table>"
+    + "<p>" + (p.definitief_automatisch ? "De termijn van " + p.oplevering_termijn_maanden + " maanden na de voorlopige oplevering is verstreken. " : "") + "De werken worden op " + nsDatum(p.definitief_opgeleverd_op) + " definitief opgeleverd. De definitieve oplevering geldt als aanvaarding van de werken, onverminderd de wettelijke aansprakelijkheid voor verborgen gebreken en de tienjarige aansprakelijkheid.</p>"
+    + (p.oplevering_opmerking ? "<p style=\"white-space:pre-line\">" + H(p.oplevering_opmerking) + "</p>" : "")
+    + "<h2>Voorbehoud — punten die nog opgevolgd worden</h2>" + (open.length ? "<table class=\"t\"><tr><th>Nr</th><th>Punt</th><th>Ruimte</th><th>Gemeld op</th><th>Stand</th></tr>" + open.map(n => "<tr><td>NS-" + ("00" + n.nr).slice(-3) + "</td><td>" + H(n.titel) + "</td><td>" + H(n.ruimte || "") + "</td><td>" + nsDatum(n.ontvangen_op) + "</td><td>" + H(NS_STATUS[n.status] || n.status) + (n.gepland_op && n.status === "ingepland" ? " (" + nsDatum(n.gepland_op) + ")" : "") + "</td></tr>").join("") + "</table><p>BROS volgt deze punten verder op; je ziet de stand van zaken in je klantenportaal.</p>" : "<p>Er staan geen naservicepunten meer open.</p>")
+    + "<h2>Naservice tijdens de termijn</h2><p>" + punten.filter(n => n.klant_zichtbaar).length + " gemelde punten, waarvan " + af.length + " afgehandeld" + (punten.some(n => n.status === "geweigerd") ? " en " + punten.filter(n => n.status === "geweigerd").length + " buiten de naservice" : "") + ". De volledige historiek van elk punt staat in het klantenportaal.</p>"
+    + "<p style=\"margin-top:26px\">Heb je opmerkingen bij dit proces-verbaal, laat het ons dan binnen 15 dagen schriftelijk weten.</p>"
+    + "<p class=\"klein\" style=\"margin-top:30px\">Opgemaakt door het BROS Planbord op " + gemaakt + (wie ? " op vraag van " + H(wie.name) : "") + ".</p></body></html>";
+  const naam = "PV definitieve oplevering " + (p.nummer ? p.nummer + " " : "") + String(p.klant || "").replace(/[\\/:*?"<>|]/g, "-") + " " + p.definitief_opgeleverd_op + ".pdf";
+  const pdf = Utilities.newBlob(html, "text/html", "pv.html").getAs("application/pdf").setName(naam);
+  const map = subfolder(DriveApp.getFolderById(p.drive_folder_id), "Documenten/Oplevering");
+  const f = map.createFile(pdf);
+  pbAdmin("/rest/v1/projecten?id=eq." + pid, "patch", { definitief_pv_drive_id: f.getId() });
+  let docId = null;
+  try {
+    const d = (pbAdmin("/rest/v1/documenten?on_conflict=project_id,drive_id", "post", [{ project_id: pid, drive_id: f.getId(), naam: f.getName(), pad: "Documenten/Oplevering", url: f.getUrl(), mime: "application/pdf", grootte: f.getSize(), gewijzigd: new Date().toISOString(), gesynct_op: new Date().toISOString(), gedeeld: true }], "resolution=merge-duplicates,return=representation") || [])[0];
+    if (d) { docId = d.id; pbAdmin("/rest/v1/documenten?id=eq." + d.id, "patch", { gemeld_klant: true }); pbAdmin("/rest/v1/projecten?id=eq." + pid, "patch", { definitief_pv_document: d.id }); }
+  } catch (e) { Logger.log("PV document " + pid + ": " + e); }
+  // mail: klant (enkel bij een recente oplevering — een oude oplevering die BROS nu pas aanvinkt, mailen we niet) + BROS
+  const recent = p.definitief_opgeleverd_op >= nsPlusMaanden(nsVandaag(), -1);
+  const lead = p.lead ? (pbAdmin("/rest/v1/profiles?id=eq." + p.lead + "&select=name,email", "get") || [])[0] : null;
+  const naarLijst = [];
+  const intro = "Je woning (" + proj + ") is op " + nsDatum(p.definitief_opgeleverd_op) + " definitief opgeleverd" + (p.definitief_automatisch ? ", na afloop van de termijn van " + p.oplevering_termijn_maanden + " maanden na de voorlopige oplevering" : "") + ". In bijlage vind je het proces-verbaal" + (open.length ? "; de " + open.length + " punt" + (open.length === 1 ? " dat nog openstaat, volgen we" : "en die nog openstaan, volgen we") + " verder op (voorbehoud)." : ".");
+  if (recent && mailRuimte(klanten.length + 1)) klanten.filter(c => c.email).forEach(c => {
+    const html2 = "<div style=\"font-family:Helvetica,Arial,sans-serif;font-size:15px;line-height:1.5;color:#1B1E1C;max-width:640px\"><p>Beste " + H(c.contactpersoon || c.naam) + ",</p><p>" + H(intro) + "</p><p>Bedankt voor het vertrouwen. Het proces-verbaal staat ook in je klantenportaal onder Documenten.</p><p style=\"margin:24px 0\"><a href=\"" + PORTAAL.URL + "\" style=\"background:#1B1E1C;color:#fff;text-decoration:none;padding:12px 20px;border-radius:8px;font-weight:600;display:inline-block\">Naar je klantenportaal</a></p><p>" + H(lead ? lead.name : "Het team") + " — BROS</p></div>";
+    portaalMail(String(c.email).trim(), "Definitieve oplevering · " + proj, "Beste " + (c.contactpersoon || c.naam) + ",\n\n" + intro + "\n\nJe klantenportaal: " + PORTAAL.URL + "\n\nBROS", html2, [pdf]); naarLijst.push(String(c.email).trim());
+  });
+  try { GmailApp.sendEmail((lead && lead.email) || YUKI.REPORT_TO, "Definitief opgeleverd · " + proj, intro.replace(/^Je woning/, "Het project") + (open.length ? "\n\nVoorbehoud: " + open.map(n => "NS-" + ("00" + n.nr).slice(-3) + " " + n.titel).join(", ") : "") + (recent ? (naarLijst.length ? "\n\nDe klant kreeg het pv per mail: " + naarLijst.join(", ") : "\n\nGeen klant met e-mailadres: bezorg het pv zelf.") : "\n\nDe oplevering ligt al meer dan een maand achter ons: de klant werd niet gemaild."), { attachments: [pdf], name: "BROS Planbord" }); } catch (e) { Logger.log("PV-mail BROS: " + e); }
+  try { const g = (pbAdmin("/rest/v1/naservice_gebeurtenissen?project_id=eq." + pid + "&soort=eq.definitief&select=id&order=created_at.desc&limit=1", "get") || [])[0];
+    if (g) pbAdmin("/rest/v1/naservice_gebeurtenissen?id=eq." + g.id, "patch", { gemeld_op: new Date().toISOString(), gemeld_naar: naarLijst.length ? "klant: " + naarLijst.join(", ") + " (met pv)" : "pv bewaard" }); } catch (e) { }
+  return { ok: true, file: { id: f.getId(), url: f.getUrl(), name: f.getName() }, document: docId, naar: naarLijst };
 }
 /* =====================================================================
    Vergaderingen & opnames (script 051, v1.54) — voor de verwerkingscomputer (Mac mini)
@@ -1553,8 +1720,8 @@ const BACKUP_TABELLEN = ["profiles", "tarieven", "fasen", "standaardtaken", "pro
   "taak_voorstellen", "assistent_gesprekken", "assistent_berichten", "prijsaanvragen", "prijsaanvraag_regels", "prijsvragen", "prijsvraag_gunningen", "tekenplannen", "plan_objecten", "plan_versies", "plan_symbolen",
   "aannemer_meetstaten", "aannemer_meetstaat_posten", "keuzes", "keuze_opties", "meerwerk_aanvragen", "werf_fotos", "werf_updates", "woningdossier",
   "aannemer_facturen", "aannemer_hulp", "betaalherinneringen", "fin_plan", "fin_vaste_kosten", "fin_instellingen",
-  "vergaderingen", "verwerkingen", "vergadering_uitvoer", "vergadering_punten", "vergadering_feedback", "verwerker_status", "ms_raming", "document_aannemers"];   // 1.49 (script 047), 1.50 (048), 1.52 (049), 1.54 (051), 1.55 (052), 1.56 (053)
-const BACKUP_OPTIONEEL = ["aannemer_facturen", "aannemer_hulp", "betaalherinneringen", "fin_plan", "fin_vaste_kosten", "fin_instellingen", "vergaderingen", "verwerkingen", "vergadering_uitvoer", "vergadering_punten", "vergadering_feedback", "verwerker_status", "ms_raming", "document_aannemers"];   // bestaan pas na script 047/049: ontbreken is dan geen back-upfout
+  "vergaderingen", "verwerkingen", "vergadering_uitvoer", "vergadering_punten", "vergadering_feedback", "verwerker_status", "ms_raming", "document_aannemers", "goedkeuring_aannemers", "naservice_punten", "naservice_gebeurtenissen"];   // 1.49 (script 047), 1.50 (048), 1.52 (049), 1.54 (051), 1.55 (052), 1.56 (053)
+const BACKUP_OPTIONEEL = ["aannemer_facturen", "aannemer_hulp", "betaalherinneringen", "fin_plan", "fin_vaste_kosten", "fin_instellingen", "vergaderingen", "verwerkingen", "vergadering_uitvoer", "vergadering_punten", "vergadering_feedback", "verwerker_status", "ms_raming", "document_aannemers", "goedkeuring_aannemers", "naservice_punten", "naservice_gebeurtenissen"];   // bestaan pas na script 047/049: ontbreken is dan geen back-upfout
 const BACKUP_ORDE = { fasen: "nr", loten: "nr", tarieven: "user_id", instellingen: "key", klant_timing: "project_id,fase_nr", prijsvraag_gunningen: "prijsvraag_id,post_id", meetstaat_prijzen: "post_id", plan_symbolen: "code", verwerker_status: "naam", document_aannemers: "document_id,contact_id" };
 function onderhoud(volledig) {
   const cache = CacheService.getScriptCache();
@@ -1646,6 +1813,8 @@ function documentenDigest() {
   try { debiteurenDagelijks(); } catch (e) { Logger.log("Opvolging klantfacturen: " + e); }   // 1.50 (script 048): één keer per werkdag
   try { herinneringenVersturen(); } catch (e) { Logger.log("Herinneringen versturen: " + e); }   // vangnet: goedgekeurde herinneringen die nog niet vertrokken
   try { documentenDigestAannemers(); } catch (e) { Logger.log("Documenten per aannemer melden: " + e); }   // 1.56 (script 053)
+  try { naserviceOpleveringen(); } catch (e) { Logger.log("Definitieve opleveringen: " + e); }   // 1.77 (script 069)
+  try { naserviceMeldingen(); } catch (e) { Logger.log("Naservice melden: " + e); }   // 1.77 (script 069)
   const docs = pbAdmin("/rest/v1/documenten?or=(gemeld_klant.eq.false,gemeld_aannemers.eq.false)&select=id,project_id,naam,pad,url,gedeeld,gedeeld_aannemers,gedeeld_op,gedeeld_aannemers_op,gemeld_klant,gemeld_aannemers&limit=500", "get") || [];
   if (!docs.length) { Logger.log("Niets te melden."); return; }
   const grens = Date.now() - DIGEST.WACHT_MIN * 60000; let mails = 0;
