@@ -234,7 +234,7 @@ Taakformulier › Afspraak ter plaatse › **Ook mee van BROS** (`taken.afspraak
 
 - **Mijn werk**: alles op jouw naam uit alle projecten op één lijst, gesorteerd op datum (zie CHANGELOG 1.73).
 - **Google Agenda in Uren**: vraagt het nieuwe Drive-script (actie `agendaweek`); afspraken horen bij wie deelnemer is of wiens initialen vooraan in de titel staan.
-- **Naar Yuki (proefmodus)**: scripteigenschappen van het Drive-script — `YUKI_FACTUUR_ADMIN_ID` (eerst een proefadministratie!), `YUKI_BTW_6`, `YUKI_BTW_21` (btw-codes uit Yuki), optioneel `YUKI_OMZET_REKENING`, `YUKI_BETAALTERMIJN`, `YUKI_SALES_URL`. Zonder `YUKI_FACTUUR_ADMIN_ID` gaat er niets naar Yuki.
+- **Naar Yuki**: zet in het Drive-script de scripteigenschap `YUKI_FACTUUR_ADMIN_ID` op het id van de administratie van BROS. dnf kan geen proefadministratie aanmaken; de factuur komt bij Te verzenden. Zonder die eigenschap gaat er niets naar Yuki. Standaard (1.79, volgens dnf): btw-code 21 % = 1, 12 % = 21, 6 % = 2; omzetrekening 700000; betaaltermijn 15 dagen; bij 6 % de wettelijke vermelding in de opmerkingen. Optioneel overschrijven met `YUKI_BTW_<tarief>` (0 % vraagt `YUKI_BTW_0`), `YUKI_OMZET_REKENING`, `YUKI_TEKST_6`, `YUKI_BETAALTERMIJN` of `YUKI_SALES_URL`.
 - Activeren: `sql/064`, `065` en `066` in volgorde (controles `2|1|2|64`, `1|…|65`, `2|1|66`), nieuw `drive/Code.gs`, pushen.
 
 ## Sneller laden (script 065, v1.72)

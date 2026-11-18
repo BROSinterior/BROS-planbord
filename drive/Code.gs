@@ -75,7 +75,7 @@ function doPost(e) {
     if (body.action === "afspraak") return json(afspraakSync(body));
     if (body.action === "agendatest") return json(agendaStatus(body));   // Instellingen › Agenda testen (1.47)
     if (body.action === "agendaweek") return json(agendaWeek(body));
-    if (body.action === "yukifactuur") return json(yukiFactuur(body));   // 1.73: rechtstreeks factureren in Yuki (proefmodus)   // 1.73: afspraken uit de Google Agenda in de weekagenda van Uren
+    if (body.action === "yukifactuur") return json(yukiFactuur(body));   // 1.73: rechtstreeks factureren in Yuki (1.79: btw-codes, omzetrekening en 6 %-vermelding volgens dnf)   // 1.73: afspraken uit de Google Agenda in de weekagenda van Uren
     if (body.action === "herinneringen") { try { caller(body.token, true); } catch (x) { return json({ ok: false, error: "Alleen beheerders kunnen herinneringen versturen." }); } return json(Object.assign({ ok: true }, herinneringenVersturen())); }   // 1.50 (script 048): goedgekeurde betalingsherinneringen nu versturen (enkel beheer)
     if (body.action === "antwoordmail") return json(antwoordMail(body));
     if (body.action === "werfpuntantwoord") return json(werfpuntAntwoord(body));
@@ -2099,15 +2099,21 @@ function yukiApiSessie() {
   return { sid: sid, admin: admin };
 }
 /* =====================================================================
-   1.73 — Rechtstreeks factureren in Yuki (Sales-webservice, ProcessSalesInvoices). PROEFMODUS.
-   - Zonder scripteigenschap YUKI_FACTUUR_ADMIN_ID gaat er NIETS naar Yuki: het Planbord krijgt terug wat Yuki zou krijgen.
-   - Met YUKI_FACTUUR_ADMIN_ID (vul eerst het id van een PROEFadministratie in): de factuur komt in Yuki bij "Te verzenden"
+   1.73 — Rechtstreeks factureren in Yuki (Sales-webservice, ProcessSalesInvoices).
+   - Zonder scripteigenschap YUKI_FACTUUR_ADMIN_ID gaat er NIETS naar Yuki: het Planbord krijgt terug wat Yuki zou krijgen (proef).
+   - Met YUKI_FACTUUR_ADMIN_ID = het id van de administratie van BROS: de factuur komt in Yuki bij "Te verzenden"
      (Process = false, geen mail aan de klant). Jij kijkt ze na en verwerkt ze in Yuki; daarna koppelt het script ze zoals altijd.
-   - Btw-codes van Yuki per tarief: YUKI_BTW_6, YUKI_BTW_21 (en YUKI_BTW_0 / YUKI_BTW_12 indien nodig) — zie in Yuki welke code
-     bij welk percentage hoort. Optioneel: YUKI_OMZET_REKENING (grootboekrekening), YUKI_BETAALTERMIJN (dagen, standaard 15),
-     YUKI_SALES_URL (standaard dezelfde server als YUKI_API_URL, met Sales.asmx).
+     1.79: dnf kan geen proefadministratie aanmaken (vraagt een eigen btw-nummer) en raadt aan in de eigen administratie te
+     testen — veilig, omdat de factuur enkel bij Te verzenden komt.
+   - 1.79: btw-codes (VATType) volgens Yuki Support België: 21 % = 1, 12 % = 21, 6 % = 2 (YUKI_BTW_STANDAARD). Een scripteigenschap
+     YUKI_BTW_<tarief> gaat voor; 0 % (verlegd/medecontractant) heeft geen standaardcode en vraagt YUKI_BTW_0.
+   - 1.79: omzetrekening standaard 700000 (Omzet, zoals dnf boekt); YUKI_OMZET_REKENING gaat voor. Betaaltermijn 15 dagen
+     (zoals in Yuki ingesteld); YUKI_BETAALTERMIJN gaat voor. Bij 6 % komt de wettelijke vermelding (dnf) in de opmerkingen
+     van de factuur (YUKI_TEKST_6 gaat voor). YUKI_SALES_URL: standaard dezelfde server als YUKI_API_URL, met Sales.asmx.
    - Enkel beheer, enkel een vordering die "Klaar voor Yuki" staat, en het bedrag moet exact het vastgezette bedrag zijn.
    ===================================================================== */
+const YUKI_BTW_STANDAARD = { 21: "1", 12: "21", 6: "2" };   // VATType per btw-tarief (Yuki Support België, 17/11/2026)
+const YUKI_TEKST_6 = "Btw-tarief: Bij gebrek aan schriftelijke betwisting binnen een termijn van één maand vanaf de ontvangst van de factuur, wordt de klant geacht te erkennen dat (1) de werken worden verricht aan een woning waarvan de eerste ingebruikneming heeft plaatsgevonden in een kalenderjaar dat ten minste tien jaar voorafgaat aan de datum van de eerste factuur met betrekking tot die werken, (2) de woning, na uitvoering van die werken, uitsluitend of hoofdzakelijk als privéwoning wordt gebruikt en (3) de werken worden verstrekt en gefactureerd aan een eindverbruiker. Wanneer minstens één van die voorwaarden niet is voldaan, zal het normale btw-tarief van 21 pct. van toepassing zijn en is de afnemer ten aanzien van die voorwaarden aansprakelijk voor de betaling van de verschuldigde belasting, interesten en geldboeten.";
 function yukiSalesUrl() {
   const props = PropertiesService.getScriptProperties();
   return props.getProperty("YUKI_SALES_URL") || String(props.getProperty("YUKI_API_URL") || DEBITEUREN.YUKI_URLS[0]).replace(/Accounting\.asmx$/i, "Sales.asmx");
@@ -2148,14 +2154,16 @@ function yukiFactuur(body) {
   const datum = brusselsDag(); const termijn = Math.max(0, Math.min(90, Number(props.getProperty("YUKI_BETAALTERMIJN") || 15)));
   const vervaldag = brusselsDag(new Date(new Date(datum + "T12:00:00Z").getTime() + termijn * 86400000));
   const w = [];
-  const lijnen = regels.map(r => ({ tarief: r.tarief, excl: r.excl, omschrijving: regels.length > 1 ? oms.slice(0, 180) + " — " + r.tarief + " % btw" : oms, ref: "PB-" + (p.nummer || "") + "-" + r.tarief, btwcode: props.getProperty("YUKI_BTW_" + r.tarief) || "" }));
-  lijnen.filter(r => !r.btwcode).forEach(r => w.push("Btw-code voor " + r.tarief + " % ontbreekt: scripteigenschap YUKI_BTW_" + r.tarief + "."));
+  const lijnen = regels.map(r => ({ tarief: r.tarief, excl: r.excl, omschrijving: regels.length > 1 ? oms.slice(0, 180) + " — " + r.tarief + " % btw" : oms, ref: "PB-" + (p.nummer || "") + "-" + r.tarief, btwcode: props.getProperty("YUKI_BTW_" + r.tarief) || YUKI_BTW_STANDAARD[r.tarief] || "" }));
+  lijnen.filter(r => !r.btwcode).forEach(r => w.push("Btw-code voor " + r.tarief + " % ontbreekt (verlegde btw / medecontractant): vraag dnf de juiste code en zet ze als scripteigenschap YUKI_BTW_" + r.tarief + "."));
   if (!p.adres || !p.postcode || !p.gemeente) w.push("Het project heeft geen volledig adres: Yuki gebruikt dan het adres dat al bij de klant staat (of geen).");
-  w.push("Zonder klantcode zoekt Yuki de klant op naam (\"" + String(p.bedrijf || p.klant || "").trim() + "\"); bestaat die niet exact zo, dan maakt Yuki een nieuwe klant aan. Test dit eerst op een proefadministratie.");
-  const o = { onderwerp: oms, datum, vervaldag, opmerking: p.nummer ? "Project " + p.nummer : "", klantcode: "", klant: String(p.bedrijf || p.klant || "").trim(), bedrijf: !!String(p.bedrijf || "").trim(),
-    adres: p.adres || "", postcode: p.postcode || "", gemeente: p.gemeente || "", email: p.factuur_email1 ? "" : (p.email1 || ""), btwnr: p.btw_nummer || "", regels: lijnen, rekening: props.getProperty("YUKI_OMZET_REKENING") || "" };
+  w.push("Zonder klantcode zoekt Yuki de klant op naam (\"" + String(p.bedrijf || p.klant || "").trim() + "\"); bestaat die niet exact zo, dan maakt Yuki een nieuwe klant aan. Kijk de klant na bij Te verzenden; een dubbele klant kan dnf samenvoegen.");
+  const zes = regels.some(r => r.tarief === 6);   // 1.79: wettelijke vermelding bij 6 % (tekst van dnf)
+  const opmerking = [p.nummer ? "Project " + p.nummer : "", zes ? (props.getProperty("YUKI_TEKST_6") || YUKI_TEKST_6) : ""].filter(Boolean).join("\n\n");
+  const o = { onderwerp: oms, datum, vervaldag, opmerking: opmerking, klantcode: "", klant: String(p.bedrijf || p.klant || "").trim(), bedrijf: !!String(p.bedrijf || "").trim(),
+    adres: p.adres || "", postcode: p.postcode || "", gemeente: p.gemeente || "", email: p.factuur_email1 ? "" : (p.email1 || ""), btwnr: p.btw_nummer || "", regels: lijnen, rekening: props.getProperty("YUKI_OMZET_REKENING") || "700000" };
   const xml = yukiFactuurXml(o);
-  const uit = { regels: lijnen, klant: o.klant, klantcode: o.klantcode, datum, vervaldag, waarschuwingen: w, xml };
+  const uit = { regels: lijnen, klant: o.klant, klantcode: o.klantcode, datum, vervaldag, opmerking: o.opmerking, rekening: o.rekening, waarschuwingen: w, xml };
   const admin = props.getProperty("YUKI_FACTUUR_ADMIN_ID");
   if (!admin) return Object.assign({ ok: true, proef: true }, uit);
   if (lijnen.some(r => !r.btwcode)) return { ok: false, error: w[0] };

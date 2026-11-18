@@ -2,6 +2,16 @@
 
 De nieuwste versie staat bovenaan. (Vanaf 1.48 houdt `version.json` enkel de laatste versie bij; het Planbord vraagt dat bestand elke 5 minuten op.)
 
+## 1.79.0 — 2026-11-18 (nieuw drive/Code.gs online zetten, pushen; geen databasescript)
+
+**Naar Yuki: ingesteld volgens het antwoord van dnf.**
+- **Btw-codes** volgens Yuki Support België: 21 % = 1, 12 % = 21, 6 % = 2. Ze staan in het script, dus scripteigenschappen zijn niet meer nodig. Voor 0 % (verlegde btw) is nog geen code bekend; die factuur wordt geweigerd tot `YUKI_BTW_0` ingevuld is.
+- **Omzetrekening** 700000 (Omzet), zoals dnf boekt.
+- **Bij 6 %** komt de wettelijke vermelding van dnf mee in de opmerkingen van de factuur, onder het projectnummer.
+- **Betaaltermijn** 15 dagen, zoals nu in Yuki ingesteld.
+- **Geen proefadministratie**: dnf kan die niet aanmaken. Je test in de eigen administratie; dat is veilig, want de factuur komt enkel bij "Te verzenden".
+- Een scripteigenschap (`YUKI_BTW_<tarief>`, `YUKI_OMZET_REKENING`, `YUKI_TEKST_6`, `YUKI_BETAALTERMIJN`) gaat nog altijd voor op de standaard.
+
 ## 1.78.0 — 2026-11-18 (script 070 uitvoeren, pushen)
 
 **Naservice: datums aanpassen (enkel beheer).** Een beheerder kan de datum aanpassen van een zelf geregistreerde actie en van de ontvangst van een melding die BROS registreerde (mail, telefoon, bezoek). Klik in de historiek van een punt op "datum aanpassen". De ontvangstdatum van het punt verandert mee. De oorspronkelijke datum blijft zichtbaar, net als wie ze aanpaste, wanneer en waarom. Wat de klant zelf in het portaal meldde en de stappen die het Planbord zette (aanvaard, ingepland, opgelost …) houden hun tijdstip.

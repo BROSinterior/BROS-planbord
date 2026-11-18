@@ -926,8 +926,9 @@ async function vordNaarYuki(vid) {
 }
 function yfProefTonen(j) {
   const html = `<p class="muted" style="font-size:13px">Er ging <b>niets</b> naar Yuki. Het Drive-script staat in proefmodus zolang de scripteigenschap <code>YUKI_FACTUUR_ADMIN_ID</code> niet ingevuld is.
-      Vul daar eerst het id van een <b>proefadministratie</b> in, en pas als alles klopt dat van BROS. De factuur komt in Yuki bij <b>Te verzenden</b>: je kijkt ze na en verwerkt ze zelf.</p>
+      Vul daar het id van de administratie van BROS in (een proefadministratie kan dnf niet aanmaken). Dat is veilig: de factuur komt in Yuki bij <b>Te verzenden</b>, niet verwerkt en niet gemaild — je kijkt ze na en verwerkt ze zelf.</p>
       <div class="tw"><table class="t yf-regels" style="margin:10px 0"><tbody>${(j.regels || []).map(r => `<tr><td>${esc(r.omschrijving)}</td><td class="r num">${eur2(r.excl)} excl.</td><td class="r">${esc(r.tarief)} % btw</td><td class="r muted">btw-code ${esc(r.btwcode || "— (nog in te vullen)")}</td></tr>`).join("")}</tbody></table></div>
+      ${j.opmerking ? `<p style="font-size:12px;white-space:pre-line;margin:6px 0" class="muted"><b>Opmerking op de factuur:</b> ${esc(j.opmerking)}</p>` : ""}
       <p style="font-size:13px">Klant in Yuki: <b>${esc(j.klant || "")}</b>${j.klantcode ? " (code " + esc(j.klantcode) + ")" : " — zonder klantcode zoekt Yuki de klant op naam"} · factuurdatum ${esc(fmtLong(j.datum))} · vervalt ${esc(fmtLong(j.vervaldag))}</p>
       ${(j.waarschuwingen || []).length ? `<div class="notice" style="font-size:13px">${j.waarschuwingen.map(esc).join("<br>")}</div>` : ""}
       <details style="margin-top:8px"><summary class="muted" style="cursor:pointer;font-size:12px">Technisch: de xml voor Yuki</summary><pre style="max-height:240px;overflow:auto;font-size:11px;white-space:pre-wrap">${esc(j.xml || "")}</pre></details>`;

@@ -25,7 +25,14 @@ let r = T.yukiFactuur({ token: "t", id: V.id, regels, omschrijving: "Vordering 3
 ok("proef (geen YUKI_FACTUUR_ADMIN_ID): niets naar Yuki, wel de xml terug", r.ok && r.proef && calls.length === 0 && /<Process>false<\/Process>/.test(r.xml) && /<EmailToCustomer>false/.test(r.xml), r);
 ok("proef: 2 regels (6 % en 21 %) met de juiste bedragen", /<SalesPrice>168\.00<\/SalesPrice><VATPercentage>6\.00/.test(r.xml) && /<SalesPrice>1000\.00<\/SalesPrice><VATPercentage>21\.00/.test(r.xml) && r.regels.length === 2, r.xml);
 ok("proef: klant, adres en vervaldag (15 dagen)", /<FullName>Alfa Annie<\/FullName>/.test(r.xml) && /<Zipcode>2000/.test(r.xml) && r.vervaldag > r.datum, r);
-ok("proef: waarschuwing over ontbrekende btw-codes", r.waarschuwingen.some(w => /YUKI_BTW_6/.test(w)), r.waarschuwingen);
+ok("1.79: btw-codes volgens Yuki Support (21 % = 1, 6 % = 2), geen waarschuwing", /<SalesPrice>168\.00<\/SalesPrice><VATPercentage>6\.00<\/VATPercentage><VATIncluded>false<\/VATIncluded><VATType>2<\/VATType>/.test(r.xml) && /<VATPercentage>21\.00<\/VATPercentage><VATIncluded>false<\/VATIncluded><VATType>1<\/VATType>/.test(r.xml) && !r.waarschuwingen.some(w => /YUKI_BTW/.test(w)), [r.xml, r.waarschuwingen]);
+ok("1.79: omzetrekening 700000", (r.xml.match(/<GLAccountCode>700000<\/GLAccountCode>/g) || []).length === 2 && r.rekening === "700000", r.xml);
+ok("1.79: bij 6 % de wettelijke vermelding in de opmerkingen (met het projectnummer)", /<Remarks>Project 260099\n\nBtw-tarief: Bij gebrek aan schriftelijke betwisting/.test(r.xml) && /geldboeten\.<\/Remarks>/.test(r.xml) && /Btw-tarief/.test(r.opmerking), r.xml.slice(0, 900));
+ok("1.79: geen verwijzing meer naar een proefadministratie", !r.waarschuwingen.some(w => /proefadministratie/.test(w)), r.waarschuwingen);
+const v21 = Object.assign({}, V); V.btw_bedrag = 245.28; let r21 = T.yukiFactuur({ token: "t", id: V.id, regels: [{ tarief: 21, excl: 1168 }], omschrijving: "x" }); V.btw_bedrag = v21.btw_bedrag;
+ok("1.79: zonder 6 % geen btw-vermelding, enkel het project", r21.ok && /<Remarks>Project 260099<\/Remarks>/.test(r21.xml), r21.xml && r21.xml.slice(0, 500));
+props.YUKI_BTW_21 = "99"; props.YUKI_OMZET_REKENING = "700003"; let rx = T.yukiFactuur({ token: "t", id: V.id, regels, omschrijving: "x" }); delete props.YUKI_BTW_21; delete props.YUKI_OMZET_REKENING;
+ok("1.79: scripteigenschappen gaan voor op de standaard", /<VATType>99<\/VATType>/.test(rx.xml) && /<GLAccountCode>700003/.test(rx.xml), rx.xml);
 ok("xml: tekens worden ge-escaped", /&lt;b&gt;/.test(T.yukiFactuurXml({ onderwerp: "<b>", regels: [], klant: "x" })));
 // ---- controles ----
 r = T.yukiFactuur({ token: "t", id: V.id, regels: [{ tarief: 6, excl: 100 }], omschrijving: "x" });
@@ -37,9 +44,9 @@ r = T.yukiFactuur({ token: "t", id: V.id, regels, omschrijving: "x" }); ok("niet
 let fout = ""; ctx.caller = () => { throw new Error("Alleen beheerders"); }; try { T.yukiFactuur({ token: "t", id: V.id, regels }); } catch (e) { fout = e.message; } ok("enkel beheer", /beheer/i.test(fout), fout); ctx.caller = () => ({ id: "b", role: "beheer" });
 // ---- echt (proefadministratie) ----
 props.YUKI_FACTUUR_ADMIN_ID = "ADMIN-PROEF"; props.YUKI_API_KEY = "sleutel";
-r = T.yukiFactuur({ token: "t", id: V.id, regels, omschrijving: "x" });
-ok("met administratie maar zonder btw-codes → geweigerd, niets verstuurd", !r.ok && /YUKI_BTW/.test(r.error) && calls.length === 0, r);
-props.YUKI_BTW_6 = "2"; props.YUKI_BTW_21 = "1"; props.YUKI_API_URL = "https://api.yukiworks.be/ws/Accounting.asmx";
+V.btw_bedrag = 0; r = T.yukiFactuur({ token: "t", id: V.id, regels: [{ tarief: 0, excl: 1168 }], omschrijving: "x" }); V.btw_bedrag = 220.08;
+ok("met administratie: 0 % (verlegd) zonder code → geweigerd, niets verstuurd", !r.ok && /YUKI_BTW_0/.test(r.error) && calls.length === 0, r);
+props.YUKI_API_URL = "https://api.yukiworks.be/ws/Accounting.asmx";
 r = T.yukiFactuur({ token: "t", id: V.id, regels, omschrijving: "Vordering 3" });
 const proc = calls.find(c => /ProcessSalesInvoices/.test(c.o.payload));
 ok("echt: aanmelden + ProcessSalesInvoices op Sales.asmx", r.ok && calls.length === 2 && calls.every(c => c.url === "https://api.yukiworks.be/ws/Sales.asmx") && !!proc, [r, calls.map(c => c.url)]);
