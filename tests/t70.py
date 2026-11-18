@@ -4,7 +4,7 @@ from decimal import Decimal as D
 herstel("basis")
 R = {}
 def ok(k, c, x=""): R[k] = "OK" if c else "FOUT " + str(x)[:600]
-r = psql_file(REPO + "/sql/064_vastzetten_markeringen.sql"); ok("064 mag opnieuw (controle 2|1|2|≥64)", re.search(r"2\|1\|2\|6[4-9]", r.stdout) is not None, r.stdout + r.stderr)
+r = psql_file(REPO + "/sql/064_vastzetten_markeringen.sql"); ok("064 mag opnieuw (controle 2|1|2|≥64)", re.search(r"2\|1\|2\|(6[4-9]|[7-9][0-9])", r.stdout) is not None, r.stdout + r.stderr)
 V3 = "eeeeeeee-0000-0000-0000-000000000003"
 pg("insert into vorderingen (id, project_id, nr, soort, omschrijving, datum, status) values (%s,%s,3,'vordering','Vordering 3','2026-11-10','opgemaakt')", (V3, P), f=None)
 pg("insert into vordering_regels (vordering_id, lot, pct) values (%s,1,0.2)", (V3,), f=None)

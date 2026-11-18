@@ -4,8 +4,8 @@ import re
 herstel("basis")
 r = psql_file(REPO + "/sql/063_presentatie_eigen_beelden.sql"); R = {}
 def ok(k, c, x=""): R[k] = "OK" if c else "FOUT " + str(x)[:500]
-ok("063 voert uit, controle 1|2|≥63 (verlaagt een hogere schemaversie niet)", re.search(r"1\|2\|6[3-9]", r.stdout) is not None and not r.stderr.strip().count("ERROR"), r.stdout + r.stderr)
-r2 = psql_file(REPO + "/sql/063_presentatie_eigen_beelden.sql"); ok("063 mag opnieuw", re.search(r"1\|2\|6[3-9]", r2.stdout) is not None, r2.stdout + r2.stderr)
+ok("063 voert uit, controle 1|2|≥63 (verlaagt een hogere schemaversie niet)", re.search(r"1\|2\|(6[3-9]|[7-9][0-9])", r.stdout) is not None and not r.stderr.strip().count("ERROR"), r.stdout + r.stderr)
+r2 = psql_file(REPO + "/sql/063_presentatie_eigen_beelden.sql"); ok("063 mag opnieuw", re.search(r"1\|2\|(6[3-9]|[7-9][0-9])", r2.stdout) is not None, r2.stdout + r2.stderr)
 pg("insert into storage.buckets (id, name, public) values ('renders','renders',false) on conflict do nothing", f=None)
 SHA = "a" * 64
 def upload(uid, pad, size=1234):

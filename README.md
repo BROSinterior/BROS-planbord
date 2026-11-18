@@ -23,7 +23,7 @@ Statische webapp (geen build-stap) op een Supabase-database.
 | `version.json` | versienummer (enkel de laatste versie); de app meldt een nieuwe versie aan wie ze open heeft |
 | `CHANGELOG.md` | versiegeschiedenis (vanaf 1.48 niet meer in version.json) |
 | `vendor/supabase-2.45.4.js` (+ `591.supabase.js`) | de Supabase-bibliotheek, zelf gehost (geen CDN nodig) |
-| `sql/001_init.sql` … `sql/069_*.sql` | databasescripts, in volgorde uit te voeren (`versie_schema` in instellingen bewaakt de volgorde vanaf 022) |
+| `sql/001_init.sql` … `sql/070_*.sql` | databasescripts, in volgorde uit te voeren (`versie_schema` in instellingen bewaakt de volgorde vanaf 022) |
 | `drive/Code.gs` | Google Apps Script dat projectmappen aanmaakt/koppelt op Drive en de meetstaat-export wegschrijft (installatie: zie bovenaan dat bestand) |
 | `drive/YukiArchief.gs` | klein Apps Script voor het account archief@bros.be: leest daar de Yuki-factuurmails en stuurt ze naar het Drive-script (v1.50.1, zie *Yuki-mails uit archief@bros.be*) |
 | `agenda.js` | gedeeld (Planbord en portalen): agendabestand (.ics) en Google Agenda-link voor afspraken (script 041) |
@@ -218,6 +218,7 @@ Activeren: Supabase → SQL Editor → `sql/052_marges_raming.sql` → Run (na 0
 - Het Drive-script mailt elk uur, per punt gebundeld (`naserviceMeldingen`). Een melding uit een portaal gaat meteen (actie `naservicemail`).
 - Na de termijn levert `naserviceOpleveringen` definitief op, met een pv (pdf) in Documenten/Oplevering. Open punten staan erop als voorbehoud. Met de actie `oplevering` maakt een beheerder het pv na een manuele definitieve oplevering.
 - Activeren: `sql/069` (controle `7|2|5|69`), nieuw `drive/Code.gs`, pushen.
+- 1.78 (script 070, controle `5|1|70`): een beheerder past de datum aan van een geregistreerde actie of van een door BROS geregistreerde ontvangst (`naservice_datum`). De oorspronkelijke datum, wie, wanneer en waarom blijven bewaard.
 
 ## Meer-/minderwerk naar de aannemer (script 068 + drive/Code.gs, v1.76)
 

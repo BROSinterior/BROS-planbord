@@ -16,6 +16,9 @@ const nsActieNodig = (n) => n.status === "ontvangen" || n.status === "opgelost";
 const nsProjecten = () => projects().filter(p => p.voorlopig_opgeleverd_op);
 const nsTeller = (pid) => nsKlaar() ? nsPunten(pid).filter(nsActieNodig).length : 0;
 const nsAannemers = (pid) => { const z = new Map(); contactsOf(pid).filter(x => !["bouwheer", "contactpersoon"].includes(x.rol)).forEach(x => { if (!z.has(x.c.id)) z.set(x.c.id, x); }); return [...z.values()]; };
+/* 1.78 (script 070): een beheerder past de datum aan van een geregistreerde actie of van de ontvangst van een door BROS geregistreerde melding */
+const nsDatumAanpasbaar = (x) => isBeheer() && schemaV() >= 70 && (x.soort === "registratie" || (x.soort === "ontvangen" && x.punt_id && S.naservice_punten[x.punt_id] && S.naservice_punten[x.punt_id].bron !== "klant"));
+const nsLokaal = (ts) => { const d = new Date(ts); d.setMinutes(d.getMinutes() - d.getTimezoneOffset()); return d.toISOString().slice(0, 16); };
 const NS_NU_LOKAAL = () => { const d = new Date(); d.setMinutes(d.getMinutes() - d.getTimezoneOffset()); return d.toISOString().slice(0, 16); };
 
 /* ---------- projecttabblad ---------- */
@@ -169,7 +172,7 @@ function nsDetail(id, open) {
     <div style="display:flex;gap:6px;flex-wrap:wrap;margin:16px 0 4px">${acties}</div>
     <div id="ns_inv"></div>
     <h3 style="margin:18px 0 6px;font-size:15px">Historiek</h3>
-    ${NSW.tijdlijn(evs, { intern: true })}
+    ${NSW.tijdlijn(evs, { intern: true, aanpas: nsDatumAanpasbaar })}
     <div style="border:1px solid var(--line);border-radius:12px;padding:12px;margin-top:6px">
       <div style="display:flex;gap:14px;flex-wrap:wrap;font-size:13px;margin-bottom:8px"><label class="chk" style="margin:0"><input type="radio" name="ns_soort" value="bericht" checked> Bericht</label><label class="chk" style="margin:0"><input type="radio" name="ns_soort" value="registratie"> Actie registreren (bv. telefoon, bezoek) met datum</label></div>
       <textarea id="ns_tekst" rows="2" style="width:100%" placeholder="bv. Klant gebeld: de aannemer komt dinsdag langs."></textarea>
@@ -179,7 +182,7 @@ function nsDetail(id, open) {
         <input id="ns_op" type="datetime-local" value="${NS_NU_LOKAAL()}" max="${NS_NU_LOKAAL()}" style="display:none">
         <input id="ns_fotos" type="file" accept="image/*" multiple style="max-width:220px">
         <button type="button" class="btn sm primary" data-ns="bericht" data-id="${n.id}" style="margin-left:auto">Toevoegen</button></div>
-      <small class="muted">Een bericht dat de klant of de aannemer ziet, krijgen ze ook per mail (binnen het uur). De historiek kan niet gewijzigd worden.</small></div>
+      <small class="muted">Een bericht dat de klant of de aannemer ziet, krijgen ze ook per mail (binnen het uur). De historiek kan niet gewijzigd worden; enkel een beheerder kan de datum van een geregistreerde actie aanpassen (dat blijft zichtbaar).</small></div>
   </div>`, { saveLabel: "Sluiten", wide: true, onSave: async () => { } });
   $("#mform").dataset.nsPunt = id;
   if (open) nsToon(open);
@@ -235,6 +238,26 @@ document.addEventListener("click", async (e) => {
   if (d.ns === "zichtbaar") { const n = S.naservice_punten[d.id]; try { await dbUpdate("naservice_punten", d.id, { klant_zichtbaar: !n.klant_zichtbaar }); } catch (x) { return; } return nsDetail(d.id); }
   if (d.ns === "toon") return nsToon(d.act2);
   if (d.ns === "toon-weg") { $("#ns_inv").innerHTML = ""; return; }
+  if (d.ns === "datum") {   // 1.78: datum aanpassen (beheer)
+    const x = S.naservice_gebeurtenissen[d.ev]; const vak = document.querySelector(`[data-ev-vak="${d.ev}"]`); if (!x || !vak || !nsDatumAanpasbaar(x)) return;
+    document.querySelectorAll(".ns-datumvak").forEach(v => { v.innerHTML = ""; });
+    vak.innerHTML = `<div style="border:1px solid var(--warn);background:var(--warn-soft);border-radius:10px;padding:10px;margin-top:6px;display:flex;gap:8px;flex-wrap:wrap;align-items:center">
+      <b style="font-size:13px">${x.soort === "ontvangen" ? "Ontvangen op" : "Datum van de actie"}</b><input type="datetime-local" id="ns_dt" value="${nsLokaal(x.op)}" max="${NS_NU_LOKAAL()}">
+      <input id="ns_dt_reden" placeholder="Reden (optioneel), bv. verkeerde dag ingevuld" style="flex:1;min-width:200px">
+      <button type="button" class="btn sm primary" data-ns="datum-bewaar" data-ev="${x.id}">Bewaren</button><button type="button" class="btn sm ghost" data-ns="datum-weg">Annuleren</button>
+      <small class="muted" style="flex-basis:100%">De oorspronkelijke datum en wie ze aanpaste blijven zichtbaar in de historiek.${x.soort === "ontvangen" ? " De ontvangstdatum van het punt verandert mee." : ""}</small></div>`;
+    const i = $("#ns_dt"); if (i) i.focus(); return;
+  }
+  if (d.ns === "datum-weg") { document.querySelectorAll(".ns-datumvak").forEach(v => { v.innerHTML = ""; }); return; }
+  if (d.ns === "datum-bewaar") {
+    const x = S.naservice_gebeurtenissen[d.ev]; const v = $("#ns_dt") && $("#ns_dt").value; if (!x) return; if (!v) { toast("Kies een datum."); return; }
+    el.disabled = true;
+    const { data, error } = await sb.rpc("naservice_datum", { p_id: x.id, p_op: new Date(v).toISOString(), p_reden: ($("#ns_dt_reden").value || "").trim() });
+    el.disabled = false; if (error) { toast(error.message, 7000); return; }
+    if (data && data.id) S.naservice_gebeurtenissen[data.id] = data;
+    if (x.punt_id) { await nsVers(x.punt_id); toast("Datum aangepast"); return nsDetail(x.punt_id); }
+    render(); toast("Datum aangepast"); return;
+  }
   if (d.ns === "doe") {
     const n = S.naservice_punten[d.id]; const act = d.act2; const o = { tekst: ($("#ns_a_tekst") && $("#ns_a_tekst").value || "").trim(), klant: $("#ns_a_klant") ? $("#ns_a_klant").checked : true };
     if (act === "toewijzen") { o.contact = $("#ns_a_contact").value; if (!o.contact) { toast("Kies een aannemer."); return; } }

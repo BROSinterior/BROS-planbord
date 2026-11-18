@@ -4,7 +4,7 @@ herstel("basis")
 VANDAAG = datetime.date.today().isoformat(); MAANDAG = (datetime.date.today() - datetime.timedelta(days=datetime.date.today().weekday())).isoformat()
 R = {}
 def ok(k, c, x=""): R[k] = "OK" if c else "FOUT " + str(x)[:600]
-r = psql_file(REPO + "/sql/067_afspraak_team.sql"); ok("067 mag opnieuw (controle 1|1|67)", re.search(r"^1\|1\|6[7-9]$", r.stdout, re.M) is not None, r.stdout[-200:] + r.stderr[-300:])
+r = psql_file(REPO + "/sql/067_afspraak_team.sql"); ok("067 mag opnieuw (controle 1|1|67)", re.search(r"^1\|1\|(6[7-9]|[7-9][0-9])$", r.stdout, re.M) is not None, r.stdout[-200:] + r.stderr[-300:])
 # ---- databank ----
 T = pg("insert into taken (project_id, titel, status, assignee, start, eind, afspraak, afspraak_van, afspraak_adres, afspraak_team) values (%s,'Bespreking','todo',%s,%s,%s,'kantoor','10:00','BROS',%s) returning id::text, afspraak_team::text[]",
        (P, B, VANDAAG, VANDAAG, [M, B, M, K]))

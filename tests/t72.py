@@ -4,7 +4,7 @@ import os, sys, json; sys.path.insert(0, os.path.join(os.path.dirname(os.path.ab
 herstel("basis")
 R = {}
 def ok(k, c, x=""): R[k] = "OK" if c else "FOUT " + str(x)[:600]
-r = psql_file(REPO + "/sql/065_wijzigingen.sql"); import re; ok("065 mag opnieuw (controle 1|…|65)", re.search(r"^1\|\d+\|6[5-9]$", r.stdout, re.M) is not None, r.stdout[-300:] + r.stderr[-300:])
+r = psql_file(REPO + "/sql/065_wijzigingen.sql"); import re; ok("065 mag opnieuw (controle 1|…|65)", re.search(r"^1\|\d+\|(6[5-9]|[7-9][0-9])$", r.stdout, re.M) is not None, r.stdout[-300:] + r.stderr[-300:])
 n_trig = pg("select count(*) from pg_trigger where tgname='pb_wijz'")[0]; ok("trigger op ±60 tabellen", n_trig >= 60, n_trig)
 # ---- databank ----
 pg("delete from pb_wijzigingen", f=None)

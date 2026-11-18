@@ -78,7 +78,9 @@
         <div class="ns-tl-kop"><b>${e(titel)}</b><span class="ns-tl-wie"><span class="ns-rolchip">${e(ROL[x.door_rol] || x.door_rol)}</span>${e(x.door_naam || "")}</span><time datetime="${e(x.op)}">${e(fmtTijd(x.op))}</time></div>
         ${x.tekst ? `<div class="ns-tl-tekst">${e(x.tekst)}</div>` : ""}
         ${fs.length ? `<div class="ns-tl-fotos">${fs.map(u => `<a href="${e(u)}" target="_blank" rel="noopener"><img src="${e(u)}" alt="" loading="lazy"></a>`).join("")}</div>` : ""}
-        ${opt.intern ? `<div class="ns-tl-meta">${later ? `geregistreerd op ${e(fmtTijd(x.created_at))} · ` : ""}${x.zichtbaar_klant === false ? "intern (klant ziet dit niet)" : "zichtbaar voor de klant"}${x.zichtbaar_aannemer ? " · en de aannemer" : ""}${x.gemeld_op ? ` · ✉ gemaild${x.gemeld_naar ? ": " + e(x.gemeld_naar) : ""}` : x.melden ? " · ✉ mail volgt" : ""}</div>` : ""}
+        ${opt.intern ? `<div class="ns-tl-meta">${later ? `geregistreerd op ${e(fmtTijd(x.created_at))} · ` : ""}${x.zichtbaar_klant === false ? "intern (klant ziet dit niet)" : "zichtbaar voor de klant"}${x.zichtbaar_aannemer ? " · en de aannemer" : ""}${x.gemeld_op ? ` · ✉ gemaild${x.gemeld_naar ? ": " + e(x.gemeld_naar) : ""}` : x.melden ? " · ✉ mail volgt" : ""}${opt.aanpas && opt.aanpas(x) ? ` · <a href="#" data-ns="datum" data-ev="${e(x.id)}">datum aanpassen</a>` : ""}</div>
+          ${x.op_oorspronkelijk ? `<div class="ns-tl-meta ns-tl-aangepast">✎ datum aangepast door ${e(x.op_gewijzigd_naam || "?")} op ${e(fmtTijd(x.op_gewijzigd_op))} — oorspronkelijk ${e(fmtTijd(x.op_oorspronkelijk))}${x.op_reden ? ` · “${e(x.op_reden)}”` : ""}</div>` : ""}
+          <div class="ns-datumvak" data-ev-vak="${e(x.id)}"></div>` : ""}
       </div></li>`; }).join("")}</ol>`;
   }
   const pill = (status) => { const [l, c] = STATUS[status] || [status, "ontv"]; return `<span class="ns-pill ns-st-${c}">${e(l)}</span>`; };
@@ -133,6 +135,7 @@
 .ns-tl-tekst{white-space:pre-line;font-size:14px;margin-top:4px;padding:8px 10px;background:var(--surface-2);border-radius:8px}
 .ns-tl-fotos{display:flex;gap:6px;flex-wrap:wrap;margin-top:6px}.ns-tl-fotos img{width:72px;height:72px;object-fit:cover;border-radius:8px;display:block}
 .ns-tl-meta{font-size:11px;color:var(--muted);margin-top:4px}
+.ns-tl-aangepast{color:var(--warn)}
 .ns-leeg{color:var(--muted);font-size:13px;padding:8px 0}
 .ns-kaart{display:block;width:100%;text-align:left;border:1px solid var(--line);border-left:4px solid var(--muted);border-radius:12px;padding:10px 12px;background:var(--surface);cursor:pointer;font:inherit;color:inherit;margin-bottom:8px}
 .ns-kaart:hover{box-shadow:var(--card)}
